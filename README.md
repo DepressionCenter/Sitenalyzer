@@ -29,6 +29,7 @@ This is a Single-file HTML/JavaScript application designed to be embedded into a
 
 ![Screenshot of Sitenalyzer](image.png)
 
+
 ## Quick Start Guide
 + First ensure you have the "Modern Script Editor" app installed. If not available, contact your site administrator to install it
 + Go to your site's home page and create a new page using the Modern Script Editor template. Use "Sitenalyzer" for the page title.
