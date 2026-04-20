@@ -1,0 +1,277 @@
+<!--
+Sitenalyzer - Gets internal information about a SharePoint site.
+Author(s): Gabriel Mongefranco.
+Created: 2026-04-20
+Last Modified: 2026-04-20
+Summary: Single-file HTML/JavaScript application, embeddable in an SP site, to gather site internal IDs and information.
+Notes: See README file for documentation and full license information. Also see: https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245
+Website: https://github.com/DepressionCenter/Sitenalyzer
+
+Copyright (c) 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sitenalyzer: SharePoint Internal Information Gatherer</title>
+<style>
+    #sp-info-app {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        color: #333;
+        background: #f9f9f9;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        max-width: 900px;
+        margin: auto;
+    }
+    #sp-info-app h2, #sp-info-app h3, #sp-info-app h4 {
+        color: #005a9e;
+    }
+    #sp-info-app button {
+        background-color: #0078d4;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        font-size: 14px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-bottom: 20px;
+    }
+    #sp-info-app button:hover { background-color: #005a9e; }
+    #sp-info-app button:disabled { background-color: #cccccc; cursor: not-allowed; }
+    .info-card {
+        background: #fff;
+        border: 1px solid #ddd;
+        padding: 15px;
+        border-radius: 6px;
+        margin-bottom: 15px;
+    }
+    .grid-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+    details.permissions-section {
+        margin-top: 10px;
+        padding: 10px;
+        background: #f3f2f1;
+        border-left: 4px solid #0078d4;
+        border-radius: 4px;
+    }
+    summary { cursor: pointer; font-weight: bold; color: #0078d4; outline: none; }
+    .perm-row { border-bottom: 1px solid #e1dfdd; padding: 4px 0; font-size: 13px; }
+    .perm-row:last-child { border-bottom: none; }
+    .app-tag { background: #edebe9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    #sp-loader { display: none; font-style: italic; color: #666; margin-bottom: 15px; }
+</style>
+</head>
+<body>
+
+<div id="sp-info-app">
+    <h2>Sitenalyzer: SharePoint Internal Information Gatherer</h2>
+    <button id="sp-btn-gather" onclick="gatherSiteInformation()">Gather Site Information</button>
+    <div id="sp-loader">Fetching data from SharePoint REST APIs... this may take a moment.</div>
+    <div id="sp-results"></div>
+</div>
+
+<script>
+    /**
+     * Data fetching logic adapted from DataLaVista (github.com/DepressionCenter/datalavista)
+     * License: GPLv3
+     */
+    async function spFetch(url, _throttleRetries = 5) {
+        const headers = { 'Accept': 'application/json;odata=nometadata' };
+        // We rely on the browser's implicit SharePoint auth context via credentials: 'include'
+        const res = await fetch(url, { headers, credentials: 'include' });
+        
+        if (res.status === 429 && _throttleRetries > 0) {
+            const retryAfter = Math.max(parseInt(res.headers.get('Retry-After') || '10', 10), 2);
+            await new Promise(r => setTimeout(r, retryAfter * 1000));
+            return spFetch(url, _throttleRetries - 1);
+        }
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`HTTP ${res.status}: ${errorText} — ${url}`);
+        }
+        return res.json();
+    }
+
+    // Determine base URL dynamically based on the current context
+    function getBaseUrl() {
+        if (window._spPageContextInfo && window._spPageContextInfo.webAbsoluteUrl) {
+            return window._spPageContextInfo.webAbsoluteUrl;
+        }
+        const path = window.location.pathname;
+        if (path.includes('/sites/')) {
+            const parts = path.split('/');
+            const siteIndex = parts.indexOf('sites');
+            return window.location.origin + '/' + parts.slice(1, siteIndex + 2).join('/');
+        }
+        return window.location.origin;
+    }
+
+    // Helper to render permissions into an HTML block
+    function renderPermissionsHtml(roleAssignments) {
+        if (!roleAssignments || roleAssignments.length === 0) return '<div class="perm-row">No explicit permissions found (inheriting or empty).</div>';
+        
+        let html = '';
+        roleAssignments.forEach(ra => {
+            const memberName = ra.Member.Title || ra.Member.LoginName;
+            const isApp = ra.Member.PrincipalType === 4; // 4 = App
+            const roles = ra.RoleDefinitionBindings.map(r => r.Name).join(', ');
+            
+            html += `<div class="perm-row">
+                        <strong>${memberName}</strong> ${isApp ? '<span class="app-tag">App Principal</span>' : ''}
+                        <br><span style="color:#666">Roles: ${roles}</span>
+                     </div>`;
+        });
+        return html;
+    }
+
+    async function gatherSiteInformation() {
+        const btn = document.getElementById('sp-btn-gather');
+        const loader = document.getElementById('sp-loader');
+        const resultsDiv = document.getElementById('sp-results');
+        
+        btn.disabled = true;
+        loader.style.display = 'block';
+        resultsDiv.innerHTML = '';
+
+        const baseUrl = getBaseUrl();
+
+        try {
+            // 1. Get Site Info
+            const siteInfo = await spFetch(`${baseUrl}/_api/web?$select=Title,Url,Id`);
+            
+            // 2. Get Site Permissions & Entra Apps (App Principals)
+            const siteRoles = await spFetch(`${baseUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`);
+            const appPrincipals = siteRoles.value ? siteRoles.value.filter(ra => ra.Member.PrincipalType === 4) : [];
+
+            // 3. Get Lists and Libraries
+            // BaseTemplate 101 = Document Library. Everything else we'll treat as a List for this exercise.
+            const allLists = await spFetch(`${baseUrl}/_api/web/lists?$filter=Hidden eq false and IsApplicationList eq false`);
+            
+            let libsHtml = '';
+            let listsHtml = '';
+
+            for (const list of allLists.value) {
+                // Fetch list/lib permissions
+                let listRolesHtml = '<div class="perm-row">Inheriting permissions from site.</div>';
+                try {
+                    const lRoles = await spFetch(`${baseUrl}/_api/web/lists(guid'${list.Id}')/roleassignments?$expand=Member,RoleDefinitionBindings`);
+                    if (lRoles.value && lRoles.value.length > 0) {
+                        listRolesHtml = renderPermissionsHtml(lRoles.value);
+                    }
+                } catch(e) {
+                    // Usually throws 403 or 404 if inheriting and no explicit assignments exist
+                }
+
+                if (list.BaseTemplate === 101) {
+                    // It's a Document Library
+                    let driveId = 'Unavailable via basic REST';
+                    let foldersHtml = '<ul>';
+
+                    // Try to get Drive ID using V2 API
+                    try {
+                        const driveData = await spFetch(`${baseUrl}/_api/v2.0/lists/${list.Id}/drive`);
+                        if (driveData && driveData.id) driveId = driveData.id;
+                    } catch(e) { console.warn("Could not fetch Drive ID for " + list.Title); }
+
+                    // Try to get Top Level Folders
+                    try {
+                        const folders = await spFetch(`${baseUrl}/_api/web/lists(guid'${list.Id}')/RootFolder/Folders?$select=Name,UniqueId&$filter=Name ne 'Forms' and Hidden eq false`);
+                        if (folders.value && folders.value.length > 0) {
+                            folders.value.forEach(f => {
+                                foldersHtml += `<li>${f.Name} <em>(ID: ${f.UniqueId})</em></li>`;
+                            });
+                        } else {
+                            foldersHtml += '<li>No top-level folders found.</li>';
+                        }
+                    } catch(e) { foldersHtml += '<li>Error loading folders.</li>'; }
+                    foldersHtml += '</ul>';
+
+                    libsHtml += `
+                        <div class="info-card">
+                            <h4>📄 ${list.Title}</h4>
+                            <div class="grid-container">
+                                <div><strong>List ID:</strong> ${list.Id}</div>
+                                <div><strong>Drive ID:</strong> ${driveId}</div>
+                            </div>
+                            <strong>Top-Level Folders:</strong>
+                            ${foldersHtml}
+                            <details class="permissions-section">
+                                <summary>View Library Permissions</summary>
+                                ${listRolesHtml}
+                            </details>
+                        </div>
+                    `;
+                } else {
+                    // It's a regular List
+                    listsHtml += `
+                        <div class="info-card">
+                            <h4>📋 ${list.Title}</h4>
+                            <div><strong>List ID:</strong> ${list.Id}</div>
+                            <details class="permissions-section">
+                                <summary>View List Permissions</summary>
+                                ${listRolesHtml}
+                            </details>
+                        </div>
+                    `;
+                }
+            }
+
+            // Build Final HTML
+            let finalHtml = `
+                <div class="info-card" style="border-top: 4px solid #0078d4;">
+                    <h3>🌐 Site Information</h3>
+                    <div class="grid-container">
+                        <div><strong>Site Name:</strong> ${siteInfo.Title}</div>
+                        <div><strong>Site URL:</strong> <a href="${siteInfo.Url}" target="_blank">${siteInfo.Url}</a></div>
+                        <div style="grid-column: span 2;"><strong>Site ID:</strong> ${siteInfo.Id}</div>
+                    </div>
+                    
+                    <details class="permissions-section">
+                        <summary>View Site Permissions</summary>
+                        ${renderPermissionsHtml(siteRoles.value)}
+                    </details>
+                </div>
+
+                <div class="info-card" style="border-top: 4px solid #107c41;">
+                    <h3>🔐 App Principals (Apps with explicit site access)</h3>
+                    <p style="font-size: 12px; color: #666;">Note: Fetching all Entra ID applications globally assigned via Graph API requires Admin 'Application.Read.All' tokens. This lists local SharePoint App Principals.</p>
+                    ${appPrincipals.length > 0 ? renderPermissionsHtml(appPrincipals) : '<em>No local app principals found.</em>'}
+                </div>
+
+                <h3>📁 Document Libraries</h3>
+                ${libsHtml || '<p>No document libraries found.</p>'}
+
+                <h3>📑 Lists</h3>
+                ${listsHtml || '<p>No lists found.</p>'}
+            `;
+
+            resultsDiv.innerHTML = finalHtml;
+
+        } catch (error) {
+            resultsDiv.innerHTML = `<div style="color: red; padding: 15px; border: 1px solid red; border-radius: 4px;">
+                <strong>Error fetching data:</strong><br>${error.message}
+            </div>`;
+        } finally {
+            btn.disabled = false;
+            loader.style.display = 'none';
+        }
+    }
+</script>
+</body>
+</html>
