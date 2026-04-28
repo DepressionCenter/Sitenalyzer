@@ -152,65 +152,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 var globalAccessibleSites = [];
 
-function startApplication() {
-    var currentBaseUrl = getBaseUrl();
-    var siteUrlInput = document.getElementById('site-url-input');
-    var siteSuggestions = document.getElementById('site-suggestions');
-
-    if (siteUrlInput) {
-        siteUrlInput.value = currentBaseUrl;
-    }
-
-    fetchAccessibleSites();
-
-    if (siteUrlInput) {
-        siteUrlInput.addEventListener('input', function() {
-            var query = siteUrlInput.value.toLowerCase();
-            siteSuggestions.innerHTML = '';
-
-            if (query.length === 0) {
-                siteSuggestions.style.display = 'none';
-                return;
-            }
-
-            var filtered = globalAccessibleSites.filter(function(site) {
-                return site.url.toLowerCase().indexOf(query) > -1 || site.title.toLowerCase().indexOf(query) > -1;
-            });
-
-            if (filtered.length === 0) {
-                siteSuggestions.style.display = 'none';
-                return;
-            }
-
-            filtered.forEach(function(site) {
-                var li = document.createElement('li');
-                var titleSpan = document.createElement('div');
-                titleSpan.className = 'site-suggestion-title';
-                titleSpan.textContent = site.title;
-                var urlSpan = document.createElement('div');
-                urlSpan.className = 'site-suggestion-url';
-                urlSpan.textContent = site.url;
-                li.appendChild(titleSpan);
-                li.appendChild(urlSpan);
-                li.addEventListener('click', function() {
-                    siteUrlInput.value = site.url;
-                    siteSuggestions.innerHTML = '';
-                    siteSuggestions.style.display = 'none';
-                });
-                siteSuggestions.appendChild(li);
-            });
-
-            siteSuggestions.style.display = 'block';
-        });
-
-        document.addEventListener('click', function(event) {
-            if (event.target !== siteUrlInput && event.target !== siteSuggestions) {
-                siteSuggestions.style.display = 'none';
-            }
-        });
-    }
-}
-
 async function spFetch(url, throttleRetries) {
     if (typeof throttleRetries === 'undefined') {
         throttleRetries = 5;
@@ -257,20 +198,35 @@ function getBaseUrl() {
 async function fetchAccessibleSites() {
     try {
         var baseUrl = getBaseUrl();
-        var hubsitesUrl = baseUrl + '/_api/hubsites';
-        var hubsites = await spFetch(hubsitesUrl);
+        var searchUrl = baseUrl + "/_api/search/query?querytext='contentclass:STS_Site'&selectproperties='Title,Path'&rowlimit=500";
+        var searchData = await spFetch(searchUrl);
 
         globalAccessibleSites = [];
-        if (hubsites.value) {
-            hubsites.value.forEach(function(hub) {
-                globalAccessibleSites.push({
-                    title: hub.Title,
-                    url: hub.SiteUrl
+        
+        if (searchData.PrimaryQueryResult && searchData.PrimaryQueryResult.RelevantResults && searchData.PrimaryQueryResult.RelevantResults.Table && searchData.PrimaryQueryResult.RelevantResults.Table.Rows) {
+            searchData.PrimaryQueryResult.RelevantResults.Table.Rows.forEach(function(row) {
+                var title = '';
+                var url = '';
+                
+                row.Cells.forEach(function(cell) {
+                    if (cell.Key === 'Title') {
+                        title = cell.Value;
+                    }
+                    if (cell.Key === 'Path') {
+                        url = cell.Value;
+                    }
                 });
+                
+                if (url) {
+                    globalAccessibleSites.push({
+                        title: title || url,
+                        url: url
+                    });
+                }
             });
         }
     } catch (error) {
-        console.warn('Could not fetch hub sites: ' + error.message);
+        console.warn('Could not fetch accessible sites: ' + error.message);
     }
 }
 
@@ -338,7 +294,7 @@ async function gatherSiteInformation() {
             }
 
             if (list.BaseTemplate === 101) {
-                var driveId = 'Unavailable via basic REST';
+                var driveId = null;
                 var foldersHtml = '<ul>';
 
                 try {
@@ -366,7 +322,7 @@ async function gatherSiteInformation() {
                 }
                 foldersHtml += '</ul>';
 
-                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4><div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div><div><strong>Drive ID:</strong> ' + driveId + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + '<details class="permissions-section"><summary>View Library Permissions</summary>' + listRolesHtml + '</details></div>';
+                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4><div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div><div><strong>' + (driveId?'Drive ID:':'') + '</strong> ' + (driveId?driveId:'') + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + '<details class="permissions-section"><summary>View Library Permissions</summary>' + listRolesHtml + '</details></div>';
             } else {
                 listsHtml += '<div class="info-card"><h4>📋 ' + list.Title + '</h4><div><strong>List ID:</strong> ' + list.Id + '</div><details class="permissions-section"><summary>View List Permissions</summary>' + listRolesHtml + '</details></div>';
             }
@@ -392,7 +348,87 @@ async function gatherSiteInformation() {
     }
 }
 
-startApplication();
+
+function startApplication() {
+    var currentBaseUrl = getBaseUrl();
+    var siteUrlInput = document.getElementById('site-url-input');
+    var siteSuggestions = document.getElementById('site-suggestions');
+
+    if (siteUrlInput) {
+        siteUrlInput.value = currentBaseUrl;
+    }
+
+    fetchAccessibleSites();
+
+    if (siteUrlInput) {
+        // Helper function to extract the part after the last slash
+        function getSearchQuery(inputValue) {
+            var lastSlashIndex = inputValue.lastIndexOf('/');
+            if (lastSlashIndex === -1) {
+                return inputValue.toLowerCase();
+            }
+            return inputValue.substring(lastSlashIndex + 1).toLowerCase();
+        }
+
+        // Function to show filtered suggestions (limited to 10 results)
+        function showSuggestions(query) {
+            siteSuggestions.innerHTML = '';
+
+            var filtered = globalAccessibleSites.filter(function(site) {
+                var siteName = site.url.substring(site.url.lastIndexOf('/') + 1).toLowerCase();
+                return siteName.indexOf(query) > -1 || site.title.toLowerCase().indexOf(query) > -1;
+            });
+
+            if (filtered.length === 0) {
+                siteSuggestions.style.display = 'none';
+                return;
+            }
+
+            // Limit to 10 results
+            filtered.slice(0, 10).forEach(function(site) {
+                var li = document.createElement('li');
+                var titleSpan = document.createElement('div');
+                titleSpan.className = 'site-suggestion-title';
+                titleSpan.textContent = site.title;
+                var urlSpan = document.createElement('div');
+                urlSpan.className = 'site-suggestion-url';
+                urlSpan.textContent = site.url;
+                li.appendChild(titleSpan);
+                li.appendChild(urlSpan);
+                li.addEventListener('click', function() {
+                    siteUrlInput.value = site.url;
+                    siteSuggestions.innerHTML = '';
+                    siteSuggestions.style.display = 'none';
+                });
+                siteSuggestions.appendChild(li);
+            });
+
+            siteSuggestions.style.display = 'block';
+        }
+
+        // Input event listener
+        siteUrlInput.addEventListener('input', function() {
+            var query = getSearchQuery(siteUrlInput.value);
+            showSuggestions(query);
+        });
+
+        // Focus event listener to show suggestions even without typing
+        siteUrlInput.addEventListener('focus', function() {
+            var query = getSearchQuery(siteUrlInput.value);
+            showSuggestions(query);
+        });
+
+        // Click outside to hide suggestions
+        document.addEventListener('click', function(event) {
+            if (event.target !== siteUrlInput && !siteSuggestions.contains(event.target)) {
+                siteSuggestions.style.display = 'none';
+            }
+        });
+    }
+}
+
+
+(function() { globalAccessibleSites = []; startApplication(); } )();
 
 </script>
 </body>
