@@ -1,9 +1,9 @@
 <!--
 This file is part of Sitenalyzer
-README.md
+README.md - Main README file with overview, quick start guide and license information.
 Author(s): Gabriel Mongefranco
 Created: 2026-04-20
-Last Modified: 2026-04-20
+Last Modified: 2026-04-28
 Summary: Provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -25,7 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 # Sitenalyzer
 
 ## Description
-This is a Single-file HTML/JavaScript application designed to be embedded into a SharePoint Online site via a Modern Script Editor Webpart. It displays internal information about the current site, such as permissions, internal IDs, and more.
+Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site. It is a Single-file HTML/JavaScript application designed to be embedded into a SharePoint Online site via a Modern Script Editor Webpart. It can be used to gather informaiton to audit permissions, or to get the internal IDs necessary for creating Applications (for MS Graph API access) in MS Entra.
 
 ![Screenshot of Sitenalyzer](image.png)
 
