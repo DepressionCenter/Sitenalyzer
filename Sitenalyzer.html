@@ -52,7 +52,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         border-radius: 4px;
         cursor: pointer;
         margin-bottom: 20px;
-
     }
 
     #sp-info-app button:hover { background-color: #005a9e; }
@@ -73,6 +72,19 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         margin-bottom: 10px;
     }
 
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid #005a9e;
+        margin-bottom: 15px;
+        padding-bottom: 5px;
+    }
+
+    .section-header h3 { margin: 0; }
+    .section-header button { margin-bottom: 0; padding: 6px 12px; font-size: 13px; background-color: #107c41; }
+    .section-header button:hover { background-color: #0c5e31; }
+
     details.permissions-section {
         margin-top: 10px;
         padding: 10px;
@@ -84,10 +96,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     summary { cursor: pointer; font-weight: bold; color: #0078d4; outline: none; }
 
     .perm-row { border-bottom: 1px solid #e1dfdd; padding: 4px 0; font-size: 13px; }
-
     .perm-row:last-child { border-bottom: none; }
 
     .app-tag { background: #edebe9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+    .fields-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .fields-table th, .fields-table td { border: 1px solid #ddd; padding: 6px; font-size: 12px; text-align: left; }
+    .fields-table th { background-color: #e1dfdd; }
 
     #sp-loader { display: none; font-style: italic; color: #666; margin-bottom: 15px; }
 
@@ -99,7 +114,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         border-radius: 4px;
         margin: 8px 0;
         box-sizing: border-box;
-
     }
 
     #site-suggestions {
@@ -115,12 +129,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
 
-    #site-suggestions li {
-        padding: 10px;
-        border-bottom: 1px solid #eee;
-        cursor: pointer;
-        word-wrap: break-word;
-    }
+    #site-suggestions li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; word-wrap: break-word; }
     #site-suggestions li:last-child { border-bottom: none; }
     #site-suggestions li:hover { background-color: #f0f0f0; }
     .site-suggestion-title { font-weight: bold; }
@@ -169,6 +178,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
 var globalAccessibleSites = [];
+var globalExportedData = []; // To store field data for CSV export
 
 async function spFetch(url, throttleRetries) {
     if (typeof throttleRetries === 'undefined') {
@@ -216,7 +226,6 @@ function getBaseUrl() {
 async function fetchAccessibleSites() {
     var helperMessage = document.getElementById('site-url-helper-message');
     
-    // Display the spinner and loading text
     if (helperMessage) {
         helperMessage.innerHTML = '<div class="helper-spinner"></div> Loading accessible sites...';
     }
@@ -241,7 +250,6 @@ async function fetchAccessibleSites() {
                         url = cell.Value;
                     }
                 });
-                // Add site to results only if it's not OneDrive
                 if (url && !url.includes('/personal/')) {
                     globalAccessibleSites.push({
                         title: title || url,
@@ -253,7 +261,6 @@ async function fetchAccessibleSites() {
     } catch (error) {
         console.warn('Could not fetch accessible sites: ' + error.message);
     } finally {
-        // Remove the spinner and display the final text regardless of success/fail
         if (helperMessage) {
             helperMessage.innerHTML = 'Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.';
         }
@@ -283,6 +290,45 @@ function renderPermissionsHtml(roleAssignments) {
     return html;
 }
 
+function exportToCSV() {
+    if (!globalExportedData || globalExportedData.length === 0) {
+        alert("No list or column data available to export.");
+        return;
+    }
+
+    var headers = ["List Name", "List Type", "Field Title", "Internal Name", "Data Type", "Description", "Calculated Return Type", "Lookup List GUID", "Formula", "Default Value", "Field GUID"];
+    var rows = [headers];
+
+    globalExportedData.forEach(function(row) {
+        // Enclose values in quotes and escape existing quotes to prevent CSV breaks
+        var rowData = [
+            '"' + (row.ListTitle || '').replace(/"/g, '""') + '"',
+            '"' + (row.ListType || '').replace(/"/g, '""') + '"',
+            '"' + (row.FieldTitle || '').replace(/"/g, '""') + '"',
+            '"' + (row.InternalName || '').replace(/"/g, '""') + '"',
+            '"' + (row.Type || '').replace(/"/g, '""') + '"',
+            '"' + (row.Description || '').replace(/"/g, '""') + '"',
+            '"' + (row.ReturnType || '').replace(/"/g, '""') + '"',
+            '"' + (row.LookupList || '').replace(/"/g, '""') + '"',
+            '"' + (row.Formula || '').replace(/"/g, '""') + '"',
+            '"' + (row.DefaultValue || '').replace(/"/g, '""') + '"',
+            '"' + (row.FieldId || '').replace(/"/g, '""') + '"'
+        ];
+        rows.push(rowData);
+    });
+
+    var csvContent = rows.map(e => e.join(",")).join("\n");
+    var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "sitenalyzer_columns_export.csv");
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 async function gatherSiteInformation() {
     var btn = document.getElementById('sp-btn-gather');
     var loader = document.getElementById('sp-loader');
@@ -292,6 +338,7 @@ async function gatherSiteInformation() {
     btn.disabled = true;
     loader.style.display = 'block';
     resultsDiv.innerHTML = '';
+    globalExportedData = []; // Clear previous exports
 
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
@@ -308,7 +355,7 @@ async function gatherSiteInformation() {
         try {siteRoles = await spFetch(targetUrl + '/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings'); } catch(err) { }
         var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
         var allLists = null;
-        try {allLists = await spFetch(targetUrl + '/_api/web/lists?$filter=Hidden eq false and IsApplicationList eq false'); } catch(err) {}
+        try {allLists = await spFetch(targetUrl + '/_api/web/lists?$select=Id,Title,BaseTemplate,Description&$filter=Hidden eq false and IsApplicationList eq false'); } catch(err) {}
 
         var libsHtml = '';
         var listsHtml = '';
@@ -317,7 +364,10 @@ async function gatherSiteInformation() {
         for (var i = 0; i < listsFound; i++) {
             var list = allLists.value[i];
             var listRolesHtml = '<div class="perm-row">Inheriting permissions from site.</div>';
+            var listDescHtml = list.Description ? '<p style="font-size: 13px; color: #666; margin: 5px 0 15px 0;"><strong>Description:</strong> ' + list.Description + '</p>' : '';
+            var listTypeLabel = list.BaseTemplate === 101 ? "Document Library" : "List";
 
+            // 1. Fetch Roles
             try {
                 var guid = list.Id;
                 var roleUrl = targetUrl + '/_api/web/lists(guid' + "'" + guid + "')/roleassignments?$expand=Member,RoleDefinitionBindings";
@@ -326,13 +376,58 @@ async function gatherSiteInformation() {
                 if (lRoles && lRoles.value && lRoles.value.length > 0) {
                     listRolesHtml = renderPermissionsHtml(lRoles.value);
                 }
+            } catch(e) { }
+
+            // 2. Fetch Field Definitions
+            var fieldsHtml = '';
+            try {
+                var fieldsUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/fields?$filter=Hidden eq false";
+                var lFields;
+                try{ lFields = await spFetch(fieldsUrl); } catch(err) { }
+                
+                if (lFields && lFields.value && lFields.value.length > 0) {
+                    var tableRows = '';
+                    lFields.value.forEach(function(f) {
+                        var returnType = (f.TypeAsString === 'Calculated' && f.OutputType) ? f.OutputType : '';
+                        
+                        tableRows += '<tr>';
+                        tableRows += '<td>' + (f.Title || '') + '</td>';
+                        tableRows += '<td>' + (f.InternalName || '') + '</td>';
+                        tableRows += '<td>' + (f.TypeAsString || '') + '</td>';
+                        tableRows += '<td>' + (f.Description || '') + '</td>';
+                        tableRows += '<td>' + returnType + '</td>';
+                        tableRows += '</tr>';
+
+                        // Push to global array for CSV Export
+                        globalExportedData.push({
+                            ListTitle: list.Title,
+                            ListType: listTypeLabel,
+                            FieldTitle: f.Title,
+                            InternalName: f.InternalName,
+                            Type: f.TypeAsString,
+                            Description: f.Description,
+                            ReturnType: returnType,
+                            LookupList: f.LookupList || '',
+                            Formula: f.Formula || '',
+                            DefaultValue: f.DefaultValue || '',
+                            FieldId: f.Id
+                        });
+                    });
+
+                    fieldsHtml = '<div style="overflow-x: auto;"><table class="fields-table"><thead><tr><th>Title</th><th>Internal Name</th><th>Type</th><th>Description</th><th>Return Type (Calculated)</th></tr></thead><tbody>' + tableRows + '</tbody></table></div>';
+                } else {
+                    fieldsHtml = '<div class="perm-row">No visible fields found.</div>';
+                }
             } catch(e) {
-                // Usually throws 403 or 404 if inheriting and no explicit assignments exist
+                fieldsHtml = '<div class="perm-row" style="color: red;">Error fetching fields.</div>';
             }
 
+            var colDefsDetails = '<details class="permissions-section"><summary>View Column Definitions</summary>' + fieldsHtml + '</details>';
+            var listRolesDetails = '<details class="permissions-section"><summary>View ' + listTypeLabel + ' Permissions</summary>' + listRolesHtml + '</details>';
+
+            // 3. Document Library Specifics vs List Specifics
             if (list.BaseTemplate === 101) {
                 var foldersHtml = '<ul>';
-
                 try {
                     var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId&$filter=Name ne " + "'Forms' and Hidden eq false";
                     var folders;
@@ -349,18 +444,19 @@ async function gatherSiteInformation() {
                 }
                 foldersHtml += '</ul>';
 
-                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4><div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + '<details class="permissions-section"><summary>View Library Permissions</summary>' + listRolesHtml + '</details></div>';
+                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4>' + listDescHtml + '<div class="grid-container"><div><strong>Library ID:</strong> ' + list.Id + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + colDefsDetails + listRolesDetails + '</div>';
             } else {
-                listsHtml += '<div class="info-card"><h4>📋 ' + list.Title + '</h4><div><strong>List ID:</strong> ' + list.Id + '</div><details class="permissions-section"><summary>View List Permissions</summary>' + listRolesHtml + '</details></div>';
+                listsHtml += '<div class="info-card"><h4>📋 ' + list.Title + '</h4>' + listDescHtml + '<div><strong>List ID:</strong> ' + list.Id + '</div>' + colDefsDetails + listRolesDetails + '</div>';
             }
         }
+
         var siteInfoHtml;
         if(siteInfo) {
             siteInfoHtml = '<div class="info-card" style="border-top: 4px solid #0078d4;"><h3>🌐 Site Information</h3><div class="grid-container"><div><strong>Site Name:</strong> ' + siteInfo.Title + '</div><div><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div><div style="grid-column: span 2;"><strong>Site ID:</strong> ' + siteInfo.Id + '</div></div>';
-        if(siteRoles && siteRoles.value) {
-            const rolesHtml = renderPermissionsHtml(siteRoles.value);
-            siteInfoHtml += '<details class="permissions-section"><summary>View Site Permissions</summary>' + rolesHtml + '</details></div>';
-        }
+            if(siteRoles && siteRoles.value) {
+                const rolesHtml = renderPermissionsHtml(siteRoles.value);
+                siteInfoHtml += '<details class="permissions-section"><summary>View Site Permissions</summary>' + rolesHtml + '</details></div>';
+            }
         } else {
             console.warn('Unable to retrieve site info.');
         }
@@ -369,7 +465,8 @@ async function gatherSiteInformation() {
 
         var libsSection = '<h3>📁 Document Libraries</h3>' + (libsHtml ? libsHtml : '<p>No document libraries found.</p>');
         libsSection += '<p>&nbsp;</p>';
-        var listsSection = '<h3>📑 Lists</h3>' + (listsHtml ? listsHtml : '<p>No lists found.</p>');
+        
+        var listsSection = '<div class="section-header"><h3>📑 Lists</h3><button onclick="exportToCSV()" title="Exports Fields & Columns for all Lists and Libraries">Download Data Dictionary (CSV)</button></div>' + (listsHtml ? listsHtml : '<p>No lists found.</p>');
         listsSection += '<p>&nbsp;</p>'
 
         var finalHtml = siteInfoHtml + appPrincipalsHtml + libsSection + listsSection;
@@ -399,7 +496,6 @@ function startApplication() {
     fetchAccessibleSites();
 
     if (siteUrlInput) {
-        // Helper function to extract the part after the last slash
         function getSearchQuery(inputValue) {
             var lastSlashIndex = inputValue.lastIndexOf('/');
             if (lastSlashIndex === -1) {
@@ -408,7 +504,6 @@ function startApplication() {
             return inputValue.substring(lastSlashIndex + 1).toLowerCase();
         }
 
-        // Function to show filtered suggestions (limited to 10 results)
         function showSuggestions(query) {
             siteSuggestions.innerHTML = '';
 
@@ -422,7 +517,6 @@ function startApplication() {
                 return;
             }
 
-            // Limit to 10 results
             filtered.slice(0, 10).forEach(function(site) {
                 var li = document.createElement('li');
                 var titleSpan = document.createElement('div');
@@ -444,20 +538,17 @@ function startApplication() {
             siteSuggestions.style.display = 'block';
         }
 
-        // Input event listener
         siteUrlInput.addEventListener('input', function() {
             var query = getSearchQuery(siteUrlInput.value);
             showSuggestions(query);
         });
 
-        // Focus event listener to show suggestions even without typing
         siteUrlInput.addEventListener('focus', function() {
             siteUrlInput.select();
             var query = getSearchQuery(siteUrlInput.value.split('/').pop().toString().charAt(0));
             showSuggestions(query);
         });
 
-        // Click outside to hide suggestions
         document.addEventListener('click', function(event) {
             if (event.target !== siteUrlInput && !siteSuggestions.contains(event.target)) {
                 siteSuggestions.style.display = 'none';
@@ -465,7 +556,6 @@ function startApplication() {
         });
     }
 }
-
 
 (function() { globalAccessibleSites = []; startApplication(); } )();
 
