@@ -85,6 +85,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     .section-header button { margin-bottom: 0; padding: 6px 12px; font-size: 13px; background-color: #107c41; }
     .section-header button:hover { background-color: #0c5e31; }
 
+    .print-btn { background-color: #666 !important; }
+    .print-btn:hover { background-color: #444 !important; }
+
     details.permissions-section {
         margin-top: 10px;
         padding: 10px;
@@ -152,6 +155,17 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
+    }
+
+    /* Print specific styling */
+    @media print {
+        body { background-color: white; font-size: 12pt; }
+        #site-url-input, label[for="site-url-input"], #site-suggestions, #site-url-helper-message, #sp-btn-gather, #sp-info-app > h2 { display: none !important; }
+        .section-header button { display: none !important; }
+        #sp-info-app { box-shadow: none; background: transparent; padding: 0; max-width: 100%; margin: 0; border: none; }
+        .info-card { border: none; padding: 0 0 20px 0; margin-bottom: 20px; page-break-after: always; break-after: page; }
+        details.permissions-section { background: transparent; border-left: 3px solid #ccc; page-break-inside: avoid; }
+        .fields-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
 </style>
 </head>
@@ -300,7 +314,6 @@ function exportToCSV() {
     var rows = [headers];
 
     globalExportedData.forEach(function(row) {
-        // Enclose values in quotes and escape existing quotes to prevent CSV breaks
         var rowData = [
             '"' + (row.ListTitle || '').replace(/"/g, '""') + '"',
             '"' + (row.ListType || '').replace(/"/g, '""') + '"',
@@ -329,6 +342,12 @@ function exportToCSV() {
     document.body.removeChild(link);
 }
 
+function expandAndPrint() {
+    var detailsEls = document.querySelectorAll('#sp-results details');
+    detailsEls.forEach(function(d) { d.open = true; });
+    window.print();
+}
+
 async function gatherSiteInformation() {
     var btn = document.getElementById('sp-btn-gather');
     var loader = document.getElementById('sp-loader');
@@ -338,7 +357,7 @@ async function gatherSiteInformation() {
     btn.disabled = true;
     loader.style.display = 'block';
     resultsDiv.innerHTML = '';
-    globalExportedData = []; // Clear previous exports
+    globalExportedData = [];
 
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
@@ -354,8 +373,10 @@ async function gatherSiteInformation() {
         var siteRoles = null;
         try {siteRoles = await spFetch(targetUrl + '/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings'); } catch(err) { }
         var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
+        
+        // Added ItemCount to the query
         var allLists = null;
-        try {allLists = await spFetch(targetUrl + '/_api/web/lists?$select=Id,Title,BaseTemplate,Description&$filter=Hidden eq false and IsApplicationList eq false'); } catch(err) {}
+        try {allLists = await spFetch(targetUrl + '/_api/web/lists?$select=Id,Title,BaseTemplate,Description,ItemCount&$filter=Hidden eq false and IsApplicationList eq false'); } catch(err) {}
 
         var libsHtml = '';
         var listsHtml = '';
@@ -398,7 +419,6 @@ async function gatherSiteInformation() {
                         tableRows += '<td>' + returnType + '</td>';
                         tableRows += '</tr>';
 
-                        // Push to global array for CSV Export
                         globalExportedData.push({
                             ListTitle: list.Title,
                             ListType: listTypeLabel,
@@ -429,30 +449,42 @@ async function gatherSiteInformation() {
             if (list.BaseTemplate === 101) {
                 var foldersHtml = '<ul>';
                 try {
-                    var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId&$filter=Name ne " + "'Forms' and Hidden eq false";
+                    // Removed Hidden eq false because it's not supported natively on SP.Folder object endpoints and causes API to reject query
+                    var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId,ItemCount";
                     var folders;
                     try{ folders = await spFetch(foldersUrl);  } catch(err) { }
+                    
                     if (folders && folders.value && folders.value.length > 0) {
-                        folders.value.forEach(function(f) {
-                            foldersHtml += '<li>' + f.Name + ' <em>(ID: ' + f.UniqueId + ')</em></li>';
-                        });
+                        // Filter out internal system folders manually here
+                        var validFolders = folders.value.filter(function(f) { return f.Name !== 'Forms'; });
+                        
+                        if (validFolders.length > 0) {
+                            validFolders.forEach(function(f) {
+                                var itemCountLabel = f.ItemCount !== undefined ? ' | Items: ' + f.ItemCount : '';
+                                foldersHtml += '<li>' + f.Name + ' <em>(ID: ' + f.UniqueId + itemCountLabel + ')</em></li>';
+                            });
+                        } else {
+                            foldersHtml += '<li>No top-level folders found.</li>';
+                        }
                     } else {
                         foldersHtml += '<li>No top-level folders found.</li>';
                     }
                 } catch(e) {
-                    foldersHtml += '<li>Error loading folders.</li>';
+                    foldersHtml += '<li>Error loading folders: ' + e.message + '</li>';
                 }
                 foldersHtml += '</ul>';
 
-                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4>' + listDescHtml + '<div class="grid-container"><div><strong>Library ID:</strong> ' + list.Id + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + colDefsDetails + listRolesDetails + '</div>';
+                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4>' + listDescHtml + '<div class="grid-container"><div><strong>Library ID:</strong> ' + list.Id + '</div><div><strong>Total Items (Files + Folders):</strong> ' + list.ItemCount + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + colDefsDetails + listRolesDetails + '</div>';
             } else {
-                listsHtml += '<div class="info-card"><h4>📋 ' + list.Title + '</h4>' + listDescHtml + '<div><strong>List ID:</strong> ' + list.Id + '</div>' + colDefsDetails + listRolesDetails + '</div>';
+                listsHtml += '<div class="info-card"><h4>📋 ' + list.Title + '</h4>' + listDescHtml + '<div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div><div><strong>Total Items:</strong> ' + list.ItemCount + '</div></div>' + colDefsDetails + listRolesDetails + '</div>';
             }
         }
 
         var siteInfoHtml;
         if(siteInfo) {
-            siteInfoHtml = '<div class="info-card" style="border-top: 4px solid #0078d4;"><h3>🌐 Site Information</h3><div class="grid-container"><div><strong>Site Name:</strong> ' + siteInfo.Title + '</div><div><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div><div style="grid-column: span 2;"><strong>Site ID:</strong> ' + siteInfo.Id + '</div></div>';
+            // Added Print to PDF button here
+            siteInfoHtml = '<div class="info-card" style="border-top: 4px solid #0078d4;"><div class="section-header"><h3>🌐 Site Information</h3><button class="print-btn" onclick="expandAndPrint()" title="Expands all sections and opens Print dialog">🖨️ Expand & Print to PDF</button></div><div class="grid-container"><div><strong>Site Name:</strong> ' + siteInfo.Title + '</div><div><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div><div style="grid-column: span 2;"><strong>Site ID:</strong> ' + siteInfo.Id + '</div></div>';
+            
             if(siteRoles && siteRoles.value) {
                 const rolesHtml = renderPermissionsHtml(siteRoles.value);
                 siteInfoHtml += '<details class="permissions-section"><summary>View Site Permissions</summary>' + rolesHtml + '</details></div>';
