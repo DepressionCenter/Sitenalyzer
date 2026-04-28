@@ -126,6 +126,24 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     .site-suggestion-title { font-weight: bold; }
     .site-suggestion-url { font-size: 11px; color: #666; }
     .site-url-helper { font-size: 12px; color: #666; margin-bottom: 15px; }
+
+    /* Spinning Circle CSS */
+    .helper-spinner {
+        border: 2px solid #ddd;
+        border-top: 2px solid #0078d4;
+        border-radius: 50%;
+        width: 12px;
+        height: 12px;
+        animation: spin 1s linear infinite;
+        display: inline-block;
+        vertical-align: middle;
+        margin-right: 6px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
 </style>
 </head>
 
@@ -136,7 +154,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         <label for="site-url-input" style="font-weight: bold;">Site URL:</label>
         <input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL">
         <ul id="site-suggestions"></ul>
-        <div class="site-url-helper">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
+        <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
     </div>
     <button id="sp-btn-gather" onclick="gatherSiteInformation()">Gather Site Information</button>
     <div id="sp-loader">Fetching data from SharePoint REST APIs... this may take a moment.</div>
@@ -196,6 +214,13 @@ function getBaseUrl() {
 }
 
 async function fetchAccessibleSites() {
+    var helperMessage = document.getElementById('site-url-helper-message');
+    
+    // Display the spinner and loading text
+    if (helperMessage) {
+        helperMessage.innerHTML = '<div class="helper-spinner"></div> Loading accessible sites...';
+    }
+
     try {
         var baseUrl = getBaseUrl();
         var searchUrl = baseUrl + "/_api/search/query?querytext='contentclass:STS_Site'&selectproperties='Title,Path'&rowlimit=500";
@@ -216,8 +241,8 @@ async function fetchAccessibleSites() {
                         url = cell.Value;
                     }
                 });
-                
-                if (url) {
+                // Add site to results only if it's not OneDrive
+                if (url && !url.includes('/personal/')) {
                     globalAccessibleSites.push({
                         title: title || url,
                         url: url
@@ -227,6 +252,11 @@ async function fetchAccessibleSites() {
         }
     } catch (error) {
         console.warn('Could not fetch accessible sites: ' + error.message);
+    } finally {
+        // Remove the spinner and display the final text regardless of success/fail
+        if (helperMessage) {
+            helperMessage.innerHTML = 'Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.';
+        }
     }
 }
 
@@ -236,17 +266,19 @@ function renderPermissionsHtml(roleAssignments) {
     }
 
     var html = '';
-    roleAssignments.forEach(function(ra) {
-        var memberName = ra.Member.Title ? ra.Member.Title : ra.Member.LoginName;
-        var isApp = ra.Member.PrincipalType === 4;
-        var roles = ra.RoleDefinitionBindings.map(function(r) { return r.Name; }).join(', ');
+    try {
+        roleAssignments.forEach(function(ra) {
+            var memberName = ra.Member.Title ? ra.Member.Title : ra.Member.LoginName;
+            var isApp = ra.Member.PrincipalType === 4;
+            var roles = ra.RoleDefinitionBindings.map(function(r) { return r.Name; }).join(', ');
 
-        html += '<div class="perm-row"><strong>' + memberName + '</strong> ';
-        if (isApp) {
-            html += '<span class="app-tag">App Principal</span>';
-        }
-        html += '<br><span style="color:#666">Roles: ' + roles + '</span></div>';
-    });
+            html += '<div class="perm-row"><strong>' + memberName + '</strong> ';
+            if (isApp) {
+                html += '<span class="app-tag">App Principal</span>';
+            }
+            html += '<br><span style="color:#666">Roles: ' + roles + '</span></div>';
+        });
+    } catch(err) { /* Simply skip */ }
 
     return html;
 }
@@ -270,23 +302,28 @@ async function gatherSiteInformation() {
     }
 
     try {
-        var siteInfo = await spFetch(targetUrl + '/_api/web?$select=Title,Url,Id');
-        var siteRoles = await spFetch(targetUrl + '/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings');
-        var appPrincipals = siteRoles.value ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
-        var allLists = await spFetch(targetUrl + '/_api/web/lists?$filter=Hidden eq false and IsApplicationList eq false');
+        var siteInfo = null;
+        siteInfo = await spFetch(targetUrl + '/_api/web?$select=Title,Url,Id');
+        var siteRoles = null;
+        try {siteRoles = await spFetch(targetUrl + '/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings'); } catch(err) { }
+        var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
+        var allLists = null;
+        try {allLists = await spFetch(targetUrl + '/_api/web/lists?$filter=Hidden eq false and IsApplicationList eq false'); } catch(err) {}
 
         var libsHtml = '';
         var listsHtml = '';
 
-        for (var i = 0; i < allLists.value.length; i++) {
+        const listsFound = (allLists && allLists.value && allLists.value.length) ? allLists.value.length : 0;
+        for (var i = 0; i < listsFound; i++) {
             var list = allLists.value[i];
             var listRolesHtml = '<div class="perm-row">Inheriting permissions from site.</div>';
 
             try {
                 var guid = list.Id;
                 var roleUrl = targetUrl + '/_api/web/lists(guid' + "'" + guid + "')/roleassignments?$expand=Member,RoleDefinitionBindings";
-                var lRoles = await spFetch(roleUrl);
-                if (lRoles.value && lRoles.value.length > 0) {
+                var lRoles;
+                try{ lRoles = await spFetch(roleUrl); } catch(err) { }
+                if (lRoles && lRoles.value && lRoles.value.length > 0) {
                     listRolesHtml = renderPermissionsHtml(lRoles.value);
                 }
             } catch(e) {
@@ -294,23 +331,13 @@ async function gatherSiteInformation() {
             }
 
             if (list.BaseTemplate === 101) {
-                var driveId = null;
                 var foldersHtml = '<ul>';
 
                 try {
-                    var driveUrl = targetUrl + '/_api/v2.0/lists/' + list.Id + '/drive';
-                    var driveData = await spFetch(driveUrl);
-                    if (driveData && driveData.id) {
-                        driveId = driveData.id;
-                    }
-                } catch(e) {
-                    console.warn('Could not fetch Drive ID for ' + list.Title);
-                }
-
-                try {
                     var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId&$filter=Name ne " + "'Forms' and Hidden eq false";
-                    var folders = await spFetch(foldersUrl);
-                    if (folders.value && folders.value.length > 0) {
+                    var folders;
+                    try{ folders = await spFetch(foldersUrl);  } catch(err) { }
+                    if (folders && folders.value && folders.value.length > 0) {
                         folders.value.forEach(function(f) {
                             foldersHtml += '<li>' + f.Name + ' <em>(ID: ' + f.UniqueId + ')</em></li>';
                         });
@@ -322,18 +349,28 @@ async function gatherSiteInformation() {
                 }
                 foldersHtml += '</ul>';
 
-                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4><div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div><div><strong>' + (driveId?'Drive ID:':'') + '</strong> ' + (driveId?driveId:'') + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + '<details class="permissions-section"><summary>View Library Permissions</summary>' + listRolesHtml + '</details></div>';
+                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4><div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + '<details class="permissions-section"><summary>View Library Permissions</summary>' + listRolesHtml + '</details></div>';
             } else {
                 listsHtml += '<div class="info-card"><h4>📋 ' + list.Title + '</h4><div><strong>List ID:</strong> ' + list.Id + '</div><details class="permissions-section"><summary>View List Permissions</summary>' + listRolesHtml + '</details></div>';
             }
         }
+        var siteInfoHtml;
+        if(siteInfo) {
+            siteInfoHtml = '<div class="info-card" style="border-top: 4px solid #0078d4;"><h3>🌐 Site Information</h3><div class="grid-container"><div><strong>Site Name:</strong> ' + siteInfo.Title + '</div><div><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div><div style="grid-column: span 2;"><strong>Site ID:</strong> ' + siteInfo.Id + '</div></div>';
+        if(siteRoles && siteRoles.value) {
+            const rolesHtml = renderPermissionsHtml(siteRoles.value);
+            siteInfoHtml += '<details class="permissions-section"><summary>View Site Permissions</summary>' + rolesHtml + '</details></div>';
+        }
+        } else {
+            console.warn('Unable to retrieve site info.');
+        }
 
-        var siteInfoHtml = '<div class="info-card" style="border-top: 4px solid #0078d4;"><h3>🌐 Site Information</h3><div class="grid-container"><div><strong>Site Name:</strong> ' + siteInfo.Title + '</div><div><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div><div style="grid-column: span 2;"><strong>Site ID:</strong> ' + siteInfo.Id + '</div></div><details class="permissions-section"><summary>View Site Permissions</summary>' + renderPermissionsHtml(siteRoles.value) + '</details></div>';
-
-        var appPrincipalsHtml = '<div class="info-card" style="border-top: 4px solid #107c41;"><h3>🔐 App Principals (Apps with explicit site access)</h3><p style="font-size: 12px; color: #666;">Note: Fetching all Entra ID applications globally assigned via Graph API requires Admin ' + "'Application.Read.All'" + ' tokens. This lists local SharePoint App Principals.</p>' + (appPrincipals.length > 0 ? renderPermissionsHtml(appPrincipals) : '<em>No local app principals found.</em>') + '</div>';
+        var appPrincipalsHtml = '<div class="info-card" style="border-top: 4px solid #107c41;"><h3>🔐 App Principals (Apps with explicit site access)</h3><p style="font-size: 12px; color: #666;">Note: Fetching all Entra ID applications globally assigned via Graph API requires Admin ' + "'Application.Read.All'" + ' tokens. This lists local SharePoint App Principals.</p>' + (appPrincipals && appPrincipals.length && appPrincipals.length > 0 ? renderPermissionsHtml(appPrincipals) : '<em>No local app principals found.</em>') + '</div>';
 
         var libsSection = '<h3>📁 Document Libraries</h3>' + (libsHtml ? libsHtml : '<p>No document libraries found.</p>');
+        libsSection += '<p>&nbsp;</p>';
         var listsSection = '<h3>📑 Lists</h3>' + (listsHtml ? listsHtml : '<p>No lists found.</p>');
+        listsSection += '<p>&nbsp;</p>'
 
         var finalHtml = siteInfoHtml + appPrincipalsHtml + libsSection + listsSection;
 
@@ -341,7 +378,8 @@ async function gatherSiteInformation() {
 
     } catch (error) {
         var errorMsg = error.message ? error.message : 'Unknown error occurred';
-        resultsDiv.innerHTML = '<div style="color: red; padding: 15px; border: 1px solid red; border-radius: 4px;"><strong>Error fetching data:</strong><br>' + errorMsg + '</div>';
+        console.warn('Error fetching data:',errorMsg);
+        resultsDiv.innerHTML = '<div style="color: red; padding: 15px; border: 1px solid red; border-radius: 4px;"><strong>Error fetching site information. You may not have admin rights for this site.</strong><br></div>';
     } finally {
         btn.disabled = false;
         loader.style.display = 'none';
@@ -414,7 +452,8 @@ function startApplication() {
 
         // Focus event listener to show suggestions even without typing
         siteUrlInput.addEventListener('focus', function() {
-            var query = getSearchQuery(siteUrlInput.value);
+            siteUrlInput.select();
+            var query = getSearchQuery(siteUrlInput.value.split('/').pop().toString().charAt(0));
             showSuggestions(query);
         });
 
