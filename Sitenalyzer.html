@@ -3,7 +3,7 @@ This file is part of Sitenalyzer.
 Sitenalyzer.html - Get internal information about a SharePoint site.
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-04-28
+Last Modified: 2026-04-29
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site.
          The contents of this file should be embedded in a SharePoint page using a REACT Modern Script Editor webpart.
 Notes: See README file for documentation and full license information. Also see: https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245
@@ -35,7 +35,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         padding: 20px;
         border-radius: 8px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        max-width: 900px;
+        max-width: 920px;
         margin: auto;
     }
 
@@ -63,6 +63,23 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         padding: 15px;
         border-radius: 6px;
         margin-bottom: 15px;
+        /* Tells the browser to skip rendering off-screen cards */
+        content-visibility: auto;
+        contain-intrinsic-size: auto 500px;
+    }
+
+    .main-section-header {
+        background: #f3f2f1;
+        border-left: 5px solid #005a9e;
+        padding: 10px 15px;
+        margin-top: 25px;
+        margin-bottom: 15px;
+        border-radius: 4px;
+    }
+
+    .main-section-header h2 {
+        margin: 0 !important;
+        font-size: 1.4em;
     }
 
     .grid-container {
@@ -80,14 +97,87 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         margin-bottom: 15px;
         padding-bottom: 5px;
     }
+	
+	.table-scroll-wrapper {
+        max-height: 350px;
+        overflow-y: auto;
+        overflow-x: auto;
+        margin-top: 8px;
+        margin-bottom: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
 
     .section-header h3 { margin: 0; }
-    .section-header button { margin-bottom: 0; padding: 6px 12px; font-size: 13px; background-color: #107c41; margin-left: 8px; }
-    .section-header button:hover { background-color: #0c5e31; }
+    .section-header button { margin-bottom: 0; padding: 6px 12px; font-size: 13px; margin-left: 8px; }
 
-    .print-btn { background-color: #666 !important; }
-    .print-btn:hover { background-color: #444 !important; }
+    .print-btn { background-color: #0078d4 !important; color: #fff !important; }
+    .print-btn:hover { background-color: #005a9e !important; }
+    .print-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
 
+    .csv-btn { background-color: #0078d4 !important; color: #fff !important; }
+    .csv-btn:hover { background-color: #005a9e !important; }
+    .csv-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+
+    #sp-info-app button:focus { outline: 3px solid #005a9e; outline-offset: 2px; }
+
+    .icon-btn {
+        background: transparent !important;
+        color: #333 !important;
+        border: 1px solid #767676 !important;
+        padding: 4px 8px !important;
+        font-size: 15px !important;
+        line-height: 1;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-bottom: 0 !important;
+        margin-left: 4px;
+        min-width: 34px;
+        min-height: 34px;
+    }
+    .icon-btn:hover { background: #e8e8e8 !important; border-color: #333 !important; }
+    .icon-btn:focus { outline: 3px solid #0078d4 !important; outline-offset: 2px; }
+
+    .app-footer {
+		margin-top: 40px;
+		padding-top: 20px;
+		border-top: 1px solid #ddd;
+		text-align: center;
+		font-size: 13px;
+		color: #555;
+		line-height: 1.8;
+	}
+    .app-footer a { color: #0078d4; text-decoration: none; }
+    .app-footer a:hover { text-decoration: underline; }
+	.github-promo {
+    margin-bottom: 15px;
+	}
+	.github-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background-color: #24292e; /* Classic GitHub Dark Color */
+    color: #ffffff !important;
+    padding: 8px 16px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background-color 0.2s;
+}
+
+.github-btn:hover {
+    background-color: #000000;
+    text-decoration: none;
+}
+.copyright-info a {
+    color: #0078d4;
+    text-decoration: none;
+}
+
+.copyright-info a:hover {
+    text-decoration: underline;
+}
     details.permissions-section {
         margin-top: 10px;
         padding: 10px;
@@ -103,9 +193,54 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
     .app-tag { background: #edebe9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
 
-    .fields-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    .fields-table th, .fields-table td { border: 1px solid #ddd; padding: 6px; font-size: 12px; text-align: left; }
+    .fields-table { 
+        width: 100%; 
+        border-collapse: collapse; 
+        margin-top: 10px; 
+        /* Forces the browser to calculate column widths once, stopping the freeze */
+        table-layout: fixed; 
+    }
+    .fields-table th, .fields-table td { 
+        border: 1px solid #ddd; 
+        padding: 6px; 
+        font-size: 12px; 
+        text-align: left; 
+        /* Ensures long URLs or descriptions don't break the fixed columns */
+        word-wrap: break-word; 
+        overflow-wrap: break-word;
+    }
     .fields-table th { background-color: #e1dfdd; }
+	
+	/* Pre-defined column widths for the fields table */
+    .fields-table th:nth-child(1) { width: 22%; }
+    .fields-table th:nth-child(2) { width: 22%; }
+    .fields-table th:nth-child(3) { width: 16%; }
+    .fields-table th:nth-child(4) { width: 25%; }
+    .fields-table th:nth-child(5) { width: 15%; }
+
+    .folders-table { 
+        width: 100%; 
+        border-collapse: collapse; 
+        margin-top: 8px; 
+        margin-bottom: 10px; 
+        table-layout: fixed; 
+    }
+    .folders-table th, .folders-table td { 
+        border: 1px solid #ddd; 
+        padding: 6px 10px; 
+        font-size: 12px; 
+        text-align: left; 
+        word-wrap: break-word; 
+        overflow-wrap: break-word;
+    }
+    .folders-table th { background-color: #e1dfdd; }
+    
+    /* Pre-defined column widths for the folders table */
+    .folders-table th:nth-child(1) { text-align: center; width: 40px; font-size: 16px; }
+    .folders-table th:nth-child(2) { width: auto; }
+    .folders-table th:nth-child(3) { width: 15%; }
+    .folders-table th:nth-child(4) { width: 30%; }
+    .folders-table tr:hover { background-color: #f8f8f8; }
 
     #sp-loader { display: none; font-style: italic; color: #666; margin-bottom: 15px; }
 
@@ -160,30 +295,70 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     /* Print specific styling */
     @media print {
         body { background-color: white; font-size: 12pt; }
-        #site-url-input, label[for="site-url-input"], #site-suggestions, #site-url-helper-message, #sp-btn-gather, #sp-info-app > h2 { display: none !important; }
+        #site-url-input, label[for="site-url-input"], #site-suggestions, #site-url-helper-message, #sp-btn-gather, #sp-info-app > div:first-child { display: none !important; }
         .section-header button { display: none !important; }
         .hide-on-print { display: none !important; }
         #sp-info-app { box-shadow: none; background: transparent; padding: 0; max-width: 100%; margin: 0; border: none; }
-        .info-card { border: none; padding: 0 0 20px 0; margin-bottom: 20px; }
+        /* Force everything to render for printing, overriding the scrollbars and content-visibility */
+        .info-card { border: none; padding: 0 0 20px 0; margin-bottom: 20px; content-visibility: visible !important; }
+        .table-scroll-wrapper { max-height: none !important; overflow: visible !important; border: none !important; }
         .print-section { page-break-after: always; break-after: page; }
         details.permissions-section { background: transparent; border-left: 3px solid #ccc; page-break-inside: avoid; }
         .fields-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .folders-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+		
+		.github-btn {
+        background-color: transparent !important;
+        color: #333 !important;
+        border: 1px solid #333;
+        padding: 5px 10px;
+		}
+		
+		/* Automatically spell out the URL next to the link when printing */
+		.github-btn::after {
+        content: " (https://github.com/DepressionCenter/Sitenalyzer)";
+        font-weight: normal;
+        font-size: 11px;
+        color: #555;
+		}
     }
 </style>
 </head>
 
 <body>
-<div id="sp-info-app">
-    <h2>Sitenalyzer: SharePoint Internal Information Gatherer</h2>
+	<div id="sp-info-app">
+		<div style="margin-bottom: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+		<h1 style="margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1;">
+			<span style="background: linear-gradient(135deg, #0078d4 0%, #003f7a 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Sitenalyzer</span>
+			
+			<span style="font-size: 0.5em; font-weight: 700; color: #ffffff; background-color: #107c41; padding: 2px 8px; border-radius: 10px; letter-spacing: 1px; position: relative; top: -0.6em; margin-left: 2px;">SP</span>
+		</h1>
+		<p style="margin: 0; font-size: 0.95em; color: #555; font-style: italic;">Data dictionary and security information extraction for SharePoint sites.</p>
+	</div>
+	
     <div>
         <label for="site-url-input" style="font-weight: bold;">Site URL:</label>
         <input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL">
         <ul id="site-suggestions"></ul>
         <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
     </div>
-    <button id="sp-btn-gather" onclick="gatherSiteInformation()">Gather Site Information</button>
+    <button id="sp-btn-gather" onclick="gatherSiteInformation()">Extract Site Information</button>
     <div id="sp-loader">Fetching data from SharePoint REST APIs... this may take a moment.</div>
     <div id="sp-results"></div>
+    <div class="app-footer">
+    <div class="github-promo">
+        <a href="https://github.com/DepressionCenter/Sitenalyzer" target="_blank" class="github-btn">
+            <svg height="18" width="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+            </svg>
+            View <strong>Sitenalyzer</strong> source code on GitHub
+        </a>
+    </div>
+    <div class="copyright-info">
+        <strong>Sitenalyzer</strong> &copy; 2026 The Regents of the University of Michigan &nbsp;|&nbsp; 
+        <a href="https://depressioncenter.org" target="_blank">Eisenberg Family Depression Center</a>
+    </div>
+</div>
 </div>
 
 
@@ -237,6 +412,30 @@ function getBaseUrl() {
     }
 
     return window.location.origin;
+}
+
+function getOutputTypeName(outputType) {
+    var typeMap = {
+        1: 'Integer',
+        2: 'Text',
+        3: 'Note',
+        4: 'DateTime',
+        5: 'Counter',
+        6: 'Choice',
+        7: 'Lookup',
+        8: 'Boolean',
+        9: 'Number',
+        10: 'Currency',
+        12: 'URL',
+        14: 'Computed'
+    };
+    if (outputType === undefined || outputType === null || outputType === '') {
+        return '';
+    }
+    if (typeMap[outputType]) {
+        return typeMap[outputType];
+    }
+    return String(outputType);
 }
 
 async function fetchAccessibleSites() {
@@ -312,27 +511,28 @@ function exportToCSV() {
         return;
     }
 
-    var headers = ["List Name", "List Type", "Field Title", "Internal Name", "Data Type", "Description", "Calculated Return Type", "Lookup List GUID", "Formula", "Default Value", "Field GUID"];
+    var headers = ["List Name", "List Type", "Field Title", "Internal Name", "Data Type", "Description", "Calculated Return Type", "Lookup List", "Lookup List GUID", "Formula", "Default Value", "Field GUID"];
     var rows = [headers];
 
     globalExportedData.forEach(function(row) {
         var rowData = [
-            '"' + (row.ListTitle || '').replace(/"/g, '""') + '"',
-            '"' + (row.ListType || '').replace(/"/g, '""') + '"',
-            '"' + (row.FieldTitle || '').replace(/"/g, '""') + '"',
-            '"' + (row.InternalName || '').replace(/"/g, '""') + '"',
-            '"' + (row.Type || '').replace(/"/g, '""') + '"',
-            '"' + (row.Description || '').replace(/"/g, '""') + '"',
-            '"' + (row.ReturnType || '').replace(/"/g, '""') + '"',
-            '"' + (row.LookupList || '').replace(/"/g, '""') + '"',
-            '"' + (row.Formula || '').replace(/"/g, '""') + '"',
-            '"' + (row.DefaultValue || '').replace(/"/g, '""') + '"',
-            '"' + (row.FieldId || '').replace(/"/g, '""') + '"'
+            '"' + (String(row.ListTitle || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.ListType || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.FieldTitle || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.InternalName || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.Type || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.Description || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.ReturnType || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.LookupListName || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.LookupList || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.Formula || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.DefaultValue || '')).replace(/"/g, '""') + '"',
+            '"' + (String(row.FieldId || '')).replace(/"/g, '""') + '"'
         ];
         rows.push(rowData);
     });
 
-    var csvContent = rows.map(e => e.join(",")).join("\n");
+    var csvContent = rows.map(function(e) { return e.join(","); }).join("\n");
     var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     var url = URL.createObjectURL(blob);
     var link = document.createElement("a");
@@ -348,6 +548,11 @@ function expandAndPrint() {
     var detailsEls = document.querySelectorAll('#sp-results details');
     detailsEls.forEach(function(d) { d.open = true; });
     window.print();
+}
+
+function expandAll() {
+    var detailsEls = document.querySelectorAll('#sp-results details');
+    detailsEls.forEach(function(d) { d.open = true; });
 }
 
 function collapseAll() {
@@ -376,18 +581,30 @@ async function gatherSiteInformation() {
 
     try {
         var siteInfo = null;
-        siteInfo = await spFetch(targetUrl + '/_api/web?$select=Title,Url,Id');
+        siteInfo = await spFetch(`${targetUrl}/_api/web?$select=Title,Url,Id,Description,SiteLogoUrl`);
         var siteRoles = null;
-        try {siteRoles = await spFetch(targetUrl + '/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings'); } catch(err) { }
+        try { siteRoles = await spFetch(`${targetUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`); } catch(err) { }
         var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
         
         var allLists = null;
-        try {allLists = await spFetch(targetUrl + '/_api/web/lists?$select=Id,Title,BaseTemplate,Description,ItemCount,HasUniqueRoleAssignments&$filter=Hidden eq false and IsApplicationList eq false'); } catch(err) {}
+        try {
+			// Adapted from DataLaVista's fetchSPLists() function (https://michmed.org/datalavista)
+			allLists = await spFetch(`${targetUrl}/_api/web/lists?$select=Id,EntityTypeName,Title,Description,ItemCount,BaseType,Hidden,ImageUrl,IsApplicationList,LastItemModifiedDate,BaseTemplate,HasUniqueRoleAssignments&$filter=(Hidden eq false and IsApplicationList eq false and BaseTemplate ne 115 and BaseTemplate ne 121 and BaseTemplate ne 330 and BaseTemplate ne 544 and Title ne 'MicroFeed' and EntityTypeName ne 'AppCatalog' and EntityTypeName ne 'FormServerTemplates' and EntityTypeName ne 'Style_x0020_Library') or (Title eq 'User Information List' or Title eq 'Events')`);
+		} catch(err) {}
+
+        // Build a map of list GUID -> Title for lookup field resolution
+        var listIdMap = {};
+        if (allLists && allLists.value) {
+            allLists.value.forEach(function(lst) {
+                var cleanId = lst.Id.toLowerCase().replace(/[{}]/g, '');
+                listIdMap[cleanId] = lst.Title;
+            });
+        }
 
         var libsHtml = '';
         var listsHtml = '';
 
-        const listsFound = (allLists && allLists.value && allLists.value.length) ? allLists.value.length : 0;
+        var listsFound = (allLists && allLists.value && allLists.value.length) ? allLists.value.length : 0;
         for (var i = 0; i < listsFound; i++) {
             var list = allLists.value[i];
             var listRolesHtml = '';
@@ -404,7 +621,7 @@ async function gatherSiteInformation() {
                     var guid = list.Id;
                     var roleUrl = targetUrl + '/_api/web/lists(guid' + "'" + guid + "')/roleassignments?$expand=Member,RoleDefinitionBindings";
                     var lRoles;
-                    try{ lRoles = await spFetch(roleUrl); } catch(err) { }
+                    try { lRoles = await spFetch(roleUrl); } catch(err) { }
                     if (lRoles && lRoles.value && lRoles.value.length > 0) {
                         listRolesHtml = renderPermissionsHtml(lRoles.value);
                     } else {
@@ -418,19 +635,31 @@ async function gatherSiteInformation() {
             try {
                 var fieldsUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/fields?$filter=Hidden eq false";
                 var lFields;
-                try{ lFields = await spFetch(fieldsUrl); } catch(err) { }
+                try { lFields = await spFetch(fieldsUrl); } catch(err) { }
                 
                 if (lFields && lFields.value && lFields.value.length > 0) {
                     var tableRows = '';
                     lFields.value.forEach(function(f) {
-                        var returnType = (f.TypeAsString === 'Calculated' && f.OutputType) ? f.OutputType : '';
-                        
+                        var returnType = '';
+                        var typeDisplay = f.TypeAsString ? f.TypeAsString : '';
+
+                        if (f.TypeAsString === 'Calculated' && f.OutputType !== undefined && f.OutputType !== null) {
+                            returnType = getOutputTypeName(f.OutputType);
+                            typeDisplay = 'Calculated (' + returnType + ')';
+                        }
+
+                        var lookupListName = '';
+                        if (f.LookupList) {
+                            var cleanGuid = String(f.LookupList).toLowerCase().replace(/[{}]/g, '');
+                            lookupListName = listIdMap[cleanGuid] ? listIdMap[cleanGuid] : f.LookupList;
+                        }
+
                         tableRows += '<tr>';
-                        tableRows += '<td>' + (f.Title || '') + '</td>';
-                        tableRows += '<td>' + (f.InternalName || '') + '</td>';
-                        tableRows += '<td>' + (f.TypeAsString || '') + '</td>';
-                        tableRows += '<td>' + (f.Description || '') + '</td>';
-                        tableRows += '<td>' + returnType + '</td>';
+                        tableRows += '<td>' + (f.Title ? f.Title : '') + '</td>';
+                        tableRows += '<td>' + (f.InternalName ? f.InternalName : '') + '</td>';
+                        tableRows += '<td>' + typeDisplay + '</td>';
+                        tableRows += '<td>' + (f.Description ? f.Description : '') + '</td>';
+                        tableRows += '<td>' + lookupListName + '</td>';
                         tableRows += '</tr>';
 
                         globalExportedData.push({
@@ -441,14 +670,15 @@ async function gatherSiteInformation() {
                             Type: f.TypeAsString,
                             Description: f.Description,
                             ReturnType: returnType,
-                            LookupList: f.LookupList || '',
-                            Formula: f.Formula || '',
-                            DefaultValue: f.DefaultValue || '',
+                            LookupListName: lookupListName,
+                            LookupList: f.LookupList ? f.LookupList : '',
+                            Formula: f.Formula ? f.Formula : '',
+                            DefaultValue: f.DefaultValue ? f.DefaultValue : '',
                             FieldId: f.Id
                         });
                     });
 
-                    fieldsHtml = '<div style="overflow-x: auto;"><table class="fields-table"><thead><tr><th>Title</th><th>Internal Name</th><th>Type</th><th>Description</th><th>Return Type (Calculated)</th></tr></thead><tbody>' + tableRows + '</tbody></table></div>';
+                    fieldsHtml = '<div class="table-scroll-wrapper"><table class="fields-table"><thead><tr><th>Title</th><th>Internal Name</th><th>Data Type</th><th>Description</th><th>Lookup List</th></tr></thead><tbody>' + tableRows + '</tbody></table></div>';
                 } else {
                     fieldsHtml = '<div class="perm-row">No visible fields found.</div>';
                 }
@@ -462,72 +692,102 @@ async function gatherSiteInformation() {
 
             // 3. Document Library Specifics vs List Specifics
             if (list.BaseTemplate === 101) {
-                var foldersHtml = '<ul>';
+                var foldersTableHtml = '';
                 try {
                     var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId,ItemCount";
                     var folders;
-                    try{ folders = await spFetch(foldersUrl);  } catch(err) { }
+                    try { folders = await spFetch(foldersUrl); } catch(err) { }
                     
                     if (folders && folders.value && folders.value.length > 0) {
-                        var validFolders = folders.value.filter(function(f) { return f.Name !== 'Forms'; });
+                        var validFolders = folders.value.filter(function(fldr) { return fldr.Name !== 'Forms'; });
                         
                         if (validFolders.length > 0) {
-                            validFolders.forEach(function(f) {
-                                var itemCountLabel = f.ItemCount !== undefined ? ' | Items: ' + f.ItemCount : '';
-                                foldersHtml += '<li>' + f.Name + ' <em>(ID: ' + f.UniqueId + itemCountLabel + ')</em></li>';
+                            var folderRows = '';
+                            validFolders.forEach(function(fldr) {
+                                var itemCount = (fldr.ItemCount !== undefined && fldr.ItemCount !== null) ? fldr.ItemCount : '-';
+                                folderRows += '<tr>';
+                                folderRows += '<td>📂</td>';
+                                folderRows += '<td>' + fldr.Name + '</td>';
+                                folderRows += '<td style="text-align:right;">' + itemCount + '</td>';
+                                folderRows += '<td style="font-size:11px; color:#666;">' + fldr.UniqueId + '</td>';
+                                folderRows += '</tr>';
                             });
+                            foldersTableHtml = '<div class="table-scroll-wrapper"><table class="folders-table"><thead><tr><th></th><th>Folder Name</th><th style="text-align:right;">Items</th><th>ID</th></tr></thead><tbody>' + folderRows + '</tbody></table></div>';
                         } else {
-                            foldersHtml += '<li>No top-level folders found.</li>';
+                            foldersTableHtml = '<p style="font-size:13px; color:#666; margin: 5px 0;">No top-level folders found.</p>';
                         }
                     } else {
-                        foldersHtml += '<li>No top-level folders found.</li>';
+                        foldersTableHtml = '<p style="font-size:13px; color:#666; margin: 5px 0;">No top-level folders found.</p>';
                     }
                 } catch(e) {
-                    foldersHtml += '<li>Error loading folders: ' + e.message + '</li>';
+                    foldersTableHtml = '<p style="font-size:13px; color:red; margin: 5px 0;">Error loading folders: ' + e.message + '</p>';
                 }
-                foldersHtml += '</ul>';
 
-                libsHtml += '<div class="info-card"><h4>📄 ' + list.Title + '</h4>' + listDescHtml + '<div class="grid-container"><div><strong>Library ID:</strong> ' + list.Id + '</div><div><strong>Total Items (Files + Folders):</strong> ' + list.ItemCount + '</div></div><strong>Top-Level Folders:</strong>' + foldersHtml + colDefsDetails + listRolesDetails + '</div>';
+                libsHtml += '<div class="info-card"><h3>📄 ' + list.Title + '</h3>' + listDescHtml + '<div class="grid-container"><div><strong>Library ID:</strong> ' + list.Id + '</div><div><strong>Total Items (Files + Folders):</strong> ' + list.ItemCount + '</div></div><strong>Top-Level Folders:</strong>' + foldersTableHtml + colDefsDetails + listRolesDetails + '</div>';
             } else {
-                listsHtml += '<div class="info-card"><h4>📋 ' + list.Title + '</h4>' + listDescHtml + '<div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div><div><strong>Total Items:</strong> ' + list.ItemCount + '</div></div>' + colDefsDetails + listRolesDetails + '</div>';
+                listsHtml += '<div class="info-card"><h3>📋 ' + list.Title + '</h3>' + listDescHtml + '<div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div><div><strong>Total Items:</strong> ' + list.ItemCount + '</div></div>' + colDefsDetails + listRolesDetails + '</div>';
             }
         }
 
-        var siteInfoHtml = '';
-        if(siteInfo) {
-            siteInfoHtml = '<div class="info-card" style="border-top: 4px solid #0078d4;"><div class="section-header"><h3>🌐 Site Information</h3>' +
-                           '<div><button class="print-btn hide-on-print" onclick="collapseAll()" title="Collapses all sections">🔽 Collapse All</button>' +
-                           '<button class="print-btn" onclick="expandAndPrint()" title="Expands all sections and opens Print dialog">🖨️ Expand & Print to PDF</button></div></div>' +
-                           '<div class="grid-container"><div><strong>Site Name:</strong> ' + siteInfo.Title + '</div><div><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div><div style="grid-column: span 2;"><strong>Site ID:</strong> ' + siteInfo.Id + '</div></div>';
-            
-            if(siteRoles && siteRoles.value) {
-                const rolesHtml = renderPermissionsHtml(siteRoles.value);
-                siteInfoHtml += '<details class="permissions-section"><summary>View Site Permissions</summary>' + rolesHtml + '</details></div>';
-            }
-        } else {
-            console.warn('Unable to retrieve site info.');
-        }
+var siteInfoHtml = '';
+if (siteInfo) {
+    var hasLogo = siteInfo.SiteLogoUrl && siteInfo.SiteLogoUrl.trim().length > 9;
+    var titleIconHtml = hasLogo
+        ? '<img src="' + siteInfo.SiteLogoUrl.trim() + '" alt="Site logo" style="height: 80px; width: auto; object-fit: contain; margin: 2px 0; display: block; flex-shrink: 0;" />'
+        : '<span style="flex-shrink: 0;">🌐</span>';
 
-        var appPrincipalsHtml = '<div class="info-card" style="border-top: 4px solid #107c41;"><h3>🔐 App Principals (Apps with explicit site access)</h3><p style="font-size: 12px; color: #666;">Note: Fetching all Entra ID applications globally assigned via Graph API requires Admin ' + "'Application.Read.All'" + ' tokens. This lists local SharePoint App Principals.</p>' + (appPrincipals && appPrincipals.length && appPrincipals.length > 0 ? renderPermissionsHtml(appPrincipals) : '<em>No local app principals found.</em>') + '</div>';
-
-        var libsSection = '<h3>📁 Document Libraries</h3>' + (libsHtml ? libsHtml : '<p>No document libraries found.</p>');
-        libsSection += '<p>&nbsp;</p>';
+    siteInfoHtml = '<div class="info-card" style="border-top: 4px solid #0078d4;">' +
+        '<div class="section-header" style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">' +
+            '<h2 style="display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; flex: 1; min-width: 0;">' +
+                titleIconHtml +
+                '<span style="white-space: normal; word-break: break-word; line-height: 1.3;">' + siteInfo.Title.trim() + '</span>' +
+            '</h2>' +
+            '<div style="flex-shrink: 0;">' +
+                '<button class="icon-btn hide-on-print" onclick="collapseAll()" aria-label="Collapse All" title="Collapse All">&#9650;</button>' +
+                '<button class="icon-btn hide-on-print" onclick="expandAll()" aria-label="Expand All" title="Expand All">&#9660;</button>' +
+                '<button class="csv-btn hide-on-print" onclick="exportToCSV()" title="Exports Fields and Columns for all Lists and Libraries to CSV">&#128229; Data Dictionary (CSV)</button>' +
+                '<button class="print-btn" onclick="expandAndPrint()" title="Expands all sections and opens Print dialog">&#128424; Print to PDF</button>' +
+            '</div>' +
+        '</div>' +
         
-        var listsSection = '<div class="section-header"><h3>📑 Lists</h3><button onclick="exportToCSV()" title="Exports Fields & Columns for all Lists and Libraries">Download Data Dictionary (CSV)</button></div>' + (listsHtml ? listsHtml : '<p>No lists found.</p>');
-        listsSection += '<p>&nbsp;</p>';
+        '<div class="grid-container" style="display: flex; gap: 24px; flex-wrap: wrap; margin-top: 10px;">' +
+            '<div style="flex: 1; min-width: 300px; max-width: 100%;">' + 
+                '<div style="margin-bottom: 8px;"><strong>Site Name:</strong> ' + siteInfo.Title + '</div>' +
+                '<div style="margin-bottom: 8px;"><strong>Site ID:</strong> ' + siteInfo.Id + '</div>' +
+                '<div style="word-break: break-word; overflow-wrap: break-word;"><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div>' +
+            '</div>' +
+            '<div style="flex: 1; min-width: 300px;">' + 
+                '<div><strong>Description:</strong> ' + (siteInfo.Description ? siteInfo.Description.toString().trim() : '') + '</div>' +
+            '</div>' +
+        '</div>';
 
-        // Updated button to use scrollIntoView instead of window.scrollTo
+    if (siteRoles && siteRoles.value) {
+        var rolesHtml = renderPermissionsHtml(siteRoles.value);
+        siteInfoHtml += '<details class="permissions-section" style="margin-top: 24px;"><summary>View Site Permissions</summary>' + rolesHtml + '</details>';
+    }
+
+    var appPrincipalsInnerHtml = (appPrincipals && appPrincipals.length && appPrincipals.length > 0 ? renderPermissionsHtml(appPrincipals) : '<div class="perm-row"><em>No local app principals found.</em></div>');
+    
+    siteInfoHtml += '<details class="permissions-section" style="margin-top: 10px;"><summary>View App Principals (Apps with explicit site access)</summary>' +
+        '<p style="font-size: 12px; color: #666; margin: 5px 0 10px 0;">Note: Fetching all Entra ID applications globally assigned via Graph API requires Admin \'Application.Read.All\' tokens. This lists local SharePoint App Principals.</p>' +
+        appPrincipalsInnerHtml + '</details></div>';
+} else {
+    console.warn('Unable to retrieve site info.');
+}
+
+        var libsSection = '<div class="main-section-header"><h2>📁 Document Libraries</h2></div>' + (libsHtml ? libsHtml : '<p style="padding-left: 10px;">No document libraries found.</p>');
+        var listsSection = '<div class="main-section-header"><h2>📑 Lists</h2></div>' + (listsHtml ? listsHtml : '<p style="padding-left: 10px;">No lists found.</p>');
+
         var finalHtml = '<div class="print-section">' + siteInfoHtml + '</div>' + 
-                        '<div class="print-section">' + appPrincipalsHtml + '</div>' + 
                         '<div class="print-section">' + libsSection + '</div>' + 
                         '<div class="print-section">' + listsSection + '</div>' + 
-                        '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button onclick="document.getElementById(\'sp-info-app\').scrollIntoView({behavior: \'smooth\', block: \'start\'})">⬆ Back to Top</button></div>';
+                        '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button onclick="document.getElementById(\'sp-info-app\').scrollIntoView({behavior: \'smooth\', block: \'start\'})">&#11014; Back to Top</button></div>';
 
         resultsDiv.innerHTML = finalHtml;
 
     } catch (error) {
         var errorMsg = error.message ? error.message : 'Unknown error occurred';
-        console.warn('Error fetching data:',errorMsg);
+        console.warn('Error fetching data:', errorMsg);
         resultsDiv.innerHTML = '<div style="color: red; padding: 15px; border: 1px solid red; border-radius: 4px;"><strong>Error fetching site information. You may not have admin rights for this site.</strong><br></div>';
     } finally {
         btn.disabled = false;
@@ -608,7 +868,7 @@ function startApplication() {
     }
 }
 
-(function() { globalAccessibleSites = []; startApplication(); } )();
+(function() { globalAccessibleSites = []; startApplication(); })();
 
 </script>
 </body>
