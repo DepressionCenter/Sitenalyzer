@@ -27,7 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 ## Description
 Sitenalyzer helps you extract a data dictionary and security information from your SharePoint sites. It is a single-file HTML/JavaScript application designed to be embedded into a SharePoint Online site via a Modern Script Editor Webpart. It can be used to gather information to audit permissions, to get the internal IDs necessary for creating Applications (for MS Graph API access) in MS Entra, or to document the data structure of lists and document libraries.
 
-![Screenshot of Sitenalyzer](image.png)
+![Screenshot of Sitenalyzer](sitenalyzer-preview.png)
 
 
 ## Quick Start Guide
