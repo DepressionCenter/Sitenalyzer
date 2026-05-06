@@ -3,7 +3,7 @@ This file is part of Sitenalyzer.
 Sitenalyzer.html - Get internal information about a SharePoint site.
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-04-29
+Last Modified: 2026-05-06
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site.
          The contents of this file should be embedded in a SharePoint page using a REACT Modern Script Editor webpart.
 Notes: See README file for documentation and full license information. Also see: https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245
@@ -292,10 +292,71 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         100% { transform: rotate(360deg); }
     }
 
+    /* ── Phase 1: URL section collapse ── */
+    #sna-url-section {
+        overflow: hidden;
+        transition: max-height 0.35s ease, opacity 0.3s ease;
+        max-height: 300px;
+        opacity: 1;
+    }
+    #sna-url-section.collapsed {
+        max-height: 0 !important;
+        opacity: 0;
+        pointer-events: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* ── Phase 1: Start Over button ── */
+    #sna-start-over-btn {
+        display: none;
+        text-align: right;
+        margin-bottom: 10px;
+    }
+    #sna-start-over-btn button {
+        background-color: #605e5c;
+        font-size: 13px;
+        padding: 7px 14px;
+        margin-bottom: 0;
+    }
+    #sna-start-over-btn button:hover { background-color: #3b3a39; }
+
+    /* ── Phase 1: ID text — small and muted ── */
+    .list-id-text {
+        font-size: 0.73rem;
+        color: #888;
+        word-break: break-all;
+        font-weight: 400;
+    }
+
+    /* ── Phase 1: Item count badge ── */
+    .item-count-badge {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 2px;
+        background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
+        color: #fff;
+        padding: 2px 9px 2px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        font-weight: 700;
+        margin-left: 8px;
+        vertical-align: middle;
+        white-space: nowrap;
+        line-height: 1.6;
+    }
+    .item-count-badge sup {
+        font-size: 0.65em;
+        font-weight: 400;
+        margin-left: 2px;
+        opacity: 0.85;
+    }
+
     /* Print specific styling */
     @media print {
         body { background-color: white; font-size: 12pt; }
-        #site-url-input, label[for="site-url-input"], #site-suggestions, #site-url-helper-message, #sp-btn-gather, #sp-info-app > div:first-child { display: none !important; }
+        #sna-url-section, #sna-start-over-btn { display: none !important; }
+        #site-url-input, label[for="site-url-input"], #site-suggestions, #site-url-helper-message, #sp-btn-gather { display: none !important; }
         .section-header button { display: none !important; }
         .hide-on-print { display: none !important; }
         #sp-info-app { box-shadow: none; background: transparent; padding: 0; max-width: 100%; margin: 0; border: none; }
@@ -306,21 +367,22 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         details.permissions-section { background: transparent; border-left: 3px solid #ccc; page-break-inside: avoid; }
         .fields-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .folders-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-		
-		.github-btn {
-        background-color: transparent !important;
-        color: #333 !important;
-        border: 1px solid #333;
-        padding: 5px 10px;
-		}
-		
-		/* Automatically spell out the URL next to the link when printing */
-		.github-btn::after {
-        content: " (https://github.com/DepressionCenter/Sitenalyzer)";
-        font-weight: normal;
-        font-size: 11px;
-        color: #555;
-		}
+        .item-count-badge { background: #555 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+        .github-btn {
+            background-color: transparent !important;
+            color: #333 !important;
+            border: 1px solid #333;
+            padding: 5px 10px;
+        }
+
+        /* Automatically spell out the URL next to the link when printing */
+        .github-btn::after {
+            content: " (https://github.com/DepressionCenter/Sitenalyzer)";
+            font-weight: normal;
+            font-size: 11px;
+            color: #555;
+        }
     }
 </style>
 </head>
@@ -336,13 +398,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 		<p style="margin: 0; font-size: 0.95em; color: #555; font-style: italic;">Data dictionary and security information extraction for SharePoint sites.</p>
 	</div>
 	
-    <div>
-        <label for="site-url-input" style="font-weight: bold;">Site URL:</label>
-        <input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL">
-        <ul id="site-suggestions"></ul>
-        <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
+    <div id="sna-url-section">
+        <div>
+            <label for="site-url-input" style="font-weight: bold;">Site URL:</label>
+            <input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL">
+            <ul id="site-suggestions"></ul>
+            <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
+        </div>
+        <button id="sp-btn-gather" onclick="gatherSiteInformation()">Extract Site Information</button>
     </div>
-    <button id="sp-btn-gather" onclick="gatherSiteInformation()">Extract Site Information</button>
+    <div id="sna-start-over-btn">
+        <button onclick="startOver()" aria-label="Start Over: clear results and enter a new site URL">&#8635; Start Over</button>
+    </div>
     <div id="sp-loader">Fetching data from SharePoint REST APIs... this may take a moment.</div>
     <div id="sp-results"></div>
     <div class="app-footer">
@@ -367,6 +434,104 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
  * Data fetching logic adapted from DataLaVista (github.com/DepressionCenter/datalavista)
  * License: GPLv3
  */
+
+// ── Phase 1: Field filter — mirrors DataLaVista SKIP_FIELDS + shouldSkipField ──
+var SITEANALYZER_SKIP_FIELDS = new Set([
+  "_ColorTag","_ComplianceFlags","_ComplianceTag","_ComplianceTagUserId",
+  "_ComplianceTagWrittenTime","_IsRecord","_LabelAppliedBy","_LabelSetting",
+  "_Level","_ModerationComments","_ModerationStatus","_SysFlow","_SysProfile",
+  "_SysVersion","_UIVersionString","AccessPolicy","AppAuthor","AppEditor",
+  "Author@odata.navigationLinkUrl","CheckedOutUser","CheckedOutUserId",
+  "CheckoutUser","CheckoutUserId","ColorTag","ComplianceAssetId","ContentType",
+  "ContentVersion","Created_x0020_Date","DocIcon","Edit",
+  "Editor@odata.navigationLinkUrl","FSObjType","FolderChildCount","GUID",
+  "HTML_x0020_File_x0020_Type","ImageTags","InstanceID","IsCheckedoutToLocal",
+  "IsCurrentVersion","ItemChildCount","Last_x0020_Modified",
+  "MediaServiceImageTags","MediaServiceLocation","MetaInfo","NoExecute",
+  "OData__SysFlow","OData__SysProfile","OData__SysVersion","Order",
+  "OriginatorId","ParentLeafName","ParentUniqueId","ParentVersionString",
+  "ProgId","ScopeId","SortBehavior","SourceNameConvertedDocument",
+  "SourceNameConvertedDocumentId","Source Version (Converted Document)",
+  "SyncClientId","TemplateUrl","UIVersionString","UniqueId",
+  "WorkflowInstanceID","WorkflowVersion","odata.editLink","odata.etag",
+  "odata.id","odata.link","odata.navigationLinkUrl","odata.type",
+  "xd_ProgID","xd_Signature"
+]);
+
+// ── Port of DLV fetchSPFields (23-sharepoint.js) — server + client filtering ──
+// Excludes Hidden, Computed, underscore-prefixed, dependent lookups, and SKIP_FIELDS.
+// Always includes mandatory fields and FileRef/FileLeafRef/FileDirRef for doc libs.
+async function snaFetchFields(targetUrl, listGuid, isDocLib) {
+  var filter = "(Hidden eq false and TypeAsString ne 'Computed' and startswith(InternalName,'_') eq false" +
+    " and (TypeAsString ne 'LookupMulti' or (TypeAsString eq 'LookupMulti' and ReadOnlyField eq false and IsDependentLookup eq false)))" +
+    " or InternalName eq 'Editor' or InternalName eq 'Author' or InternalName eq 'Created'" +
+    " or InternalName eq 'Modified' or InternalName eq 'ID' or InternalName eq 'Title' or InternalName eq 'TaxKeyword'";
+  var select = "Id,InternalName,Title,TypeAsString,Description,Required,MaxLength,Choices,LookupField,LookupList,IsHidden,Hidden,ReadOnlyField,IsDependentLookup";
+  var fieldsUrl = targetUrl + "/_api/web/lists(guid'" + listGuid + "')/fields?$select=" + select + "&$filter=" + filter;
+
+  var json = await spFetch(fieldsUrl);
+  var fields = json.value || [];
+
+  // Snapshot all for mandatory-field restoration
+  var allFieldsMap = {};
+  fields.forEach(function(f) { allFieldsMap[f.InternalName] = f; });
+
+  // Client-side filter: SKIP_FIELDS by InternalName/Title, projected lookups (_x003a_), dependent lookups
+  fields = fields.filter(function(f) {
+    if (SITEANALYZER_SKIP_FIELDS.has(f.InternalName)) return false;
+    if (SITEANALYZER_SKIP_FIELDS.has(f.Title)) return false;
+    if (f.InternalName.indexOf('_x003a_') > -1) return false;
+    if (f.IsDependentLookup) return false;
+    return true;
+  });
+
+  // Enrich Calculated fields with CalculatedFieldTypeAsString (mirrors DLV)
+  var hasCalc = fields.some(function(f) { return f.TypeAsString === 'Calculated'; });
+  if (hasCalc) {
+    try {
+      var calcUrl = targetUrl + "/_api/web/lists(guid'" + listGuid + "')/fields?$filter=FieldTypeKind eq 17&$select=InternalName,OutputType";
+      var calcJson = await spFetch(calcUrl);
+      var calcFields = calcJson.value || [];
+      var calcMap = {};
+      calcFields.forEach(function(cf) { calcMap[cf.InternalName] = cf.OutputType; });
+      var outputTypeToString = { 2: 'Text', 4: 'DateTime', 8: 'Boolean', 9: 'Number', 10: 'Currency' };
+      fields.forEach(function(f) {
+        if (f.TypeAsString === 'Calculated' && calcMap[f.InternalName] !== undefined) {
+          f.CalculatedFieldTypeAsString = outputTypeToString[calcMap[f.InternalName]] || 'Text';
+        }
+      });
+    } catch(e) { /* skip calc enrichment on error */ }
+  }
+
+  // Always ensure mandatory fields (ID, Title, Created, Modified, Author, Editor)
+  var mandatory = ['ID', 'Title', 'Created', 'Modified', 'Author', 'Editor'];
+  mandatory.forEach(function(mand) {
+    if (!fields.some(function(f) { return f.InternalName === mand; })) {
+      if (allFieldsMap[mand]) {
+        fields.push(allFieldsMap[mand]);
+      } else {
+        var forcedType = 'Text';
+        if (mand === 'ID') { forcedType = 'Counter'; }
+        if (mand === 'Author' || mand === 'Editor') { forcedType = 'User'; }
+        if (mand === 'Created' || mand === 'Modified') { forcedType = 'DateTime'; }
+        fields.push({ InternalName: mand, Title: mand, TypeAsString: forcedType });
+      }
+    }
+  });
+
+  // For doc libs, always include FileRef, FileLeafRef, FileDirRef
+  if (isDocLib) {
+    var fileFields = ['FileRef', 'FileLeafRef', 'FileDirRef'];
+    fileFields.forEach(function(fn) {
+      if (!fields.some(function(f) { return f.InternalName === fn; })) {
+        var found = allFieldsMap[fn];
+        fields.push(found || { InternalName: fn, Title: fn, TypeAsString: 'Text' });
+      }
+    });
+  }
+
+  return fields;
+}
 
 var globalAccessibleSites = [];
 var globalExportedData = []; // To store field data for CSV export
@@ -544,6 +709,17 @@ function exportToCSV() {
     document.body.removeChild(link);
 }
 
+function startOver() {
+    document.getElementById('sp-results').innerHTML = '';
+    globalExportedData = [];
+    var urlSection = document.getElementById('sna-url-section');
+    if (urlSection) { urlSection.classList.remove('collapsed'); }
+    var startOverBtn = document.getElementById('sna-start-over-btn');
+    if (startOverBtn) { startOverBtn.style.display = 'none'; }
+    var input = document.getElementById('site-url-input');
+    if (input) { input.focus(); input.select(); }
+}
+
 function expandAndPrint() {
     var detailsEls = document.querySelectorAll('#sp-results details');
     detailsEls.forEach(function(d) { d.open = true; });
@@ -630,21 +806,20 @@ async function gatherSiteInformation() {
                 } catch(e) { }
             }
 
-            // 2. Fetch Field Definitions
+            // 2. Fetch Field Definitions (via snaFetchFields — mirrors DLV fetchSPFields)
             var fieldsHtml = '';
             try {
-                var fieldsUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/fields?$filter=Hidden eq false";
-                var lFields;
-                try { lFields = await spFetch(fieldsUrl); } catch(err) { }
-                
-                if (lFields && lFields.value && lFields.value.length > 0) {
-                    var tableRows = '';
-                    lFields.value.forEach(function(f) {
-                        var returnType = '';
-                        var typeDisplay = f.TypeAsString ? f.TypeAsString : '';
+                var isDocLib = list.BaseTemplate === 101;
+                var lFields = await snaFetchFields(targetUrl, list.Id, isDocLib);
 
-                        if (f.TypeAsString === 'Calculated' && f.OutputType !== undefined && f.OutputType !== null) {
-                            returnType = getOutputTypeName(f.OutputType);
+                if (lFields && lFields.length > 0) {
+                    var tableRows = '';
+                    lFields.forEach(function(f) {
+                        var returnType = '';
+                        var typeDisplay = f.TypeAsString || '';
+
+                        if (f.TypeAsString === 'Calculated' && f.CalculatedFieldTypeAsString) {
+                            returnType = f.CalculatedFieldTypeAsString;
                             typeDisplay = 'Calculated (' + returnType + ')';
                         }
 
@@ -723,9 +898,9 @@ async function gatherSiteInformation() {
                     foldersTableHtml = '<p style="font-size:13px; color:red; margin: 5px 0;">Error loading folders: ' + e.message + '</p>';
                 }
 
-                libsHtml += '<div class="info-card"><h3>📄 ' + list.Title + '</h3>' + listDescHtml + '<div class="grid-container"><div><strong>Library ID:</strong> ' + list.Id + '</div><div><strong>Total Items (Files + Folders):</strong> ' + list.ItemCount + '</div></div><strong>Top-Level Folders:</strong>' + foldersTableHtml + colDefsDetails + listRolesDetails + '</div>';
+                libsHtml += '<div class="info-card"><h3>📄 ' + list.Title + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' + listDescHtml + '<div style="margin-bottom:12px;"><strong>Library ID:</strong> <span class="list-id-text">' + list.Id + '</span></div>' + '<strong>Top-Level Folders:</strong>' + foldersTableHtml + colDefsDetails + listRolesDetails + '</div>';
             } else {
-                listsHtml += '<div class="info-card"><h3>📋 ' + list.Title + '</h3>' + listDescHtml + '<div class="grid-container"><div><strong>List ID:</strong> ' + list.Id + '</div><div><strong>Total Items:</strong> ' + list.ItemCount + '</div></div>' + colDefsDetails + listRolesDetails + '</div>';
+                listsHtml += '<div class="info-card"><h3>📋 ' + list.Title + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' + listDescHtml + '<div style="margin-bottom:12px;"><strong>List ID:</strong> <span class="list-id-text">' + list.Id + '</span></div>' + colDefsDetails + listRolesDetails + '</div>';
             }
         }
 
@@ -784,6 +959,12 @@ if (siteInfo) {
                         '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button onclick="document.getElementById(\'sp-info-app\').scrollIntoView({behavior: \'smooth\', block: \'start\'})">&#11014; Back to Top</button></div>';
 
         resultsDiv.innerHTML = finalHtml;
+
+        // ── Phase 1: collapse URL section, reveal Start Over ──
+        var urlSection = document.getElementById('sna-url-section');
+        if (urlSection) { urlSection.classList.add('collapsed'); }
+        var startOverBtn = document.getElementById('sna-start-over-btn');
+        if (startOverBtn) { startOverBtn.style.display = 'block'; }
 
     } catch (error) {
         var errorMsg = error.message ? error.message : 'Unknown error occurred';
