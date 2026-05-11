@@ -582,6 +582,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         font-style: italic;
         text-align: center;
     }
+    .sna-search-separator {
+        height: 0;
+        border: none;
+        border-top: 1px solid #c8c6c4;
+        margin: 4px 0;
+        padding: 0;
+        list-style: none;
+        pointer-events: none;
+    }
     @keyframes sna-highlight-pulse {
         0%   { outline: 4px solid #0078d4; outline-offset: 3px; background-color: #cce4f6; }
         65%  { outline: 4px solid #0078d4; outline-offset: 3px; background-color: #cce4f6; }
@@ -1488,11 +1497,16 @@ if (siteInfo) {
 }
 
 // ── Phase 4: Global search ──
-var _snaSearchIndex = [];
-var _snaCardData    = [];
+var _snaSearchIndex    = [];
+var _snaCardData       = [];
+var _snaCurrentResults = [];
 
 function buildSearchIndex() {
     _snaSearchIndex = [];
+
+    // Build a title → full card object map for column resolution
+    var titleToCard = {};
+    _snaCardData.forEach(function(card) { titleToCard[card.title] = card; });
 
     // Index each list / library card
     _snaCardData.forEach(function(card) {
@@ -1505,21 +1519,23 @@ function buildSearchIndex() {
             label:      card.title,
             sublabel:   card.internalName + ' • ' + card.listId,
             breadcrumb: section,
-            cardId:     card.cardId
+            cardId:     card.cardId,
+            listTitle:  card.title,
+            listId:     card.listId,
+            columnName: '',
+            dataType:   ''
         });
     });
 
-    // Build ListTitle -> cardId map for column entries
-    var titleToCardId = {};
-    _snaCardData.forEach(function(card) { titleToCardId[card.title] = card.cardId; });
-
-    // Deduplicate columns by InternalName+ListTitle
+    // Deduplicate columns by ListTitle+InternalName
     var colSeen = {};
     globalExportedData.forEach(function(row) {
         var key = (row.ListTitle || '') + '|' + (row.InternalName || '');
         if (colSeen[key]) { return; }
         colSeen[key] = true;
-        var cardId    = titleToCardId[row.ListTitle] || null;
+        var card           = titleToCard[row.ListTitle];
+        var cardId         = card ? card.cardId : null;
+        var listId         = card ? card.listId  : '';
         var listTypePlural = row.ListType ? (row.ListType + 's') : 'Lists';
         _snaSearchIndex.push({
             icon:       '🔲',
@@ -1527,39 +1543,92 @@ function buildSearchIndex() {
             label:      row.FieldTitle || row.InternalName || '',
             sublabel:   (row.InternalName || '') + ' • ' + (row.Type || ''),
             breadcrumb: listTypePlural + ' > ' + (row.ListTitle || ''),
-            cardId:     cardId
+            cardId:     cardId,
+            listTitle:  row.ListTitle || '',
+            listId:     listId,
+            columnName: row.FieldTitle || row.InternalName || '',
+            dataType:   row.Type || ''
         });
     });
 }
 
+// Parse a raw query string into a match descriptor.
+// "quoted text"  → exact substring match
+// *              → any sequence of characters
+// space / other non-alphanumeric → any single character
+function snaParseQuery(rawQuery) {
+    var q = rawQuery.trim();
+    if (q.length >= 2 && q.charAt(0) === '"' && q.charAt(q.length - 1) === '"') {
+        return { mode: 'exact', value: q.slice(1, -1).toLowerCase() };
+    }
+    var pattern = '';
+    for (var ci = 0; ci < q.length; ci++) {
+        var ch = q.charAt(ci);
+        if (ch === '*') {
+            pattern += '.*';
+        } else if (/[a-zA-Z0-9]/.test(ch)) {
+            pattern += ch;
+        } else {
+            pattern += '.';
+        }
+    }
+    return { mode: 'pattern', regex: new RegExp(pattern, 'i') };
+}
+
+// Returns { columns: Item[], others: Item[] }
+// columns = all matching Column entries, sorted: label-match first, then alphabetically by label
+// others  = all matching List/Library entries, sorted alphabetically by (listTitle, listId)
 function snaSearchQuery(query) {
-    if (!query || query.length < 2) { return []; }
-    var q       = query.toLowerCase();
-    var results = [];
-    var seen    = {};
+    if (!query || query.trim().length < 2) { return { columns: [], others: [] }; }
+
+    var parsed = snaParseQuery(query.trim());
+
+    function fieldMatches(value) {
+        var v = (value || '').toLowerCase();
+        if (parsed.mode === 'exact') { return v.indexOf(parsed.value) > -1; }
+        return parsed.regex.test(v);
+    }
+
+    var columnHits = [];
+    var otherHits  = [];
+    var seen       = {};
 
     _snaSearchIndex.forEach(function(item) {
-        var dedupeKey  = item.type + '|' + item.label + '|' + (item.cardId || '');
+        var dedupeKey = item.type + '|' + item.label + '|' + (item.cardId || '');
         if (seen[dedupeKey]) { return; }
 
-        var labelLc      = (item.label      || '').toLowerCase();
-        var sublabelLc   = (item.sublabel   || '').toLowerCase();
-        var breadcrumbLc = (item.breadcrumb || '').toLowerCase();
+        var labelMatch      = fieldMatches(item.label);
+        var sublabelMatch   = fieldMatches(item.sublabel);
+        var breadcrumbMatch = fieldMatches(item.breadcrumb);
 
-        var score = 0;
-        if (labelLc.indexOf(q) === 0)       { score = 4; }
-        else if (labelLc.indexOf(q) > -1)   { score = 3; }
-        else if (sublabelLc.indexOf(q) > -1) { score = 2; }
-        else if (breadcrumbLc.indexOf(q) > -1) { score = 1; }
+        if (!labelMatch && !sublabelMatch && !breadcrumbMatch) { return; }
 
-        if (score > 0) {
-            seen[dedupeKey] = true;
-            results.push({ item: item, score: score });
+        seen[dedupeKey] = true;
+
+        if (item.type === 'Column') {
+            columnHits.push({ item: item, score: labelMatch ? 2 : 1 });
+        } else {
+            otherHits.push(item);
         }
     });
 
-    results.sort(function(a, b) { return b.score - a.score; });
-    return results.slice(0, 8).map(function(r) { return r.item; });
+    // Columns: label-match first, then alphabetically by display name
+    columnHits.sort(function(a, b) {
+        if (b.score !== a.score) { return b.score - a.score; }
+        return (a.item.label || '').localeCompare(b.item.label || '');
+    });
+
+    // Others (lists/libraries): alphabetically by listTitle, then listId
+    otherHits.sort(function(a, b) {
+        var r = (a.listTitle || '').localeCompare(b.listTitle || '');
+        if (r !== 0) { return r; }
+        return (a.listId || '').localeCompare(b.listId || '');
+    });
+
+    return {
+        columns: columnHits.map(function(c) { return c.item; }),
+        others:  otherHits
+    };
 }
 
 function snaSearchSelect(item) {
@@ -1593,12 +1662,29 @@ function snaSearchSelect(item) {
     });
 }
 
-function snaRenderSearchResults(results, input, resultsList) {
+// result = { columns: Item[], others: Item[] } from snaSearchQuery.
+// Renders: top 3 column hits, separator, then remaining columns + list/library hits
+// sorted alphabetically by (listTitle, listId, columnName, dataType). Max 20 total.
+function snaRenderSearchResults(result, input, resultsList) {
     resultsList.innerHTML = '';
+    _snaCurrentResults = [];
 
     var srCount = document.getElementById('sna-search-sr-count');
+    var topCols = result.columns.slice(0, 3);
 
-    if (results.length === 0) {
+    // Remaining: columns beyond top-3 + list/library hits — sorted alphabetically
+    var rest = result.columns.slice(3).concat(result.others);
+    rest.sort(function(a, b) {
+        var aText = (a.icon || '') + ' ' + (a.label || '');
+        var bText = (b.icon || '') + ' ' + (b.label || '');
+        return aText.localeCompare(bText);
+    });
+
+    var maxRest  = 20 - topCols.length;
+    var restShow = rest.slice(0, maxRest);
+    var total    = topCols.length + restShow.length;
+
+    if (total === 0) {
         input.setAttribute('aria-expanded', 'false');
         input.setAttribute('aria-activedescendant', '');
         var noRes = document.createElement('li');
@@ -1612,13 +1698,13 @@ function snaRenderSearchResults(results, input, resultsList) {
     }
 
     input.setAttribute('aria-expanded', 'true');
-    if (srCount) { srCount.textContent = results.length + ' result' + (results.length === 1 ? '' : 's') + '.'; }
+    if (srCount) { srCount.textContent = total + ' result' + (total === 1 ? '' : 's') + '.'; }
 
-    results.forEach(function(item, idx) {
+    function makeResultLi(item) {
         var li = document.createElement('li');
         li.className = 'sna-search-result';
         li.setAttribute('role', 'option');
-        li.setAttribute('id', 'sna-search-opt-' + idx);
+        li.setAttribute('id', 'sna-search-opt-' + _snaCurrentResults.length);
         li.setAttribute('aria-selected', 'false');
         li.setAttribute('tabindex', '-1');
 
@@ -1637,10 +1723,24 @@ function snaRenderSearchResults(results, input, resultsList) {
         li.appendChild(primary);
         li.appendChild(secondary);
         li.appendChild(breadcrumb);
-
         li.addEventListener('click', function() { snaSearchSelect(item); });
-        resultsList.appendChild(li);
-    });
+
+        _snaCurrentResults.push(item);
+        return li;
+    }
+
+    topCols.forEach(function(item) { resultsList.appendChild(makeResultLi(item)); });
+
+    // Visual separator between priority columns and everything else
+    if (topCols.length > 0 && restShow.length > 0) {
+        var sep = document.createElement('li');
+        sep.className = 'sna-search-separator';
+        sep.setAttribute('role', 'separator');
+        sep.setAttribute('aria-hidden', 'true');
+        resultsList.appendChild(sep);
+    }
+
+    restShow.forEach(function(item) { resultsList.appendChild(makeResultLi(item)); });
 }
 
 function snaSearchInit() {
@@ -1722,8 +1822,8 @@ function snaSearchInit() {
                 if (srEl) { srEl.textContent = ''; }
                 return;
             }
-            var matches = snaSearchQuery(val);
-            snaRenderSearchResults(matches, input, resultsList);
+            var result = snaSearchQuery(val);
+            snaRenderSearchResults(result, input, resultsList);
         }, 180);
     });
 
@@ -1754,11 +1854,10 @@ function snaSearchInit() {
             }
         } else if (e.key === 'Enter') {
             e.preventDefault();
-            var enterMatches = snaSearchQuery(input.value.trim());
-            if (current && idx > -1 && enterMatches[idx]) {
-                snaSearchSelect(enterMatches[idx]);
-            } else if (opts.length === 1 && enterMatches[0]) {
-                snaSearchSelect(enterMatches[0]);
+            if (current && idx > -1 && _snaCurrentResults[idx]) {
+                snaSearchSelect(_snaCurrentResults[idx]);
+            } else if (opts.length === 1 && _snaCurrentResults[0]) {
+                snaSearchSelect(_snaCurrentResults[0]);
             }
         } else if (e.key === 'Escape') {
             panel.hidden = true;
