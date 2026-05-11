@@ -300,6 +300,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     }
     .sna-action-btn:hover { background: #0078d4 !important; color: #fff !important; }
     .sna-action-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+    /* Let Tabulator rows expand and overflow when a cell editor is active */
+    .tabulator-row.tabulator-editing,
+    .tabulator-row .tabulator-cell.tabulator-editing {
+        overflow: visible !important;
+        z-index: 50;
+        position: relative;
+    }
+
     .sna-copy-toast {
         position: fixed;
         bottom: 28px;
@@ -479,7 +487,94 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
             font-size: 11px;
             color: #555;
         }
+        .sna-pencil-btn { display: none !important; }
+        .sna-editor-controls { display: none !important; }
     }
+
+    /* ── Phase 5: Taxonomy section ── */
+    .sna-taxonomy-group {
+        margin-top: 10px;
+        padding: 10px;
+        background: #f3f2f1;
+        border-left: 4px solid #0078d4;
+        border-radius: 4px;
+    }
+    .sna-taxonomy-set {
+        margin-top: 8px;
+        padding: 8px 10px;
+        background: #faf9f8;
+        border-left: 3px solid #c8c6c4;
+        border-radius: 3px;
+    }
+    .sna-taxonomy-group > summary,
+    .sna-taxonomy-set > summary { font-weight: 600; color: #005a9e; }
+
+    /* ── Phase 5: Admin inline edit ── */
+    .sna-editable-wrap { position: relative; display: inline; }
+    .sna-pencil-btn {
+        background: transparent !important;
+        border: none !important;
+        cursor: pointer;
+        font-size: 14px;
+        padding: 0 4px !important;
+        margin: 0 0 0 4px !important;
+        opacity: 0;
+        transition: opacity 0.15s;
+        vertical-align: middle;
+        color: #0078d4 !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+    }
+    .sna-editable-wrap:hover .sna-pencil-btn,
+    .sna-editable-wrap:focus-within .sna-pencil-btn { opacity: 1; }
+    .sna-pencil-btn:focus { opacity: 1; outline: 2px solid #0078d4; }
+    /* Empty field: keep pencil at reduced opacity so admins can always discover it */
+    .sna-editable-wrap--empty .sna-pencil-btn { opacity: 0.55; }
+    .sna-editable-wrap--empty:hover .sna-pencil-btn { opacity: 1; }
+    .sna-editor-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 4px;
+    }
+    .sna-editor-field {
+        min-height: 60px;
+        padding: 6px 8px;
+        font-size: 13px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        border: 2px solid #0078d4;
+        border-radius: 4px;
+        background: #fff;
+        outline: none;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.5;
+    }
+    .sna-editor-controls { display: flex; gap: 6px; margin-top: 2px; }
+    .sna-editor-save-btn {
+        background: #0078d4 !important;
+        color: #fff !important;
+        border: none !important;
+        padding: 4px 12px !important;
+        font-size: 12px !important;
+        border-radius: 4px;
+        cursor: pointer;
+        margin: 0 !important;
+        min-height: 0 !important;
+    }
+    .sna-editor-save-btn:hover { background: #005a9e !important; }
+    .sna-editor-cancel-btn {
+        background: #fff !important;
+        color: #323130 !important;
+        border: 1px solid #8a8886 !important;
+        padding: 4px 12px !important;
+        font-size: 12px !important;
+        border-radius: 4px;
+        cursor: pointer;
+        margin: 0 !important;
+        min-height: 0 !important;
+    }
+    .sna-editor-cancel-btn:hover { background: #f3f2f1 !important; }
 
     /* ── Phase 4: Global search widget ── */
     #sna-global-search {
@@ -759,8 +854,104 @@ function initSnaTabulators() {
         },
         { title: 'Internal Name', field: 'internalName', sorter: 'string', widthGrow: 2 },
         { title: 'Data Type',     field: 'dataType',     sorter: 'string', widthGrow: 1.5 },
-        { title: 'Description',   field: 'description',  sorter: 'string', widthGrow: 3, formatter: 'textarea' },
+        {
+          title: 'Description', field: 'description', sorter: 'string', widthGrow: 3,
+          formatter: 'textarea',
+          editor: _snaIsAdmin ? function(cell, onRendered, success, cancel) {
+            var currentVal = cell.getValue() || '';
+            var wrap = document.createElement('div');
+            wrap.style.cssText = 'width:100%;box-sizing:border-box;';
+
+            var ta = document.createElement('textarea');
+            ta.value = currentVal;
+            // Extra bottom padding reserves room for the overlaid buttons
+            ta.style.cssText = 'display:block;width:100%;min-height:54px;resize:vertical;font-size:13px;padding:4px 6px 20px 6px;border:2px solid #0078d4;border-radius:3px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;box-sizing:border-box;line-height:1.5;';
+
+            ta.addEventListener('keydown', function(e) {
+              if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+              else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); success(ta.value); }
+              // Shift+Enter / Alt+Enter → native newline in textarea
+            });
+
+            // Pull buttons up into the textarea's bottom-padding area via negative margin
+            var btnWrap = document.createElement('div');
+            btnWrap.style.cssText = 'display:flex;flex-direction:row;gap:2px;position:relative;z-index:2;margin-top:-18px;padding-left:4px;';
+
+            var S = 'width:18px;height:16px;padding:0;border-radius:2px;cursor:pointer;font-size:10px;line-height:16px;text-align:center;';
+
+            var saveBtn = document.createElement('button');
+            saveBtn.innerHTML = '&#10003;';
+            saveBtn.title     = 'Save (Enter)';
+            saveBtn.setAttribute('aria-label', 'Save');
+            saveBtn.style.cssText = S + 'background:#0078d4;color:#fff;border:none;';
+            saveBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+            saveBtn.addEventListener('click',     function(e) { e.stopPropagation(); success(ta.value); });
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.innerHTML = '&#10007;';
+            cancelBtn.title     = 'Cancel (Esc)';
+            cancelBtn.setAttribute('aria-label', 'Cancel');
+            cancelBtn.style.cssText = S + 'background:#fff;color:#605e5c;border:1px solid #8a8886;';
+            cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+            cancelBtn.addEventListener('click',     function(e) { e.stopPropagation(); cancel(); });
+
+            btnWrap.appendChild(saveBtn);
+            btnWrap.appendChild(cancelBtn);
+            wrap.appendChild(ta);
+            wrap.appendChild(btnWrap);
+
+            onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
+            return wrap;
+          } : false,
+          cellEdited: _snaIsAdmin ? function(cell) {
+            var row     = cell.getRow().getData();
+            var editKey = 'column:' + (row.listId || '') + ':' + (row.fieldId || row.internalName || '');
+            snaSaveDescription(editKey, cell.getValue() || '').then(function() {
+              snaShowToast('Description saved.');
+            }).catch(function(err) {
+              cell.restoreOldValue();
+              snaShowToast('Save failed: ' + (err.message || String(err)), true);
+            });
+          } : null
+        },
         { title: 'Lookup List',   field: 'lookupList',   sorter: 'string', widthGrow: 1.5 }
+      ];
+    } else if (tbl.type === 'terms') {
+      var termSetId = tbl.setId || '';
+      columns = [
+        {
+          title: 'Term Name', field: 'termName', sorter: 'string', widthGrow: 2,
+          formatter: function(cell) {
+            return '<span class="sna-type-icon" aria-hidden="true">&#127991;</span>' + (cell.getValue() || '');
+          }
+        },
+        {
+          title: 'GUID', field: 'termId', sorter: 'string', widthGrow: 2,
+          formatter: function(cell) {
+            return '<span style="font-size:0.75rem;color:#888;">' + (cell.getValue() || '') + '</span>';
+          }
+        },
+        {
+          title: 'Description', field: 'termDescription', sorter: 'string', widthGrow: 3,
+          formatter: 'textarea',
+          editor: _snaIsAdmin ? function(cell, onRendered) {
+            var ta = document.createElement('textarea');
+            ta.style.cssText = 'width:100%;height:100%;box-sizing:border-box;resize:vertical;';
+            ta.value = cell.getValue() || '';
+            onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
+            return ta;
+          } : false,
+          cellEdited: _snaIsAdmin ? function(cell) {
+            var row     = cell.getRow().getData();
+            var editKey = 'term:' + termSetId + ':' + (row.termId || '');
+            snaSaveDescription(editKey, cell.getValue() || '').then(function() {
+              snaShowToast('Description saved.');
+            }).catch(function(err) {
+              cell.restoreOldValue();
+              snaShowToast('Save failed: ' + (err.message || String(err)), true);
+            });
+          } : null
+        }
       ];
     } else if (tbl.type === 'folders') {
       columns = [
@@ -1114,6 +1305,18 @@ function snaCopyToClipboard(text, label) {
     });
 }
 
+function snaShowToast(msg, isError) {
+    var toast = document.getElementById('sna-copy-toast');
+    if (!toast) { return; }
+    toast.textContent = msg;
+    toast.style.background = isError ? '#a4262c' : '#323130';
+    toast.classList.add('visible');
+    setTimeout(function() {
+        toast.classList.remove('visible');
+        toast.style.background = '';
+    }, 2200);
+}
+
 // Single delegated click handler for all dynamically generated buttons and links.
 function snaHandleResultsClick(e) {
     var target = e.target.closest('[data-action]');
@@ -1138,6 +1341,15 @@ function snaHandleResultsClick(e) {
         e.preventDefault();
         snaOpenUrl(target.getAttribute('data-url') || target.href);
     }
+    else if (action === 'start-edit') {
+        snaStartEdit(target.closest('.sna-editable-wrap'));
+    }
+    else if (action === 'save-edit') {
+        snaSaveEditFromEl(target.closest('.sna-editable-wrap'));
+    }
+    else if (action === 'cancel-edit') {
+        snaCancelEdit(target.closest('.sna-editable-wrap'));
+    }
 }
 
 // Copy ID to clipboard and temporarily reveal it as small text next to the button.
@@ -1161,6 +1373,13 @@ function startOver() {
     globalExportedData = [];
     _snaSearchIndex = [];
     _snaCardData    = [];
+    _snaTaxonomyData     = [];
+    _snaSiteCollectionId = '';
+    _snaTermStoreId      = '';
+    _snaIsAdmin          = false;
+    _snaTargetUrl        = '';
+    _snaRequestDigest    = null;
+    _snaRequestDigestExpiry = 0;
     var srPanel = document.getElementById('sna-search-panel');
     if (srPanel) { srPanel.hidden = true; }
     var srToggle = document.getElementById('sna-search-toggle');
@@ -1216,6 +1435,11 @@ async function gatherSiteInformation() {
     _snaTabInstances = {};
     _snaCardData = [];
     _snaSearchIndex = [];
+    _snaTaxonomyData     = [];
+    _snaSiteCollectionId = '';
+    _snaTermStoreId      = '';
+    _snaIsAdmin          = false;
+    _snaTargetUrl        = '';
 
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
@@ -1226,12 +1450,17 @@ async function gatherSiteInformation() {
     }
 
     try {
+        _snaTargetUrl = targetUrl;
         var siteInfo = null;
         siteInfo = await spFetch(`${targetUrl}/_api/web?$select=Title,Url,Id,Description,SiteLogoUrl`);
         var siteRoles = null;
         try { siteRoles = await spFetch(`${targetUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`); } catch(err) { }
         var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
-        
+
+        // ── Phase 5: resolve admin before the loop (single call, fast) then run taxonomy concurrently ──
+        _snaIsAdmin = await checkAdminPermissions(targetUrl).catch(function() { return false; });
+        var taxonomyPromise = fetchTaxonomy(targetUrl).catch(function(e) { console.warn('taxonomy error', e); });
+
         var allLists = null;
         try {
 			// Adapted from DataLaVista's fetchSPLists() function (https://michmed.org/datalavista)
@@ -1255,7 +1484,9 @@ async function gatherSiteInformation() {
             var list = allLists.value[i];
             var listRolesHtml = '';
             var isInherited = false;
-            var listDescHtml = list.Description ? '<p style="font-size: 13px; color: #666; margin: 5px 0 15px 0;"><strong>Description:</strong> ' + list.Description + '</p>' : '';
+            var listEditKey  = 'list:' + list.Id;
+            var listDescBody = renderAdminDescWrap(list.Description || '', listEditKey);
+            var listDescHtml = (list.Description || _snaIsAdmin) ? '<p style="font-size: 13px; color: #666; margin: 5px 0 15px 0;"><strong>Description:</strong> ' + listDescBody + '</p>' : '';
             var listTypeLabel = list.BaseTemplate === 101 ? "Document Library" : "List";
 
             // 1. Fetch Roles or Handle Inheritance
@@ -1306,7 +1537,9 @@ async function gatherSiteInformation() {
                             typeIcon:     typeIcon,
                             typeLabel:    resolvedForLabel,
                             description:  f.Description || '',
-                            lookupList:   lookupListName
+                            lookupList:   lookupListName,
+                            listId:       list.Id || '',
+                            fieldId:      f.Id || ''
                         });
                         globalExportedData.push({
                             ListTitle:    list.Title,
@@ -1419,6 +1652,9 @@ async function gatherSiteInformation() {
             }
         }
 
+        // ── Phase 5: wait for taxonomy (ran concurrently with the lists loop) ──
+        await taxonomyPromise;
+
 var siteInfoHtml = '';
 if (siteInfo) {
     var hasLogo = siteInfo.SiteLogoUrl && siteInfo.SiteLogoUrl.trim().length > 9;
@@ -1447,7 +1683,7 @@ if (siteInfo) {
                 '<div style="word-break: break-word; overflow-wrap: break-word;"><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div>' +
             '</div>' +
             '<div style="flex: 1; min-width: 300px;">' + 
-                '<div><strong>Description:</strong> ' + (siteInfo.Description ? siteInfo.Description.toString().trim() : '') + '</div>' +
+                '<div><strong>Description:</strong> ' + renderAdminDescWrap((siteInfo.Description || '').toString().trim(), 'site') + '</div>' +
             '</div>' +
         '</div>';
 
@@ -1468,9 +1704,11 @@ if (siteInfo) {
         var libsSection = '<div class="main-section-header"><h2>📁 Document Libraries</h2></div>' + (libsHtml ? libsHtml : '<p style="padding-left: 10px;">No document libraries found.</p>');
         var listsSection = '<div class="main-section-header"><h2>📑 Lists</h2></div>' + (listsHtml ? listsHtml : '<p style="padding-left: 10px;">No lists found.</p>');
 
-        var finalHtml = '<div class="print-section">' + siteInfoHtml + '</div>' + 
-                        '<div class="print-section">' + libsSection + '</div>' + 
-                        '<div class="print-section">' + listsSection + '</div>' + 
+        var taxonomySection = '<div class="print-section" id="sna-taxonomy-section">' + renderTaxonomySection() + '</div>';
+        var finalHtml = '<div class="print-section">' + siteInfoHtml + '</div>' +
+                        '<div class="print-section">' + libsSection + '</div>' +
+                        '<div class="print-section">' + listsSection + '</div>' +
+                        taxonomySection +
                         '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button data-action="scroll-top">&#11014; Back to Top</button></div>';
 
         resultsDiv.innerHTML = finalHtml;
@@ -1500,6 +1738,15 @@ if (siteInfo) {
 var _snaSearchIndex    = [];
 var _snaCardData       = [];
 var _snaCurrentResults = [];
+
+// ── Phase 5: Taxonomy + Admin Edit state ──
+var _snaTaxonomyData        = [];
+var _snaSiteCollectionId    = '';
+var _snaTermStoreId         = '';
+var _snaIsAdmin             = false;
+var _snaTargetUrl           = '';
+var _snaRequestDigest       = null;
+var _snaRequestDigestExpiry = 0;
 
 function buildSearchIndex() {
     _snaSearchIndex = [];
@@ -1548,6 +1795,26 @@ function buildSearchIndex() {
             listId:     listId,
             columnName: row.FieldTitle || row.InternalName || '',
             dataType:   row.Type || ''
+        });
+    });
+
+    // ── Phase 5: index taxonomy terms ──
+    _snaTaxonomyData.forEach(function(group) {
+        (group.termSets || []).forEach(function(set) {
+            (set.terms || []).forEach(function(term) {
+                _snaSearchIndex.push({
+                    icon:       '🏷️',
+                    type:       'Term',
+                    label:      term.termName || '',
+                    sublabel:   term.termId || '',
+                    breadcrumb: group.groupName + ' › ' + set.setName,
+                    cardId:     'sna-taxonomy-section',
+                    listTitle:  '',
+                    listId:     '',
+                    columnName: term.termName || '',
+                    dataType:   'Term'
+                });
+            });
         });
     });
 }
@@ -1741,6 +2008,370 @@ function snaRenderSearchResults(result, input, resultsList) {
     }
 
     restShow.forEach(function(item) { resultsList.appendChild(makeResultLi(item)); });
+}
+
+// ── Phase 5: Admin permission check ──
+async function checkAdminPermissions(targetUrl) {
+    try {
+        var perms = await spFetch(targetUrl + '/_api/web/effectivebasePermissions');
+        // ManageWeb = bit 31 (1-indexed) in the 64-bit permission mask; bit 31 is the MSB of Low.
+        // Use unsigned right-shift to avoid JS signed-int sign extension on bit 31.
+        var lowUnsigned = (parseInt(perms.Low, 10) || 0) >>> 0;
+        return (lowUnsigned & 0x80000000) !== 0;
+    } catch(e) {
+        return false;
+    }
+}
+
+// ── Phase 5: X-RequestDigest cache (25-minute TTL) ──
+async function getRequestDigest(targetUrl) {
+    var now = Date.now();
+    if (_snaRequestDigest && now < _snaRequestDigestExpiry) { return _snaRequestDigest; }
+    var res  = await fetch(targetUrl + '/_api/contextinfo', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json;odata=nometadata', 'Content-Length': '0' },
+        credentials: 'include'
+    });
+    var data = await res.json();
+    _snaRequestDigest      = data.FormDigestValue;
+    _snaRequestDigestExpiry = now + 25 * 60 * 1000;
+    return _snaRequestDigest;
+}
+
+// ── Phase 5: Fetch site-collection taxonomy (mirrors user-provided script) ──
+async function fetchTaxonomy(targetUrl) {
+    _snaTaxonomyData = [];
+    try {
+        var siteData = await spFetch(targetUrl + '/_api/site?$select=Id');
+        _snaSiteCollectionId = siteData.Id || '';
+        if (!_snaSiteCollectionId) { return; }
+
+        var termBase      = targetUrl + '/_api/v2.1/sites/' + _snaSiteCollectionId + '/termStore';
+        var termStoreInfo = await spFetch(termBase);
+        _snaTermStoreId   = termStoreInfo.id || '';
+        var groupsData    = await spFetch(termBase + '/groups');
+        var siteScopedGroups = (groupsData.value || []).filter(function(g) {
+            return g.scope === 'siteCollection';
+        });
+
+        for (var gi = 0; gi < siteScopedGroups.length; gi++) {
+            var group    = siteScopedGroups[gi];
+            var groupObj = {
+                groupName:        group.displayName || '',
+                groupId:          group.id || '',
+                groupDescription: group.description || '',
+                termSets:         []
+            };
+
+            var setsData = await spFetch(termBase + '/groups/' + group.id + '/sets');
+            var sets     = setsData.value || [];
+
+            for (var si = 0; si < sets.length; si++) {
+                var set     = sets[si];
+                var setName = (set.localizedNames && set.localizedNames[0]) ? set.localizedNames[0].name : '';
+                var setObj  = {
+                    setName:        setName,
+                    setId:          set.id || '',
+                    setDescription: set.description || '',
+                    terms:          []
+                };
+
+                var termsData = await spFetch(termBase + '/sets/' + set.id + '/terms');
+                var terms     = termsData.value || [];
+                setObj.terms  = terms.map(function(t) {
+                    var defaultLabel = '';
+                    if (t.labels && t.labels.length > 0) {
+                        var found = null;
+                        t.labels.forEach(function(l) { if (l.isDefault) { found = l; } });
+                        defaultLabel = found ? found.name : t.labels[0].name;
+                    }
+                    return {
+                        termName:        defaultLabel,
+                        termId:          t.id || '',
+                        termDescription: (t.descriptions && t.descriptions[0]) ? t.descriptions[0].description : ''
+                    };
+                });
+
+                groupObj.termSets.push(setObj);
+            }
+            _snaTaxonomyData.push(groupObj);
+        }
+    } catch(e) {
+        console.warn('Sitenalyzer: taxonomy fetch failed:', e);
+    }
+}
+
+// ── Phase 5: Render admin-editable description wrapper ──
+function renderAdminDescWrap(text, editKey) {
+    var safeText  = (text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (!_snaIsAdmin) { return safeText || '<em style="color:#999;">No description.</em>'; }
+    var isEmpty    = !safeText;
+    var emptyClass = isEmpty ? ' sna-editable-wrap--empty' : '';
+    var displayed  = isEmpty ? '<em style="color:#bbb;">Click ✎ to add a description</em>' : safeText;
+    return '<span class="sna-editable-wrap' + emptyClass + '" data-edit-key="' + editKey + '">' +
+           '<span class="sna-editable-text" data-sna-orig="' + safeText + '">' + displayed + '</span>' +
+           '<button class="sna-pencil-btn" aria-label="Edit description" data-action="start-edit">&#9998;</button>' +
+           '</span>';
+}
+
+// ── Phase 5: Render taxonomy section HTML ──
+function renderTaxonomySection() {
+    var header = '<div class="main-section-header"><h2>&#127991; Taxonomy / Term Store</h2></div>';
+    if (!_snaTaxonomyData || _snaTaxonomyData.length === 0) {
+        return header + '<p style="padding-left:10px;color:#666;">No site-collection-scoped taxonomy groups found.</p>';
+    }
+
+    var html = header;
+    _snaTaxonomyData.forEach(function(group) {
+        var groupDescHtml = renderAdminDescWrap(group.groupDescription, 'termgroup:' + group.groupId);
+        html += '<details class="sna-taxonomy-group">';
+        html += '<summary>&#128193; ' + group.groupName +
+                ' <span class="list-id-text" style="font-size:0.72rem;color:#888;margin-left:6px;">' +
+                group.groupId + '</span></summary>';
+        if (group.groupDescription || _snaIsAdmin) {
+            html += '<p style="font-size:13px;color:#555;margin:8px 0 6px 0;">' + groupDescHtml + '</p>';
+        }
+
+        group.termSets.forEach(function(set) {
+            var setDescHtml  = renderAdminDescWrap(set.setDescription, 'termset:' + set.setId);
+            var termCount    = set.terms ? set.terms.length : 0;
+            html += '<details class="sna-taxonomy-set">';
+            html += '<summary>&#128193; ' + set.setName +
+                    ' <span class="item-count-badge">' + termCount + '<sup>terms</sup></span>' +
+                    ' <span class="list-id-text" style="font-size:0.72rem;color:#888;margin-left:6px;">' +
+                    set.setId + '</span></summary>';
+            if (set.setDescription || _snaIsAdmin) {
+                html += '<p style="font-size:13px;color:#555;margin:8px 0 6px 0;">' + setDescHtml + '</p>';
+            }
+            if (termCount > 0) {
+                var tblId = 'sna-terms-' + set.setId.replace(/-/g, '');
+                html += '<div id="' + tblId + '"></div>';
+                _snaTablesQueue.push({ id: tblId, type: 'terms', data: set.terms, searchLabel: set.setName + ' terms', setId: set.setId });
+            } else {
+                html += '<p style="font-size:13px;color:#999;font-style:italic;margin:6px 0;">No terms found.</p>';
+            }
+            html += '</details>';
+        });
+
+        html += '</details>';
+    });
+    return html;
+}
+
+// ── Phase 5: Save a description field ──
+async function snaSaveDescription(editKey, newText) {
+    var parts = editKey.split(':');
+    var kind  = parts[0];
+
+    // Taxonomy entities require CSOM (v2.1 REST enforces OAuth-only on writes)
+    if (kind === 'termset' || kind === 'termgroup' || kind === 'term') {
+        return snaTaxonomyCsomUpdate(kind, parts, newText);
+    }
+
+    var digest = await getRequestDigest(_snaTargetUrl);
+    var url    = '';
+    var body   = {};
+
+    if (kind === 'site') {
+        url  = _snaTargetUrl + '/_api/web';
+        body = { Description: newText };
+    } else if (kind === 'list') {
+        url  = _snaTargetUrl + '/_api/web/lists(guid' + "'" + parts[1] + "'" + ')';
+        body = { Description: newText };
+    } else if (kind === 'column') {
+        url  = _snaTargetUrl + '/_api/web/lists(guid' + "'" + parts[1] +
+               "')/fields(guid'" + parts[2] + "')";
+        body = { Description: newText };
+    }
+
+    var res = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json;odata=nometadata',
+            'X-RequestDigest': digest,
+            'IF-MATCH': '*'
+        },
+        credentials: 'include',
+        body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+        var errText = await res.text().catch(function() { return ''; });
+        throw new Error('HTTP ' + res.status + (errText ? ': ' + errText.substring(0, 120) : ''));
+    }
+}
+
+// ── Phase 5: Update taxonomy descriptions via CSOM (bypasses OAuth-only restriction on v2.1 REST) ──
+async function snaTaxonomyCsomUpdate(kind, parts, newText) {
+    var digest  = await getRequestDigest(_snaTargetUrl);
+    var storeId = _snaTermStoreId;
+    var escaped = newText
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    var csomHeader = '<Request AddExpandoFieldTypeSuffix="true" SchemaVersion="15.0.0.0" LibraryVersion="16.0.0.0" ApplicationName="JavaScript Client Library" xmlns="http://schemas.microsoft.com/sharepoint/clientquery/2009">';
+    var sessionPaths =
+        '<StaticMethod TypeId="{981cbc68-9edc-4f8d-872f-71580e7715a2}" Name="GetTaxonomySession" Id="3"><Parameters><Parameter ObjectPathId="4"/></Parameters></StaticMethod>' +
+        '<StaticProperty Id="4" TypeId="{3747adcd-a3c3-41b9-bfab-4a64dd2f1e0a}" Name="Current"/>' +
+        '<Property Id="33" ObjectPathId="3" Name="TermStores"/>' +
+        '<Method Id="5" ObjectPathId="33" Name="GetById"><Parameters><Parameter Type="Guid">' + storeId + '</Parameter></Parameters></Method>';
+
+    var xml;
+    if (kind === 'termset') {
+        // parts: ['termset', setId]
+        xml = csomHeader +
+            '<Actions>' +
+            '<SetProperty Id="1" ObjectPathId="6" Name="Description"><Parameter Type="String">' + escaped + '</Parameter></SetProperty>' +
+            '<Method Name="CommitAll" Id="2" ObjectPathId="5"/>' +
+            '</Actions>' +
+            '<ObjectPaths>' + sessionPaths +
+            '<Method Id="6" ObjectPathId="5" Name="GetTermSet"><Parameters><Parameter Type="Guid">' + parts[1] + '</Parameter></Parameters></Method>' +
+            '</ObjectPaths></Request>';
+    } else if (kind === 'termgroup') {
+        // parts: ['termgroup', groupId]
+        xml = csomHeader +
+            '<Actions>' +
+            '<SetProperty Id="1" ObjectPathId="7" Name="Description"><Parameter Type="String">' + escaped + '</Parameter></SetProperty>' +
+            '<Method Name="CommitAll" Id="2" ObjectPathId="5"/>' +
+            '</Actions>' +
+            '<ObjectPaths>' + sessionPaths +
+            '<Property Id="34" ObjectPathId="5" Name="Groups"/>' +
+            '<Method Id="7" ObjectPathId="34" Name="GetById"><Parameters><Parameter Type="Guid">' + parts[1] + '</Parameter></Parameters></Method>' +
+            '</ObjectPaths></Request>';
+    } else if (kind === 'term') {
+        // parts: ['term', setId, termId]
+        xml = csomHeader +
+            '<Actions>' +
+            '<Method Name="SetDescription" Id="1" ObjectPathId="7"><Parameters><Parameter Type="String">en-US</Parameter><Parameter Type="String">' + escaped + '</Parameter></Parameters></Method>' +
+            '<Method Name="CommitAll" Id="2" ObjectPathId="5"/>' +
+            '</Actions>' +
+            '<ObjectPaths>' + sessionPaths +
+            '<Method Id="6" ObjectPathId="5" Name="GetTermSet"><Parameters><Parameter Type="Guid">' + parts[1] + '</Parameter></Parameters></Method>' +
+            '<Method Id="7" ObjectPathId="6" Name="GetTerm"><Parameters><Parameter Type="Guid">' + parts[2] + '</Parameter></Parameters></Method>' +
+            '</ObjectPaths></Request>';
+    }
+
+    var res = await fetch(_snaTargetUrl + '/_vti_bin/client.svc/ProcessQuery', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'text/xml',
+            'X-RequestDigest': digest
+        },
+        credentials: 'include',
+        body: xml
+    });
+    if (!res.ok) {
+        var errText = await res.text().catch(function() { return ''; });
+        throw new Error('HTTP ' + res.status + (errText ? ': ' + errText.substring(0, 200) : ''));
+    }
+    var respText = await res.text();
+    var errMatch = respText.match(/"ErrorMessage"\s*:\s*"([^"]+)"/);
+    if (errMatch) { throw new Error(errMatch[1]); }
+}
+
+// ── Phase 5: Inline edit lifecycle ──
+function snaStartEdit(wrapEl) {
+    if (!wrapEl || wrapEl.dataset.editing) { return; }
+    wrapEl.dataset.editing = '1';
+
+    var textEl    = wrapEl.querySelector('.sna-editable-text');
+    var pencilBtn = wrapEl.querySelector('.sna-pencil-btn');
+    var origText  = textEl ? (textEl.dataset.snaOrig || '') : '';
+
+    var editorWrap = document.createElement('div');
+    editorWrap.className = 'sna-editor-wrap';
+
+    var field = document.createElement('div');
+    field.className      = 'sna-editor-field';
+    field.contentEditable = 'true';
+    field.setAttribute('role', 'textbox');
+    field.setAttribute('aria-multiline', 'true');
+    field.setAttribute('aria-label', 'Edit description');
+    field.textContent = origText;
+
+    var controls  = document.createElement('div');
+    controls.className = 'sna-editor-controls';
+
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'sna-editor-save-btn';
+    saveBtn.setAttribute('data-action', 'save-edit');
+    saveBtn.textContent = 'Save';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'sna-editor-cancel-btn';
+    cancelBtn.setAttribute('data-action', 'cancel-edit');
+    cancelBtn.textContent = 'Cancel';
+
+    controls.appendChild(saveBtn);
+    controls.appendChild(cancelBtn);
+    editorWrap.appendChild(field);
+    editorWrap.appendChild(controls);
+
+    wrapEl._snaEditorWrap = editorWrap;
+
+    if (textEl)    { textEl.style.display    = 'none'; }
+    if (pencilBtn) { pencilBtn.style.display = 'none'; }
+    wrapEl.appendChild(editorWrap);
+
+    field.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            snaCancelEdit(wrapEl);
+        } else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
+            e.preventDefault();
+            snaSaveEditFromEl(wrapEl);
+        }
+    });
+
+    field.focus();
+    var range = document.createRange();
+    range.selectNodeContents(field);
+    range.collapse(false);
+    var sel = window.getSelection();
+    if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+}
+
+function snaCancelEdit(wrapEl) {
+    if (!wrapEl) { return; }
+    var textEl    = wrapEl.querySelector('.sna-editable-text');
+    var pencilBtn = wrapEl.querySelector('.sna-pencil-btn');
+    var editorWrap = wrapEl._snaEditorWrap;
+    if (editorWrap && editorWrap.parentNode) { editorWrap.parentNode.removeChild(editorWrap); }
+    if (textEl)    { textEl.style.display    = ''; }
+    if (pencilBtn) { pencilBtn.style.display = ''; }
+    delete wrapEl.dataset.editing;
+    delete wrapEl._snaEditorWrap;
+}
+
+function snaSaveEditFromEl(wrapEl) {
+    if (!wrapEl) { return; }
+    var editorWrap = wrapEl._snaEditorWrap;
+    var field      = editorWrap ? editorWrap.querySelector('.sna-editor-field') : null;
+    if (!field) { return; }
+    var newText = field.textContent;
+    var editKey = wrapEl.getAttribute('data-edit-key') || '';
+    var saveBtn = editorWrap.querySelector('.sna-editor-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+
+    snaSaveDescription(editKey, newText).then(function() {
+        var textEl = wrapEl.querySelector('.sna-editable-text');
+        if (textEl) {
+            textEl.textContent    = newText || '';
+            textEl.dataset.snaOrig = newText || '';
+        }
+        if (newText) {
+            wrapEl.classList.remove('sna-editable-wrap--empty');
+        } else {
+            wrapEl.classList.add('sna-editable-wrap--empty');
+            if (textEl) { textEl.innerHTML = '<em style="color:#bbb;">Click ✎ to add a description</em>'; }
+        }
+        snaCancelEdit(wrapEl);
+        snaShowToast('Description saved.');
+    }).catch(function(err) {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+        snaShowToast('Save failed: ' + (err.message || String(err)), true);
+    });
 }
 
 function snaSearchInit() {
