@@ -3,7 +3,7 @@ This file is part of Sitenalyzer.
 Sitenalyzer.html - Get internal information about a SharePoint site.
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-05-06
+Last Modified: 2026-05-11
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site.
          The contents of this file should be embedded in a SharePoint page using a REACT Modern Script Editor webpart.
 Notes: See README file for documentation and full license information. Also see: https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245
@@ -27,6 +27,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 <head>
 <meta charset="UTF-8">
 <title>Sitenalyzer: SharePoint Internal Information Gatherer</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" integrity="sha256-yVBhl8r4CaB1tt7h2g02+xnacVj/6KiOewyWxdhiPJk=" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tabulator/6.3.1/js/tabulator.min.js" integrity="sha512-8+qwMD/110YLl5T2bPupMbPMXlARhei2mSxerb/0UWZuvcg4NjG7FdxzuuvDs2rBr/KCNqhyBDe8W3ykKB1dzA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabulator/6.3.1/css/tabulator_simple.min.css" integrity="sha512-y1tmflpZJZN8kuF2iztrztYsEAnYDzjD0KwlWScBzVxYWbz0QM9W6j2WPZQNh2rudzO/fxpUJsXYS6LlojZfgQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <style>
     #sp-info-app {
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -193,54 +196,132 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
     .app-tag { background: #edebe9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
 
-    .fields-table { 
-        width: 100%; 
-        border-collapse: collapse; 
-        margin-top: 10px; 
-        /* Forces the browser to calculate column widths once, stopping the freeze */
-        table-layout: fixed; 
+    /* ── Phase 2: Tabulator theme — matches Sitenalyzer palette ── */
+    .tabulator {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 13px;
+        border: 1px solid #c8c6c4;
+        border-radius: 4px;
+        background: #fff;
+        margin-top: 4px;
     }
-    .fields-table th, .fields-table td { 
-        border: 1px solid #ddd; 
-        padding: 6px; 
-        font-size: 12px; 
-        text-align: left; 
-        /* Ensures long URLs or descriptions don't break the fixed columns */
-        word-wrap: break-word; 
+    .tabulator .tabulator-header {
+        background: #f3f2f1;
+        border-bottom: 2px solid #0078d4;
+        border-radius: 4px 4px 0 0;
+    }
+    .tabulator .tabulator-header .tabulator-col {
+        background: transparent;
+        border-right: 1px solid #e1dfdd;
+        color: #323130;
+        font-weight: 600;
+        font-size: 13px;
+        padding: 8px 10px;
+    }
+    .tabulator .tabulator-header .tabulator-col:last-child { border-right: none; }
+    .tabulator .tabulator-header .tabulator-col .tabulator-col-title { white-space: normal; }
+    .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover { background: rgba(0,120,212,0.08); cursor: pointer; }
+    /* Fields (column definitions) tables are not row-clickable — reset to default cursor */
+    .sna-fields-table .tabulator-row,
+    .sna-fields-table .tabulator-row .tabulator-cell { cursor: default; }
+    .tabulator .tabulator-header .tabulator-col .tabulator-col-sorter .tabulator-arrow { border-top-color: #0078d4; border-bottom-color: #0078d4; }
+    .tabulator-row { border-bottom: 1px solid #edebe9; }
+    .tabulator-row:nth-child(even) { background: #faf9f8; }
+    .tabulator-row:nth-child(odd)  { background: #ffffff; }
+    .tabulator-row:hover,
+    .tabulator-row.tabulator-row-even:hover { background: #e8f3fb !important; }
+    .tabulator-row .tabulator-cell {
+        padding: 7px 10px;
+        border-right: 1px solid #edebe9;
+        vertical-align: top;
+        word-break: break-word;
         overflow-wrap: break-word;
+        white-space: normal;
+        line-height: 1.5;
+        font-size: 13px;
+        color: #323130;
     }
-    .fields-table th { background-color: #e1dfdd; }
-	
-	/* Pre-defined column widths for the fields table */
-    .fields-table th:nth-child(1) { width: 22%; }
-    .fields-table th:nth-child(2) { width: 22%; }
-    .fields-table th:nth-child(3) { width: 16%; }
-    .fields-table th:nth-child(4) { width: 25%; }
-    .fields-table th:nth-child(5) { width: 15%; }
+    .tabulator-row .tabulator-cell:last-child { border-right: none; }
+    .tabulator .tabulator-footer { display: none !important; }
+    .tabulator-placeholder span { color: #999; font-style: italic; }
+    .tabulator .tabulator-tableholder { overflow-y: auto; }
 
-    .folders-table { 
-        width: 100%; 
-        border-collapse: collapse; 
-        margin-top: 8px; 
-        margin-bottom: 10px; 
-        table-layout: fixed; 
+    /* ── Phase 2: Table search input ── */
+    .sna-table-search-wrap { margin: 8px 0 5px 0; }
+    .sna-table-search {
+        width: 100%;
+        padding: 7px 10px 7px 32px;
+        font-size: 13px;
+        border: 1px solid #c8c6c4;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 10px center;
+        transition: border-color 0.2s;
     }
-    .folders-table th, .folders-table td { 
-        border: 1px solid #ddd; 
-        padding: 6px 10px; 
-        font-size: 12px; 
-        text-align: left; 
-        word-wrap: break-word; 
-        overflow-wrap: break-word;
+    .sna-table-search:focus { outline: 3px solid #0078d4; outline-offset: 1px; border-color: #0078d4; }
+    .sna-table-search::placeholder { color: #aaa; }
+
+    /* ── Phase 3: Section action buttons (Copy ID, Open, header row) ── */
+    .sna-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+        margin-bottom: 4px;
     }
-    .folders-table th { background-color: #e1dfdd; }
-    
-    /* Pre-defined column widths for the folders table */
-    .folders-table th:nth-child(1) { text-align: center; width: 40px; font-size: 16px; }
-    .folders-table th:nth-child(2) { width: auto; }
-    .folders-table th:nth-child(3) { width: 15%; }
-    .folders-table th:nth-child(4) { width: 30%; }
-    .folders-table tr:hover { background-color: #f8f8f8; }
+    .sna-card-header h3 {
+        margin: 0;
+        flex: 1;
+        min-width: 0;
+        word-break: break-word;
+    }
+    .sna-card-actions {
+        display: flex;
+        gap: 4px;
+        flex-shrink: 0;
+        align-items: center;
+    }
+    .sna-action-btn {
+        background: #fff !important;
+        color: #0078d4 !important;
+        border: 1px solid #0078d4 !important;
+        padding: 3px 9px !important;
+        font-size: 12px !important;
+        font-weight: 600;
+        border-radius: 4px;
+        cursor: pointer;
+        margin: 0 !important;
+        min-width: 0;
+        min-height: 28px;
+        white-space: nowrap;
+        line-height: 1.4;
+        transition: background 0.15s, color 0.15s;
+    }
+    .sna-action-btn:hover { background: #0078d4 !important; color: #fff !important; }
+    .sna-action-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+    .sna-copy-toast {
+        position: fixed;
+        bottom: 28px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #323130;
+        color: #fff;
+        padding: 8px 20px;
+        border-radius: 20px;
+        font-size: 13px;
+        z-index: 9999;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+    .sna-copy-toast.visible { opacity: 1; }
+
+    /* ── Phase 2: Field type icon ── */
+    .sna-type-icon { font-style: normal; margin-right: 4px; vertical-align: middle; opacity: 0.85; }
+
+    /* ── Phase 2: folder items right-align ── */
+    .sna-tab-items-cell { text-align: right; font-variant-numeric: tabular-nums; }
 
     #sp-loader { display: none; font-style: italic; color: #666; margin-bottom: 15px; }
 
@@ -329,6 +410,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         font-weight: 400;
     }
 
+    /* ── Phase 3: Inline ID reveal (shown temporarily on ID button click) ── */
+    .sna-id-inline {
+        font-size: 0.72rem;
+        color: #888;
+        font-family: 'Courier New', monospace;
+        word-break: break-all;
+        vertical-align: middle;
+        margin-right: 4px;
+    }
+
     /* ── Phase 1: Item count badge ── */
     .item-count-badge {
         display: inline-flex;
@@ -368,6 +459,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         .fields-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .folders-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .item-count-badge { background: #555 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        /* Tabulator print: expand all rows, hide search */
+        .tabulator { height: auto !important; border: 1px solid #ccc !important; }
+        .tabulator-tableholder { height: auto !important; overflow: visible !important; }
+        .tabulator .tabulator-header { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .sna-table-search-wrap { display: none !important; }
 
         .github-btn {
             background-color: transparent !important;
@@ -384,10 +480,128 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
             color: #555;
         }
     }
+
+    /* ── Phase 4: Global search widget ── */
+    #sna-global-search {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    #sna-search-toggle {
+        background: #0078d4;
+        color: #fff;
+        border: none;
+        border-radius: 50%;
+        width: 48px;
+        height: 48px;
+        font-size: 22px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        padding: 0;
+        margin: 0;
+        line-height: 1;
+        transition: background 0.15s, transform 0.15s;
+    }
+    #sna-search-toggle:hover { background: #005a9e; transform: scale(1.08); }
+    #sna-search-toggle:focus { outline: 3px solid #005a9e; outline-offset: 2px; }
+    #sna-search-panel {
+        background: #fff;
+        border: 1px solid #c8c6c4;
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+        padding: 10px;
+        width: 320px;
+        max-width: calc(100vw - 56px);
+        order: -1;
+    }
+    #sna-search-input {
+        width: 100%;
+        padding: 8px 12px;
+        font-size: 14px;
+        border: 1px solid #c8c6c4;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    #sna-search-input:focus { outline: 3px solid #0078d4; outline-offset: 1px; border-color: #0078d4; }
+    #sna-search-results {
+        list-style: none;
+        padding: 0;
+        margin: 6px 0 0 0;
+        max-height: 300px;
+        overflow-y: auto;
+        border-top: 1px solid #edebe9;
+    }
+    #sna-search-results:empty { display: none; }
+    .sna-search-result {
+        padding: 8px 10px;
+        cursor: pointer;
+        border-bottom: 1px solid #f3f2f1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .sna-search-result:last-child { border-bottom: none; }
+    .sna-search-result:hover,
+    .sna-search-result[aria-selected="true"] { background: #e8f3fb; }
+    .sna-search-result-primary {
+        font-size: 13px;
+        font-weight: 600;
+        color: #323130;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .sna-search-result-secondary {
+        font-size: 11px;
+        color: #555;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .sna-search-result-breadcrumb {
+        font-size: 10px;
+        color: #999;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .sna-search-no-results {
+        padding: 10px;
+        font-size: 13px;
+        color: #999;
+        font-style: italic;
+        text-align: center;
+    }
+    @keyframes sna-highlight-pulse {
+        0%   { outline: 4px solid #0078d4; outline-offset: 3px; background-color: #cce4f6; }
+        65%  { outline: 4px solid #0078d4; outline-offset: 3px; background-color: #cce4f6; }
+        100% { outline: none; outline-offset: 0; background-color: transparent; }
+    }
+    .sna-highlight-pulse {
+        animation: sna-highlight-pulse 1.8s ease-out forwards;
+        border-radius: 4px;
+    }
+    @media (max-width: 480px) {
+        #sna-search-panel { width: calc(100vw - 56px); }
+    }
+    @media print {
+        #sna-global-search { display: none !important; }
+    }
 </style>
 </head>
 
 <body>
+	<div id="sna-copy-toast" role="status" aria-live="polite" class="sna-copy-toast"></div>
 	<div id="sp-info-app">
 		<div style="margin-bottom: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
 		<h1 style="margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1;">
@@ -405,10 +619,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
             <ul id="site-suggestions"></ul>
             <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
         </div>
-        <button id="sp-btn-gather" onclick="gatherSiteInformation()">Extract Site Information</button>
+        <button id="sp-btn-gather">Extract Site Information</button>
     </div>
     <div id="sna-start-over-btn">
-        <button onclick="startOver()" aria-label="Start Over: clear results and enter a new site URL">&#8635; Start Over</button>
+        <button aria-label="Start Over: clear results and enter a new site URL">&#8635; Start Over</button>
     </div>
     <div id="sp-loader">Fetching data from SharePoint REST APIs... this may take a moment.</div>
     <div id="sp-results"></div>
@@ -427,7 +641,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     </div>
 </div>
 </div>
-
 
 <script>
 /**
@@ -461,6 +674,161 @@ var SITEANALYZER_SKIP_FIELDS = new Set([
 // ── Port of DLV fetchSPFields (23-sharepoint.js) — server + client filtering ──
 // Excludes Hidden, Computed, underscore-prefixed, dependent lookups, and SKIP_FIELDS.
 // Always includes mandatory fields and FileRef/FileLeafRef/FileDirRef for doc libs.
+// ── Phase 2: Field type icons (mirrors DLV FIELD_TYPE_ICONS from 10-constants.js) ──
+var SITEANALYZER_FIELD_TYPE_ICONS = {
+  'text':         { icon: '📝', label: 'Text' },
+  'number':       { icon: '＃',  label: 'Number' },
+  'date':         { icon: '📅', label: 'Date' },
+  'datetime':     { icon: '🕒', label: 'Date & Time' },
+  'boolean':      { icon: '✅', label: 'Yes/No' },
+  'url':          { icon: '🌐', label: 'URL / Hyperlink' },
+  'user':         { icon: '👤', label: 'Person' },
+  'user-multi':   { icon: '👥', label: 'Person (multi)' },
+  'lookup':       { icon: '🔍', label: 'Lookup' },
+  'lookup-multi': { icon: '🔍', label: 'Lookup (multi)' },
+  'choice':       { icon: '📝', label: 'Choice' },
+  'choice-multi': { icon: '🔍', label: 'Choice (multi)' },
+  'taxkeyword':   { icon: '🔍', label: 'Taxonomy' },
+  'calculated':   { icon: '🔢', label: 'Calculated' },
+  'default':      { icon: '❔', label: 'Unknown' }
+};
+
+// Map SP TypeAsString to a field type icon.  Uses CalculatedFieldTypeAsString for Calculated fields.
+function snaGetFieldTypeIcon(spType, calcType) {
+  var resolved = (spType === 'Calculated' && calcType) ? calcType : spType;
+  var t = (resolved || '').toLowerCase();
+  if (t === 'usermulti') return SITEANALYZER_FIELD_TYPE_ICONS['user-multi'].icon;
+  if (t === 'user') return SITEANALYZER_FIELD_TYPE_ICONS['user'].icon;
+  if (t === 'lookupmulti' || t === 'taxonomyfieldtypemulti' || t === 'multichoice') return SITEANALYZER_FIELD_TYPE_ICONS['lookup-multi'].icon;
+  if (t === 'lookup' || t === 'taxonomyfieldtype') return SITEANALYZER_FIELD_TYPE_ICONS['lookup'].icon;
+  if (t === 'choice') return SITEANALYZER_FIELD_TYPE_ICONS['choice'].icon;
+  if (t.indexOf('bool') === 0 || t === 'yesno' || t === 'yes/no') return SITEANALYZER_FIELD_TYPE_ICONS['boolean'].icon;
+  if (t === 'number' || t === 'currency' || t === 'integer' || t === 'counter' || t === 'autoid' || t === 'float' || t === 'decimal') return SITEANALYZER_FIELD_TYPE_ICONS['number'].icon;
+  if (t === 'datetime') return SITEANALYZER_FIELD_TYPE_ICONS['datetime'].icon;
+  if (t === 'date') return SITEANALYZER_FIELD_TYPE_ICONS['date'].icon;
+  if (t === 'url' || t === 'hyperlink' || t === 'link') return SITEANALYZER_FIELD_TYPE_ICONS['url'].icon;
+  if (t === 'calculated') return SITEANALYZER_FIELD_TYPE_ICONS['calculated'].icon;
+  if (t === 'note' || t === 'html') return SITEANALYZER_FIELD_TYPE_ICONS['text'].icon;
+  return SITEANALYZER_FIELD_TYPE_ICONS['text'].icon;
+}
+
+// ── Phase 2: Tabulator queue + instance map ──
+// _snaTablesQueue: populated during gatherSiteInformation, consumed by initSnaTabulators.
+// _snaTabInstances: stores live Tabulator instances for redraw on details-open and print.
+var _snaTablesQueue = [];
+var _snaTabInstances = {};
+
+// Initialize all queued Tabulator tables after HTML is injected into the DOM.
+function initSnaTabulators() {
+  if (!window.Tabulator) { return; }
+
+  _snaTablesQueue.forEach(function(tbl) {
+    var el = document.getElementById(tbl.id);
+    if (!el) { return; }
+
+    // Inject search input above the placeholder div
+    var searchId = tbl.id + '-s';
+    el.insertAdjacentHTML('beforebegin',
+      '<div class="sna-table-search-wrap">' +
+        '<input type="text" id="' + searchId + '" class="sna-table-search"' +
+        ' placeholder="Search ' + tbl.searchLabel + '..." aria-label="Search ' + tbl.searchLabel + '">' +
+      '</div>'
+    );
+
+    var columns = [];
+    if (tbl.type === 'fields') {
+      columns = [
+        {
+          title: 'Title', field: 'title', sorter: 'string', widthGrow: 2,
+          formatter: function(cell) {
+            var rowData = cell.getRow().getData();
+            var icon = rowData.typeIcon || '📝';
+            var label = rowData.typeLabel || '';
+            var val = cell.getValue() || '';
+            return '<span class="sna-type-icon" title="' + label + '" aria-hidden="true">' + icon + '</span>' + val;
+          }
+        },
+        { title: 'Internal Name', field: 'internalName', sorter: 'string', widthGrow: 2 },
+        { title: 'Data Type',     field: 'dataType',     sorter: 'string', widthGrow: 1.5 },
+        { title: 'Description',   field: 'description',  sorter: 'string', widthGrow: 3, formatter: 'textarea' },
+        { title: 'Lookup List',   field: 'lookupList',   sorter: 'string', widthGrow: 1.5 }
+      ];
+    } else if (tbl.type === 'folders') {
+      columns = [
+        {
+          title: 'Folder Name', field: 'name', sorter: 'string', widthGrow: 3,
+          formatter: function(cell) {
+            var rowData = cell.getRow().getData();
+            var icon = rowData.icon || '📂';
+            var val = cell.getValue() || '';
+            var url = rowData.folderUrl || '';
+            if (url) {
+              return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' +
+                '<a href="' + url + '" target="_blank" rel="noopener noreferrer" data-action="open-url">' + val + '</a>';
+            }
+            return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' + val;
+          }
+        },
+        {
+          title: 'Items', field: 'items', sorter: 'number', width: 95, hozAlign: 'right',
+          formatter: function(cell) {
+            return '<span class="sna-tab-items-cell">' + (cell.getValue() !== null ? cell.getValue() : '-') + '</span>';
+          }
+        },
+        {
+          title: 'Folder ID', field: 'folderId', sorter: 'string', widthGrow: 2,
+          formatter: function(cell) {
+            return '<span class="list-id-text">' + (cell.getValue() || '') + '</span>';
+          }
+        }
+      ];
+    }
+
+    var tabOpts = {
+      data: tbl.data,
+      columns: columns,
+      layout: 'fitColumns',
+      renderType: 'basic',
+      movableColumns: false,
+      selectable: false,
+      placeholder: '<em>No data found.</em>'
+    };
+    if (tbl.data.length > 7) { tabOpts.maxHeight = '360px'; }
+
+    var table = new Tabulator(el, tabOpts);
+    _snaTabInstances[tbl.id] = table;
+
+    // Wire search input
+    var searchEl = document.getElementById(searchId);
+    if (searchEl) {
+      searchEl.addEventListener('input', function() {
+        var val = this.value.trim().toLowerCase();
+        if (!val) { table.clearFilter(); return; }
+        table.setFilter(function(data) {
+          var keys = Object.keys(data);
+          for (var k = 0; k < keys.length; k++) {
+            var v = data[keys[k]];
+            if (v && String(v).toLowerCase().indexOf(val) > -1) { return true; }
+          }
+          return false;
+        });
+      });
+    }
+
+    // Redraw when enclosing <details> opens (fixes layout in collapsed containers)
+    var detailsParent = el.closest('details');
+    if (detailsParent) {
+      detailsParent.addEventListener('toggle', function() {
+        if (detailsParent.open && _snaTabInstances[tbl.id]) {
+          _snaTabInstances[tbl.id].redraw(true);
+        }
+      });
+    }
+  });
+
+  _snaTablesQueue = [];
+}
+
 async function snaFetchFields(targetUrl, listGuid, isDocLib) {
   var filter = "(Hidden eq false and TypeAsString ne 'Computed' and startswith(InternalName,'_') eq false" +
     " and (TypeAsString ne 'LookupMulti' or (TypeAsString eq 'LookupMulti' and ReadOnlyField eq false and IsDependentLookup eq false)))" +
@@ -709,9 +1077,91 @@ function exportToCSV() {
     document.body.removeChild(link);
 }
 
+// ── Phase 3: Clipboard copy with toast notification ──
+function snaCopyToClipboard(text, label) {
+    var toast = document.getElementById('sna-copy-toast');
+    navigator.clipboard.writeText(text).then(function() {
+        if (toast) {
+            toast.textContent = (label || 'ID') + ' copied!';
+            toast.classList.add('visible');
+            setTimeout(function() { toast.classList.remove('visible'); }, 1800);
+        }
+    }, function() {
+        // Fallback for browsers without clipboard API
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { document.execCommand('copy'); } catch(e) { /* ignore */ }
+        document.body.removeChild(ta);
+        if (toast) {
+            toast.textContent = (label || 'ID') + ' copied!';
+            toast.classList.add('visible');
+            setTimeout(function() { toast.classList.remove('visible'); }, 1800);
+        }
+    });
+}
+
+// Single delegated click handler for all dynamically generated buttons and links.
+function snaHandleResultsClick(e) {
+    var target = e.target.closest('[data-action]');
+    if (!target) { return; }
+    var action = target.getAttribute('data-action');
+    if (action === 'collapse-all') { collapseAll(); }
+    else if (action === 'expand-all') { expandAll(); }
+    else if (action === 'export-csv') { exportToCSV(); }
+    else if (action === 'expand-print') { expandAndPrint(); }
+    else if (action === 'scroll-top') {
+        var el = document.getElementById('sp-info-app');
+        if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    }
+    else if (action === 'copy-show-id') {
+        snaCopyAndShowId(
+            target.getAttribute('data-id'),
+            target.getAttribute('data-label'),
+            target.getAttribute('data-display-id')
+        );
+    }
+    else if (action === 'open-url') {
+        e.preventDefault();
+        snaOpenUrl(target.getAttribute('data-url') || target.href);
+    }
+}
+
+// Copy ID to clipboard and temporarily reveal it as small text next to the button.
+function snaCopyAndShowId(id, label, displayId) {
+    snaCopyToClipboard(id, label);
+    var el = document.getElementById(displayId);
+    if (el) {
+        el.textContent = id;
+        el.style.display = 'inline';
+        if (el._snaHideTimer) { clearTimeout(el._snaHideTimer); }
+        el._snaHideTimer = setTimeout(function() { el.style.display = 'none'; }, 5000);
+    }
+}
+
+function snaOpenUrl(url) {
+    if (url) { window.open(url, '_blank', 'noopener,noreferrer'); }
+}
+
 function startOver() {
     document.getElementById('sp-results').innerHTML = '';
     globalExportedData = [];
+    _snaSearchIndex = [];
+    _snaCardData    = [];
+    var srPanel = document.getElementById('sna-search-panel');
+    if (srPanel) { srPanel.hidden = true; }
+    var srToggle = document.getElementById('sna-search-toggle');
+    if (srToggle) { srToggle.setAttribute('aria-expanded', 'false'); }
+    var srInput = document.getElementById('sna-search-input');
+    if (srInput) { srInput.setAttribute('aria-expanded', 'false'); srInput.value = ''; }
+    var srList = document.getElementById('sna-search-results');
+    if (srList) { srList.innerHTML = ''; }
+    var srCountEl = document.getElementById('sna-search-sr-count');
+    if (srCountEl) { srCountEl.textContent = ''; }
     var urlSection = document.getElementById('sna-url-section');
     if (urlSection) { urlSection.classList.remove('collapsed'); }
     var startOverBtn = document.getElementById('sna-start-over-btn');
@@ -723,12 +1173,19 @@ function startOver() {
 function expandAndPrint() {
     var detailsEls = document.querySelectorAll('#sp-results details');
     detailsEls.forEach(function(d) { d.open = true; });
+    // Redraw all Tabulator instances so columns resize correctly when revealed
+    Object.keys(_snaTabInstances).forEach(function(k) {
+        if (_snaTabInstances[k]) { _snaTabInstances[k].redraw(true); }
+    });
     window.print();
 }
 
 function expandAll() {
     var detailsEls = document.querySelectorAll('#sp-results details');
     detailsEls.forEach(function(d) { d.open = true; });
+    Object.keys(_snaTabInstances).forEach(function(k) {
+        if (_snaTabInstances[k]) { _snaTabInstances[k].redraw(true); }
+    });
 }
 
 function collapseAll() {
@@ -746,6 +1203,10 @@ async function gatherSiteInformation() {
     loader.style.display = 'block';
     resultsDiv.innerHTML = '';
     globalExportedData = [];
+    _snaTablesQueue = [];
+    _snaTabInstances = {};
+    _snaCardData = [];
+    _snaSearchIndex = [];
 
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
@@ -765,7 +1226,7 @@ async function gatherSiteInformation() {
         var allLists = null;
         try {
 			// Adapted from DataLaVista's fetchSPLists() function (https://michmed.org/datalavista)
-			allLists = await spFetch(`${targetUrl}/_api/web/lists?$select=Id,EntityTypeName,Title,Description,ItemCount,BaseType,Hidden,ImageUrl,IsApplicationList,LastItemModifiedDate,BaseTemplate,HasUniqueRoleAssignments&$filter=(Hidden eq false and IsApplicationList eq false and BaseTemplate ne 115 and BaseTemplate ne 121 and BaseTemplate ne 330 and BaseTemplate ne 544 and Title ne 'MicroFeed' and EntityTypeName ne 'AppCatalog' and EntityTypeName ne 'FormServerTemplates' and EntityTypeName ne 'Style_x0020_Library') or (Title eq 'User Information List' or Title eq 'Events')`);
+			allLists = await spFetch(`${targetUrl}/_api/web/lists?$select=Id,EntityTypeName,Title,Description,ItemCount,BaseType,Hidden,ImageUrl,IsApplicationList,LastItemModifiedDate,BaseTemplate,HasUniqueRoleAssignments,DefaultViewUrl&$filter=(Hidden eq false and IsApplicationList eq false and BaseTemplate ne 115 and BaseTemplate ne 121 and BaseTemplate ne 330 and BaseTemplate ne 544 and Title ne 'MicroFeed' and EntityTypeName ne 'AppCatalog' and EntityTypeName ne 'FormServerTemplates' and EntityTypeName ne 'Style_x0020_Library') or (Title eq 'User Information List' or Title eq 'Events')`);
 		} catch(err) {}
 
         // Build a map of list GUID -> Title for lookup field resolution
@@ -813,47 +1274,49 @@ async function gatherSiteInformation() {
                 var lFields = await snaFetchFields(targetUrl, list.Id, isDocLib);
 
                 if (lFields && lFields.length > 0) {
-                    var tableRows = '';
+                    var fieldsData = [];
                     lFields.forEach(function(f) {
                         var returnType = '';
                         var typeDisplay = f.TypeAsString || '';
-
                         if (f.TypeAsString === 'Calculated' && f.CalculatedFieldTypeAsString) {
                             returnType = f.CalculatedFieldTypeAsString;
                             typeDisplay = 'Calculated (' + returnType + ')';
                         }
-
                         var lookupListName = '';
                         if (f.LookupList) {
                             var cleanGuid = String(f.LookupList).toLowerCase().replace(/[{}]/g, '');
                             lookupListName = listIdMap[cleanGuid] ? listIdMap[cleanGuid] : f.LookupList;
                         }
-
-                        tableRows += '<tr>';
-                        tableRows += '<td>' + (f.Title ? f.Title : '') + '</td>';
-                        tableRows += '<td>' + (f.InternalName ? f.InternalName : '') + '</td>';
-                        tableRows += '<td>' + typeDisplay + '</td>';
-                        tableRows += '<td>' + (f.Description ? f.Description : '') + '</td>';
-                        tableRows += '<td>' + lookupListName + '</td>';
-                        tableRows += '</tr>';
-
+                        var typeIcon = snaGetFieldTypeIcon(f.TypeAsString, f.CalculatedFieldTypeAsString);
+                        // Resolve human-readable label for icon tooltip
+                        var resolvedForLabel = (f.TypeAsString === 'Calculated' && f.CalculatedFieldTypeAsString) ? f.CalculatedFieldTypeAsString : (f.TypeAsString || '');
+                        fieldsData.push({
+                            title:        f.Title || '',
+                            internalName: f.InternalName || '',
+                            dataType:     typeDisplay,
+                            typeIcon:     typeIcon,
+                            typeLabel:    resolvedForLabel,
+                            description:  f.Description || '',
+                            lookupList:   lookupListName
+                        });
                         globalExportedData.push({
-                            ListTitle: list.Title,
-                            ListType: listTypeLabel,
-                            FieldTitle: f.Title,
+                            ListTitle:    list.Title,
+                            ListType:     listTypeLabel,
+                            FieldTitle:   f.Title,
                             InternalName: f.InternalName,
-                            Type: f.TypeAsString,
-                            Description: f.Description,
-                            ReturnType: returnType,
+                            Type:         f.TypeAsString,
+                            Description:  f.Description,
+                            ReturnType:   returnType,
                             LookupListName: lookupListName,
-                            LookupList: f.LookupList ? f.LookupList : '',
-                            Formula: f.Formula ? f.Formula : '',
+                            LookupList:   f.LookupList ? f.LookupList : '',
+                            Formula:      f.Formula ? f.Formula : '',
                             DefaultValue: f.DefaultValue ? f.DefaultValue : '',
-                            FieldId: f.Id
+                            FieldId:      f.Id
                         });
                     });
-
-                    fieldsHtml = '<div class="table-scroll-wrapper"><table class="fields-table"><thead><tr><th>Title</th><th>Internal Name</th><th>Data Type</th><th>Description</th><th>Lookup List</th></tr></thead><tbody>' + tableRows + '</tbody></table></div>';
+                    var fTblId = 'sna-tbl-f-' + i;
+                    _snaTablesQueue.push({ id: fTblId, type: 'fields', searchLabel: 'columns', data: fieldsData });
+                    fieldsHtml = '<div id="' + fTblId + '" class="sna-fields-table"></div>';
                 } else {
                     fieldsHtml = '<div class="perm-row">No visible fields found.</div>';
                 }
@@ -869,7 +1332,7 @@ async function gatherSiteInformation() {
             if (list.BaseTemplate === 101) {
                 var foldersTableHtml = '';
                 try {
-                    var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId,ItemCount";
+                    var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId,ItemCount,ServerRelativeUrl";
                     var folders;
                     try { folders = await spFetch(foldersUrl); } catch(err) { }
                     
@@ -877,17 +1340,26 @@ async function gatherSiteInformation() {
                         var validFolders = folders.value.filter(function(fldr) { return fldr.Name !== 'Forms'; });
                         
                         if (validFolders.length > 0) {
-                            var folderRows = '';
+                            var foldersData = [];
                             validFolders.forEach(function(fldr) {
-                                var itemCount = (fldr.ItemCount !== undefined && fldr.ItemCount !== null) ? fldr.ItemCount : '-';
-                                folderRows += '<tr>';
-                                folderRows += '<td>📂</td>';
-                                folderRows += '<td>' + fldr.Name + '</td>';
-                                folderRows += '<td style="text-align:right;">' + itemCount + '</td>';
-                                folderRows += '<td style="font-size:11px; color:#666;">' + fldr.UniqueId + '</td>';
-                                folderRows += '</tr>';
+                                // Build folder URL from ServerRelativeUrl (preferred) or fallback construction
+                                var folderUrl = '';
+                                if (fldr.ServerRelativeUrl) {
+                                    folderUrl = targetUrl.replace(/\/+$/, '').split('/').slice(0, 3).join('/') + fldr.ServerRelativeUrl;
+                                } else {
+                                    folderUrl = targetUrl.replace(/\/+$/, '') + '/' + list.EntityTypeName + '/' + encodeURIComponent(fldr.Name || '');
+                                }
+                                foldersData.push({
+                                    icon:     '📂',
+                                    name:     fldr.Name || '',
+                                    folderUrl: folderUrl,
+                                    items:    (fldr.ItemCount !== undefined && fldr.ItemCount !== null) ? fldr.ItemCount : null,
+                                    folderId: fldr.UniqueId || ''
+                                });
                             });
-                            foldersTableHtml = '<div class="table-scroll-wrapper"><table class="folders-table"><thead><tr><th></th><th>Folder Name</th><th style="text-align:right;">Items</th><th>ID</th></tr></thead><tbody>' + folderRows + '</tbody></table></div>';
+                            var dTblId = 'sna-tbl-d-' + i;
+                            _snaTablesQueue.push({ id: dTblId, type: 'folders', searchLabel: 'folders', data: foldersData });
+                            foldersTableHtml = '<div id="' + dTblId + '"></div>';
                         } else {
                             foldersTableHtml = '<p style="font-size:13px; color:#666; margin: 5px 0;">No top-level folders found.</p>';
                         }
@@ -898,9 +1370,43 @@ async function gatherSiteInformation() {
                     foldersTableHtml = '<p style="font-size:13px; color:red; margin: 5px 0;">Error loading folders: ' + e.message + '</p>';
                 }
 
-                libsHtml += '<div class="info-card"><h3>📄 ' + list.Title + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' + listDescHtml + '<div style="margin-bottom:12px;"><strong>Library ID:</strong> <span class="list-id-text">' + list.Id + '</span></div>' + '<strong>Top-Level Folders:</strong>' + foldersTableHtml + colDefsDetails + listRolesDetails + '</div>';
+                var libOpenUrl = list.DefaultViewUrl
+                    ? (window.location.origin + list.DefaultViewUrl)
+                    : (targetUrl.replace(/\/+$/, '') + '/' + list.EntityTypeName.replace(/_x0020_/g, '%20'));
+                var libIdLabel = 'Library ID';
+                var libIdDisplayId = 'sna-id-lib-' + i;
+                var libActionsHtml = '<div class="sna-card-actions hide-on-print">' +
+                    '<span id="' + libIdDisplayId + '" class="sna-id-inline" style="display:none;" aria-live="polite"></span>' +
+                    '<button class="sna-action-btn" data-action="copy-show-id" data-id="' + list.Id + '" data-label="' + libIdLabel + '" data-display-id="' + libIdDisplayId + '" aria-label="Copy Library ID to clipboard" title="' + libIdLabel + ': ' + list.Id + '">ID</button>' +
+                    '<button class="sna-action-btn" data-action="open-url" data-url="' + libOpenUrl + '" aria-label="Open library in new window" title="Open Library">Open</button>' +
+                    '</div>';
+                _snaCardData.push({ cardId: 'sna-card-lib-' + i, title: list.Title, internalName: list.EntityTypeName || '', listId: list.Id || '', isLib: true });
+                libsHtml += '<div class="info-card" id="sna-card-lib-' + i + '">' +
+                    '<div class="sna-card-header">' +
+                        '<h3>📄 ' + list.Title + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' +
+                        libActionsHtml +
+                    '</div>' +
+                    listDescHtml +
+                    '<strong>Top-Level Folders:</strong>' + foldersTableHtml + colDefsDetails + listRolesDetails + '</div>';
             } else {
-                listsHtml += '<div class="info-card"><h3>📋 ' + list.Title + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' + listDescHtml + '<div style="margin-bottom:12px;"><strong>List ID:</strong> <span class="list-id-text">' + list.Id + '</span></div>' + colDefsDetails + listRolesDetails + '</div>';
+                var listOpenUrl = list.DefaultViewUrl
+                    ? (window.location.origin + list.DefaultViewUrl)
+                    : (targetUrl.replace(/\/+$/, '') + '/Lists/' + list.EntityTypeName.replace(/List$/, '').replace(/_x0020_/g, '%20'));
+                var listIdLabel = 'List ID';
+                var listIdDisplayId = 'sna-id-lst-' + i;
+                var listActionsHtml = '<div class="sna-card-actions hide-on-print">' +
+                    '<span id="' + listIdDisplayId + '" class="sna-id-inline" style="display:none;" aria-live="polite"></span>' +
+                    '<button class="sna-action-btn" data-action="copy-show-id" data-id="' + list.Id + '" data-label="' + listIdLabel + '" data-display-id="' + listIdDisplayId + '" aria-label="Copy List ID to clipboard" title="' + listIdLabel + ': ' + list.Id + '">ID</button>' +
+                    '<button class="sna-action-btn" data-action="open-url" data-url="' + listOpenUrl + '" aria-label="Open list in new window" title="Open List">Open</button>' +
+                    '</div>';
+                _snaCardData.push({ cardId: 'sna-card-lst-' + i, title: list.Title, internalName: list.EntityTypeName || '', listId: list.Id || '', isLib: false });
+                listsHtml += '<div class="info-card" id="sna-card-lst-' + i + '">' +
+                    '<div class="sna-card-header">' +
+                        '<h3>📋 ' + list.Title + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' +
+                        listActionsHtml +
+                    '</div>' +
+                    listDescHtml +
+                    colDefsDetails + listRolesDetails + '</div>';
             }
         }
 
@@ -918,10 +1424,10 @@ if (siteInfo) {
                 '<span style="white-space: normal; word-break: break-word; line-height: 1.3;">' + siteInfo.Title.trim() + '</span>' +
             '</h2>' +
             '<div style="flex-shrink: 0;">' +
-                '<button class="icon-btn hide-on-print" onclick="collapseAll()" aria-label="Collapse All" title="Collapse All">&#9650;</button>' +
-                '<button class="icon-btn hide-on-print" onclick="expandAll()" aria-label="Expand All" title="Expand All">&#9660;</button>' +
-                '<button class="csv-btn hide-on-print" onclick="exportToCSV()" title="Exports Fields and Columns for all Lists and Libraries to CSV">&#128229; Data Dictionary (CSV)</button>' +
-                '<button class="print-btn" onclick="expandAndPrint()" title="Expands all sections and opens Print dialog">&#128424; Print to PDF</button>' +
+                '<button class="icon-btn hide-on-print" data-action="collapse-all" aria-label="Collapse All" title="Collapse All">&#9650;</button>' +
+                '<button class="icon-btn hide-on-print" data-action="expand-all" aria-label="Expand All" title="Expand All">&#9660;</button>' +
+                '<button class="csv-btn hide-on-print" data-action="export-csv" title="Exports Fields and Columns for all Lists and Libraries to CSV">&#128229; Data Dictionary (CSV)</button>' +
+                '<button class="print-btn" data-action="expand-print" title="Expands all sections and opens Print dialog">&#128424; Print to PDF</button>' +
             '</div>' +
         '</div>' +
         
@@ -956,9 +1462,14 @@ if (siteInfo) {
         var finalHtml = '<div class="print-section">' + siteInfoHtml + '</div>' + 
                         '<div class="print-section">' + libsSection + '</div>' + 
                         '<div class="print-section">' + listsSection + '</div>' + 
-                        '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button onclick="document.getElementById(\'sp-info-app\').scrollIntoView({behavior: \'smooth\', block: \'start\'})">&#11014; Back to Top</button></div>';
+                        '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button data-action="scroll-top">&#11014; Back to Top</button></div>';
 
         resultsDiv.innerHTML = finalHtml;
+
+        // ── Phase 2: initialize Tabulator tables ──
+        initSnaTabulators();
+        // ── Phase 4: build global search index after browser paints results ──
+        setTimeout(buildSearchIndex, 0);
 
         // ── Phase 1: collapse URL section, reveal Start Over ──
         var urlSection = document.getElementById('sna-url-section');
@@ -976,14 +1487,316 @@ if (siteInfo) {
     }
 }
 
+// ── Phase 4: Global search ──
+var _snaSearchIndex = [];
+var _snaCardData    = [];
+
+function buildSearchIndex() {
+    _snaSearchIndex = [];
+
+    // Index each list / library card
+    _snaCardData.forEach(function(card) {
+        var icon      = card.isLib ? '📁' : '📋';
+        var typeLabel = card.isLib ? 'Library' : 'List';
+        var section   = card.isLib ? 'Document Libraries' : 'Lists';
+        _snaSearchIndex.push({
+            icon:       icon,
+            type:       typeLabel,
+            label:      card.title,
+            sublabel:   card.internalName + ' • ' + card.listId,
+            breadcrumb: section,
+            cardId:     card.cardId
+        });
+    });
+
+    // Build ListTitle -> cardId map for column entries
+    var titleToCardId = {};
+    _snaCardData.forEach(function(card) { titleToCardId[card.title] = card.cardId; });
+
+    // Deduplicate columns by InternalName+ListTitle
+    var colSeen = {};
+    globalExportedData.forEach(function(row) {
+        var key = (row.ListTitle || '') + '|' + (row.InternalName || '');
+        if (colSeen[key]) { return; }
+        colSeen[key] = true;
+        var cardId    = titleToCardId[row.ListTitle] || null;
+        var listTypePlural = row.ListType ? (row.ListType + 's') : 'Lists';
+        _snaSearchIndex.push({
+            icon:       '🔲',
+            type:       'Column',
+            label:      row.FieldTitle || row.InternalName || '',
+            sublabel:   (row.InternalName || '') + ' • ' + (row.Type || ''),
+            breadcrumb: listTypePlural + ' > ' + (row.ListTitle || ''),
+            cardId:     cardId
+        });
+    });
+}
+
+function snaSearchQuery(query) {
+    if (!query || query.length < 2) { return []; }
+    var q       = query.toLowerCase();
+    var results = [];
+    var seen    = {};
+
+    _snaSearchIndex.forEach(function(item) {
+        var dedupeKey  = item.type + '|' + item.label + '|' + (item.cardId || '');
+        if (seen[dedupeKey]) { return; }
+
+        var labelLc      = (item.label      || '').toLowerCase();
+        var sublabelLc   = (item.sublabel   || '').toLowerCase();
+        var breadcrumbLc = (item.breadcrumb || '').toLowerCase();
+
+        var score = 0;
+        if (labelLc.indexOf(q) === 0)       { score = 4; }
+        else if (labelLc.indexOf(q) > -1)   { score = 3; }
+        else if (sublabelLc.indexOf(q) > -1) { score = 2; }
+        else if (breadcrumbLc.indexOf(q) > -1) { score = 1; }
+
+        if (score > 0) {
+            seen[dedupeKey] = true;
+            results.push({ item: item, score: score });
+        }
+    });
+
+    results.sort(function(a, b) { return b.score - a.score; });
+    return results.slice(0, 8).map(function(r) { return r.item; });
+}
+
+function snaSearchSelect(item) {
+    var panel       = document.getElementById('sna-search-panel');
+    var toggle      = document.getElementById('sna-search-toggle');
+    var input       = document.getElementById('sna-search-input');
+    var resultsList = document.getElementById('sna-search-results');
+
+    if (panel)       { panel.hidden = true; }
+    if (toggle)      { toggle.setAttribute('aria-expanded', 'false'); }
+    if (input)       { input.setAttribute('aria-expanded', 'false'); input.value = ''; }
+    if (resultsList) { resultsList.innerHTML = ''; }
+
+    if (!item || !item.cardId) { return; }
+    var el = document.getElementById(item.cardId);
+    if (!el) { return; }
+
+    // Open any collapsed <details> so the card content is visible
+    var detailEls = el.querySelectorAll('details');
+    for (var di = 0; di < detailEls.length; di++) { detailEls[di].open = true; }
+
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // Restart the pulse animation
+    el.classList.remove('sna-highlight-pulse');
+    void el.offsetWidth;
+    el.classList.add('sna-highlight-pulse');
+    el.addEventListener('animationend', function onPulseDone() {
+        el.classList.remove('sna-highlight-pulse');
+        el.removeEventListener('animationend', onPulseDone);
+    });
+}
+
+function snaRenderSearchResults(results, input, resultsList) {
+    resultsList.innerHTML = '';
+
+    var srCount = document.getElementById('sna-search-sr-count');
+
+    if (results.length === 0) {
+        input.setAttribute('aria-expanded', 'false');
+        input.setAttribute('aria-activedescendant', '');
+        var noRes = document.createElement('li');
+        noRes.className = 'sna-search-no-results';
+        noRes.setAttribute('role', 'option');
+        noRes.setAttribute('aria-selected', 'false');
+        noRes.textContent = 'No results found.';
+        resultsList.appendChild(noRes);
+        if (srCount) { srCount.textContent = 'No results.'; }
+        return;
+    }
+
+    input.setAttribute('aria-expanded', 'true');
+    if (srCount) { srCount.textContent = results.length + ' result' + (results.length === 1 ? '' : 's') + '.'; }
+
+    results.forEach(function(item, idx) {
+        var li = document.createElement('li');
+        li.className = 'sna-search-result';
+        li.setAttribute('role', 'option');
+        li.setAttribute('id', 'sna-search-opt-' + idx);
+        li.setAttribute('aria-selected', 'false');
+        li.setAttribute('tabindex', '-1');
+
+        var primary = document.createElement('span');
+        primary.className = 'sna-search-result-primary';
+        primary.textContent = item.icon + ' ' + item.label;
+
+        var secondary = document.createElement('span');
+        secondary.className = 'sna-search-result-secondary';
+        secondary.textContent = item.type + ' • ' + (item.sublabel || '');
+
+        var breadcrumb = document.createElement('span');
+        breadcrumb.className = 'sna-search-result-breadcrumb';
+        breadcrumb.textContent = item.breadcrumb || '';
+
+        li.appendChild(primary);
+        li.appendChild(secondary);
+        li.appendChild(breadcrumb);
+
+        li.addEventListener('click', function() { snaSearchSelect(item); });
+        resultsList.appendChild(li);
+    });
+}
+
+function snaSearchInit() {
+    var widget = document.createElement('div');
+    widget.id = 'sna-global-search';
+    widget.setAttribute('role', 'search');
+    widget.setAttribute('aria-label', 'Search site contents');
+
+    // Visually-hidden live region for screen readers
+    var srCount = document.createElement('div');
+    srCount.id = 'sna-search-sr-count';
+    srCount.setAttribute('role', 'status');
+    srCount.setAttribute('aria-live', 'polite');
+    srCount.setAttribute('aria-atomic', 'true');
+    srCount.style.position = 'absolute';
+    srCount.style.width    = '1px';
+    srCount.style.height   = '1px';
+    srCount.style.padding  = '0';
+    srCount.style.margin   = '-1px';
+    srCount.style.overflow = 'hidden';
+    srCount.style.clip     = 'rect(0,0,0,0)';
+    srCount.style.whiteSpace = 'nowrap';
+    srCount.style.border   = '0';
+
+    var toggle = document.createElement('button');
+    toggle.id = 'sna-search-toggle';
+    toggle.setAttribute('aria-label', 'Search site contents');
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-controls', 'sna-search-panel');
+    toggle.setAttribute('title', 'Search lists, libraries and columns');
+    toggle.textContent = '🔍';
+
+    var panel = document.createElement('div');
+    panel.id = 'sna-search-panel';
+    panel.hidden = true;
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.id   = 'sna-search-input';
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-autocomplete', 'list');
+    input.setAttribute('aria-controls', 'sna-search-results');
+    input.setAttribute('aria-expanded', 'false');
+    input.setAttribute('aria-activedescendant', '');
+    input.setAttribute('placeholder', 'Search lists, columns…');
+    input.setAttribute('autocomplete', 'off');
+
+    var resultsList = document.createElement('ul');
+    resultsList.id = 'sna-search-results';
+    resultsList.setAttribute('role', 'listbox');
+    resultsList.setAttribute('aria-label', 'Search results');
+
+    panel.appendChild(input);
+    panel.appendChild(resultsList);
+    widget.appendChild(srCount);
+    widget.appendChild(panel);
+    widget.appendChild(toggle);
+    document.body.appendChild(widget);
+
+    // Toggle open/close
+    toggle.addEventListener('click', function() {
+        var nowHidden = panel.hidden;
+        panel.hidden  = !nowHidden;
+        toggle.setAttribute('aria-expanded', nowHidden ? 'true' : 'false');
+        if (nowHidden) { input.focus(); }
+    });
+
+    // Debounced search-on-input
+    var _debounce = null;
+    input.addEventListener('input', function() {
+        clearTimeout(_debounce);
+        var val = input.value.trim();
+        _debounce = setTimeout(function() {
+            if (val.length < 2) {
+                resultsList.innerHTML = '';
+                input.setAttribute('aria-expanded', 'false');
+                input.setAttribute('aria-activedescendant', '');
+                var srEl = document.getElementById('sna-search-sr-count');
+                if (srEl) { srEl.textContent = ''; }
+                return;
+            }
+            var matches = snaSearchQuery(val);
+            snaRenderSearchResults(matches, input, resultsList);
+        }, 180);
+    });
+
+    // Keyboard navigation: arrows, Enter, Escape
+    input.addEventListener('keydown', function(e) {
+        var opts    = resultsList.querySelectorAll('.sna-search-result');
+        var current = resultsList.querySelector('[aria-selected="true"]');
+        var optsArr = Array.prototype.slice.call(opts);
+        var idx     = current ? optsArr.indexOf(current) : -1;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            var nextIdx = (idx + 1 >= opts.length) ? 0 : idx + 1;
+            if (current) { current.setAttribute('aria-selected', 'false'); }
+            if (opts[nextIdx]) {
+                opts[nextIdx].setAttribute('aria-selected', 'true');
+                input.setAttribute('aria-activedescendant', opts[nextIdx].id);
+                opts[nextIdx].scrollIntoView({ block: 'nearest' });
+            }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            var prevIdx = (idx - 1 < 0) ? opts.length - 1 : idx - 1;
+            if (current) { current.setAttribute('aria-selected', 'false'); }
+            if (opts[prevIdx]) {
+                opts[prevIdx].setAttribute('aria-selected', 'true');
+                input.setAttribute('aria-activedescendant', opts[prevIdx].id);
+                opts[prevIdx].scrollIntoView({ block: 'nearest' });
+            }
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            var enterMatches = snaSearchQuery(input.value.trim());
+            if (current && idx > -1 && enterMatches[idx]) {
+                snaSearchSelect(enterMatches[idx]);
+            } else if (opts.length === 1 && enterMatches[0]) {
+                snaSearchSelect(enterMatches[0]);
+            }
+        } else if (e.key === 'Escape') {
+            panel.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+            input.setAttribute('aria-expanded', 'false');
+            toggle.focus();
+        }
+    });
+
+    // Close on outside click
+    document.addEventListener('click', function(e) {
+        if (!widget.contains(e.target)) {
+            panel.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+            input.setAttribute('aria-expanded', 'false');
+            resultsList.innerHTML = '';
+        }
+    });
+}
+
 function startApplication() {
     var currentBaseUrl = getBaseUrl();
     var siteUrlInput = document.getElementById('site-url-input');
     var siteSuggestions = document.getElementById('site-suggestions');
 
+    var gatherBtn = document.getElementById('sp-btn-gather');
+    if (gatherBtn) { gatherBtn.addEventListener('click', gatherSiteInformation); }
+    var startOverBtn = document.querySelector('#sna-start-over-btn button');
+    if (startOverBtn) { startOverBtn.addEventListener('click', startOver); }
+    var resultsDiv = document.getElementById('sp-results');
+    if (resultsDiv) { resultsDiv.addEventListener('click', snaHandleResultsClick); }
+
     if (siteUrlInput) {
         siteUrlInput.value = currentBaseUrl;
     }
+
+    // ── Phase 4: mount global search widget ──
+    snaSearchInit();
 
     fetchAccessibleSites();
 
