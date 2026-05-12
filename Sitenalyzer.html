@@ -934,12 +934,44 @@ function initSnaTabulators() {
         {
           title: 'Description', field: 'termDescription', sorter: 'string', widthGrow: 3,
           formatter: 'textarea',
-          editor: _snaIsAdmin ? function(cell, onRendered) {
+          editor: _snaIsAdmin ? function(cell, onRendered, success, cancel) {
+            var currentVal = cell.getValue() || '';
+            var wrap = document.createElement('div');
+            wrap.style.cssText = 'width:100%;box-sizing:border-box;';
+
             var ta = document.createElement('textarea');
-            ta.style.cssText = 'width:100%;height:100%;box-sizing:border-box;resize:vertical;';
-            ta.value = cell.getValue() || '';
+            ta.value = currentVal;
+            ta.style.cssText = 'display:block;width:100%;min-height:54px;resize:vertical;font-size:13px;padding:4px 6px 20px 6px;border:2px solid #0078d4;border-radius:3px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;box-sizing:border-box;line-height:1.5;';
+            ta.addEventListener('keydown', function(e) {
+              if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+              else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); success(ta.value); }
+            });
+
+            var btnWrap = document.createElement('div');
+            btnWrap.style.cssText = 'display:flex;flex-direction:row;gap:2px;position:relative;z-index:2;margin-top:-18px;padding-left:4px;';
+            var S = 'width:18px;height:16px;padding:0;border-radius:2px;cursor:pointer;font-size:10px;line-height:16px;text-align:center;';
+
+            var saveBtn = document.createElement('button');
+            saveBtn.innerHTML = '&#10003;'; saveBtn.title = 'Save (Enter)';
+            saveBtn.setAttribute('aria-label', 'Save');
+            saveBtn.style.cssText = S + 'background:#0078d4;color:#fff;border:none;';
+            saveBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+            saveBtn.addEventListener('click',     function(e) { e.stopPropagation(); success(ta.value); });
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.innerHTML = '&#10007;'; cancelBtn.title = 'Cancel (Esc)';
+            cancelBtn.setAttribute('aria-label', 'Cancel');
+            cancelBtn.style.cssText = S + 'background:#fff;color:#605e5c;border:1px solid #8a8886;';
+            cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+            cancelBtn.addEventListener('click',     function(e) { e.stopPropagation(); cancel(); });
+
+            btnWrap.appendChild(saveBtn);
+            btnWrap.appendChild(cancelBtn);
+            wrap.appendChild(ta);
+            wrap.appendChild(btnWrap);
+
             onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
-            return ta;
+            return wrap;
           } : false,
           cellEdited: _snaIsAdmin ? function(cell) {
             var row     = cell.getRow().getData();
@@ -2163,8 +2195,18 @@ async function snaSaveDescription(editKey, newText) {
     var parts = editKey.split(':');
     var kind  = parts[0];
 
-    // Taxonomy entities require CSOM (v2.1 REST enforces OAuth-only on writes)
     if (kind === 'termset' || kind === 'termgroup' || kind === 'term') {
+        // Try non-site-scoped v2.1 first (works on tenants without OAuth-only term store policy).
+        // Fall back to CSOM for tenants that block v2.1 writes but have CSOM stubs.
+        try {
+            return await snaTaxonomyV21Update(kind, parts, newText);
+        } catch (e) {
+            // Only fall through to CSOM on an auth/policy error; re-throw anything else.
+            var isAuthErr = e.message.indexOf('OAuth') !== -1 ||
+                            e.message.indexOf('notAllowed') !== -1 ||
+                            e.message.indexOf('403') !== -1;
+            if (!isAuthErr) { throw e; }
+        }
         return snaTaxonomyCsomUpdate(kind, parts, newText);
     }
 
@@ -2200,55 +2242,109 @@ async function snaSaveDescription(editKey, newText) {
     }
 }
 
-// ── Phase 5: Update taxonomy descriptions via CSOM (bypasses OAuth-only restriction on v2.1 REST) ──
+// ── Phase 5: Taxonomy writes via non-site-scoped v2.1 REST (Gemini approach) ──
+// Uses /_api/v2.1/termStore/... instead of /_api/v2.1/sites/{id}/termStore/...
+// On some tenants this route accepts session cookies + X-RequestDigest without OAuth.
+async function snaTaxonomyV21Update(kind, parts, newText) {
+    var digest = await getRequestDigest(_snaTargetUrl);
+    var base   = _snaTargetUrl + '/_api/v2.1/termStore/';
+    var url, body;
+
+    if (kind === 'termset') {
+        url  = base + 'sets/' + parts[1];
+        body = { description: newText };
+    } else if (kind === 'termgroup') {
+        url  = base + 'groups/' + parts[1];
+        body = { description: newText };
+    } else if (kind === 'term') {
+        // parts: ['term', setId, termId]
+        url  = base + 'sets/' + parts[1] + '/terms/' + parts[2];
+        body = { descriptions: [{ description: newText, languageTag: 'en-US' }] };
+    }
+
+    var res = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-RequestDigest': digest,
+            'IF-MATCH': '*'
+        },
+        credentials: 'include',
+        body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+        var errText = await res.text().catch(function() { return ''; });
+        throw new Error('HTTP ' + res.status + (errText ? ': ' + errText.substring(0, 200) : ''));
+    }
+}
+
+// ── Phase 5: Update taxonomy descriptions via CSOM ──
+// Applies all corrections from the Gemini "bulletproof" approach:
+//   • TypeId {9511028b-06c6-492d-905e-f0b1442d76e7} loads Microsoft.SharePoint.Taxonomy.dll
+//   • StaticProperty "Current" replaces GetTaxonomySession (avoids context-parameter issues)
+//   • ObjectPath actions in <Actions> materialize each object before use
+//   • SetDescription(String description, Int32 lcid) — correct order/types
+//   • GUIDs wrapped in {…} in parameter values
+//   • X-Requested-With: XMLHttpRequest header
 async function snaTaxonomyCsomUpdate(kind, parts, newText) {
     var digest  = await getRequestDigest(_snaTargetUrl);
-    var storeId = _snaTermStoreId;
     var escaped = newText
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
 
-    var csomHeader = '<Request AddExpandoFieldTypeSuffix="true" SchemaVersion="15.0.0.0" LibraryVersion="16.0.0.0" ApplicationName="JavaScript Client Library" xmlns="http://schemas.microsoft.com/sharepoint/clientquery/2009">';
-    var sessionPaths =
-        '<StaticMethod TypeId="{981cbc68-9edc-4f8d-872f-71580e7715a2}" Name="GetTaxonomySession" Id="3"><Parameters><Parameter ObjectPathId="4"/></Parameters></StaticMethod>' +
-        '<StaticProperty Id="4" TypeId="{3747adcd-a3c3-41b9-bfab-4a64dd2f1e0a}" Name="Current"/>' +
-        '<Property Id="33" ObjectPathId="3" Name="TermStores"/>' +
-        '<Method Id="5" ObjectPathId="33" Name="GetById"><Parameters><Parameter Type="Guid">' + storeId + '</Parameter></Parameters></Method>';
+    var hdr = '<Request AddExpandoFieldTypeSuffix="true" SchemaVersion="15.0.0.0" LibraryVersion="16.0.0.0" ApplicationName="JavaScript Client Library" xmlns="http://schemas.microsoft.com/sharepoint/clientquery/2009">';
+    // Id=0: TaxonomySession.Current  Id=2: GetDefaultSiteCollectionTermStore  Id=4: target object
+    var basePaths =
+        '<StaticProperty Id="0" TypeId="{9511028b-06c6-492d-905e-f0b1442d76e7}" Name="Current"/>' +
+        '<Method Id="2" ParentId="0" Name="GetDefaultSiteCollectionTermStore"/>';
 
     var xml;
     if (kind === 'termset') {
         // parts: ['termset', setId]
-        xml = csomHeader +
+        xml = hdr +
             '<Actions>' +
-            '<SetProperty Id="1" ObjectPathId="6" Name="Description"><Parameter Type="String">' + escaped + '</Parameter></SetProperty>' +
-            '<Method Name="CommitAll" Id="2" ObjectPathId="5"/>' +
+            '<ObjectPath Id="1" ObjectPathId="0"/>' +
+            '<ObjectPath Id="3" ObjectPathId="2"/>' +
+            '<ObjectPath Id="5" ObjectPathId="4"/>' +
+            '<SetProperty Id="6" ObjectPathId="4" Name="Description"><Parameter Type="String">' + escaped + '</Parameter></SetProperty>' +
+            '<Method Name="CommitAll" Id="7" ObjectPathId="2"/>' +
             '</Actions>' +
-            '<ObjectPaths>' + sessionPaths +
-            '<Method Id="6" ObjectPathId="5" Name="GetTermSet"><Parameters><Parameter Type="Guid">' + parts[1] + '</Parameter></Parameters></Method>' +
+            '<ObjectPaths>' + basePaths +
+            '<Method Id="4" ParentId="2" Name="GetTermSet"><Parameters><Parameter Type="Guid">{' + parts[1] + '}</Parameter></Parameters></Method>' +
             '</ObjectPaths></Request>';
     } else if (kind === 'termgroup') {
         // parts: ['termgroup', groupId]
-        xml = csomHeader +
+        // Groups is a property; GetById navigates into it — need an extra ObjectPath step
+        xml = hdr +
             '<Actions>' +
-            '<SetProperty Id="1" ObjectPathId="7" Name="Description"><Parameter Type="String">' + escaped + '</Parameter></SetProperty>' +
-            '<Method Name="CommitAll" Id="2" ObjectPathId="5"/>' +
+            '<ObjectPath Id="1" ObjectPathId="0"/>' +
+            '<ObjectPath Id="3" ObjectPathId="2"/>' +
+            '<ObjectPath Id="9" ObjectPathId="8"/>' +
+            '<ObjectPath Id="5" ObjectPathId="4"/>' +
+            '<SetProperty Id="6" ObjectPathId="4" Name="Description"><Parameter Type="String">' + escaped + '</Parameter></SetProperty>' +
+            '<Method Name="CommitAll" Id="7" ObjectPathId="2"/>' +
             '</Actions>' +
-            '<ObjectPaths>' + sessionPaths +
-            '<Property Id="34" ObjectPathId="5" Name="Groups"/>' +
-            '<Method Id="7" ObjectPathId="34" Name="GetById"><Parameters><Parameter Type="Guid">' + parts[1] + '</Parameter></Parameters></Method>' +
+            '<ObjectPaths>' + basePaths +
+            '<Property Id="8" ParentId="2" Name="Groups"/>' +
+            '<Method Id="4" ParentId="8" Name="GetById"><Parameters><Parameter Type="Guid">{' + parts[1] + '}</Parameter></Parameters></Method>' +
             '</ObjectPaths></Request>';
     } else if (kind === 'term') {
         // parts: ['term', setId, termId]
-        xml = csomHeader +
+        // GetTerm directly from the store by GUID (no set navigation needed)
+        xml = hdr +
             '<Actions>' +
-            '<Method Name="SetDescription" Id="1" ObjectPathId="7"><Parameters><Parameter Type="String">en-US</Parameter><Parameter Type="String">' + escaped + '</Parameter></Parameters></Method>' +
-            '<Method Name="CommitAll" Id="2" ObjectPathId="5"/>' +
+            '<ObjectPath Id="1" ObjectPathId="0"/>' +
+            '<ObjectPath Id="3" ObjectPathId="2"/>' +
+            '<ObjectPath Id="5" ObjectPathId="4"/>' +
+            '<Method Name="SetDescription" Id="6" ObjectPathId="4">' +
+            '<Parameters><Parameter Type="String">' + escaped + '</Parameter><Parameter Type="Int32">1033</Parameter></Parameters>' +
+            '</Method>' +
+            '<Method Name="CommitAll" Id="7" ObjectPathId="2"/>' +
             '</Actions>' +
-            '<ObjectPaths>' + sessionPaths +
-            '<Method Id="6" ObjectPathId="5" Name="GetTermSet"><Parameters><Parameter Type="Guid">' + parts[1] + '</Parameter></Parameters></Method>' +
-            '<Method Id="7" ObjectPathId="6" Name="GetTerm"><Parameters><Parameter Type="Guid">' + parts[2] + '</Parameter></Parameters></Method>' +
+            '<ObjectPaths>' + basePaths +
+            '<Method Id="4" ParentId="2" Name="GetTerm"><Parameters><Parameter Type="Guid">{' + parts[2] + '}</Parameter></Parameters></Method>' +
             '</ObjectPaths></Request>';
     }
 
@@ -2256,7 +2352,8 @@ async function snaTaxonomyCsomUpdate(kind, parts, newText) {
         method: 'POST',
         headers: {
             'Content-Type': 'text/xml',
-            'X-RequestDigest': digest
+            'X-RequestDigest': digest,
+            'X-Requested-With': 'XMLHttpRequest'
         },
         credentials: 'include',
         body: xml
@@ -2266,8 +2363,19 @@ async function snaTaxonomyCsomUpdate(kind, parts, newText) {
         throw new Error('HTTP ' + res.status + (errText ? ': ' + errText.substring(0, 200) : ''));
     }
     var respText = await res.text();
-    var errMatch = respText.match(/"ErrorMessage"\s*:\s*"([^"]+)"/);
-    if (errMatch) { throw new Error(errMatch[1]); }
+    // Use a JSON-aware pattern to capture the full error message including escaped characters
+    var errMatch = respText.match(/"ErrorMessage"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (errMatch) {
+        var msg = errMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        // Both known taxonomy write blockers: OAuth-only REST and missing CSOM stubs.
+        // Neither can be resolved from a browser page without an OAuth token.
+        if (msg.indexOf('Cannot find stub for type') !== -1 || msg.indexOf('OAuth') !== -1 || msg.indexOf('notAllowed') !== -1) {
+            throw new Error(
+                'Term store descriptions cannot be edited from this tool. Please use the Term Store Management page in the SharePoint Admin Center instead.'
+            );
+        }
+        throw new Error(msg);
+    }
 }
 
 // ── Phase 5: Inline edit lifecycle ──
