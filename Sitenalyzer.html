@@ -38,7 +38,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         padding: 20px;
         border-radius: 8px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        max-width: 920px;
+        max-width: 960px;
         margin: auto;
     }
 
@@ -362,6 +362,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     .site-suggestion-title { font-weight: bold; }
     .site-suggestion-url { font-size: 11px; color: #666; }
     .site-url-helper { font-size: 12px; color: #666; margin-bottom: 15px; }
+    #sp-info-app #sna-sites-refresh-btn { background: none !important; border: 1px solid #ccc !important; border-radius: 50% !important; color: #999 !important; cursor: pointer; font-size: 13px !important; height: 22px; width: 22px; line-height: 1; padding: 0 !important; margin: 0 !important; flex-shrink: 0; }
+    #sp-info-app #sna-sites-refresh-btn:hover { background: #f0f0f0 !important; color: #444 !important; border-color: #999 !important; }
 
     /* Spinning Circle CSS */
     .helper-spinner {
@@ -719,7 +721,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     <div id="sna-url-section">
         <div>
             <label for="site-url-input" style="font-weight: bold;">Site URL:</label>
-            <input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL">
+            <div style="display:flex;align-items:center;gap:4px;margin:8px 0;">
+                <input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL" style="margin:0;flex:1;min-width:0;">
+                <button id="sna-sites-refresh-btn" class="hide-on-print" title="Refresh sites list" aria-label="Refresh sites list">&#8635;</button>
+            </div>
             <ul id="site-suggestions"></ul>
             <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
         </div>
@@ -728,7 +733,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     <div id="sna-start-over-btn">
         <button aria-label="Start Over: clear results and enter a new site URL">&#8635; Start Over</button>
     </div>
-    <div id="sp-loader">Fetching data from SharePoint REST APIs... this may take a moment.</div>
+    <div id="sp-loader">Fetching data from SharePoint... this may take a moment.</div>
     <div id="sp-results"></div>
     <div class="app-footer">
     <div class="github-promo">
@@ -1203,49 +1208,6 @@ function getOutputTypeName(outputType) {
     return String(outputType);
 }
 
-async function fetchAccessibleSites() {
-    var helperMessage = document.getElementById('site-url-helper-message');
-    
-    if (helperMessage) {
-        helperMessage.innerHTML = '<div class="helper-spinner"></div> Loading accessible sites...';
-    }
-
-    try {
-        var baseUrl = getBaseUrl();
-        var searchUrl = baseUrl + "/_api/search/query?querytext='contentclass:STS_Site'&selectproperties='Title,Path'&rowlimit=500";
-        var searchData = await spFetch(searchUrl);
-
-        globalAccessibleSites = [];
-        
-        if (searchData.PrimaryQueryResult && searchData.PrimaryQueryResult.RelevantResults && searchData.PrimaryQueryResult.RelevantResults.Table && searchData.PrimaryQueryResult.RelevantResults.Table.Rows) {
-            searchData.PrimaryQueryResult.RelevantResults.Table.Rows.forEach(function(row) {
-                var title = '';
-                var url = '';
-                
-                row.Cells.forEach(function(cell) {
-                    if (cell.Key === 'Title') {
-                        title = cell.Value;
-                    }
-                    if (cell.Key === 'Path') {
-                        url = cell.Value;
-                    }
-                });
-                if (url && !url.includes('/personal/')) {
-                    globalAccessibleSites.push({
-                        title: title || url,
-                        url: url
-                    });
-                }
-            });
-        }
-    } catch (error) {
-        console.warn('Could not fetch accessible sites: ' + error.message);
-    } finally {
-        if (helperMessage) {
-            helperMessage.innerHTML = 'Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.';
-        }
-    }
-}
 
 function renderPermissionsHtml(roleAssignments) {
     if (!roleAssignments || roleAssignments.length === 0) {
@@ -1661,7 +1623,7 @@ async function gatherSiteInformation() {
                         libActionsHtml +
                     '</div>' +
                     listDescHtml +
-                    '<strong>Top-Level Folders:</strong>' + foldersTableHtml + colDefsDetails + listRolesDetails + '</div>';
+                    '<details class="permissions-section"><summary>Top-Level Folders</summary>' + foldersTableHtml + '</details>' + colDefsDetails + listRolesDetails + '</div>';
             } else {
                 var listOpenUrl = list.DefaultViewUrl
                     ? (window.location.origin + list.DefaultViewUrl)
@@ -2139,10 +2101,10 @@ function renderAdminDescWrap(text, editKey) {
     if (!_snaIsAdmin) { return safeText || '<em style="color:#999;">No description.</em>'; }
     var isEmpty    = !safeText;
     var emptyClass = isEmpty ? ' sna-editable-wrap--empty' : '';
-    var displayed  = isEmpty ? '<em style="color:#bbb;">Click ✎ to add a description</em>' : safeText;
+    var displayed  = isEmpty ? '<em style="color:#bbb;" title="No description. Click the pencil icon to add one.">⠀</em>' : safeText;
     return '<span class="sna-editable-wrap' + emptyClass + '" data-edit-key="' + editKey + '">' +
            '<span class="sna-editable-text" data-sna-orig="' + safeText + '">' + displayed + '</span>' +
-           '<button class="sna-pencil-btn" aria-label="Edit description" data-action="start-edit">&#9998;</button>' +
+           '<button class="sna-pencil-btn" title="Edit description" aria-label="Edit description" data-action="start-edit">&#9998;</button>' +
            '</span>';
 }
 
@@ -2633,10 +2595,148 @@ function startApplication() {
         siteUrlInput.value = currentBaseUrl;
     }
 
+    // ── Phase 6: siteUrl query parameter deep-link ──
+    var _urlParams = new URLSearchParams(window.location.search);
+    var _siteUrlParam = _urlParams.get('siteUrl');
+    if (_siteUrlParam && siteUrlInput) {
+        siteUrlInput.value = _siteUrlParam;
+        gatherSiteInformation();
+    }
+
     // ── Phase 4: mount global search widget ──
     snaSearchInit();
 
+    // ── Phase 6: sites list caching helpers (local to startApplication) ──
+    var SITES_CACHE_KEY = 'sna_sites_cache';
+    var SITES_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+    var SITES_MAX = 1000;
+
+    function saveSitesCache(sites, complete) {
+        try {
+            localStorage.setItem(SITES_CACHE_KEY, JSON.stringify({
+                version: 1,
+                cachedAt: Date.now(),
+                complete: complete === true,
+                sites: sites.slice(0, SITES_MAX)
+            }));
+        } catch(e) {}
+    }
+
+    function parseSiteRows(rows) {
+        var results = [];
+        rows.forEach(function(row) {
+            var title = '', url = '';
+            row.Cells.forEach(function(cell) {
+                if (cell.Key === 'Title') { title = cell.Value; }
+                if (cell.Key === 'Path')  { url   = cell.Value; }
+            });
+            if (url && !url.includes('/personal/')) {
+                results.push({ title: title || url, url: url });
+            }
+        });
+        return results;
+    }
+
+    async function fetchMoreSitesBackground(baseUrl, sorted, batchSize, accSites) {
+        var sortParam = sorted ? "&sortlist='Write:descending'" : '';
+        var startRow = accSites.length;
+        var completedNaturally = false;
+        while (accSites.length < SITES_MAX) {
+            try {
+                var bgUrl = baseUrl + "/_api/search/query?querytext='contentclass:STS_Site'" +
+                    "&selectproperties='Title,Path'" + sortParam +
+                    "&rowlimit=" + batchSize + "&startrow=" + startRow;
+                var bgData = await spFetch(bgUrl);
+                var bgRows = (bgData.PrimaryQueryResult && bgData.PrimaryQueryResult.RelevantResults &&
+                    bgData.PrimaryQueryResult.RelevantResults.Table &&
+                    bgData.PrimaryQueryResult.RelevantResults.Table.Rows)
+                    ? bgData.PrimaryQueryResult.RelevantResults.Table.Rows : [];
+                if (bgRows.length === 0) { completedNaturally = true; break; }
+                var bgSites = parseSiteRows(bgRows);
+                bgSites.forEach(function(s) { accSites.push(s); });
+                globalAccessibleSites = accSites.slice(0, SITES_MAX);
+                saveSitesCache(globalAccessibleSites, false);
+                startRow += batchSize;
+                if (bgRows.length < batchSize) { completedNaturally = true; break; }
+            } catch(e) { break; }
+        }
+        if (accSites.length >= SITES_MAX) { completedNaturally = true; }
+        if (completedNaturally) { saveSitesCache(globalAccessibleSites, true); }
+    }
+
+    async function fetchAccessibleSites() {
+        var helperMessage = document.getElementById('site-url-helper-message');
+        var helperDefault = 'Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.';
+
+        if (helperMessage) {
+            helperMessage.innerHTML = '<div class="helper-spinner"></div> Loading accessible sites...';
+        }
+
+        var cacheStale = true;
+        try {
+            var cacheRaw = localStorage.getItem(SITES_CACHE_KEY);
+            if (cacheRaw) {
+                var cached = JSON.parse(cacheRaw);
+                if (cached.version === 1 && Array.isArray(cached.sites)) {
+                    globalAccessibleSites = cached.sites;
+                    if (helperMessage) { helperMessage.innerHTML = helperDefault; }
+                    if (cached.complete === true && cached.cachedAt && (Date.now() - cached.cachedAt < SITES_CACHE_TTL)) {
+                        cacheStale = false;
+                    }
+                }
+            }
+        } catch(e) {}
+
+        if (!cacheStale && globalAccessibleSites.length > 0) { return; }
+
+        try {
+            var baseUrl = getBaseUrl();
+            var sorted = true;
+            var batchSize = 100;
+            var searchUrl = baseUrl + "/_api/search/query?querytext='contentclass:STS_Site'" +
+                "&selectproperties='Title,Path'&sortlist='Write:descending'&rowlimit=100&startrow=0";
+            var searchData;
+            try {
+                searchData = await spFetch(searchUrl);
+            } catch(sortErr) {
+                sorted = false;
+                batchSize = 200;
+                searchUrl = baseUrl + "/_api/search/query?querytext='contentclass:STS_Site'" +
+                    "&selectproperties='Title,Path'&rowlimit=200&startrow=0";
+                searchData = await spFetch(searchUrl);
+            }
+
+            var rows = (searchData.PrimaryQueryResult && searchData.PrimaryQueryResult.RelevantResults &&
+                searchData.PrimaryQueryResult.RelevantResults.Table &&
+                searchData.PrimaryQueryResult.RelevantResults.Table.Rows)
+                ? searchData.PrimaryQueryResult.RelevantResults.Table.Rows : [];
+
+            var newSites = parseSiteRows(rows);
+            globalAccessibleSites = newSites;
+            var allLoadedInOneBatch = rows.length < batchSize;
+            saveSitesCache(newSites, allLoadedInOneBatch);
+
+            if (helperMessage) { helperMessage.innerHTML = helperDefault; }
+
+            if (!allLoadedInOneBatch) {
+                fetchMoreSitesBackground(baseUrl, sorted, batchSize, newSites);
+            }
+        } catch (error) {
+            console.warn('Could not fetch accessible sites: ' + error.message);
+            if (helperMessage) { helperMessage.innerHTML = helperDefault; }
+        }
+    }
+
     fetchAccessibleSites();
+
+    var sitesRefreshBtn = document.getElementById('sna-sites-refresh-btn');
+    if (sitesRefreshBtn) {
+        sitesRefreshBtn.addEventListener('click', function() {
+            try { localStorage.removeItem(SITES_CACHE_KEY); } catch(e) {}
+            globalAccessibleSites = [];
+            fetchAccessibleSites();
+        });
+    }
 
     if (siteUrlInput) {
         function getSearchQuery(inputValue) {
