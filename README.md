@@ -25,10 +25,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 # Sitenalyzer
 
 ## Description
-Sitenalyzer helps you extract a data dictionary and security information from your SharePoint sites. It is a single-file HTML/JavaScript application designed to be embedded into a SharePoint Online site via a Modern Script Editor Webpart. It can be used to gather information to audit permissions, to get the internal IDs necessary for creating Applications (for MS Graph API access) in MS Entra, or to document the data structure of lists and document libraries.
+Sitenalyzer helps you extract a data dictionary and security information from your SharePoint sites. Data dictionary functionality allows you to query other sites, edit list and column descriptions if you have admin rights to that site, and export the data dictionary as a spreadsheet.
 
 ![Screenshot of Sitenalyzer](sitenalyzer-preview.png)
 
+Sitenalyzer is a single-file HTML/JavaScript application designed to be embedded into a SharePoint Online site via a Modern Script Editor Webpart. It can be used to gather information to audit permissions, to get the internal IDs necessary for creating Applications (for MS Graph API access) in MS Entra, or to document the data structure of lists and document libraries. 
 
 ## Quick Start Guide
 + First ensure you have the "Modern Script Editor" app installed. If not available, contact your site administrator to install it
@@ -77,6 +78,8 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 + [DataLaVista™](https://michmed.org/datalavista). A lightweight, client-side reporting and dashboard toolkit. This project re-uses some of the SharePoint connection functions.
 + [Modern Script Editor](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor) - The PnP/SPFX delivery vehicle used to deploy this "Unit" into modern SharePoint environments.
 + [Microsoft SharePoint REST API](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/get-to-know-the-sharepoint-rest-service) - The primary data uplink for retrieving SharePoint List items and Document Library metadata.
++ [SheetJS](https://sheetjs.com/) - A library for reading, processing, and writing spreadsheet data.
++ [Tabulator](https://tabulator.info/) - A library for creating interactive, data-rich tables and grids.
 
 
 ## License

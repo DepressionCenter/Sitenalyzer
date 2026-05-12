@@ -3,7 +3,7 @@ This file is part of Sitenalyzer.
 Sitenalyzer.html - Get internal information about a SharePoint site.
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-05-11
+Last Modified: 2026-05-12
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site.
          The contents of this file should be embedded in a SharePoint page using a REACT Modern Script Editor webpart.
 Notes: See README file for documentation and full license information. Also see: https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245
@@ -196,7 +196,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
     .app-tag { background: #edebe9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
 
-    /* ── Phase 2: Tabulator theme — matches Sitenalyzer palette ── */
+    /* Tabulator theme — matches Sitenalyzer palette */
     .tabulator {
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         font-size: 13px;
@@ -246,7 +246,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     .tabulator-placeholder span { color: #999; font-style: italic; }
     .tabulator .tabulator-tableholder { overflow-y: auto; }
 
-    /* ── Phase 2: Table search input ── */
+    /* Table search input */
     .sna-table-search-wrap { margin: 8px 0 5px 0; }
     .sna-table-search {
         width: 100%;
@@ -262,7 +262,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     .sna-table-search:focus { outline: 3px solid #0078d4; outline-offset: 1px; border-color: #0078d4; }
     .sna-table-search::placeholder { color: #aaa; }
 
-    /* ── Phase 3: Section action buttons (Copy ID, Open, header row) ── */
+    /* Section action buttons (Copy ID, Open, header row) */
     .sna-card-header {
         display: flex;
         justify-content: space-between;
@@ -325,10 +325,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     }
     .sna-copy-toast.visible { opacity: 1; }
 
-    /* ── Phase 2: Field type icon ── */
+    /* Field type icon */
     .sna-type-icon { font-style: normal; margin-right: 4px; vertical-align: middle; opacity: 0.85; }
 
-    /* ── Phase 2: folder items right-align ── */
+    /* Folder link visual style (navigation handled via cellClick, not native anchor) */
+    .sna-folder-link { color: #0078d4; text-decoration: underline; cursor: pointer; }
+    .sna-folder-link:hover { text-decoration: none; }
+
+    /* Folder items right-align */
     .sna-tab-items-cell { text-align: right; font-variant-numeric: tabular-nums; }
 
     #sp-loader { display: none; font-style: italic; color: #666; margin-bottom: 15px; }
@@ -383,7 +387,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         100% { transform: rotate(360deg); }
     }
 
-    /* ── Phase 1: URL section collapse ── */
+    /* URL input section collapse animation */
     #sna-url-section {
         overflow: hidden;
         transition: max-height 0.35s ease, opacity 0.3s ease;
@@ -398,7 +402,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         padding: 0;
     }
 
-    /* ── Phase 1: Start Over button ── */
+    /* Start Over button */
     #sna-start-over-btn {
         display: none;
         text-align: right;
@@ -412,7 +416,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     }
     #sna-start-over-btn button:hover { background-color: #3b3a39; }
 
-    /* ── Phase 1: ID text — small and muted ── */
+    /* ID text — small and muted */
     .list-id-text {
         font-size: 0.73rem;
         color: #888;
@@ -420,7 +424,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         font-weight: 400;
     }
 
-    /* ── Phase 3: Inline ID reveal (shown temporarily on ID button click) ── */
+    /* Inline ID reveal (shown temporarily on ID button click) */
     .sna-id-inline {
         font-size: 0.72rem;
         color: #888;
@@ -430,7 +434,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         margin-right: 4px;
     }
 
-    /* ── Phase 1: Item count badge ── */
+    /* Item count badge */
     .item-count-badge {
         display: inline-flex;
         align-items: baseline;
@@ -493,7 +497,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         .sna-editor-controls { display: none !important; }
     }
 
-    /* ── Phase 5: Taxonomy section ── */
+    /* Taxonomy section */
     .sna-taxonomy-group {
         margin-top: 10px;
         padding: 10px;
@@ -511,7 +515,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     .sna-taxonomy-group > summary,
     .sna-taxonomy-set > summary { font-weight: 600; color: #005a9e; }
 
-    /* ── Phase 5: Admin inline edit ── */
+    /* Admin inline edit */
     .sna-editable-wrap { position: relative; display: inline; }
     .sna-pencil-btn {
         background: transparent !important;
@@ -578,7 +582,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     }
     .sna-editor-cancel-btn:hover { background: #f3f2f1 !important; }
 
-    /* ── Phase 4: Global search widget ── */
+    /* Global search widget */
     #sna-global-search {
         position: fixed;
         bottom: 24px;
@@ -757,7 +761,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
  * License: GPLv3
  */
 
-// ── Phase 1: Field filter — mirrors DataLaVista SKIP_FIELDS + shouldSkipField ──
+// Field filter: mirrors DataLaVista SKIP_FIELDS and shouldSkipField logic.
 var SITEANALYZER_SKIP_FIELDS = new Set([
   "_ColorTag","_ComplianceFlags","_ComplianceTag","_ComplianceTagUserId",
   "_ComplianceTagWrittenTime","_IsRecord","_LabelAppliedBy","_LabelSetting",
@@ -783,7 +787,7 @@ var SITEANALYZER_SKIP_FIELDS = new Set([
 // ── Port of DLV fetchSPFields (23-sharepoint.js) — server + client filtering ──
 // Excludes Hidden, Computed, underscore-prefixed, dependent lookups, and SKIP_FIELDS.
 // Always includes mandatory fields and FileRef/FileLeafRef/FileDirRef for doc libs.
-// ── Phase 2: Field type icons (mirrors DLV FIELD_TYPE_ICONS from 10-constants.js) ──
+// Field type icons (mirrors DLV FIELD_TYPE_ICONS from 10-constants.js).
 var SITEANALYZER_FIELD_TYPE_ICONS = {
   'text':         { icon: '📝', label: 'Text' },
   'number':       { icon: '＃',  label: 'Number' },
@@ -821,9 +825,7 @@ function snaGetFieldTypeIcon(spType, calcType) {
   return SITEANALYZER_FIELD_TYPE_ICONS['text'].icon;
 }
 
-// ── Phase 2: Tabulator queue + instance map ──
-// _snaTablesQueue: populated during gatherSiteInformation, consumed by initSnaTabulators.
-// _snaTabInstances: stores live Tabulator instances for redraw on details-open and print.
+// _snaTablesQueue: populated during gatherSiteInformation; _snaTabInstances: live Tabulator instances for redraw on details-open and print.
 var _snaTablesQueue = [];
 var _snaTabInstances = {};
 
@@ -1001,9 +1003,13 @@ function initSnaTabulators() {
             var url = rowData.folderUrl || '';
             if (url) {
               return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' +
-                '<a href="' + url + '" target="_blank" rel="noopener noreferrer" data-action="open-url">' + val + '</a>';
+                '<span class="sna-folder-link" title="Open folder in new tab">' + val + '</span>';
             }
             return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' + val;
+          },
+          cellClick: function(e, cell) {
+            var url = cell.getRow().getData().folderUrl;
+            if (url) { snaOpenUrl(url); }
           }
         },
         {
@@ -1066,6 +1072,7 @@ function initSnaTabulators() {
   _snaTablesQueue = [];
 }
 
+// Fetches and filters field definitions for a list from the SharePoint REST API.
 async function snaFetchFields(targetUrl, listGuid, isDocLib) {
   var filter = "(Hidden eq false and TypeAsString ne 'Computed' and startswith(InternalName,'_') eq false" +
     " and (TypeAsString ne 'LookupMulti' or (TypeAsString eq 'LookupMulti' and ReadOnlyField eq false and IsDependentLookup eq false)))" +
@@ -1141,6 +1148,7 @@ async function snaFetchFields(targetUrl, listGuid, isDocLib) {
 var globalAccessibleSites = [];
 var globalExportedData = []; // To store field data for CSV export
 
+// Authenticated fetch wrapper for SharePoint REST APIs with automatic throttle retry on 429 responses.
 async function spFetch(url, throttleRetries) {
     if (typeof throttleRetries === 'undefined') {
         throttleRetries = 5;
@@ -1168,6 +1176,7 @@ async function spFetch(url, throttleRetries) {
     return res.json();
 }
 
+// Returns the absolute URL of the current SharePoint site based on page context info or the URL path.
 function getBaseUrl() {
     if (window._spPageContextInfo && window._spPageContextInfo.webAbsoluteUrl) {
         return window._spPageContextInfo.webAbsoluteUrl;
@@ -1184,6 +1193,7 @@ function getBaseUrl() {
     return window.location.origin;
 }
 
+// Maps a SharePoint calculated-field OutputType integer to its human-readable string name.
 function getOutputTypeName(outputType) {
     var typeMap = {
         1: 'Integer',
@@ -1209,6 +1219,7 @@ function getOutputTypeName(outputType) {
 }
 
 
+// Renders role assignments as HTML rows for display in permissions sections.
 function renderPermissionsHtml(roleAssignments) {
     if (!roleAssignments || roleAssignments.length === 0) {
         return '<div class="perm-row">No explicit permissions found.</div>';
@@ -1232,6 +1243,7 @@ function renderPermissionsHtml(roleAssignments) {
     return html;
 }
 
+// Exports all gathered field definitions across lists and libraries to a downloadable CSV file.
 function exportToCSV() {
     if (!globalExportedData || globalExportedData.length === 0) {
         alert("No list or column data available to export.");
@@ -1271,7 +1283,7 @@ function exportToCSV() {
     document.body.removeChild(link);
 }
 
-// ── Phase 3: Clipboard copy with toast notification ──
+// Copies text to clipboard and shows a brief toast notification; falls back to execCommand if needed.
 function snaCopyToClipboard(text, label) {
     var toast = document.getElementById('sna-copy-toast');
     navigator.clipboard.writeText(text).then(function() {
@@ -1299,6 +1311,7 @@ function snaCopyToClipboard(text, label) {
     });
 }
 
+// Shows a brief bottom-center toast notification; pass isError=true for a red error style.
 function snaShowToast(msg, isError) {
     var toast = document.getElementById('sna-copy-toast');
     if (!toast) { return; }
@@ -1358,10 +1371,12 @@ function snaCopyAndShowId(id, label, displayId) {
     }
 }
 
+// Opens a URL in a new browser tab/window with noopener and noreferrer for security.
 function snaOpenUrl(url) {
     if (url) { window.open(url, '_blank', 'noopener,noreferrer'); }
 }
 
+// Resets all extracted data and UI state so the user can analyse a different site.
 function startOver() {
     document.getElementById('sp-results').innerHTML = '';
     globalExportedData = [];
@@ -1392,6 +1407,7 @@ function startOver() {
     if (input) { input.focus(); input.select(); }
 }
 
+// Expands all collapsible sections, redraws Tabulator tables, then opens the print dialog.
 function expandAndPrint() {
     var detailsEls = document.querySelectorAll('#sp-results details');
     detailsEls.forEach(function(d) { d.open = true; });
@@ -1402,6 +1418,7 @@ function expandAndPrint() {
     window.print();
 }
 
+// Opens all collapsible <details> sections and redraws every Tabulator instance.
 function expandAll() {
     var detailsEls = document.querySelectorAll('#sp-results details');
     detailsEls.forEach(function(d) { d.open = true; });
@@ -1410,11 +1427,13 @@ function expandAll() {
     });
 }
 
+// Closes all collapsible <details> sections in the results area.
 function collapseAll() {
     var detailsEls = document.querySelectorAll('#sp-results details');
     detailsEls.forEach(function(d) { d.open = false; });
 }
 
+// Fetches all SharePoint site data (info, lists, fields, permissions, taxonomy) and renders the full report.
 async function gatherSiteInformation() {
     var btn = document.getElementById('sp-btn-gather');
     var loader = document.getElementById('sp-loader');
@@ -1451,7 +1470,7 @@ async function gatherSiteInformation() {
         try { siteRoles = await spFetch(`${targetUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`); } catch(err) { }
         var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
 
-        // ── Phase 5: resolve admin before the loop (single call, fast) then run taxonomy concurrently ──
+        // Resolve admin status before the loop (single call); run taxonomy fetch concurrently.
         _snaIsAdmin = await checkAdminPermissions(targetUrl).catch(function() { return false; });
         var taxonomyPromise = fetchTaxonomy(targetUrl).catch(function(e) { console.warn('taxonomy error', e); });
 
@@ -1646,7 +1665,7 @@ async function gatherSiteInformation() {
             }
         }
 
-        // ── Phase 5: wait for taxonomy (ran concurrently with the lists loop) ──
+        // Wait for the taxonomy fetch that ran concurrently with the lists loop.
         await taxonomyPromise;
 
 var siteInfoHtml = '';
@@ -1707,12 +1726,12 @@ if (siteInfo) {
 
         resultsDiv.innerHTML = finalHtml;
 
-        // ── Phase 2: initialize Tabulator tables ──
+        // Initialize Tabulator tables.
         initSnaTabulators();
-        // ── Phase 4: build global search index after browser paints results ──
+        // Build global search index after the browser paints results.
         setTimeout(buildSearchIndex, 0);
 
-        // ── Phase 1: collapse URL section, reveal Start Over ──
+        // Collapse URL input section and reveal Start Over button.
         var urlSection = document.getElementById('sna-url-section');
         if (urlSection) { urlSection.classList.add('collapsed'); }
         var startOverBtn = document.getElementById('sna-start-over-btn');
@@ -1728,12 +1747,12 @@ if (siteInfo) {
     }
 }
 
-// ── Phase 4: Global search ──
+// Global search state.
 var _snaSearchIndex    = [];
 var _snaCardData       = [];
 var _snaCurrentResults = [];
 
-// ── Phase 5: Taxonomy + Admin Edit state ──
+// Taxonomy and admin edit state.
 var _snaTaxonomyData        = [];
 var _snaSiteCollectionId    = '';
 var _snaTermStoreId         = '';
@@ -1742,6 +1761,7 @@ var _snaTargetUrl           = '';
 var _snaRequestDigest       = null;
 var _snaRequestDigestExpiry = 0;
 
+// Builds the in-memory search index from the gathered lists, columns, and taxonomy data.
 function buildSearchIndex() {
     _snaSearchIndex = [];
 
@@ -1792,7 +1812,7 @@ function buildSearchIndex() {
         });
     });
 
-    // ── Phase 5: index taxonomy terms ──
+    // Index taxonomy terms.
     _snaTaxonomyData.forEach(function(group) {
         (group.termSets || []).forEach(function(set) {
             (set.terms || []).forEach(function(term) {
@@ -1813,10 +1833,7 @@ function buildSearchIndex() {
     });
 }
 
-// Parse a raw query string into a match descriptor.
-// "quoted text"  → exact substring match
-// *              → any sequence of characters
-// space / other non-alphanumeric → any single character
+// Parses a raw search query into an exact-match or wildcard-pattern descriptor.
 function snaParseQuery(rawQuery) {
     var q = rawQuery.trim();
     if (q.length >= 2 && q.charAt(0) === '"' && q.charAt(q.length - 1) === '"') {
@@ -1836,9 +1853,7 @@ function snaParseQuery(rawQuery) {
     return { mode: 'pattern', regex: new RegExp(pattern, 'i') };
 }
 
-// Returns { columns: Item[], others: Item[] }
-// columns = all matching Column entries, sorted: label-match first, then alphabetically by label
-// others  = all matching List/Library entries, sorted alphabetically by (listTitle, listId)
+// Searches the index for the given query and returns {columns, others} result sets sorted by relevance.
 function snaSearchQuery(query) {
     if (!query || query.trim().length < 2) { return { columns: [], others: [] }; }
 
@@ -1892,6 +1907,7 @@ function snaSearchQuery(query) {
     };
 }
 
+// Closes the search panel and navigates to the selected result's card, scrolling and pulsing it.
 function snaSearchSelect(item) {
     var panel       = document.getElementById('sna-search-panel');
     var toggle      = document.getElementById('sna-search-toggle');
@@ -1923,9 +1939,7 @@ function snaSearchSelect(item) {
     });
 }
 
-// result = { columns: Item[], others: Item[] } from snaSearchQuery.
-// Renders: top 3 column hits, separator, then remaining columns + list/library hits
-// sorted alphabetically by (listTitle, listId, columnName, dataType). Max 20 total.
+// Renders up to 20 search results into the dropdown: top 3 column hits first, then remaining hits sorted alphabetically.
 function snaRenderSearchResults(result, input, resultsList) {
     resultsList.innerHTML = '';
     _snaCurrentResults = [];
@@ -2004,7 +2018,7 @@ function snaRenderSearchResults(result, input, resultsList) {
     restShow.forEach(function(item) { resultsList.appendChild(makeResultLi(item)); });
 }
 
-// ── Phase 5: Admin permission check ──
+// Checks if the current user has ManageWeb permission on the target site.
 async function checkAdminPermissions(targetUrl) {
     try {
         var perms = await spFetch(targetUrl + '/_api/web/effectivebasePermissions');
@@ -2017,7 +2031,7 @@ async function checkAdminPermissions(targetUrl) {
     }
 }
 
-// ── Phase 5: X-RequestDigest cache (25-minute TTL) ──
+// Returns a cached X-RequestDigest token, fetching a fresh one from /_api/contextinfo if expired.
 async function getRequestDigest(targetUrl) {
     var now = Date.now();
     if (_snaRequestDigest && now < _snaRequestDigestExpiry) { return _snaRequestDigest; }
@@ -2032,7 +2046,7 @@ async function getRequestDigest(targetUrl) {
     return _snaRequestDigest;
 }
 
-// ── Phase 5: Fetch site-collection taxonomy (mirrors user-provided script) ──
+// Fetches site-collection-scoped taxonomy groups, term sets, and terms from the v2.1 term store API.
 async function fetchTaxonomy(targetUrl) {
     _snaTaxonomyData = [];
     try {
@@ -2095,7 +2109,7 @@ async function fetchTaxonomy(targetUrl) {
     }
 }
 
-// ── Phase 5: Render admin-editable description wrapper ──
+// Returns HTML wrapping a description string in an inline-editable span with a pencil button for admin users.
 function renderAdminDescWrap(text, editKey) {
     var safeText  = (text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     if (!_snaIsAdmin) { return safeText || '<em style="color:#999;">No description.</em>'; }
@@ -2108,7 +2122,7 @@ function renderAdminDescWrap(text, editKey) {
            '</span>';
 }
 
-// ── Phase 5: Render taxonomy section HTML ──
+// Renders the Taxonomy / Term Store section HTML from the fetched taxonomy data.
 function renderTaxonomySection() {
     var header = '<div class="main-section-header"><h2>&#127991; Taxonomy / Term Store</h2></div>';
     if (!_snaTaxonomyData || _snaTaxonomyData.length === 0) {
@@ -2152,7 +2166,7 @@ function renderTaxonomySection() {
     return html;
 }
 
-// ── Phase 5: Save a description field ──
+// Saves an updated description via REST PATCH (site/list/column) or taxonomy v2.1/CSOM endpoints.
 async function snaSaveDescription(editKey, newText) {
     var parts = editKey.split(':');
     var kind  = parts[0];
@@ -2204,9 +2218,7 @@ async function snaSaveDescription(editKey, newText) {
     }
 }
 
-// ── Phase 5: Taxonomy writes via non-site-scoped v2.1 REST (Gemini approach) ──
-// Uses /_api/v2.1/termStore/... instead of /_api/v2.1/sites/{id}/termStore/...
-// On some tenants this route accepts session cookies + X-RequestDigest without OAuth.
+// Updates a taxonomy description via the non-site-scoped v2.1 term store REST endpoint (works on tenants that accept session cookies without OAuth).
 async function snaTaxonomyV21Update(kind, parts, newText) {
     var digest = await getRequestDigest(_snaTargetUrl);
     var base   = _snaTargetUrl + '/_api/v2.1/termStore/';
@@ -2240,14 +2252,7 @@ async function snaTaxonomyV21Update(kind, parts, newText) {
     }
 }
 
-// ── Phase 5: Update taxonomy descriptions via CSOM ──
-// Applies all corrections from the Gemini "bulletproof" approach:
-//   • TypeId {9511028b-06c6-492d-905e-f0b1442d76e7} loads Microsoft.SharePoint.Taxonomy.dll
-//   • StaticProperty "Current" replaces GetTaxonomySession (avoids context-parameter issues)
-//   • ObjectPath actions in <Actions> materialize each object before use
-//   • SetDescription(String description, Int32 lcid) — correct order/types
-//   • GUIDs wrapped in {…} in parameter values
-//   • X-Requested-With: XMLHttpRequest header
+// Updates a taxonomy description via CSOM XML POST to /_vti_bin/client.svc/ProcessQuery; fallback when v2.1 REST is blocked.
 async function snaTaxonomyCsomUpdate(kind, parts, newText) {
     var digest  = await getRequestDigest(_snaTargetUrl);
     var escaped = newText
@@ -2340,7 +2345,7 @@ async function snaTaxonomyCsomUpdate(kind, parts, newText) {
     }
 }
 
-// ── Phase 5: Inline edit lifecycle ──
+// Activates inline editing for a description field, replacing static text with a contenteditable div.
 function snaStartEdit(wrapEl) {
     if (!wrapEl || wrapEl.dataset.editing) { return; }
     wrapEl.dataset.editing = '1';
@@ -2402,6 +2407,7 @@ function snaStartEdit(wrapEl) {
     if (sel) { sel.removeAllRanges(); sel.addRange(range); }
 }
 
+// Cancels an in-progress inline description edit and restores the original displayed text.
 function snaCancelEdit(wrapEl) {
     if (!wrapEl) { return; }
     var textEl    = wrapEl.querySelector('.sna-editable-text');
@@ -2414,6 +2420,7 @@ function snaCancelEdit(wrapEl) {
     delete wrapEl._snaEditorWrap;
 }
 
+// Reads the inline editor content, calls snaSaveDescription, and updates the displayed text on success.
 function snaSaveEditFromEl(wrapEl) {
     if (!wrapEl) { return; }
     var editorWrap = wrapEl._snaEditorWrap;
@@ -2444,6 +2451,7 @@ function snaSaveEditFromEl(wrapEl) {
     });
 }
 
+// Creates and mounts the global fixed-position search widget (toggle button + panel) into the DOM.
 function snaSearchInit() {
     var widget = document.createElement('div');
     widget.id = 'sna-global-search';
@@ -2579,6 +2587,7 @@ function snaSearchInit() {
     });
 }
 
+// Entry point: wires all event handlers, loads the accessible sites list, and initialises the search widget.
 function startApplication() {
     var currentBaseUrl = getBaseUrl();
     var siteUrlInput = document.getElementById('site-url-input');
@@ -2595,7 +2604,7 @@ function startApplication() {
         siteUrlInput.value = currentBaseUrl;
     }
 
-    // ── Phase 6: siteUrl query parameter deep-link ──
+    // Deep-link support: pre-fill and auto-run if a siteUrl query parameter is present.
     var _urlParams = new URLSearchParams(window.location.search);
     var _siteUrlParam = _urlParams.get('siteUrl');
     if (_siteUrlParam && siteUrlInput) {
@@ -2603,14 +2612,15 @@ function startApplication() {
         gatherSiteInformation();
     }
 
-    // ── Phase 4: mount global search widget ──
+    // Mount the global search widget.
     snaSearchInit();
 
-    // ── Phase 6: sites list caching helpers (local to startApplication) ──
+    // Sites list caching helpers.
     var SITES_CACHE_KEY = 'sna_sites_cache';
     var SITES_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
     var SITES_MAX = 1000;
 
+    // Serialises the sites array to localStorage with a cache timestamp and completion flag.
     function saveSitesCache(sites, complete) {
         try {
             localStorage.setItem(SITES_CACHE_KEY, JSON.stringify({
@@ -2622,6 +2632,7 @@ function startApplication() {
         } catch(e) {}
     }
 
+    // Converts raw SharePoint search result rows into {title, url} site objects.
     function parseSiteRows(rows) {
         var results = [];
         rows.forEach(function(row) {
@@ -2637,6 +2648,7 @@ function startApplication() {
         return results;
     }
 
+    // Fetches additional site pages in the background, appending results and refreshing the cache after each batch.
     async function fetchMoreSitesBackground(baseUrl, sorted, batchSize, accSites) {
         var sortParam = sorted ? "&sortlist='Write:descending'" : '';
         var startRow = accSites.length;
@@ -2664,6 +2676,7 @@ function startApplication() {
         if (completedNaturally) { saveSitesCache(globalAccessibleSites, true); }
     }
 
+    // Loads accessible sites from localStorage cache or SharePoint search, refreshing stale cache in the background.
     async function fetchAccessibleSites() {
         var helperMessage = document.getElementById('site-url-helper-message');
         var helperDefault = 'Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.';
@@ -2739,6 +2752,7 @@ function startApplication() {
     }
 
     if (siteUrlInput) {
+        // Extracts the searchable segment from a site URL input value (the text after the last slash).
         function getSearchQuery(inputValue) {
             var lastSlashIndex = inputValue.lastIndexOf('/');
             if (lastSlashIndex === -1) {
@@ -2747,6 +2761,7 @@ function startApplication() {
             return inputValue.substring(lastSlashIndex + 1).toLowerCase();
         }
 
+        // Filters the accessible sites list and renders matching suggestions in the URL input dropdown.
         function showSuggestions(query) {
             siteSuggestions.innerHTML = '';
 
