@@ -844,6 +844,7 @@ var _snaRequestDigest       = null;
 var _snaRequestDigestExpiry = 0;
 var _snaSiteInfo            = null;  // Site metadata from _api/web; used by XLSX export
 var _snaAllListsMeta        = [];    // Raw allLists.value objects; used by XLSX export
+var _snaCurrentUser         = null;  // Logged-in user { name, email, loginName } fetched at analysis time
 
 
 // Initialize all queued Tabulator tables after HTML is injected into the DOM.
@@ -1210,6 +1211,18 @@ function getBaseUrl() {
     return window.location.origin;
 }
 
+// Fetches the current user's profile from the SharePoint REST API.
+// Returns { name, email, loginName } or null on failure.
+async function getLoggedInUser(targetUrl) {
+    try {
+        var data = await spFetch((targetUrl || _snaTargetUrl) + '/_api/web/currentUser?$select=Title,Email,LoginName');
+        if (!data) return null;
+        return { name: data.Title || '', email: data.Email || '', loginName: data.LoginName || '' };
+    } catch (e) {
+        return null;
+    }
+}
+
 // Maps a SharePoint calculated-field OutputType integer to its human-readable string name.
 function getOutputTypeName(outputType) {
     var typeMap = {
@@ -1306,6 +1319,18 @@ function xlsxStripSlash(s) {
     return r;
 }
 
+// Pascal case conversion (Upper Camel Case)
+function toPascalCase(str) {
+  return str
+    .trim()
+    .replace(/[^a-zA-Z0-9 _]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/_([a-zA-Z])/g, (_, c) => c.toUpperCase())
+    .replace(/^[^a-zA-Z_$]/, '_')
+    .replace(/^[a-z]/, (c) => c.toUpperCase())
+    .trim();
+}
+
 // Builds a SheetJS worksheet from a header array and data rows.
 function buildSheet(headers, rows) {
     var wsData = [headers].concat(rows);
@@ -1325,20 +1350,25 @@ function exportToXLSX() {
         return;
     }
     
-    var ec = { src: 0, ast: 0, fld: 0, vs: 0, rel: 0 };
+    var ec = { stw: 0, fld: 0, vs: 0, rel: 0 };
     var i, j, ti, ci;
-    var list, astId, cleanId, assetType, qualifiedPath, dvParts, qparts, container, itemCount;
+    var list, astId, cleanId, assetType, qualifiedPath, dvParts, qparts, container, itemCount, listUrl;
     var f, fldId, cleanList, fieldAstId, displayType, nativeType, vsId, choices, choice;
     var req, nullable, indexed, pk, maxLen;
-    var tgtClean, toAstId, cardinality;
+    var tgtClean, toAstId, toIdFieldGuid, cardinality;
     var group, termSets, termSet, terms, term;
 
     var now     = new Date();
     var dateStr = now.getFullYear() + '-' +
         String(now.getMonth() + 1).padStart(2, '0') + '-' +
         String(now.getDate()).padStart(2, '0');
-    var exportedBy = (window._spPageContextInfo && window._spPageContextInfo.userEmail)
-        ? window._spPageContextInfo.userEmail : '';
+    var exporterName    = (_snaCurrentUser && _snaCurrentUser.name)      ? _snaCurrentUser.name      : '';
+    var exporterEmail   = (_snaCurrentUser && _snaCurrentUser.email)     ? _snaCurrentUser.email     : '';
+    var techStewardId   = exporterEmail || xlsxNid(ec, 'STW_', 'stw');
+    var stewardsRows = [];
+    if (techStewardId) {
+        stewardsRows.push([techStewardId, exporterName, 'Person', 'Technical Steward', '', exporterEmail, '', '', '']);
+    }
     var siteTitle = (_snaSiteInfo && _snaSiteInfo.Title) ? _snaSiteInfo.Title : '';
     var siteUrl   = _snaTargetUrl || ((_snaSiteInfo && _snaSiteInfo.Url) ? _snaSiteInfo.Url : '');
     var siteDesc  = (_snaSiteInfo && _snaSiteInfo.Description) ? _snaSiteInfo.Description : '';
@@ -1346,17 +1376,17 @@ function exportToXLSX() {
     var exportInfoData = [
         ['export_id',      'SITENALYZER_' + String(now.getTime())],
         ['export_date',    dateStr],
-        ['exported_by',    exportedBy],
+        ['exported_by',    exporterName],
         ['tool',           'Sitenalyzer'],
         ['tool_version',   '1.0'],
         ['format_version', '1.0'],
         ['scope_notes',    'SharePoint site: ' + siteUrl],
-        ['contact_email',  exportedBy]
+        ['contact_email',  exporterEmail]
     ];
     var wsExportInfo = XLSX.utils.aoa_to_sheet(exportInfoData);
     wsExportInfo['!cols'] = [{ wch: 20 }, { wch: 60 }];
 
-    var srcId = xlsxNid(ec, 'SRC_', 'src');
+    var srcId = (_snaSiteInfo && _snaSiteInfo.Id) ? xlsxCleanGuid(_snaSiteInfo.Id) : 'SRC_UNKNOWN';
     var sourcesRows = [];
     sourcesRows.push([
         srcId, siteTitle, 'SharePoint', 'SharePoint Online',
@@ -1364,24 +1394,25 @@ function exportToXLSX() {
         '', '', '',
         siteDesc, 'Real-time',
         'Unknown', 'Unknown', '',
-        '', '', 'Active'
+        '', techStewardId, 'Active'
     ]);
 
     var listGuidToAstId = {};
     var assetsRows = [];
+    var origin = siteUrl ? (siteUrl.match(/^(https?:\/\/[^\/]+)/) || ['', ''])[1] : '';
 
     for (i = 0; i < _snaAllListsMeta.length; i++) {
         list    = _snaAllListsMeta[i];
-        astId   = xlsxNid(ec, 'AST_', 'ast');
         cleanId = xlsxCleanGuid(list.Id);
+        astId   = cleanId;
         listGuidToAstId[cleanId] = astId;
 
         if (list.BaseTemplate === 101) {
-            assetType = 'SP Library (Document)';
-        } else if (list.BaseTemplate === 100) {
-            assetType = 'SP List';
+            assetType = 'SharePoint Document Library';
+        } else if (list.BaseType === 1) {
+            assetType = 'SharePoint Document Library';
         } else {
-            assetType = 'SP Library';
+            assetType = 'SharePoint List';
         }
 
         qualifiedPath = '';
@@ -1394,6 +1425,10 @@ function exportToXLSX() {
             qualifiedPath = xlsxStripSlash(siteUrl) + '/' + (list.EntityTypeName || '');
         }
 
+        listUrl = list.DefaultViewUrl
+            ? (origin + list.DefaultViewUrl)
+            : (xlsxStripSlash(siteUrl) + '/' + (list.EntityTypeName || ''));
+
         qparts    = qualifiedPath.split('/');
         qparts.pop();
         container = qparts.join('/') || siteUrl;
@@ -1405,29 +1440,30 @@ function exportToXLSX() {
             astId, srcId,
             list.EntityTypeName || list.Title || '',
             list.Title || '',
-            assetType,
+            assetType, listUrl,
             container, qualifiedPath,
             list.Description || '',
             '', itemCount, '',
             'Source', 'Real-time',
             'Unknown', 'Unknown', '',
-            '', '', 'Active', ''
+            '', techStewardId, 'Active', ''
         ]);
     }
 
     var termStoreAstId = '';
     var hasTaxonomy = (_snaTaxonomyData && _snaTaxonomyData.length > 0);
     if (hasTaxonomy) {
-        termStoreAstId = xlsxNid(ec, 'AST_', 'ast');
+        termStoreAstId = srcId + '_termstore';
+        var termStoreUrl = xlsxStripSlash(siteUrl) + '/_layouts/15/termstoremanager.aspx';
         assetsRows.push([
             termStoreAstId, srcId,
-            'TermStore', 'Term Store', 'SP Library',
+            'TermStore', 'Term Store', 'SharePoint Term Store', termStoreUrl,
             siteUrl, siteUrl,
             'SharePoint Managed Metadata term store',
             '', '', '',
             'Source', 'Real-time',
             'Unknown', 'Unknown', '',
-            '', '', 'Active', ''
+            '', techStewardId, 'Active', ''
         ]);
     }
 
@@ -1435,11 +1471,18 @@ function exportToXLSX() {
     var valueSetsRows     = [];
     var relationshipsRows = [];
 
+    var listGuidToIdFieldGuid = {};
+    for (i = 0; i < globalExportedData.length; i++) {
+        if (globalExportedData[i].InternalName === 'ID' && globalExportedData[i].FieldId) {
+            listGuidToIdFieldGuid[xlsxCleanGuid(globalExportedData[i].ListGuid)] = xlsxCleanGuid(globalExportedData[i].FieldId);
+        }
+    }
+
     for (i = 0; i < globalExportedData.length; i++) {
         f           = globalExportedData[i];
-        fldId       = xlsxNid(ec, 'FLD_', 'fld');
         cleanList   = xlsxCleanGuid(f.ListGuid);
-        fieldAstId  = listGuidToAstId[cleanList] || '';
+        fldId       = f.FieldId ? xlsxCleanGuid(f.FieldId) : xlsxNid(ec, 'FLD_', 'fld');
+        fieldAstId  = cleanList;
         displayType = spTypeToDisplayType(f.Type, f.ReturnType);
 
         nativeType = f.Type || '';
@@ -1491,13 +1534,14 @@ function exportToXLSX() {
         ]);
 
         if (f.Type === 'Lookup' || f.Type === 'LookupMulti') {
-            tgtClean    = xlsxCleanGuid(f.LookupList);
-            toAstId     = listGuidToAstId[tgtClean] || '';
-            cardinality = (f.Type === 'LookupMulti') ? 'M-M' : 'M-1';
+            tgtClean      = xlsxCleanGuid(f.LookupList);
+            toAstId       = tgtClean;
+            toIdFieldGuid = listGuidToIdFieldGuid[tgtClean] || '';
+            cardinality   = (f.Type === 'LookupMulti') ? 'M-M' : 'M-1';
             relationshipsRows.push([
                 xlsxNid(ec, 'REL_', 'rel'),
                 'Lookup', fieldAstId, fldId,
-                toAstId, '',
+                toAstId, toIdFieldGuid,
                 cardinality, 'Lookup', 'Y',
                 f.Description || ''
             ]);
@@ -1534,7 +1578,7 @@ function exportToXLSX() {
         'contains_phi','contains_pii','sensitivity','business_steward_id','technical_steward_id','status'
     ];
     var H_AST = [
-        'asset_id','source_id','asset_name','asset_display_name','asset_type','container',
+        'asset_id','source_id','asset_name','asset_display_name','asset_type','url','container',
         'qualified_path','description','grain','record_count','view_or_derivation_definition',
         'source_or_derived','refresh_frequency','contains_phi','contains_pii','sensitivity',
         'business_steward_id','technical_steward_id','status','notes'
@@ -1576,14 +1620,15 @@ function exportToXLSX() {
     XLSX.utils.book_append_sheet(wb, buildSheet(H_REL, relationshipsRows),  'Relationships');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_DSH, []),                 'Dashboards');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_VIZ, []),                 'Visualizations');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_STW, []),                 'Stewards');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_STW, stewardsRows),        'Stewards');
 
     var wbArr = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     var blob  = new Blob([wbArr], { type: 'application/octet-stream' });
     var dlUrl = URL.createObjectURL(blob);
     var link  = document.createElement('a');
     link.setAttribute('href', dlUrl);
-    link.setAttribute('download', 'sitenalyzer_data_dictionary_' + dateStr + '.xlsx');
+    var safeSiteName = toPascalCase(siteTitle.trim().replace(/\.?mm$/i, '').trim()) || 'Site';
+    link.setAttribute('download', safeSiteName + '_Data_Dictionary_' + dateStr + '.xlsx');
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -1696,6 +1741,7 @@ function startOver() {
     _snaTargetUrl        = '';
     _snaSiteInfo         = null;
     _snaAllListsMeta     = [];
+    _snaCurrentUser = null;
     _snaRequestDigest    = null;
     _snaRequestDigestExpiry = 0;
     var srPanel = document.getElementById('sna-search-panel');
@@ -1764,6 +1810,7 @@ async function gatherSiteInformation() {
     _snaTargetUrl        = '';
     _snaSiteInfo         = null;
     _snaAllListsMeta     = [];
+    _snaCurrentUser = null;
 
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
@@ -1778,6 +1825,7 @@ async function gatherSiteInformation() {
         var siteInfo = null;
         siteInfo = await spFetch(`${targetUrl}/_api/web?$select=Title,Url,Id,Description,SiteLogoUrl`);
         _snaSiteInfo = siteInfo;
+        _snaCurrentUser = await getLoggedInUser(targetUrl).catch(function() { return null; });
         var siteRoles = null;
         try { siteRoles = await spFetch(`${targetUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`); } catch(err) { }
         var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
