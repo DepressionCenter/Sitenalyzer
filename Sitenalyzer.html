@@ -829,6 +829,23 @@ function snaGetFieldTypeIcon(spType, calcType) {
 var _snaTablesQueue = [];
 var _snaTabInstances = {};
 
+// Global search state.
+var _snaSearchIndex    = [];
+var _snaCardData       = [];
+var _snaCurrentResults = [];
+
+// Taxonomy and admin edit state.
+var _snaTaxonomyData        = [];
+var _snaSiteCollectionId    = '';
+var _snaTermStoreId         = '';
+var _snaIsAdmin             = false;
+var _snaTargetUrl           = '';
+var _snaRequestDigest       = null;
+var _snaRequestDigestExpiry = 0;
+var _snaSiteInfo            = null;  // Site metadata from _api/web; used by XLSX export
+var _snaAllListsMeta        = [];    // Raw allLists.value objects; used by XLSX export
+
+
 // Initialize all queued Tabulator tables after HTML is injected into the DOM.
 function initSnaTabulators() {
   if (!window.Tabulator) { return; }
@@ -1078,7 +1095,7 @@ async function snaFetchFields(targetUrl, listGuid, isDocLib) {
     " and (TypeAsString ne 'LookupMulti' or (TypeAsString eq 'LookupMulti' and ReadOnlyField eq false and IsDependentLookup eq false)))" +
     " or InternalName eq 'Editor' or InternalName eq 'Author' or InternalName eq 'Created'" +
     " or InternalName eq 'Modified' or InternalName eq 'ID' or InternalName eq 'Title' or InternalName eq 'TaxKeyword'";
-  var select = "Id,InternalName,Title,TypeAsString,Description,Required,MaxLength,Choices,LookupField,LookupList,IsHidden,Hidden,ReadOnlyField,IsDependentLookup";
+  var select = "Id,InternalName,Title,TypeAsString,Description,Required,MaxLength,Choices,LookupField,LookupList,IsHidden,Hidden,ReadOnlyField,IsDependentLookup,DefaultValue,Formula,Indexed";
   var fieldsUrl = targetUrl + "/_api/web/lists(guid'" + listGuid + "')/fields?$select=" + select + "&$filter=" + filter;
 
   var json = await spFetch(fieldsUrl);
@@ -1243,40 +1260,330 @@ function renderPermissionsHtml(roleAssignments) {
     return html;
 }
 
-// Exports all gathered field definitions across lists and libraries to a downloadable CSV file.
-function exportToCSV() {
+// Maps a SharePoint TypeAsString to the data-dictionary display_type enum.
+function spTypeToDisplayType(spType, calcReturnType) {
+    if (spType === 'Calculated') {
+        var rt = calcReturnType || '';
+        if (rt === 'Number' || rt === 'Currency') { return rt; }
+        if (rt === 'DateTime') { return 'DateTime'; }
+        if (rt === 'Boolean') { return 'Boolean'; }
+        return 'Calculated';
+    }
+    var m = {
+        'Text': 'Text', 'Note': 'Text',
+        'Number': 'Number', 'Counter': 'Number',
+        'Currency': 'Currency',
+        'DateTime': 'DateTime',
+        'Boolean': 'Boolean', 'Attachments': 'Boolean',
+        'Choice': 'Choice', 'MultiChoice': 'Choice',
+        'Lookup': 'Lookup', 'LookupMulti': 'Lookup',
+        'User': 'Person', 'UserMulti': 'Person',
+        'URL': 'Hyperlink',
+        'TaxonomyFieldType': 'ManagedMetadata',
+        'TaxonomyFieldTypeMulti': 'ManagedMetadata',
+        'Computed': 'Calculated'
+    };
+    return m[spType] || 'Unknown';
+}
+
+// Increments and returns the next sequential ID string (e.g. SRC_000001).
+function xlsxNid(ec, prefix, key) {
+    ec[key]++;
+    return prefix + String(ec[key]).padStart(6, '0');
+}
+
+// Strips curly braces from a GUID string and lowercases it.
+function xlsxCleanGuid(s) {
+    return String(s || '').toLowerCase().split('{').join('').split('}').join('');
+}
+
+// Removes trailing forward slashes from a URL string.
+function xlsxStripSlash(s) {
+    var r = String(s || '');
+    while (r.length > 0 && r.charAt(r.length - 1) === '/') {
+        r = r.substring(0, r.length - 1);
+    }
+    return r;
+}
+
+// Builds a SheetJS worksheet from a header array and data rows.
+function buildSheet(headers, rows) {
+    var wsData = [headers].concat(rows);
+    var ws = XLSX.utils.aoa_to_sheet(wsData);
+    var cols = [];
+    for (var k = 0; k < headers.length; k++) {
+        cols.push({ wch: 20 });
+    }
+    ws['!cols'] = cols;
+    return ws;
+}
+
+// Exports a 9-tab Data Dictionary XLSX file using SheetJS.
+function exportToXLSX() {
     if (!globalExportedData || globalExportedData.length === 0) {
-        alert("No list or column data available to export.");
+        snaShowToast("No list or column data available to export.",true);
         return;
     }
+    
+    var ec = { src: 0, ast: 0, fld: 0, vs: 0, rel: 0 };
+    var i, j, ti, ci;
+    var list, astId, cleanId, assetType, qualifiedPath, dvParts, qparts, container, itemCount;
+    var f, fldId, cleanList, fieldAstId, displayType, nativeType, vsId, choices, choice;
+    var req, nullable, indexed, pk, maxLen;
+    var tgtClean, toAstId, cardinality;
+    var group, termSets, termSet, terms, term;
 
-    var headers = ["List Name", "List Type", "Field Title", "Internal Name", "Data Type", "Description", "Calculated Return Type", "Lookup List", "Lookup List GUID", "Formula", "Default Value", "Field GUID"];
-    var rows = [headers];
+    var now     = new Date();
+    var dateStr = now.getFullYear() + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0');
+    var exportedBy = (window._spPageContextInfo && window._spPageContextInfo.userEmail)
+        ? window._spPageContextInfo.userEmail : '';
+    var siteTitle = (_snaSiteInfo && _snaSiteInfo.Title) ? _snaSiteInfo.Title : '';
+    var siteUrl   = _snaTargetUrl || ((_snaSiteInfo && _snaSiteInfo.Url) ? _snaSiteInfo.Url : '');
+    var siteDesc  = (_snaSiteInfo && _snaSiteInfo.Description) ? _snaSiteInfo.Description : '';
 
-    globalExportedData.forEach(function(row) {
-        var rowData = [
-            '"' + (String(row.ListTitle || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.ListType || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.FieldTitle || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.InternalName || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.Type || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.Description || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.ReturnType || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.LookupListName || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.LookupList || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.Formula || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.DefaultValue || '')).replace(/"/g, '""') + '"',
-            '"' + (String(row.FieldId || '')).replace(/"/g, '""') + '"'
-        ];
-        rows.push(rowData);
-    });
+    var exportInfoData = [
+        ['export_id',      'SITENALYZER_' + String(now.getTime())],
+        ['export_date',    dateStr],
+        ['exported_by',    exportedBy],
+        ['tool',           'Sitenalyzer'],
+        ['tool_version',   '1.0'],
+        ['format_version', '1.0'],
+        ['scope_notes',    'SharePoint site: ' + siteUrl],
+        ['contact_email',  exportedBy]
+    ];
+    var wsExportInfo = XLSX.utils.aoa_to_sheet(exportInfoData);
+    wsExportInfo['!cols'] = [{ wch: 20 }, { wch: 60 }];
 
-    var csvContent = rows.map(function(e) { return e.join(","); }).join("\n");
-    var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    var url = URL.createObjectURL(blob);
-    var link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", "sitenalyzer_columns_export.csv");
+    var srcId = xlsxNid(ec, 'SRC_', 'src');
+    var sourcesRows = [];
+    sourcesRows.push([
+        srcId, siteTitle, 'SharePoint', 'SharePoint Online',
+        siteUrl, siteTitle,
+        '', '', '',
+        siteDesc, 'Real-time',
+        'Unknown', 'Unknown', '',
+        '', '', 'Active'
+    ]);
+
+    var listGuidToAstId = {};
+    var assetsRows = [];
+
+    for (i = 0; i < _snaAllListsMeta.length; i++) {
+        list    = _snaAllListsMeta[i];
+        astId   = xlsxNid(ec, 'AST_', 'ast');
+        cleanId = xlsxCleanGuid(list.Id);
+        listGuidToAstId[cleanId] = astId;
+
+        if (list.BaseTemplate === 101) {
+            assetType = 'SP Library (Document)';
+        } else if (list.BaseTemplate === 100) {
+            assetType = 'SP List';
+        } else {
+            assetType = 'SP Library';
+        }
+
+        qualifiedPath = '';
+        if (list.DefaultViewUrl) {
+            dvParts = list.DefaultViewUrl.split('/');
+            dvParts.pop();
+            qualifiedPath = dvParts.join('/');
+        }
+        if (!qualifiedPath) {
+            qualifiedPath = xlsxStripSlash(siteUrl) + '/' + (list.EntityTypeName || '');
+        }
+
+        qparts    = qualifiedPath.split('/');
+        qparts.pop();
+        container = qparts.join('/') || siteUrl;
+
+        itemCount = (list.ItemCount !== undefined && list.ItemCount !== null)
+            ? String(list.ItemCount) : '';
+
+        assetsRows.push([
+            astId, srcId,
+            list.EntityTypeName || list.Title || '',
+            list.Title || '',
+            assetType,
+            container, qualifiedPath,
+            list.Description || '',
+            '', itemCount, '',
+            'Source', 'Real-time',
+            'Unknown', 'Unknown', '',
+            '', '', 'Active', ''
+        ]);
+    }
+
+    var termStoreAstId = '';
+    var hasTaxonomy = (_snaTaxonomyData && _snaTaxonomyData.length > 0);
+    if (hasTaxonomy) {
+        termStoreAstId = xlsxNid(ec, 'AST_', 'ast');
+        assetsRows.push([
+            termStoreAstId, srcId,
+            'TermStore', 'Term Store', 'SP Library',
+            siteUrl, siteUrl,
+            'SharePoint Managed Metadata term store',
+            '', '', '',
+            'Source', 'Real-time',
+            'Unknown', 'Unknown', '',
+            '', '', 'Active', ''
+        ]);
+    }
+
+    var fieldsRows        = [];
+    var valueSetsRows     = [];
+    var relationshipsRows = [];
+
+    for (i = 0; i < globalExportedData.length; i++) {
+        f           = globalExportedData[i];
+        fldId       = xlsxNid(ec, 'FLD_', 'fld');
+        cleanList   = xlsxCleanGuid(f.ListGuid);
+        fieldAstId  = listGuidToAstId[cleanList] || '';
+        displayType = spTypeToDisplayType(f.Type, f.ReturnType);
+
+        nativeType = f.Type || '';
+        if (f.Type === 'Calculated' && f.ReturnType) {
+            nativeType = 'Calculated (' + f.ReturnType + ')';
+        }
+
+        vsId    = '';
+        choices = Array.isArray(f.Choices) ? f.Choices : [];
+        if (choices.length > 0) {
+            vsId = xlsxNid(ec, 'VS_', 'vs');
+            for (ci = 0; ci < choices.length; ci++) {
+                choice = choices[ci];
+                valueSetsRows.push([
+                    vsId,
+                    (f.ListTitle || '') + ' - ' + (f.FieldTitle || ''),
+                    '',
+                    choice, choice, '',
+                    String(ci + 1), 'Y', 'N', '', ''
+                ]);
+            }
+        }
+
+        req      = f.Required ? 'Y' : 'N';
+        nullable = f.Required ? 'N' : 'Y';
+        indexed  = f.Indexed  ? 'Y' : 'N';
+        pk       = (f.InternalName === 'ID') ? 'Y' : 'N';
+        maxLen   = (f.MaxLength !== '' && f.MaxLength !== null && f.MaxLength !== undefined)
+            ? String(f.MaxLength) : '';
+
+        fieldsRows.push([
+            fldId, fieldAstId,
+            f.InternalName || '', f.FieldTitle || '',
+            String(f.FieldOrder || ''),
+            f.Description  || '',
+            displayType, nativeType,
+            f.Formula      || '',
+            maxLen, '', '',
+            '', '',
+            req, nullable,
+            '', pk, indexed,
+            f.DefaultValue || '',
+            '', '', '',
+            vsId,
+            '',
+            'Unknown', 'Unknown', '',
+            '', '', '', '',
+            'Active', ''
+        ]);
+
+        if (f.Type === 'Lookup' || f.Type === 'LookupMulti') {
+            tgtClean    = xlsxCleanGuid(f.LookupList);
+            toAstId     = listGuidToAstId[tgtClean] || '';
+            cardinality = (f.Type === 'LookupMulti') ? 'M-M' : 'M-1';
+            relationshipsRows.push([
+                xlsxNid(ec, 'REL_', 'rel'),
+                'Lookup', fieldAstId, fldId,
+                toAstId, '',
+                cardinality, 'Lookup', 'Y',
+                f.Description || ''
+            ]);
+        }
+    }
+
+    if (hasTaxonomy) {
+        for (i = 0; i < _snaTaxonomyData.length; i++) {
+            group    = _snaTaxonomyData[i];
+            termSets = group.termSets || [];
+            for (j = 0; j < termSets.length; j++) {
+                termSet = termSets[j];
+                vsId    = xlsxNid(ec, 'VS_', 'vs');
+                terms   = termSet.terms || [];
+                for (ti = 0; ti < terms.length; ti++) {
+                    term = terms[ti];
+                    valueSetsRows.push([
+                        vsId,
+                        termSet.setName || '',
+                        termSet.setDescription || '',
+                        term.termId   || '',
+                        term.termName || '',
+                        term.termDescription || '',
+                        String(ti + 1), 'Y', 'N', '', ''
+                    ]);
+                }
+            }
+        }
+    }
+
+    var H_SRC = [
+        'source_id','source_name','source_type','platform','url','database_or_site',
+        'environment','business_unit','domain','description','refresh_frequency',
+        'contains_phi','contains_pii','sensitivity','business_steward_id','technical_steward_id','status'
+    ];
+    var H_AST = [
+        'asset_id','source_id','asset_name','asset_display_name','asset_type','container',
+        'qualified_path','description','grain','record_count','view_or_derivation_definition',
+        'source_or_derived','refresh_frequency','contains_phi','contains_pii','sensitivity',
+        'business_steward_id','technical_steward_id','status','notes'
+    ];
+    var H_FLD = [
+        'field_id','asset_id','internal_name','display_name','field_order','description',
+        'display_type','native_type','calculation_formula','length','precision','scale',
+        'format','unit_of_measure','required','nullable','unique','primary_key','indexed',
+        'default_value','valid_min','valid_max','valid_regex','value_set_id','missing_value_codes',
+        'sensitivity','contains_phi','contains_pii','identifier_type','nih_cde_id',
+        'standard_code_system','standard_code','status','notes'
+    ];
+    var H_VS  = [
+        'value_set_id','value_set_name','description','value_code','value_label',
+        'value_definition','display_order','active','is_missing_value','standard_code_system','standard_code'
+    ];
+    var H_REL = [
+        'relationship_id','relationship_type','from_asset_id','from_field_id',
+        'to_asset_id','to_field_id','cardinality','join_type','enforced','description'
+    ];
+    var H_DSH = [
+        'dashboard_id','name','tool','url','workspace_or_site','description','audience',
+        'business_process','refresh_frequency','source_ids','asset_ids',
+        'contains_phi','contains_pii','sensitivity','business_steward_id','technical_steward_id','status','notes'
+    ];
+    var H_VIZ = [
+        'viz_id','dashboard_id','page_or_section','name','viz_type','description',
+        'asset_ids','field_ids_used','x_field_id','y_field_id_or_metric',
+        'group_by_field_ids','filter_field_ids','default_filters','calculation_formula','sort_logic','notes'
+    ];
+    var H_STW = ['steward_id','name','type','role_default','unit','email','phone','backup_steward_id','notes'];
+
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsExportInfo,                          'Export_Info');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_SRC, sourcesRows),        'Sources');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_AST, assetsRows),         'Assets');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_FLD, fieldsRows),         'Fields');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_VS,  valueSetsRows),      'Value_Sets');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_REL, relationshipsRows),  'Relationships');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_DSH, []),                 'Dashboards');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_VIZ, []),                 'Visualizations');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_STW, []),                 'Stewards');
+
+    var wbArr = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    var blob  = new Blob([wbArr], { type: 'application/octet-stream' });
+    var dlUrl = URL.createObjectURL(blob);
+    var link  = document.createElement('a');
+    link.setAttribute('href', dlUrl);
+    link.setAttribute('download', 'sitenalyzer_data_dictionary_' + dateStr + '.xlsx');
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -1331,7 +1638,7 @@ function snaHandleResultsClick(e) {
     var action = target.getAttribute('data-action');
     if (action === 'collapse-all') { collapseAll(); }
     else if (action === 'expand-all') { expandAll(); }
-    else if (action === 'export-csv') { exportToCSV(); }
+    else if (action === 'export-xlsx') { exportToXLSX(); }
     else if (action === 'expand-print') { expandAndPrint(); }
     else if (action === 'scroll-top') {
         var el = document.getElementById('sp-info-app');
@@ -1387,6 +1694,8 @@ function startOver() {
     _snaTermStoreId      = '';
     _snaIsAdmin          = false;
     _snaTargetUrl        = '';
+    _snaSiteInfo         = null;
+    _snaAllListsMeta     = [];
     _snaRequestDigest    = null;
     _snaRequestDigestExpiry = 0;
     var srPanel = document.getElementById('sna-search-panel');
@@ -1453,6 +1762,8 @@ async function gatherSiteInformation() {
     _snaTermStoreId      = '';
     _snaIsAdmin          = false;
     _snaTargetUrl        = '';
+    _snaSiteInfo         = null;
+    _snaAllListsMeta     = [];
 
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
@@ -1466,6 +1777,7 @@ async function gatherSiteInformation() {
         _snaTargetUrl = targetUrl;
         var siteInfo = null;
         siteInfo = await spFetch(`${targetUrl}/_api/web?$select=Title,Url,Id,Description,SiteLogoUrl`);
+        _snaSiteInfo = siteInfo;
         var siteRoles = null;
         try { siteRoles = await spFetch(`${targetUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`); } catch(err) { }
         var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
@@ -1479,6 +1791,7 @@ async function gatherSiteInformation() {
 			// Adapted from DataLaVista's fetchSPLists() function (https://michmed.org/datalavista)
 			allLists = await spFetch(`${targetUrl}/_api/web/lists?$select=Id,EntityTypeName,Title,Description,ItemCount,BaseType,Hidden,ImageUrl,IsApplicationList,LastItemModifiedDate,BaseTemplate,HasUniqueRoleAssignments,DefaultViewUrl&$filter=(Hidden eq false and IsApplicationList eq false and BaseTemplate ne 115 and BaseTemplate ne 121 and BaseTemplate ne 330 and BaseTemplate ne 544 and Title ne 'MicroFeed' and EntityTypeName ne 'AppCatalog' and EntityTypeName ne 'FormServerTemplates' and EntityTypeName ne 'Style_x0020_Library') or (Title eq 'User Information List' or Title eq 'Events')`);
 		} catch(err) {}
+        _snaAllListsMeta = (allLists && allLists.value) ? allLists.value : [];
 
         // Build a map of list GUID -> Title for lookup field resolution
         var listIdMap = {};
@@ -1528,7 +1841,7 @@ async function gatherSiteInformation() {
 
                 if (lFields && lFields.length > 0) {
                     var fieldsData = [];
-                    lFields.forEach(function(f) {
+                    lFields.forEach(function(f, fieldIdx) {
                         var returnType = '';
                         var typeDisplay = f.TypeAsString || '';
                         if (f.TypeAsString === 'Calculated' && f.CalculatedFieldTypeAsString) {
@@ -1566,7 +1879,14 @@ async function gatherSiteInformation() {
                             LookupList:   f.LookupList ? f.LookupList : '',
                             Formula:      f.Formula ? f.Formula : '',
                             DefaultValue: f.DefaultValue ? f.DefaultValue : '',
-                            FieldId:      f.Id
+                            FieldId:      f.Id,
+                            ListGuid:     list.Id,
+                            FieldOrder:   fieldIdx + 1,
+                            Required:     f.Required ? true : false,
+                            MaxLength:    (f.MaxLength !== undefined && f.MaxLength !== null) ? f.MaxLength : '',
+                            Choices:      (f.Choices && f.Choices.results) ? f.Choices.results : (Array.isArray(f.Choices) ? f.Choices : []),
+                            LookupField:  f.LookupField ? f.LookupField : '',
+                            Indexed:      f.Indexed ? true : false
                         });
                     });
                     var fTblId = 'sna-tbl-f-' + i;
@@ -1684,7 +2004,7 @@ if (siteInfo) {
             '<div style="flex-shrink: 0;">' +
                 '<button class="icon-btn hide-on-print" data-action="collapse-all" aria-label="Collapse All" title="Collapse All">&#9650;</button>' +
                 '<button class="icon-btn hide-on-print" data-action="expand-all" aria-label="Expand All" title="Expand All">&#9660;</button>' +
-                '<button class="csv-btn hide-on-print" data-action="export-csv" title="Exports Fields and Columns for all Lists and Libraries to CSV">&#128229; Data Dictionary (CSV)</button>' +
+                '<button class="csv-btn hide-on-print" data-action="export-xlsx" title="Exports a multi-tab Data Dictionary spreadsheet (XLSX)">&#128229; Export Data Dictionary</button>' +
                 '<button class="print-btn" data-action="expand-print" title="Expands all sections and opens Print dialog">&#128424; Print to PDF</button>' +
             '</div>' +
         '</div>' +
@@ -1747,19 +2067,6 @@ if (siteInfo) {
     }
 }
 
-// Global search state.
-var _snaSearchIndex    = [];
-var _snaCardData       = [];
-var _snaCurrentResults = [];
-
-// Taxonomy and admin edit state.
-var _snaTaxonomyData        = [];
-var _snaSiteCollectionId    = '';
-var _snaTermStoreId         = '';
-var _snaIsAdmin             = false;
-var _snaTargetUrl           = '';
-var _snaRequestDigest       = null;
-var _snaRequestDigestExpiry = 0;
 
 // Builds the in-memory search index from the gathered lists, columns, and taxonomy data.
 function buildSearchIndex() {
