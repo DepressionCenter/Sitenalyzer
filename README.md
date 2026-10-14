@@ -81,7 +81,7 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 
 #### Contributors:
 + [Eisenberg Family Depression Center](https://depressioncenter.org) [(@DepressionCenter)](https://github.com/DepressionCenter)
-+ [Jeremy Glskin](https://www.linkedin.com/in/jeremy-gluskin-16980623/) ([@jerm-ops](https://github.com/jerm-ops))
++ [Jeremy Gluskin](https://www.linkedin.com/in/jeremy-gluskin-16980623/) ([@jerm-ops](https://github.com/jerm-ops))
 + [Shelley Boa](https://www.linkedin.com/in/shelleyboa/) [(@blondilox-ai)](https://github.com/blondilox-ai) - Program Manager, Internal Medicine / Pulmonology & Critical Care, Michigan Medicine.
 
 
