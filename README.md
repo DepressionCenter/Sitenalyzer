@@ -49,7 +49,7 @@ With Sitenalyzer, you can:
 + Select the "{ }" button under Edit HTML Code to open the code editor. Copy the contents of [dist/SitePages/sitenalyzer.html.txt](dist/SitePages/sitenalyzer.html.txt) and paste them into the code editor. Select Save in the code editor to close it, then select Save on the page to leave edit mode.
 + Refresh the page.
 + Enter a site address, or keep the current site's address in the box, and select **Extract site information**.
-+ To save the data dictionary as a spreadsheet, select **Export data dictionary**. To save every permission, select **Export permissions**.
++ To save the data dictionary as a spreadsheet, select **⤓ Data Dictionary**. To save every permission, select **⤓ Permissions**.
 
 To install a newer version, copy the files from `dist/SiteAssets` again and replace the old ones. You don't need to change the page.
 

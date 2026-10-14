@@ -67,8 +67,8 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 2. Keep the current site's address in the **Site URL** box, or type or pick another site. The list shows sites you can open.
 3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, and permissions. Large sites can take a minute.
 4. Open the sections to see column definitions, permissions, and folders. Use the search box on each table to filter it. **Expand all sections** and **Collapse all sections** open and close every section at once.
-5. To save the data dictionary as a spreadsheet, select **Export data dictionary**.
-6. To save every permission as a spreadsheet, select **Export permissions**. See [The permissions workbook](#the-permissions-workbook).
+5. To save the data dictionary as a spreadsheet, select **⤓ Data Dictionary**.
+6. To save every permission as a spreadsheet, select **⤓ Permissions**. See [The permissions workbook](#the-permissions-workbook).
 7. To look at another site, select **Start over**.
 
 You must be an owner of a site to see all of its permissions. If you can manage the site, Sitenalyzer also lets you edit list and column descriptions.
@@ -116,7 +116,7 @@ Sitenalyzer reads Site Pages 2,000 items at a time, up to 10,000 items. If the l
 
 ### The permissions workbook
 
-**Export permissions** saves an Excel workbook named like `TestResearchSite_Permissions_2026-10-14.xlsx`. It holds what Sitenalyzer read, so it matches the screen. Every sheet has filter buttons on its header row.
+The **⤓ Permissions** button saves an Excel workbook named like `TestResearchSite_Permissions_2026-10-14.xlsx`. It holds what Sitenalyzer read, so it matches the screen. Every sheet has filter buttons on its header row.
 
 | Sheet | One row for each | What it is for |
 | --- | --- | --- |

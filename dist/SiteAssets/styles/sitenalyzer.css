@@ -136,12 +136,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #sp-info-app button:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
 
-/* Site card: maize stripe on top, and a row of report buttons that wraps on narrow screens. */
+/* Site card: maize stripe on top, and a right-aligned row of report buttons that wraps on narrow screens. */
 .sna-site-card { border-top: 4px solid var(--um-maize); }
 .sna-report-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    justify-content: flex-end;
+    gap: 12px;
     align-items: center;
     margin: 0 0 10px 0;
 }
