@@ -85,8 +85,8 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 + [DataLaVista™](https://michmed.org/datalavista). A lightweight, client-side reporting and dashboard toolkit. This project re-uses some of the SharePoint connection functions.
 + [Modern Script Editor](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor) - The PnP/SPFX delivery vehicle used to deploy this "Unit" into modern SharePoint environments.
 + [Microsoft SharePoint REST API](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/get-to-know-the-sharepoint-rest-service) - The primary data uplink for retrieving SharePoint List items and Document Library metadata.
-+ [SheetJS](https://sheetjs.com/) - A library for reading, processing, and writing spreadsheet data.
-+ [Tabulator](https://tabulator.info/) - A library for creating interactive, data-rich tables and grids.
++ [SheetJS](https://sheetjs.com/) - A library for reading, processing, and writing spreadsheet data. License: Apache License 2.0.
++ [Tabulator](https://tabulator.info/) - A library for creating interactive, data-rich tables and grids. License: MIT.
 
 
 ## License
