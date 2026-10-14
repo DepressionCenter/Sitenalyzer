@@ -59,7 +59,7 @@ copy_text_file() {
 }
 
 if command -v sha256sum > /dev/null 2>&1; then
-  file_sha256() { sha256sum "$1" | cut -d ' ' -f 1 | tr -d '\\'; }
+  file_sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
 elif command -v shasum > /dev/null 2>&1; then
   file_sha256() { shasum -a 256 "$1" | cut -d ' ' -f 1; }
 else
