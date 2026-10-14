@@ -1,0 +1,38 @@
+<!--
+This file is part of Sitenalyzer
+sitenalyzer.html.txt
+Author(s): Gabriel Mongefranco.
+Created: 2026-10-14
+Last Modified: 2026-10-14
+Summary: Code to paste into the Modern Script Editor web part on the sitenalyzer page.
+Notes: See README file for documentation and full license information.
+Website: https://github.com/DepressionCenter/Sitenalyzer
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+How to use this file:
+1. In your site's Site Assets library, create two folders named scripts and styles.
+2. Copy every file from dist/SiteAssets/scripts into the scripts folder, and every file
+   from dist/SiteAssets/styles into the styles folder.
+3. On your site's home page, select New, then Page, and choose the Modern Script Editor
+   template. Name the page sitenalyzer, so its address ends in /SitePages/sitenalyzer.aspx.
+4. In the Modern Script Editor web part, select the "{ }" button under Edit HTML Code.
+5. Paste the entire contents of this file into the code editor. Select Save in the code
+   editor, then select Save on the page.
+6. Refresh the page.
+See the README file for the full steps.
+-->
+<div id="sitenalyzer-app"></div>
+<script src="../SiteAssets/scripts/sitenalyzer.js"></script>

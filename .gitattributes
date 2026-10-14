@@ -1,0 +1,15 @@
+# .gitattributes - tells Git how to store and check out files in this repository.
+# See README file for documentation and full license information.
+
+# App source files always use LF line endings, so builds on Windows and Linux write the same bytes.
+src/*.js text eol=lf
+src/*.html text eol=lf
+src/*.css text eol=lf
+src/*.txt text eol=lf
+*.sh text eol=lf
+
+# Library copies must stay byte for byte, because the build checks them against src/lib/sha256sums.txt.
+src/lib/** -text
+
+# Build results are stored exactly as the build writes them.
+dist/** -text

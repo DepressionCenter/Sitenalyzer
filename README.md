@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 README.md - Main README file with overview, quick start guide and license information.
 Author(s): Gabriel Mongefranco
 Created: 2026-04-20
-Last Modified: 2026-10-13
+Last Modified: 2026-10-14
 Summary: Provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -25,24 +25,29 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 # Sitenalyzer
 
 ## Description
-Sitenalyzer is an open-source SharePoint Online inventory and data-dictionary tool built as a single HTML and JavaScript file. It catalogs lists, document libraries, columns, descriptions, internal IDs, and permissions, and can export the resulting SharePoint data dictionary to a spreadsheet.
+Sitenalyzer is an open-source SharePoint Online inventory and data-dictionary tool that runs on a SharePoint page and loads its scripts from your site's Site Assets library. It catalogs lists, document libraries, columns, descriptions, internal IDs, and permissions, and can export the resulting SharePoint data dictionary to a spreadsheet.
 
 ![Screenshot of Sitenalyzer](sitenalyzer-preview.png)
 
 Embed Sitenalyzer with the Modern Script Editor web part to document site structure, review permissions, edit list or column descriptions when authorized, and collect identifiers needed for Microsoft Graph and Microsoft Entra applications. It is designed for SharePoint administrators, developers, data stewards, and research operations teams.
 
 ## Quick Start Guide
-+ First ensure you have the "Modern Script Editor" app installed. If not available, contact your site administrator to install it
-+ Go to your site's home page and create a new page using the Modern Script Editor template. Use "Sitenalyzer" for the page title.
-+ In the "Modern Script Editor" webpart, click "Markup" then click the "{ }" button to open the code editor.
-+ Copy and the paste the code from [Sitenalyzer.html](Sitenalyzer.html) into the script editor.
-  - Note: If your SharePoint tenant has CSP restrictions that block inline JavaScript, you may need to separate the contents of the JavaScript file into its own .js file and store it in your site's Site Assets library. Then, update the script tag near the bottom of the file to point to htttp://you-tenant.sharepoint.com/sites/your-site/SiteAssets/Sitenalyzer.js.
-+ Save, and refresh the page.
++ First, make sure the "Modern Script Editor" app is installed. If it isn't available, ask your site administrator to install it.
++ In your site's Site Assets library (Settings > Site contents > Site Assets), create two folders named `scripts` and `styles`.
++ Copy every file from [dist/SiteAssets/scripts/](dist/SiteAssets/scripts/) to your site's `SiteAssets/scripts` folder.
++ Copy every file from [dist/SiteAssets/styles/](dist/SiteAssets/styles/) to your site's `SiteAssets/styles` folder.
++ Go to your site's home page and create a new page from the Modern Script Editor template (Home > New > Page > Modern Script Editor). Use `sitenalyzer` for the page title, so the page address ends in `/SitePages/sitenalyzer.aspx`.
++ Select the "{ }" button under Edit HTML Code to open the code editor. Copy the contents of [dist/SitePages/sitenalyzer.html.txt](dist/SitePages/sitenalyzer.html.txt) and paste them into the code editor. Select Save in the code editor to close it, then select Save on the page to leave edit mode.
++ Refresh the page.
++ Enter a site address, or keep the current site's address in the box, and select Extract Site Information.
++ To save the data dictionary as a spreadsheet, select the Export Data Dictionary button.
+
+To install a newer version, copy the files from `dist/SiteAssets` again and replace the old ones. You don't need to change the page.
 
 
 
 ## Documentation
-+ **Complete documentation:** See the [`/docs`](./docs) folder in this repository for setup guides, usage examples, architecture, and technical details.
++ **Complete documentation:** See the [`/docs`](./docs) folder in this repository: [installing and using Sitenalyzer](docs/usage.md), [troubleshooting](docs/troubleshooting.md), [how it works](docs/architecture.md), and [building and testing](docs/development.md).
 + **Overview for researchers and developers:** Visit the [Health Research Resource Library](https://michmed.org/efdc-kb) for a high-level summary, key features, and important assumptions.
 + **Project instructions for contributors and AI coding tools:** See [AGENTS.md](AGENTS.md) and the [skills index](SKILLS.md).
 
@@ -85,8 +90,9 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 + [DataLaVista™](https://michmed.org/datalavista). A lightweight, client-side reporting and dashboard toolkit. This project re-uses some of the SharePoint connection functions.
 + [Modern Script Editor](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor) - The PnP/SPFX delivery vehicle used to deploy this "Unit" into modern SharePoint environments.
 + [Microsoft SharePoint REST API](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/get-to-know-the-sharepoint-rest-service) - The primary data uplink for retrieving SharePoint List items and Document Library metadata.
-+ [SheetJS](https://sheetjs.com/) - A library for reading, processing, and writing spreadsheet data. License: Apache License 2.0.
-+ [Tabulator](https://tabulator.info/) - A library for creating interactive, data-rich tables and grids. License: MIT.
++ [SheetJS](https://sheetjs.com/) - Reads and writes spreadsheet files. Sitenalyzer uses it to save the data dictionary as an Excel file. A copy of SheetJS Community Edition 0.20.3 is included in `dist/SiteAssets/scripts`. License: Apache License 2.0.
++ [Tabulator](https://tabulator.info/) - Creates interactive tables. Sitenalyzer uses it to show columns and folders in searchable tables. A copy of Tabulator 6.6.1 is included in `dist/SiteAssets`. License: MIT.
++ See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full license texts of the included libraries.
 
 
 ## License
