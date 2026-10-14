@@ -88,7 +88,7 @@ Automated checks find only part of all accessibility problems. Check keyboard us
 2. Confirm the license is still compatible with GPLv3. See the project preferences in [skills/project-preferences/SKILL.md](../skills/project-preferences/SKILL.md).
 3. Replace the file in `src/lib`, and replace its license text if the license changed.
 4. Update its line in `src/lib/sha256sums.txt`. Get the new value with `sha256sum src/lib/<file>` in bash, or `(Get-FileHash src/lib/<file>).Hash.ToLower()` in PowerShell.
-5. Update the version in the README credits and in the third-party section of `LICENSE`.
+5. Update the version and license text in `THIRD-PARTY-NOTICES.md`, and the version in the README credits.
 6. Build, run the tests, and commit.
 
 ### What CI checks

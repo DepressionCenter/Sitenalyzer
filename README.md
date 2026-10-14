@@ -92,6 +92,7 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 + [Microsoft SharePoint REST API](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/get-to-know-the-sharepoint-rest-service) - The primary data uplink for retrieving SharePoint List items and Document Library metadata.
 + [SheetJS](https://sheetjs.com/) - Reads and writes spreadsheet files. Sitenalyzer uses it to save the data dictionary as an Excel file. A copy of SheetJS Community Edition 0.20.3 is included in `dist/SiteAssets/scripts`. License: Apache License 2.0.
 + [Tabulator](https://tabulator.info/) - Creates interactive tables. Sitenalyzer uses it to show columns and folders in searchable tables. A copy of Tabulator 6.6.1 is included in `dist/SiteAssets`. License: MIT.
++ See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full license texts of the included libraries.
 
 
 ## License

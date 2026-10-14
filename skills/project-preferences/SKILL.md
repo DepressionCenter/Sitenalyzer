@@ -114,8 +114,10 @@ compatible with GPLv3.
 - Keep the license notice that ships with a library's files when you save a copy
   in Site Assets or in this repository.
 - Save the library's full license text next to it in `src/lib`, such as
-  `src/lib/tabulator.license.txt`, and add the same text to the third-party
-  section at the end of `LICENSE`. Remove both when you remove the library.
+  `src/lib/tabulator.license.txt`, and add the same text to `THIRD-PARTY-NOTICES.md`.
+  Remove both when you remove the library. Leave `LICENSE` as the unchanged GPLv3
+  text, because GitHub only recognizes the project's license when that file
+  matches the standard text.
 
 ### Terms
 

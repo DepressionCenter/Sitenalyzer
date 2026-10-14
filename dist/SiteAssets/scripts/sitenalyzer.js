@@ -499,6 +499,15 @@ async function snaFetchFields(targetUrl, listGuid, isDocLib) {
   return fields;
 }
 
+// Returns text with the characters that have meaning in HTML replaced by entities, so SharePoint values
+// such as list names show as plain text when they are added to the page with innerHTML.
+function snaEscapeHtml(value) {
+    var entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function(character) {
+        return entities[character];
+    });
+}
+
 var globalAccessibleSites = [];
 var globalExportedData = []; // To store field data for CSV export
 
@@ -1342,7 +1351,7 @@ async function gatherSiteInformation() {
                 _snaCardData.push({ cardId: 'sna-card-lib-' + i, title: list.Title, internalName: list.EntityTypeName || '', listId: list.Id || '', isLib: true });
                 libsHtml += '<div class="info-card" id="sna-card-lib-' + i + '">' +
                     '<div class="sna-card-header">' +
-                        '<h3>📄 ' + list.Title + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' +
+                        '<h3>📄 ' + snaEscapeHtml(list.Title) + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' +
                         libActionsHtml +
                     '</div>' +
                     listDescHtml +
@@ -1361,7 +1370,7 @@ async function gatherSiteInformation() {
                 _snaCardData.push({ cardId: 'sna-card-lst-' + i, title: list.Title, internalName: list.EntityTypeName || '', listId: list.Id || '', isLib: false });
                 listsHtml += '<div class="info-card" id="sna-card-lst-' + i + '">' +
                     '<div class="sna-card-header">' +
-                        '<h3>📋 ' + list.Title + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' +
+                        '<h3>📋 ' + snaEscapeHtml(list.Title) + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' +
                         listActionsHtml +
                     '</div>' +
                     listDescHtml +

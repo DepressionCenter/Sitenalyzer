@@ -163,6 +163,7 @@ function buildPageHtml(extraHeadHtml) {
  * @param {object} [options]
  * @param {string[]} [options.missingFiles] Site Assets file names to answer with 404 Not Found.
  * @param {string} [options.extraHeadHtml] Markup added to the page head.
+ * @param {object[]} [options.extraLists] More lists for the site to return, in the same shape as the lists above.
  * @returns {Promise<{consoleErrors: string[], unexpectedRequests: string[], siteAssetsRequests: {url: string, status: number}[]}>}
  *          Lists the test can check after the page has run.
  */
@@ -222,7 +223,9 @@ async function openPretendSite(page, options) {
             const apiPath = pathname.substring(SITE_PATH.length);
             const answer = API_ANSWERS.find(function(entry) { return entry.pattern.test(apiPath); });
             if (answer) {
-                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer.body) });
+                let body = answer.body;
+                if (body === lists && settings.extraLists) { body = { value: lists.value.concat(settings.extraLists) }; }
+                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
                 return;
             }
         }

@@ -116,6 +116,21 @@ test('extracts site information from the pretend site', async function({ page })
     expect(record.unexpectedRequests).toEqual([]);
 });
 
+test('shows list names that contain HTML as plain text', async function({ page }) {
+    const unsafeTitle = '<img src="x" id="injected-image">Study & "Visits"';
+    await openPretendSite(page, {
+        extraLists: [{
+            Id: 'aaaaaaaa-0000-4000-8000-000000000003', EntityTypeName: 'UnsafeNameList', Title: unsafeTitle,
+            Description: '', ItemCount: 1, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 100,
+            HasUniqueRoleAssignments: false, DefaultViewUrl: '/sites/testsite/Lists/UnsafeName/AllItems.aspx'
+        }]
+    });
+    await extractSiteInformation(page);
+
+    await expect(page.locator('#injected-image')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: unsafeTitle })).toBeVisible();
+});
+
 test('exports the data dictionary as an Excel file', async function({ page }, testInfo) {
     await openPretendSite(page);
     await extractSiteInformation(page);
