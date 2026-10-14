@@ -25,11 +25,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 # Sitenalyzer
 
 ## Description
-Sitenalyzer is an open-source SharePoint Online inventory and data-dictionary tool that runs on a SharePoint page and loads its scripts from your site's Site Assets library. It catalogs lists, document libraries, columns, descriptions, internal IDs, and permissions, and can export the resulting SharePoint data dictionary to a spreadsheet.
+Sitenalyzer is an open-source inventory and data dictionary tool for SharePoint Online. It runs on a page in your site and reports the site's lists, document libraries, columns, and permissions. It can also save that report as an Excel data dictionary. It is designed for data stewards, research teams, SharePoint administrators, developers, security analysts, and data analysts.
 
 ![Screenshot of Sitenalyzer](sitenalyzer-preview.png)
 
-Embed Sitenalyzer with the Modern Script Editor web part to document site structure, review permissions, edit list or column descriptions when authorized, and collect identifiers needed for Microsoft Graph and Microsoft Entra applications. It is designed for SharePoint administrators, developers, data stewards, and research operations teams.
+With Sitenalyzer, you can:
++ Review every list and library, with its columns, descriptions, and item counts.
++ Check permissions for the site and for each list or library, including apps that have access.
++ Save a data dictionary as an Excel file, or print the report to PDF.
++ Search across lists, libraries, columns, and folders.
++ Edit list and column descriptions, if you own the site.
++ Copy the site, list, and library IDs needed for Microsoft Graph and Microsoft Entra apps.
+
 
 ## Quick Start Guide
 + First, make sure the "Modern Script Editor" app is installed. If it isn't available, ask your site administrator to install it.
