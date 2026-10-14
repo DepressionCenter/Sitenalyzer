@@ -32,8 +32,10 @@ Sitenalyzer is an open-source inventory and data dictionary tool for SharePoint 
 With Sitenalyzer, you can:
 + Review every list and library, with its columns, descriptions, and item counts.
 + Check permissions for the site and for each list or library, including apps that have access.
-+ Save a data dictionary as an Excel file, or print the report to PDF.
-+ Search across lists, libraries, columns, and folders.
++ See who can open what, by person or group, with the members of each SharePoint group, and check what one person can do.
++ Spot guests, organization-wide access, and sharing links that anyone can use, and find lists and libraries to clean up.
++ Save a data dictionary or a permissions workbook as an Excel file, or print the report to PDF.
++ Search across lists, libraries, columns, and folders, and see the site's pages.
 + Edit list and column descriptions, if you own the site.
 + Copy the site, list, and library IDs needed for Microsoft Graph and Microsoft Entra apps.
 
@@ -46,8 +48,8 @@ With Sitenalyzer, you can:
 + Go to your site's home page and create a new page from the Modern Script Editor template (Home > New > Page > Modern Script Editor). Use `sitenalyzer` for the page title, so the page address ends in `/SitePages/sitenalyzer.aspx`.
 + Select the "{ }" button under Edit HTML Code to open the code editor. Copy the contents of [dist/SitePages/sitenalyzer.html.txt](dist/SitePages/sitenalyzer.html.txt) and paste them into the code editor. Select Save in the code editor to close it, then select Save on the page to leave edit mode.
 + Refresh the page.
-+ Enter a site address, or keep the current site's address in the box, and select Extract Site Information.
-+ To save the data dictionary as a spreadsheet, select the Export Data Dictionary button.
++ Enter a site address, or keep the current site's address in the box, and select **Extract site information**.
++ To save the data dictionary as a spreadsheet, select **Export data dictionary**. To save every permission, select **Export permissions**.
 
 To install a newer version, copy the files from `dist/SiteAssets` again and replace the old ones. You don't need to change the page.
 

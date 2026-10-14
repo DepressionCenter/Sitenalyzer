@@ -46,8 +46,17 @@ const CONTENT_TYPES = {
 
 const LIST_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
 const LIBRARY_ID = 'aaaaaaaa-0000-4000-8000-000000000002';
+const SITE_PAGES_ID = 'aaaaaaaa-0000-4000-8000-000000000009';
+const SHARED_FILE_ID = '44444444-0000-4000-8000-000000000001';
 
 // ### Synthetic REST API Answers ###
+
+// Marks an answer that needs a status other than 200 OK, such as reply(403, {...}).
+const REPLY = Symbol('reply');
+function reply(status, body) {
+    return { [REPLY]: true, status: status, body: body };
+}
+
 const siteInfo = {
     Title: 'Test Research Site',
     Url: SITE_URL,
@@ -62,10 +71,31 @@ const currentUser = {
     LoginName: 'i:0#.f|membership|test.user@example.org'
 };
 
+// Permission levels. BasePermissions values follow SharePoint's PermissionKind bits.
+const ROLE = {
+    fullControl: { Id: 1073741829, Name: 'Full Control', Description: 'Has full control.', Hidden: false, RoleTypeKind: 5, Order: 1, BasePermissions: { High: '2147483647', Low: '4294967295' } },
+    contribute: { Id: 1073741827, Name: 'Contribute', Description: 'Can view, add, update, and delete list items and documents.', Hidden: false, RoleTypeKind: 3, Order: 64, BasePermissions: { High: '432', Low: '1011028719' } },
+    read: { Id: 1073741826, Name: 'Read', Description: 'Can view pages and list items and download documents.', Hidden: false, RoleTypeKind: 2, Order: 128, BasePermissions: { High: '176', Low: '138612833' } },
+    limitedAccess: { Id: 1073741825, Name: 'Limited Access', Description: 'Can view specific lists, document libraries, list items, folders, or documents when given permissions.', Hidden: true, RoleTypeKind: 1, Order: 160, BasePermissions: { High: '48', Low: '134287360' } },
+    studyCoordinator: { Id: 1073741930, Name: 'Study Coordinator', Description: 'Custom level made for the tests.', Hidden: false, RoleTypeKind: 0, Order: 200, BasePermissions: { High: '0', Low: '69639' } }
+};
+
+// Role assignments include only the fields Sitenalyzer reads from each permission level.
+function binding(role) {
+    return { Id: role.Id, Name: role.Name, Hidden: role.Hidden, RoleTypeKind: role.RoleTypeKind };
+}
+
+const SHARING_LINK_GROUP = 'SharingLinks.' + SHARED_FILE_ID + '.OrganizationView.55555555-0000-4000-8000-000000000001';
+
 const siteRoleAssignments = {
     value: [
-        { Member: { Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 }, RoleDefinitionBindings: [{ Name: 'Full Control' }] },
-        { Member: { Title: 'Example Reporting App', LoginName: 'app@example', PrincipalType: 4 }, RoleDefinitionBindings: [{ Name: 'Read' }] }
+        { Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 }, RoleDefinitionBindings: [binding(ROLE.fullControl)] },
+        { Member: { Id: 4, Title: 'Test Site Visitors', LoginName: 'Test Site Visitors', PrincipalType: 8 }, RoleDefinitionBindings: [binding(ROLE.read)] },
+        { Member: { Id: 11, Title: 'Study Staff Security Group', LoginName: 'c:0t.c|tenant|66666666-0000-4000-8000-000000000001', PrincipalType: 4 }, RoleDefinitionBindings: [binding(ROLE.read)] },
+        { Member: { Id: 12, Title: 'Example Reporting App', LoginName: 'i:0i.t|ms.sp.ext|77777777-0000-4000-8000-000000000001@88888888-0000-4000-8000-000000000001', PrincipalType: 1 }, RoleDefinitionBindings: [binding(ROLE.read)] },
+        { Member: { Id: 13, Title: 'Guest Reviewer', Email: 'guest.reviewer@example.com', LoginName: 'i:0#.f|membership|guest.reviewer_example.com#ext#@contoso.onmicrosoft.com', PrincipalType: 1 }, RoleDefinitionBindings: [binding(ROLE.limitedAccess)] },
+        { Member: { Id: 14, Title: 'Everyone except external users', LoginName: 'c:0-.f|rolemanager|spo-grid-all-users/99999999-0000-4000-8000-000000000001', PrincipalType: 4 }, RoleDefinitionBindings: [binding(ROLE.read)] },
+        { Member: { Id: 15, Title: SHARING_LINK_GROUP, LoginName: SHARING_LINK_GROUP, PrincipalType: 8 }, RoleDefinitionBindings: [binding(ROLE.limitedAccess)] }
     ]
 };
 
@@ -74,21 +104,90 @@ const lists = {
         {
             Id: LIST_ID, EntityTypeName: 'StudyVisitsList', Title: 'Study Visits', Description: 'Synthetic visit schedule.',
             ItemCount: 12, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 100,
-            HasUniqueRoleAssignments: true, DefaultViewUrl: SITE_PATH + '/Lists/StudyVisits/AllItems.aspx'
+            HasUniqueRoleAssignments: true, DefaultViewUrl: SITE_PATH + '/Lists/StudyVisits/AllItems.aspx',
+            LastItemModifiedDate: '2024-01-15T12:00:00Z', EnableVersioning: true, EnableMinorVersions: false, MajorVersionLimit: 0
         },
         {
             Id: LIBRARY_ID, EntityTypeName: 'Shared_x0020_Documents', Title: 'Documents', Description: '',
             ItemCount: 3, BaseType: 1, Hidden: false, IsApplicationList: false, BaseTemplate: 101,
-            HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Shared Documents/Forms/AllItems.aspx'
+            HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Shared Documents/Forms/AllItems.aspx',
+            LastItemModifiedDate: new Date().toISOString(), EnableVersioning: true, EnableMinorVersions: false, MajorVersionLimit: 500
         }
     ]
 };
 
 const listRoleAssignments = {
     value: [
-        { Member: { Title: 'Test Study Team', LoginName: 'Test Study Team', PrincipalType: 8 }, RoleDefinitionBindings: [{ Name: 'Contribute' }] }
+        { Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 }, RoleDefinitionBindings: [binding(ROLE.fullControl)] },
+        { Member: { Id: 20, Title: 'Test Study Team', LoginName: 'Test Study Team', PrincipalType: 8 }, RoleDefinitionBindings: [binding(ROLE.contribute), binding(ROLE.studyCoordinator)] },
+        { Member: { Id: 13, Title: 'Guest Reviewer', Email: 'guest.reviewer@example.com', LoginName: 'i:0#.f|membership|guest.reviewer_example.com#ext#@contoso.onmicrosoft.com', PrincipalType: 1 }, RoleDefinitionBindings: [binding(ROLE.limitedAccess)] }
     ]
 };
+
+// Members of each SharePoint group, by group Id.
+const groupMembers = {
+    3: [{ Id: 30, Title: 'Test Owner', Email: 'test.owner@example.org', LoginName: 'i:0#.f|membership|test.owner@example.org', PrincipalType: 1 }],
+    4: [
+        { Id: 31, Title: 'Test Visitor', Email: 'test.visitor@example.org', LoginName: 'i:0#.f|membership|test.visitor@example.org', PrincipalType: 1 },
+        { Id: 32, Title: 'Visiting Guest', Email: 'visiting.guest@example.net', LoginName: 'i:0#.f|membership|visiting.guest_example.net#ext#@contoso.onmicrosoft.com', PrincipalType: 1 }
+    ],
+    20: [{ Id: 33, Title: 'Test Coordinator', Email: 'test.coordinator@example.org', LoginName: 'i:0#.f|membership|test.coordinator@example.org', PrincipalType: 1 }]
+};
+
+const siteGroups = {
+    value: [
+        { Id: 3, Title: 'Test Site Owners' },
+        { Id: 4, Title: 'Test Site Visitors' },
+        { Id: 15, Title: SHARING_LINK_GROUP },
+        { Id: 20, Title: 'Test Study Team' }
+    ]
+};
+
+const sharedFile = { Name: 'Visit Schedule.docx', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Visit Schedule.docx' };
+
+// Site users the person check can find by email address.
+const siteUsers = [
+    { Id: 33, Title: 'Test Coordinator', Email: 'test.coordinator@example.org', LoginName: 'i:0#.f|membership|test.coordinator@example.org', IsSiteAdmin: false },
+    { Id: 40, Title: 'Test Admin', Email: 'test.admin@example.org', LoginName: 'i:0#.f|membership|test.admin@example.org', IsSiteAdmin: true }
+];
+
+// Permission masks for the person check: Read on the site, Contribute on Study Visits, no access to Documents.
+const EFFECTIVE_PERMISSIONS = {
+    site: ROLE.read.BasePermissions,
+    [LIST_ID]: ROLE.contribute.BasePermissions,
+    [LIBRARY_ID]: { High: '0', Low: '0' }
+};
+
+const sitePagesLibrary = { value: [{ Id: SITE_PAGES_ID, Title: 'Site Pages', BaseTemplate: 119 }] };
+
+// Site Pages answers in two batches, joined by SharePoint's next-batch link.
+const SITE_PAGES_BATCHES = [
+    [
+        { Id: 1, Title: 'Welcome', FileLeafRef: 'Home.aspx', FileRef: SITE_PATH + '/SitePages/Home.aspx', FSObjType: 0, Modified: '2026-09-01T10:00:00Z' },
+        { Id: 2, Title: null, FileLeafRef: 'Templates', FileRef: SITE_PATH + '/SitePages/Templates', FSObjType: 1, Modified: '2026-09-01T10:00:00Z' },
+        { Id: 3, Title: 'Banner image', FileLeafRef: 'banner.png', FileRef: SITE_PATH + '/SitePages/banner.png', FSObjType: 0, Modified: '2026-09-01T10:00:00Z' }
+    ],
+    [
+        { Id: 4, Title: 'About the Study', FileLeafRef: 'About.aspx', FileRef: SITE_PATH + '/SitePages/About.aspx', FSObjType: 0, Modified: '2026-09-02T10:00:00Z' }
+    ]
+];
+
+// Answers the Site Pages items request: the first batch has a next-batch link to the second.
+function sitePagesItems(url) {
+    if (url.searchParams.get('$skiptoken')) { return { value: SITE_PAGES_BATCHES[1] }; }
+    const nextLink = SITE_URL + "/_api/web/lists(guid'" + SITE_PAGES_ID + "')/items?%24skiptoken=Paged%3dTRUE%26p_ID%3d3" +
+        '&%24select=Id,Title,FileLeafRef,FileRef,FSObjType,Modified&%24top=2000';
+    return { value: SITE_PAGES_BATCHES[0], 'odata.nextLink': nextLink };
+}
+
+// Answers siteusers by its $filter: site collection administrators, or one user by email address.
+function siteUsersAnswer(url) {
+    const filter = url.searchParams.get('$filter') || '';
+    if (filter === 'IsSiteAdmin eq true') { return { value: siteUsers.filter(function(u) { return u.IsSiteAdmin; }) }; }
+    const match = /^Email eq '(.*)'$/.exec(filter);
+    const email = match ? match[1].replace(/''/g, "'").toLowerCase() : '';
+    return { value: siteUsers.filter(function(u) { return u.Email.toLowerCase() === email; }) };
+}
 
 const fields = {
     value: [
@@ -130,12 +229,27 @@ const searchResults = {
 };
 
 // Each entry matches the part of the address after the site path. Order matters: first match wins.
+// An entry has a fixed body, or an answer(url, match) function for answers that depend on the address or query.
 const API_ANSWERS = [
     { pattern: /^\/_api\/web$/, body: siteInfo },
     { pattern: /^\/_api\/web\/currentUser$/, body: currentUser },
     { pattern: /^\/_api\/web\/roleassignments$/, body: siteRoleAssignments },
+    { pattern: /^\/_api\/web\/roledefinitions$/, body: { value: Object.values(ROLE) } },
     { pattern: /^\/_api\/web\/effectivebasePermissions$/, body: { High: '2147483647', Low: '4294967295' } },
-    { pattern: /^\/_api\/web\/lists$/, body: lists },
+    { pattern: /^\/_api\/web\/getUserEffectivePermissions\(@u\)$/, body: EFFECTIVE_PERMISSIONS.site },
+    { pattern: /^\/_api\/web\/sitegroups$/, body: siteGroups },
+    { pattern: /^\/_api\/web\/sitegroups\((\d+)\)\/users$/, answer: function(url, match) { return { value: groupMembers[match[1]] || [] }; } },
+    { pattern: /^\/_api\/web\/siteusers$/, answer: siteUsersAnswer },
+    { pattern: /^\/_api\/web\/GetFileById\('([^']+)'\)$/, answer: function(url, match) {
+        return match[1] === SHARED_FILE_ID ? sharedFile : reply(404, { error: 'File not found' });
+    } },
+    { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+        return /BaseTemplate eq 119/.test(url.searchParams.get('$filter') || '') ? sitePagesLibrary : lists;
+    } },
+    { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: sitePagesItems },
+    { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/getUserEffectivePermissions\(@u\)$/, answer: function(url, match) {
+        return EFFECTIVE_PERMISSIONS[match[1]] || { High: '0', Low: '0' };
+    } },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/roleassignments$/, body: listRoleAssignments },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, body: fields },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/RootFolder\/Folders$/, body: folders },
@@ -151,8 +265,10 @@ const API_ANSWERS = [
 
 // Builds the SharePoint page: the code a site owner pastes into the Modern Script Editor web part,
 // inside a minimal page. extraHeadHtml lets a test add markup, such as an inline script that CSP must block.
-function buildPageHtml(extraHeadHtml) {
-    const pageCode = fs.readFileSync(path.join(DIST_DIR, 'SitePages', 'sitenalyzer.html.txt'), 'utf8');
+// omitMountDiv leaves out the app's <div>, so a test can add it later or check what happens without it.
+function buildPageHtml(extraHeadHtml, omitMountDiv) {
+    let pageCode = fs.readFileSync(path.join(DIST_DIR, 'SitePages', 'sitenalyzer.html.txt'), 'utf8');
+    if (omitMountDiv) { pageCode = pageCode.replace('<div id="sitenalyzer-app"></div>', ''); }
     return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>sitenalyzer</title>\n' +
         (extraHeadHtml || '') + '</head>\n<body>\n<main>\n' + pageCode + '</main>\n</body>\n</html>\n';
 }
@@ -163,14 +279,18 @@ function buildPageHtml(extraHeadHtml) {
  * @param {object} [options]
  * @param {string[]} [options.missingFiles] Site Assets file names to answer with 404 Not Found.
  * @param {string} [options.extraHeadHtml] Markup added to the page head.
+ * @param {boolean} [options.omitMountDiv] Leaves the app's <div id="sitenalyzer-app"> out of the page.
  * @param {object[]} [options.extraLists] More lists for the site to return, in the same shape as the lists above.
- * @returns {Promise<{consoleErrors: string[], unexpectedRequests: string[], siteAssetsRequests: {url: string, status: number}[]}>}
- *          Lists the test can check after the page has run.
+ * @param {object[]} [options.answerOverrides] Answers checked before the standard ones, in the same shape as
+ *        API_ANSWERS: { pattern, body } or { pattern, answer(url, match) }. Use reply(status, body) for errors.
+ * @returns {Promise<{consoleErrors: string[], unexpectedRequests: string[], siteAssetsRequests: {url: string, status: number}[],
+ *          apiRequests: string[], otherOriginRequests: string[]}>} Lists the test can check after the page has run.
  */
 async function openPretendSite(page, options) {
     const settings = options || {};
     const missingFiles = settings.missingFiles || [];
-    const record = { consoleErrors: [], unexpectedRequests: [], siteAssetsRequests: [] };
+    const answers = (settings.answerOverrides || []).concat(API_ANSWERS);
+    const record = { consoleErrors: [], unexpectedRequests: [], siteAssetsRequests: [], apiRequests: [], otherOriginRequests: [] };
 
     page.on('console', function(message) {
         if (message.type() === 'error') { record.consoleErrors.push(message.text()); }
@@ -186,6 +306,12 @@ async function openPretendSite(page, options) {
         });
     }, SITE_URL);
 
+    // Nothing leaves the test machine: requests to any other address are recorded and refused.
+    await page.route(function(url) { return url.origin !== TENANT_ORIGIN; }, async function(route) {
+        record.otherOriginRequests.push(route.request().url());
+        await route.abort();
+    });
+
     await page.route(TENANT_ORIGIN + '/**', async function(route) {
         const url = new URL(route.request().url());
         const pathname = decodeURIComponent(url.pathname);
@@ -195,7 +321,7 @@ async function openPretendSite(page, options) {
                 status: 200,
                 contentType: 'text/html; charset=utf-8',
                 headers: { 'Content-Security-Policy': CONTENT_SECURITY_POLICY },
-                body: buildPageHtml(settings.extraHeadHtml)
+                body: buildPageHtml(settings.extraHeadHtml, settings.omitMountDiv)
             });
             return;
         }
@@ -220,12 +346,19 @@ async function openPretendSite(page, options) {
         }
 
         if (pathname.startsWith(SITE_PATH + '/_api/')) {
+            record.apiRequests.push(url.href);
             const apiPath = pathname.substring(SITE_PATH.length);
-            const answer = API_ANSWERS.find(function(entry) { return entry.pattern.test(apiPath); });
+            let match = null;
+            const answer = answers.find(function(entry) {
+                match = entry.pattern.exec(apiPath);
+                return match !== null;
+            });
             if (answer) {
-                let body = answer.body;
+                let body = answer.answer ? answer.answer(url, match) : answer.body;
+                let status = 200;
+                if (body && body[REPLY]) { status = body.status; body = body.body; }
                 if (body === lists && settings.extraLists) { body = { value: lists.value.concat(settings.extraLists) }; }
-                await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+                await route.fulfill({ status: status, contentType: 'application/json', body: JSON.stringify(body) });
                 return;
             }
         }
@@ -238,4 +371,4 @@ async function openPretendSite(page, options) {
     return record;
 }
 
-module.exports = { openPretendSite, SITE_URL, DIST_DIR };
+module.exports = { openPretendSite, reply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID };

@@ -24,6 +24,15 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
+/* University of Michigan colors. Declared on the app's own elements, not :root, so the rest of the SharePoint page is unchanged.
+   Contrast checked against WCAG 2.2 AA: white on dark blue 15.06:1, dark blue on #f3f2f1 13.47:1, dark blue on maize 9.89:1,
+   white on medium blue 8.73:1. Maize is used only behind dark blue text or as a decorative border, never as text on white. */
+#sp-info-app, #sna-global-search, #sna-copy-toast {
+    --um-dark-blue: #00274c;
+    --um-medium-blue: #174992;
+    --um-maize: #ffcb05;
+}
+
 #sp-info-app {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     color: #333;
@@ -36,11 +45,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 }
 
 #sp-info-app h2, #sp-info-app h3, #sp-info-app h4 {
-    color: #005a9e;
+    color: var(--um-dark-blue);
 }
 
 #sp-info-app button {
-    background-color: #0078d4;
+    background-color: var(--um-dark-blue);
     color: white;
     border: none;
     padding: 10px 15px;
@@ -50,8 +59,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     margin-bottom: 20px;
 }
 
-#sp-info-app button:hover { background-color: #005a9e; }
+#sp-info-app button:hover { background-color: var(--um-medium-blue); }
 #sp-info-app button:disabled { background-color: #cccccc; cursor: not-allowed; }
+
+/* Main call to action: dark blue text on maize (9.89:1). */
+#sp-info-app #sp-btn-gather {
+    background-color: var(--um-maize);
+    color: var(--um-dark-blue);
+    font-weight: 700;
+    border: 1px solid var(--um-dark-blue);
+}
+#sp-info-app #sp-btn-gather:hover { background-color: #ffd633; }
+#sp-info-app #sp-btn-gather:disabled { background-color: #cccccc; color: #323130; border-color: #767676; }
 
 .info-card {
     background: #fff;
@@ -66,7 +85,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 .main-section-header {
     background: #f3f2f1;
-    border-left: 5px solid #005a9e;
+    border-left: 5px solid var(--um-maize);
     padding: 10px 15px;
     margin-top: 25px;
     margin-bottom: 15px;
@@ -89,7 +108,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 2px solid #005a9e;
+    border-bottom: 2px solid var(--um-dark-blue);
     margin-bottom: 15px;
     padding-bottom: 5px;
 }
@@ -107,15 +126,26 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .section-header h3 { margin: 0; }
 .section-header button { margin-bottom: 0; padding: 6px 12px; font-size: 13px; margin-left: 8px; }
 
-.print-btn { background-color: #0078d4 !important; color: #fff !important; }
-.print-btn:hover { background-color: #005a9e !important; }
-.print-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+.print-btn { background-color: var(--um-dark-blue) !important; color: #fff !important; }
+.print-btn:hover { background-color: var(--um-medium-blue) !important; }
+.print-btn:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
 
-.csv-btn { background-color: #0078d4 !important; color: #fff !important; }
-.csv-btn:hover { background-color: #005a9e !important; }
-.csv-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+.csv-btn { background-color: var(--um-dark-blue) !important; color: #fff !important; }
+.csv-btn:hover { background-color: var(--um-medium-blue) !important; }
+.csv-btn:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
 
-#sp-info-app button:focus { outline: 3px solid #005a9e; outline-offset: 2px; }
+#sp-info-app button:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
+
+/* Site card: maize stripe on top, and a row of report buttons that wraps on narrow screens. */
+.sna-site-card { border-top: 4px solid var(--um-maize); }
+.sna-report-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 0 0 10px 0;
+}
+.sna-report-actions button { margin: 0 !important; }
 
 .icon-btn {
     background: transparent !important;
@@ -132,7 +162,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     min-height: 34px;
 }
 .icon-btn:hover { background: #e8e8e8 !important; border-color: #333 !important; }
-.icon-btn:focus { outline: 3px solid #0078d4 !important; outline-offset: 2px; }
+.icon-btn:focus { outline: 3px solid var(--um-dark-blue) !important; outline-offset: 2px; }
 
 .app-footer {
 		margin-top: 40px;
@@ -143,7 +173,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 		color: #555;
 		line-height: 1.8;
 	}
-.app-footer a { color: #0078d4; text-decoration: none; }
+.app-footer a { color: var(--um-dark-blue); text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
 	.github-promo {
 margin-bottom: 15px;
@@ -167,7 +197,7 @@ background-color: #000000;
 text-decoration: none;
 }
 .copyright-info a {
-color: #005a9e;
+color: var(--um-dark-blue);
 text-decoration: underline;   /* Underlined so the link stands out from the text around it without relying on color */
 }
 
@@ -178,18 +208,89 @@ details.permissions-section {
     margin-top: 10px;
     padding: 10px;
     background: #f3f2f1;
-    border-left: 4px solid #0078d4;
+    border-left: 4px solid var(--um-dark-blue);
     border-radius: 4px;
 }
 
-/* #005a9e keeps a 4.5:1 contrast ratio on the gray section background; #0078d4 does not. */
-summary { cursor: pointer; font-weight: bold; color: #005a9e; }
-summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
+/* Dark blue keeps a 13.47:1 contrast ratio on the gray section background. */
+summary { cursor: pointer; font-weight: bold; color: var(--um-dark-blue); }
+summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 2px; }
 
-.perm-row { border-bottom: 1px solid #e1dfdd; padding: 4px 0; font-size: 13px; }
+.perm-row { border-bottom: 1px solid #e1dfdd; padding: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
 .perm-row:last-child { border-bottom: none; }
 
-.app-tag { background: #edebe9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+.app-tag { background: #edebe9; color: #323130; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: 400; }
+
+/* Secondary text. #595959 keeps a 6.26:1 contrast ratio on the gray section background and 7.0:1 on white. */
+.sna-muted { color: #595959; }
+.sna-note { font-size: 12px; color: #595959; margin: 4px 0 10px 0; }
+
+/* Hidden on screen but read by screen readers, such as table captions. */
+.sna-visually-hidden {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Who has access, by person or group */
+.sna-principal-block { padding: 8px 0; border-bottom: 1px solid #e1dfdd; }
+.sna-principal-block:last-child { border-bottom: none; }
+.sna-principal-name { margin-bottom: 4px; overflow-wrap: anywhere; }
+.sna-principal-line { font-size: 13px; color: #323130; margin: 2px 0; }
+.sna-principal-line.sna-muted { color: #595959; }
+.sna-guest-tag { background: #fde7e9; color: #a4262c; font-weight: 600; }
+.sna-perm-list-table { width: 100%; border-collapse: collapse; margin: 6px 0 2px 0; font-size: 13px; background: #fff; }
+.sna-perm-list-table caption { text-align: left; font-weight: 600; padding: 4px 0; color: #323130; }
+.sna-perm-list-table th { text-align: left; background: #f3f2f1; color: #323130; font-weight: 600; padding: 6px 10px; border-bottom: 2px solid var(--um-dark-blue); }
+.sna-perm-list-table td { padding: 6px 10px; border-bottom: 1px solid #edebe9; vertical-align: top; word-break: break-word; }
+.sna-perm-list-table tr:nth-child(even) td { background: #faf9f8; }
+.sna-members { margin: 4px 0 2px 0; }
+.sna-members > summary { font-size: 13px; }
+.sna-members-list { margin: 4px 0 4px 6px; padding: 0; font-size: 13px; }
+.sna-members-list li { padding: 1px 0; list-style: disc; margin-left: 22px; }
+
+/* Check one person's access */
+.sna-access-tool { margin-bottom: 8px; }
+.sna-access-tool label { display: block; font-weight: 600; margin-bottom: 4px; }
+.sna-access-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sna-access-input {
+    flex: 1;
+    min-width: min(220px, 100%);
+    padding: 8px 10px;
+    font-size: 13px;
+    border: 1px solid #767676;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+.sna-access-input:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 1px; border-color: var(--um-dark-blue); }
+#sna-user-access-hint { font-size: 12px; margin-top: 4px; }
+.sna-access-status { font-size: 13px; margin: 6px 0; }
+.sna-access-status:empty { display: none; }
+
+/* Guests and organization-wide access. The words carry the meaning; color only adds emphasis. */
+.sna-risk-panel { margin: 14px 0; padding: 12px 14px; border-radius: 6px; border-left: 5px solid #a4262c; background: #fdf3f4; }
+.sna-risk-panel.sna-risk-clear { border-left-color: #107c41; background: #f1faf5; }
+.sna-risk-panel.sna-risk-unknown { border-left-color: #767676; background: #f3f2f1; }
+#sp-info-app .sna-risk-title { font-size: 1em; font-weight: 700; color: #a4262c; margin: 0 0 6px 0; }
+#sp-info-app .sna-risk-clear .sna-risk-title { color: #0e6b38; margin-bottom: 0; }
+#sp-info-app .sna-risk-unknown .sna-risk-title { color: #323130; }
+.sna-risk-list { margin: 0; padding-left: 20px; }
+.sna-risk-row { font-size: 13px; padding: 3px 0; color: #323130; margin: 0; overflow-wrap: anywhere; }
+.sna-risk-reason { font-weight: 600; color: #a4262c; }
+
+/* Cleanup suggestions. #6b5400 keeps a 6.49:1 contrast ratio on the gray section background. */
+.sna-cleanup-group { margin: 8px 0; }
+#sp-info-app .sna-cleanup-head { font-weight: 600; font-size: 13px; padding: 4px 0; margin: 0; color: #323130; }
+#sp-info-app .sna-cleanup-alert { color: #a4262c; }
+#sp-info-app .sna-cleanup-warning { color: #6b5400; }
+.sna-cleanup-row { font-size: 13px; padding: 2px 0 2px 12px; color: #323130; }
 
 /* Tabulator theme — matches Sitenalyzer palette */
 .tabulator {
@@ -202,7 +303,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 }
 .tabulator .tabulator-header {
     background: #f3f2f1;
-    border-bottom: 2px solid #0078d4;
+    border-bottom: 2px solid var(--um-dark-blue);
     border-radius: 4px 4px 0 0;
 }
 .tabulator .tabulator-header .tabulator-col {
@@ -219,7 +320,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 /* Fields (column definitions) tables are not row-clickable — reset to default cursor */
 .sna-fields-table .tabulator-row,
 .sna-fields-table .tabulator-row .tabulator-cell { cursor: default; }
-.tabulator .tabulator-header .tabulator-col .tabulator-col-sorter .tabulator-arrow { border-top-color: #0078d4; border-bottom-color: #0078d4; }
+.tabulator .tabulator-header .tabulator-col .tabulator-col-sorter .tabulator-arrow { border-top-color: var(--um-dark-blue); border-bottom-color: var(--um-dark-blue); }
 .tabulator-row { border-bottom: 1px solid #edebe9; }
 .tabulator-row:nth-child(even) { background: #faf9f8; }
 .tabulator-row:nth-child(odd)  { background: #ffffff; }
@@ -238,8 +339,12 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 }
 .tabulator-row .tabulator-cell:last-child { border-right: none; }
 .tabulator .tabulator-footer { display: none !important; }
-.tabulator-placeholder span { color: #999; font-style: italic; }
+.tabulator-placeholder span { color: #595959; font-style: italic; }
 .tabulator .tabulator-tableholder { overflow-y: auto; }
+/* Scroll area around long tables; keyboard users can focus it and scroll with the arrow keys. */
+.sna-table-scroll { max-height: 360px; overflow: auto; margin-top: 4px; border-radius: 4px; }
+.sna-table-scroll .tabulator { margin-top: 0; }
+.sna-table-scroll:focus-visible { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
 
 /* Table search input */
 .sna-table-search-wrap { margin: 8px 0 5px 0; }
@@ -247,15 +352,15 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     width: 100%;
     padding: 7px 10px 7px 32px;
     font-size: 13px;
-    border: 1px solid #c8c6c4;
+    border: 1px solid #767676;
     border-radius: 4px;
     box-sizing: border-box;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 10px center;
     transition: border-color 0.2s;
 }
-.sna-table-search:focus { outline: 3px solid #0078d4; outline-offset: 1px; border-color: #0078d4; }
-.sna-table-search::placeholder { color: #aaa; }
+.sna-table-search:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 1px; border-color: var(--um-dark-blue); }
+.sna-table-search::placeholder { color: #767676; }
 
 /* Section action buttons (Copy ID, Open, header row) */
 .sna-card-header {
@@ -279,8 +384,8 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 }
 .sna-action-btn {
     background: #fff !important;
-    color: #0078d4 !important;
-    border: 1px solid #0078d4 !important;
+    color: var(--um-dark-blue) !important;
+    border: 1px solid var(--um-dark-blue) !important;
     padding: 3px 9px !important;
     font-size: 12px !important;
     font-weight: 600;
@@ -293,8 +398,8 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     line-height: 1.4;
     transition: background 0.15s, color 0.15s;
 }
-.sna-action-btn:hover { background: #0078d4 !important; color: #fff !important; }
-.sna-action-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+.sna-action-btn:hover { background: var(--um-dark-blue) !important; color: #fff !important; }
+.sna-action-btn:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
 /* Let Tabulator rows expand and overflow when a cell editor is active */
 .tabulator-row.tabulator-editing,
 .tabulator-row .tabulator-cell.tabulator-editing {
@@ -323,8 +428,8 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 /* Field type icon */
 .sna-type-icon { font-style: normal; margin-right: 4px; vertical-align: middle; opacity: 0.85; }
 
-/* Folder link visual style (navigation handled via cellClick, not native anchor) */
-.sna-folder-link { color: #0078d4; text-decoration: underline; cursor: pointer; }
+/* Links to folders, pages, and files inside tables */
+.sna-folder-link { color: var(--um-dark-blue); text-decoration: underline; cursor: pointer; }
 .sna-folder-link:hover { text-decoration: none; }
 
 /* Folder items right-align */
@@ -336,7 +441,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     width: 100%;
     padding: 10px;
     font-size: 14px;
-    border: 1px solid #ddd;
+    border: 1px solid #767676;
     border-radius: 4px;
     margin: 8px 0;
     box-sizing: border-box;
@@ -363,12 +468,12 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 .site-url-helper { font-size: 12px; color: #666; margin-bottom: 15px; }
 /* 24 by 24 pixels is the smallest target size WCAG 2.2 allows; #595959 and #767676 meet the contrast minimums. */
 #sp-info-app #sna-sites-refresh-btn { background: none !important; border: 1px solid #767676 !important; border-radius: 50% !important; color: #595959 !important; cursor: pointer; font-size: 13px !important; height: 24px; width: 24px; line-height: 1; padding: 0 !important; margin: 0 !important; flex-shrink: 0; }
-#sp-info-app #sna-sites-refresh-btn:hover { background: #f0f0f0 !important; color: #444 !important; border-color: #999 !important; }
+#sp-info-app #sna-sites-refresh-btn:hover { background: #f0f0f0 !important; color: #444 !important; border-color: #595959 !important; }
 
 /* Spinning Circle CSS */
 .helper-spinner {
     border: 2px solid #ddd;
-    border-top: 2px solid #0078d4;
+    border-top: 2px solid var(--um-dark-blue);
     border-radius: 50%;
     width: 12px;
     height: 12px;
@@ -418,7 +523,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 /* ID text — small and muted */
 .list-id-text {
     font-size: 0.73rem;
-    color: #888;
+    color: #595959;
     word-break: break-all;
     font-weight: 400;
 }
@@ -426,7 +531,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 /* Inline ID reveal (shown temporarily on ID button click) */
 .sna-id-inline {
     font-size: 0.72rem;
-    color: #888;
+    color: #595959;
     font-family: 'Courier New', monospace;
     word-break: break-all;
     vertical-align: middle;
@@ -438,8 +543,8 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     display: inline-flex;
     align-items: baseline;
     gap: 2px;
-    background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
-    color: #fff;
+    background: var(--um-maize);
+    color: var(--um-dark-blue);
     padding: 2px 9px 2px 8px;
     border-radius: 12px;
     font-size: 0.8em;
@@ -471,10 +576,11 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     details.permissions-section { background: transparent; border-left: 3px solid #ccc; page-break-inside: avoid; }
     .fields-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .folders-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .item-count-badge { background: #555 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .item-count-badge { background: #555 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     /* Tabulator print: expand all rows, hide search */
     .tabulator { height: auto !important; border: 1px solid #ccc !important; }
     .tabulator-tableholder { height: auto !important; overflow: visible !important; }
+    .sna-table-scroll { max-height: none !important; overflow: visible !important; }
     .tabulator .tabulator-header { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .sna-table-search-wrap { display: none !important; }
 
@@ -501,7 +607,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     margin-top: 10px;
     padding: 10px;
     background: #f3f2f1;
-    border-left: 4px solid #0078d4;
+    border-left: 4px solid var(--um-dark-blue);
     border-radius: 4px;
 }
 .sna-taxonomy-set {
@@ -512,7 +618,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     border-radius: 3px;
 }
 .sna-taxonomy-group > summary,
-.sna-taxonomy-set > summary { font-weight: 600; color: #005a9e; }
+.sna-taxonomy-set > summary { font-weight: 600; color: var(--um-dark-blue); }
 
 /* Admin inline edit */
 .sna-editable-wrap { position: relative; display: inline; }
@@ -526,13 +632,13 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     opacity: 0;
     transition: opacity 0.15s;
     vertical-align: middle;
-    color: #0078d4 !important;
+    color: var(--um-dark-blue) !important;
     min-width: 0 !important;
     min-height: 0 !important;
 }
 .sna-editable-wrap:hover .sna-pencil-btn,
 .sna-editable-wrap:focus-within .sna-pencil-btn { opacity: 1; }
-.sna-pencil-btn:focus { opacity: 1; outline: 2px solid #0078d4; }
+.sna-pencil-btn:focus { opacity: 1; outline: 2px solid var(--um-dark-blue); }
 /* Empty field: keep pencil at reduced opacity so admins can always discover it */
 .sna-editable-wrap--empty .sna-pencil-btn { opacity: 0.55; }
 .sna-editable-wrap--empty:hover .sna-pencil-btn { opacity: 1; }
@@ -547,7 +653,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     padding: 6px 8px;
     font-size: 13px;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    border: 2px solid #0078d4;
+    border: 2px solid var(--um-dark-blue);
     border-radius: 4px;
     background: #fff;
     outline: none;
@@ -557,7 +663,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 }
 .sna-editor-controls { display: flex; gap: 6px; margin-top: 2px; }
 .sna-editor-save-btn {
-    background: #0078d4 !important;
+    background: var(--um-dark-blue) !important;
     color: #fff !important;
     border: none !important;
     padding: 4px 12px !important;
@@ -567,7 +673,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     margin: 0 !important;
     min-height: 0 !important;
 }
-.sna-editor-save-btn:hover { background: #005a9e !important; }
+.sna-editor-save-btn:hover { background: var(--um-medium-blue) !important; }
 .sna-editor-cancel-btn {
     background: #fff !important;
     color: #323130 !important;
@@ -594,7 +700,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 #sna-search-toggle {
-    background: #0078d4;
+    background: var(--um-dark-blue);
     color: #fff;
     border: none;
     border-radius: 50%;
@@ -611,8 +717,8 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     line-height: 1;
     transition: background 0.15s, transform 0.15s;
 }
-#sna-search-toggle:hover { background: #005a9e; transform: scale(1.08); }
-#sna-search-toggle:focus { outline: 3px solid #005a9e; outline-offset: 2px; }
+#sna-search-toggle:hover { background: var(--um-medium-blue); transform: scale(1.08); }
+#sna-search-toggle:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
 #sna-search-panel {
     background: #fff;
     border: 1px solid #c8c6c4;
@@ -627,12 +733,12 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     width: 100%;
     padding: 8px 12px;
     font-size: 14px;
-    border: 1px solid #c8c6c4;
+    border: 1px solid #767676;
     border-radius: 4px;
     box-sizing: border-box;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
-#sna-search-input:focus { outline: 3px solid #0078d4; outline-offset: 1px; border-color: #0078d4; }
+#sna-search-input:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 1px; border-color: var(--um-dark-blue); }
 #sna-search-results {
     list-style: none;
     padding: 0;
@@ -670,7 +776,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 }
 .sna-search-result-breadcrumb {
     font-size: 10px;
-    color: #999;
+    color: #595959;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -678,7 +784,7 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
 .sna-search-no-results {
     padding: 10px;
     font-size: 13px;
-    color: #999;
+    color: #595959;
     font-style: italic;
     text-align: center;
 }
@@ -692,8 +798,8 @@ summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
     pointer-events: none;
 }
 @keyframes sna-highlight-pulse {
-    0%   { outline: 4px solid #0078d4; outline-offset: 3px; background-color: #cce4f6; }
-    65%  { outline: 4px solid #0078d4; outline-offset: 3px; background-color: #cce4f6; }
+    0%   { outline: 4px solid var(--um-dark-blue); outline-offset: 3px; background-color: #cce4f6; }
+    65%  { outline: 4px solid var(--um-dark-blue); outline-offset: 3px; background-color: #cce4f6; }
     100% { outline: none; outline-offset: 0; background-color: transparent; }
 }
 .sna-highlight-pulse {

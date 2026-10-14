@@ -56,12 +56,49 @@ flowchart TD
 
 The diagram shows these steps:
 
-1. The page loads, and the Modern Script Editor runs the `<script src>` line. The browser downloads `sitenalyzer.js` from `SiteAssets/scripts`.
+1. The page loads, and the Modern Script Editor runs the `<script src>` line. The browser downloads `sitenalyzer.js` from `SiteAssets/scripts`. All of its code is inside one function, so none of its names can clash with other scripts on the page.
 2. `sitenalyzer.js` works out which folder it came from. It uses the script's own address, and if that isn't available, the site address in `_spPageContextInfo` plus `/SiteAssets/scripts/`. The styles folder is `../styles/` from there.
 3. It adds `tabulator_simple.min.css` and `sitenalyzer.css` to the page.
 4. At the same time, it loads `xlsx.full.min.js` and then `tabulator.min.js`. While each one loads, it hides any AMD loader on the page, so the libraries create the `XLSX` and `Tabulator` globals that the app uses. The Modern Script Editor does the same thing for the scripts it loads.
-5. When every file has loaded, it places the app markup in `<div id="sitenalyzer-app">` and starts the app.
+5. When every file has loaded, it places the app markup in `<div id="sitenalyzer-app">` and starts the app. SharePoint sometimes adds the web part's `<div>` to the page a little later, so Sitenalyzer checks for it every 100 milliseconds for up to 5 seconds. If the `<div>` never appears, it writes an error in the browser console. Both times are set at the top of `src/sitenalyzer.js` (`SNA_MOUNT_WAIT_MS` and `SNA_MOUNT_CHECK_INTERVAL_MS`).
 6. If any file fails to load, it shows a message in the `<div>` that names the file and tells the person which folder to copy it to.
+
+### What Sitenalyzer asks SharePoint
+
+Every request is a read made with the signed-in person's own permissions. The only writes are the description edits that site owners make on purpose.
+
+| Request | Why |
+| --- | --- |
+| `/_api/web`, `/_api/web/currentUser` | Site name, address, and ID; who is exporting. |
+| `/_api/web/effectivebasePermissions` | Whether the person can manage the site (the ManageWeb permission). Only then are the description edit buttons shown. |
+| `/_api/web/roleassignments`, `/_api/web/lists(guid'…')/roleassignments` | Who has which permission level on the site, and on each list or library that has its own permissions. |
+| `/_api/web/lists` | Lists and libraries, with version history settings and last-changed dates for the cleanup suggestions. |
+| `/_api/web/sitegroups(<ID>)/users` | Members of each SharePoint group in the permission list. |
+| `/_api/web/sitegroups` and `/_api/web/GetFileById('…')` | Sharing links, read from the hidden `SharingLinks.*` groups, and the names of up to 60 shared files. |
+| `/_api/web/roledefinitions`, `/_api/web/siteusers?$filter=IsSiteAdmin eq true` | Permission levels and site collection administrators, for the permissions workbook. |
+| `/_api/web/lists?$filter=BaseTemplate eq 119` and its `items` | The Site Pages library and its pages. |
+| `/_api/web/siteusers?$filter=Email eq '…'` and `getUserEffectivePermissions(@u)` | Only when someone uses **Check one person's access**. |
+| Fields, root folders, and the term store (`/_api/v2.1/sites/…/termStore`) | Columns, top-level folders, and terms for the data dictionary. |
+
+Group member lookups, file name lookups, and person checks run at most 6 at a time (`SNA_MAX_PARALLEL_REQUESTS`), so large sites aren't slowed down by SharePoint's request limits.
+
+### How permissions are counted
+
+Sitenalyzer keeps one permission row for each scope, person or group, and permission level. A scope is the whole site or one list or library that has its own permissions. The **Who has access** section and the Permissions sheet of the workbook are both built from these rows, so they always agree.
+
+- A permission level on the whole site also covers every list and library that uses the site's permissions. Sitenalyzer says so next to each person or group.
+- Limited Access is the exception. SharePoint adds it by itself when someone shares a single item, and it gives no access to other lists. Sitenalyzer recognizes it by its `RoleTypeKind` of 1, or by the level being hidden, so it works on sites in any language. It is never counted as access to the site's lists.
+- Groups named `SharingLinks.*` and the Limited Access System Group are created by SharePoint. They are counted and left out of the access list, and the sharing links section lists the links.
+- Apps added through SharePoint have the user type, so Sitenalyzer recognizes them by `|ms.sp.ext|` in the sign-in name. Type 4 means a security or Microsoft 365 group, not an app.
+
+### Values from SharePoint are treated as untrusted
+
+- Every name, title, and address from SharePoint is escaped before it is added to the page, so HTML in a list or group name shows as plain text.
+- The person check doubles single quotes in the email address before it goes into `$filter` and `@u`, and accepts at most 320 characters with no control characters.
+- File IDs from sharing link group names must look like a GUID before Sitenalyzer asks for the file.
+- Sitenalyzer follows the Site Pages next-batch link (`odata.nextLink`) only when it points to the same site's REST API. It stops after 10,000 items (`SNA_SITE_PAGES_MAX`) and doesn't sort on the server, because SharePoint rejects sorted requests on libraries with more than 5,000 items.
+- Links to shared files and to pages are shown only when they are on the same site.
+- Every cell in the permissions workbook is written as text, so a name such as `=SUM(A1)` can't run as a formula.
 
 ### Where the app markup comes from
 
@@ -82,7 +119,7 @@ CI checks the source for these patterns, and the browser tests run the app on a 
 
 ### Conclusion
 
-You now know which files make up Sitenalyzer, how they reach SharePoint, and how the app starts. To change the app, edit `src/` and run a build script.
+You now know which files make up Sitenalyzer, how they reach SharePoint, how the app starts, what it asks SharePoint, and how it counts permissions. To change the app, edit `src/` and run a build script.
 
 ### Additional resources
 
@@ -91,5 +128,6 @@ You now know which files make up Sitenalyzer, how they reach SharePoint, and how
 - [Support for Content Security Policy (CSP) in SharePoint Online](https://learn.microsoft.com/en-us/sharepoint/dev/spfx/content-securty-policy-trusted-script-sources)
 - [Modern Script Editor web part source code](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor)
 - [SharePoint REST service](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/get-to-know-the-sharepoint-rest-service)
+- [Permission levels in SharePoint](https://learn.microsoft.com/en-us/sharepoint/understanding-permission-levels)
 
 [Back to README](../README.md)
