@@ -45,9 +45,12 @@ var SNA_MOUNT_CHECK_INTERVAL_MS = 100;
 var SNA_STYLE_FILES = ['tabulator_simple.min.css', 'sitenalyzer.css'];
 
 // Libraries loaded one at a time from the scripts folder in Site Assets, with the global each one creates.
+// isUsable checks that the global is the working library, not an empty object or another script's variable.
 var SNA_LIBRARY_FILES = [
-    { file: 'xlsx.full.min.js', globalName: 'XLSX' },
-    { file: 'tabulator.min.js', globalName: 'Tabulator' }
+    { file: 'xlsx.full.min.js', globalName: 'XLSX',
+      isUsable: function(lib) { return !!(lib && lib.utils && typeof lib.utils.aoa_to_sheet === 'function' && typeof lib.write === 'function'); } },
+    { file: 'tabulator.min.js', globalName: 'Tabulator',
+      isUsable: function(lib) { return typeof lib === 'function'; } }
 ];
 
 // App markup from src/sitenalyzer.html. The build replaces the next line, so keep it exactly as written.
@@ -3647,33 +3650,53 @@ function snaLoadStyle(fileName, folderUrl) {
     });
 }
 
-// Loads one library with a <script src> element unless its global already exists.
-// Resolves when the library has created its global; rejects otherwise.
+// Hides the page's module loaders while a library loads, and returns a function that puts them back.
+// UMD libraries such as SheetJS and Tabulator fill in window.exports or window.module.exports when the page
+// has them, or register with an AMD loader when window.define.amd is set. In both cases they never fill in their
+// own global; SheetJS leaves window.XLSX as an empty object. Other scripts on a SharePoint page can create these
+// names. The Modern Script Editor hides define.amd while it loads scripts for the same reason.
+function snaHideModuleLoaders() {
+    var saved = [];
+    function hide(owner, name) {
+        if (!owner || owner[name] === undefined || owner[name] === null) { return; }
+        try {
+            saved.push({ owner: owner, name: name, value: owner[name] });
+            owner[name] = undefined;
+        } catch(e) { /* A read-only name can't be hidden; the usable check after loading reports the problem. */ }
+    }
+    hide(window.define, 'amd');
+    hide(window, 'exports');
+    hide(window, 'module');
+    return function restoreModuleLoaders() {
+        saved.forEach(function(item) {
+            try { item.owner[item.name] = item.value; } catch(e) { /* Nothing more can be done. */ }
+        });
+    };
+}
+
+// Loads one library with a <script src> element unless a usable copy is already on the page.
+// Resolves when the library's global works; rejects otherwise.
 function snaLoadLibrary(library, folderUrl) {
-    if (window[library.globalName]) { return Promise.resolve(); }
+    if (library.isUsable(window[library.globalName])) { return Promise.resolve(); }
     var url = new URL(library.file, folderUrl).href;
     return new Promise(function(resolve, reject) {
-        // UMD libraries register as AMD modules instead of creating globals when window.define.amd is set.
-        // The Modern Script Editor hides define.amd while it loads scripts for the same reason.
-        var savedAmd = (window.define && window.define.amd) ? window.define.amd : null;
-        if (savedAmd) { window.define.amd = null; }
-        function restoreAmd() {
-            if (savedAmd) { window.define.amd = savedAmd; }
-        }
+        var restoreModuleLoaders = snaHideModuleLoaders();
 
         var script = document.createElement('script');
         script.src = url;
         script.onload = function() {
-            restoreAmd();
-            if (window[library.globalName]) {
+            restoreModuleLoaders();
+            if (library.isUsable(window[library.globalName])) {
                 resolve();
             } else {
-                reject(snaStartupError(url + ' loaded but did not create window.' + library.globalName,
-                    snaMissingFileMessage(library.file, 'scripts')));
+                reject(snaStartupError(url + ' loaded but window.' + library.globalName + ' is missing or incomplete',
+                    'Sitenalyzer loaded ' + library.file + ', but another script on this page kept it from starting. ' +
+                    'Remove any other code from this page\'s web parts, then refresh the page. If this message appears again, ' +
+                    'ask your site administrator for help and mention the errors in the browser console.'));
             }
         };
         script.onerror = function() {
-            restoreAmd();
+            restoreModuleLoaders();
             reject(snaStartupError('Could not load ' + url, snaMissingFileMessage(library.file, 'scripts')));
         };
         document.head.appendChild(script);

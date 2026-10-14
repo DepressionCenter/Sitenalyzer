@@ -185,6 +185,39 @@ test('exports the data dictionary as an Excel file', async function({ page }, te
     widths.forEach(function(width) { expect(width).toBeGreaterThanOrEqual(12); expect(width).toBeLessThanOrEqual(61); });
 });
 
+// Other SharePoint scripts can leave module loader globals behind. SheetJS then fills in window.exports instead of
+// window.XLSX, and an empty window.XLSX must not be mistaken for the library.
+[
+    { name: 'a global exports object', setup: function() { window.exports = { fromPage: true }; } },
+    { name: 'exports, module, an AMD loader, and an empty XLSX', setup: function() {
+        window.exports = { fromPage: true };
+        window.module = { exports: { fromPage: true } };
+        window.define = function() {};
+        window.define.amd = { fromPage: true };
+        window.XLSX = {};
+    } }
+].forEach(function(scenario) {
+    test('loads working libraries when the page has ' + scenario.name, async function({ page }, testInfo) {
+        await page.addInitScript(scenario.setup);
+        const record = await openPretendSite(page);
+        await extractSiteInformation(page);
+
+        const { workbook } = await downloadWorkbook(page, testInfo, /Export permissions/i);
+        expect(workbook.SheetNames).toContain('Permissions');
+        // The page's own globals are put back after the libraries load.
+        const pageGlobals = await page.evaluate(function() {
+            return {
+                exports: window.exports.fromPage === true && !('utils' in window.exports),
+                module: !window.module || window.module.exports.fromPage === true,
+                amd: !window.define || window.define.amd.fromPage === true,
+                tabulator: typeof window.Tabulator
+            };
+        });
+        expect(pageGlobals).toEqual({ exports: true, module: true, amd: true, tabulator: 'function' });
+        expect(record.consoleErrors).toEqual([]);
+    });
+});
+
 test('lists who has access by person or group', async function({ page }) {
     const record = await openPretendSite(page);
     await extractSiteInformation(page);
