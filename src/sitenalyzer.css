@@ -165,11 +165,17 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .icon-btn:hover { background: #e8e8e8 !important; border-color: #333 !important; }
 .icon-btn:focus { outline: 3px solid var(--um-dark-blue) !important; outline-offset: 2px; }
 
+/* Footer: copyright on the left and the GitHub button on the right. They stack on narrow screens. */
 .app-footer {
 		margin-top: 40px;
 		padding-top: 20px;
 		border-top: 1px solid #ddd;
-		text-align: center;
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		align-items: center;
+		gap: 12px;
+		text-align: left;
 		font-size: 13px;
 		color: #555;
 		line-height: 1.8;
@@ -177,7 +183,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .app-footer a { color: var(--um-dark-blue); text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
 	.github-promo {
-margin-bottom: 15px;
+flex-shrink: 0;
 	}
 	.github-btn {
 display: inline-flex;
