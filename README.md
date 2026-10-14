@@ -129,7 +129,8 @@ Free Documentation License". If not, see <https://www.gnu.org/licenses/fdl-1.3-s
 If you find this repository, code or paper useful for your research, please cite it.
 
 #### Citation Example:
->_Mongefranco, Gabriel (2026). Sitenalyzer. University of Michigan. Software. https://github.com/DepressionCenter/Sitenalyzer_  
+>_Mongefranco, Gabriel (2026). Sitenalyzer. Eisenberg Family Depression Center, University of Michigan. Software. https://github.com/DepressionCenter/Sitenalyzer_ 
+​​​​​​​     _DOI: [10.5281/zenodo.23371816](https://doi.org/10.5281/zenodo.23371816)_
 
 ----
 
