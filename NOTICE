@@ -14,3 +14,7 @@ Permission is granted to copy, distribute and/or modify this document under the 
 
 Change Log
 See the full change log under this repository's releases page.
+
+
+Third-Party Licenses
+This repository includes copies of SheetJS Community Edition (Apache License 2.0) and Tabulator (MIT License). Their full license texts are at the end of the LICENSE file and in src/lib.

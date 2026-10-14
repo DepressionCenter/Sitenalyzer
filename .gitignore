@@ -54,3 +54,8 @@ CHATGPT.md
 *.cache
 __pycache__/
 .venv/
+
+# Ignore browser test tools and results (see tests/)
+tests/node_modules/
+tests/test-results/
+tests/playwright-report/

@@ -24,7 +24,7 @@ licensing, testing, or authorization rules.
 Sitenalyzer is a SharePoint Online inventory and data dictionary tool. It lists a
 site's lists, document libraries, columns, descriptions, internal names, and
 permissions, and it can save the data dictionary as a spreadsheet. Apply these
-preferences to every change to `Sitenalyzer.html`, its scripts, and the
+preferences to every change to the files in `src/`, the build scripts, and the
 documentation that describes how to install it.
 
 ### Environment and structure
@@ -32,10 +32,15 @@ documentation that describes how to install it.
 Follow the repository’s existing file and folder naming conventions when adding new files.
 
 Sitenalyzer runs inside a SharePoint Online page, embedded in the Modern Script
-Editor web part. The page loads `Sitenalyzer.html` as the web part's markup, and
-that markup loads every script from the site's Site Assets document library. For
-example, `https://your-tenant.sharepoint.com/sites/your-site/SiteAssets/Sitenalyzer.js`.
+Editor web part. The web part holds the code from `dist/SitePages/sitenalyzer.html.txt`,
+which loads `sitenalyzer.js` from the site's Site Assets document library. For
+example, `https://your-tenant.sharepoint.com/sites/your-site/SiteAssets/scripts/sitenalyzer.js`.
+That script then loads the style sheets from `SiteAssets/styles` and the libraries
+from `SiteAssets/scripts`.
 
+- Edit the files in `src/`. Never edit `dist/` by hand, because each build replaces it.
+- Use lowercase names for every file Sitenalyzer ships, such as `sitenalyzer.js`. Only
+  the SharePoint folder names `SitePages` and `SiteAssets` keep their capitals.
 - Keep the markup and the scripts as separate files, so that a site owner can copy
   the markup into the web part and upload the scripts to Site Assets.
 - Load third-party libraries from copies saved in Site Assets too, not from a
@@ -47,6 +52,11 @@ example, `https://your-tenant.sharepoint.com/sites/your-site/SiteAssets/Sitenaly
 
 ### Setup and verification
 
+After changing anything in `src/`, run `.\build.ps1` or `bash build.sh`, then run the
+browser tests in `tests/` with `npx playwright test`. Both build scripts must write
+identical files, so a change to one needs the same change in the other. See
+[docs/development.md](../../docs/development.md) for the full steps.
+
 Before calling a change done, check it against the project constraints below. In
 particular, search the markup and scripts for inline scripts and inline event
 handlers, such as `<script>` blocks with code in them, `onclick="..."`,
@@ -56,7 +66,7 @@ When possible, test the change on a SharePoint Online page with the Modern Scrip
 Editor web part and the scripts uploaded to Site Assets. Add `?csp=enforce` to the
 page address so that SharePoint blocks scripts the way it does when it enforces
 the Content Security Policy (CSP), such as
-`https://your-tenant.sharepoint.com/sites/your-site/SitePages/Sitenalyzer.aspx?csp=enforce`.
+`https://your-tenant.sharepoint.com/sites/your-site/SitePages/sitenalyzer.aspx?csp=enforce`.
 Then check the browser console for CSP violation messages. If you could not test
 it in SharePoint, say so.
 
@@ -78,6 +88,11 @@ CSP is the browser setting that decides which scripts a page is allowed to run.
 - Choose libraries that work without inline scripts. SharePoint does not allow
   `unsafe-inline`, so a library that needs it does not qualify.
 
+**Browser storage.** Sitenalyzer shares its SharePoint host, and so its browser
+storage, with other apps. Start every local storage or session storage key, IndexedDB
+database name, and cookie name with `sitenalyzer:` (or `sitenalyzer-` where a colon is
+not allowed), such as `sitenalyzer:sites-cache`.
+
 **Library licenses.** Sitenalyzer is licensed under the GNU General Public License
 v3.0 or later (GPLv3), so every library it uses must have a license that is
 compatible with GPLv3.
@@ -98,6 +113,9 @@ compatible with GPLv3.
 - When removing a library, remove its credit from `README.md` too.
 - Keep the license notice that ships with a library's files when you save a copy
   in Site Assets or in this repository.
+- Save the library's full license text next to it in `src/lib`, such as
+  `src/lib/tabulator.license.txt`, and add the same text to the third-party
+  section at the end of `LICENSE`. Remove both when you remove the library.
 
 ### Terms
 

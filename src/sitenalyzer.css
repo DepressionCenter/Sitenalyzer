@@ -1,0 +1,708 @@
+/*
+This file is part of Sitenalyzer
+sitenalyzer.css
+Author(s): Gabriel Mongefranco.
+Created: 2026-04-20
+Last Modified: 2026-10-14
+Summary: Styles for the Sitenalyzer app. The build copies this file to dist/SiteAssets/styles/,
+         and sitenalyzer.js adds it to the page from the site's Site Assets library.
+Notes: See README file for documentation and full license information.
+Website: https://github.com/DepressionCenter/Sitenalyzer
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#sp-info-app {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #333;
+    background: #f9f9f9;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    max-width: 960px;
+    margin: auto;
+}
+
+#sp-info-app h2, #sp-info-app h3, #sp-info-app h4 {
+    color: #005a9e;
+}
+
+#sp-info-app button {
+    background-color: #0078d4;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    font-size: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 20px;
+}
+
+#sp-info-app button:hover { background-color: #005a9e; }
+#sp-info-app button:disabled { background-color: #cccccc; cursor: not-allowed; }
+
+.info-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    padding: 15px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    /* Tells the browser to skip rendering off-screen cards */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 500px;
+}
+
+.main-section-header {
+    background: #f3f2f1;
+    border-left: 5px solid #005a9e;
+    padding: 10px 15px;
+    margin-top: 25px;
+    margin-bottom: 15px;
+    border-radius: 4px;
+}
+
+.main-section-header h2 {
+    margin: 0 !important;
+    font-size: 1.4em;
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #005a9e;
+    margin-bottom: 15px;
+    padding-bottom: 5px;
+}
+	
+	.table-scroll-wrapper {
+    max-height: 350px;
+    overflow-y: auto;
+    overflow-x: auto;
+    margin-top: 8px;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.section-header h3 { margin: 0; }
+.section-header button { margin-bottom: 0; padding: 6px 12px; font-size: 13px; margin-left: 8px; }
+
+.print-btn { background-color: #0078d4 !important; color: #fff !important; }
+.print-btn:hover { background-color: #005a9e !important; }
+.print-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+
+.csv-btn { background-color: #0078d4 !important; color: #fff !important; }
+.csv-btn:hover { background-color: #005a9e !important; }
+.csv-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+
+#sp-info-app button:focus { outline: 3px solid #005a9e; outline-offset: 2px; }
+
+.icon-btn {
+    background: transparent !important;
+    color: #333 !important;
+    border: 1px solid #767676 !important;
+    padding: 4px 8px !important;
+    font-size: 15px !important;
+    line-height: 1;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 0 !important;
+    margin-left: 4px;
+    min-width: 34px;
+    min-height: 34px;
+}
+.icon-btn:hover { background: #e8e8e8 !important; border-color: #333 !important; }
+.icon-btn:focus { outline: 3px solid #0078d4 !important; outline-offset: 2px; }
+
+.app-footer {
+		margin-top: 40px;
+		padding-top: 20px;
+		border-top: 1px solid #ddd;
+		text-align: center;
+		font-size: 13px;
+		color: #555;
+		line-height: 1.8;
+	}
+.app-footer a { color: #0078d4; text-decoration: none; }
+.app-footer a:hover { text-decoration: underline; }
+	.github-promo {
+margin-bottom: 15px;
+	}
+	.github-btn {
+display: inline-flex;
+align-items: center;
+gap: 8px;
+background-color: #24292e; /* Classic GitHub Dark Color */
+color: #ffffff !important;
+padding: 8px 16px;
+border-radius: 6px;
+text-decoration: none;
+font-size: 14px;
+font-weight: 500;
+transition: background-color 0.2s;
+}
+
+.github-btn:hover {
+background-color: #000000;
+text-decoration: none;
+}
+.copyright-info a {
+color: #005a9e;
+text-decoration: underline;   /* Underlined so the link stands out from the text around it without relying on color */
+}
+
+.copyright-info a:hover {
+text-decoration-thickness: 2px;
+}
+details.permissions-section {
+    margin-top: 10px;
+    padding: 10px;
+    background: #f3f2f1;
+    border-left: 4px solid #0078d4;
+    border-radius: 4px;
+}
+
+/* #005a9e keeps a 4.5:1 contrast ratio on the gray section background; #0078d4 does not. */
+summary { cursor: pointer; font-weight: bold; color: #005a9e; }
+summary:focus-visible { outline: 2px solid #005a9e; outline-offset: 2px; }
+
+.perm-row { border-bottom: 1px solid #e1dfdd; padding: 4px 0; font-size: 13px; }
+.perm-row:last-child { border-bottom: none; }
+
+.app-tag { background: #edebe9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+/* Tabulator theme — matches Sitenalyzer palette */
+.tabulator {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 13px;
+    border: 1px solid #c8c6c4;
+    border-radius: 4px;
+    background: #fff;
+    margin-top: 4px;
+}
+.tabulator .tabulator-header {
+    background: #f3f2f1;
+    border-bottom: 2px solid #0078d4;
+    border-radius: 4px 4px 0 0;
+}
+.tabulator .tabulator-header .tabulator-col {
+    background: transparent;
+    border-right: 1px solid #e1dfdd;
+    color: #323130;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 8px 10px;
+}
+.tabulator .tabulator-header .tabulator-col:last-child { border-right: none; }
+.tabulator .tabulator-header .tabulator-col .tabulator-col-title { white-space: normal; }
+.tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover { background: rgba(0,120,212,0.08); cursor: pointer; }
+/* Fields (column definitions) tables are not row-clickable — reset to default cursor */
+.sna-fields-table .tabulator-row,
+.sna-fields-table .tabulator-row .tabulator-cell { cursor: default; }
+.tabulator .tabulator-header .tabulator-col .tabulator-col-sorter .tabulator-arrow { border-top-color: #0078d4; border-bottom-color: #0078d4; }
+.tabulator-row { border-bottom: 1px solid #edebe9; }
+.tabulator-row:nth-child(even) { background: #faf9f8; }
+.tabulator-row:nth-child(odd)  { background: #ffffff; }
+.tabulator-row:hover,
+.tabulator-row.tabulator-row-even:hover { background: #e8f3fb !important; }
+.tabulator-row .tabulator-cell {
+    padding: 7px 10px;
+    border-right: 1px solid #edebe9;
+    vertical-align: top;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    white-space: normal;
+    line-height: 1.5;
+    font-size: 13px;
+    color: #323130;
+}
+.tabulator-row .tabulator-cell:last-child { border-right: none; }
+.tabulator .tabulator-footer { display: none !important; }
+.tabulator-placeholder span { color: #999; font-style: italic; }
+.tabulator .tabulator-tableholder { overflow-y: auto; }
+
+/* Table search input */
+.sna-table-search-wrap { margin: 8px 0 5px 0; }
+.sna-table-search {
+    width: 100%;
+    padding: 7px 10px 7px 32px;
+    font-size: 13px;
+    border: 1px solid #c8c6c4;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 10px center;
+    transition: border-color 0.2s;
+}
+.sna-table-search:focus { outline: 3px solid #0078d4; outline-offset: 1px; border-color: #0078d4; }
+.sna-table-search::placeholder { color: #aaa; }
+
+/* Section action buttons (Copy ID, Open, header row) */
+.sna-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+.sna-card-header h3 {
+    margin: 0;
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+}
+.sna-card-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+    align-items: center;
+}
+.sna-action-btn {
+    background: #fff !important;
+    color: #0078d4 !important;
+    border: 1px solid #0078d4 !important;
+    padding: 3px 9px !important;
+    font-size: 12px !important;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 0 !important;
+    min-width: 0;
+    min-height: 28px;
+    white-space: nowrap;
+    line-height: 1.4;
+    transition: background 0.15s, color 0.15s;
+}
+.sna-action-btn:hover { background: #0078d4 !important; color: #fff !important; }
+.sna-action-btn:focus { outline: 3px solid #0078d4; outline-offset: 2px; }
+/* Let Tabulator rows expand and overflow when a cell editor is active */
+.tabulator-row.tabulator-editing,
+.tabulator-row .tabulator-cell.tabulator-editing {
+    overflow: visible !important;
+    z-index: 50;
+    position: relative;
+}
+
+.sna-copy-toast {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #323130;
+    color: #fff;
+    padding: 8px 20px;
+    border-radius: 20px;
+    font-size: 13px;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.sna-copy-toast.visible { opacity: 1; }
+
+/* Field type icon */
+.sna-type-icon { font-style: normal; margin-right: 4px; vertical-align: middle; opacity: 0.85; }
+
+/* Folder link visual style (navigation handled via cellClick, not native anchor) */
+.sna-folder-link { color: #0078d4; text-decoration: underline; cursor: pointer; }
+.sna-folder-link:hover { text-decoration: none; }
+
+/* Folder items right-align */
+.sna-tab-items-cell { text-align: right; font-variant-numeric: tabular-nums; }
+
+#sp-loader { display: none; font-style: italic; color: #666; margin-bottom: 15px; }
+
+#site-url-input {
+    width: 100%;
+    padding: 10px;
+    font-size: 14px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin: 8px 0;
+    box-sizing: border-box;
+}
+
+#site-suggestions {
+    display: none;
+    list-style: none;
+    padding: 0;
+    margin: 0 0 10px 0;
+    border: 1px solid #ddd;
+    max-height: 250px;
+    overflow-y: auto;
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+#site-suggestions li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; word-wrap: break-word; }
+#site-suggestions li:last-child { border-bottom: none; }
+#site-suggestions li:hover { background-color: #f0f0f0; }
+.site-suggestion-title { font-weight: bold; }
+.site-suggestion-url { font-size: 11px; color: #666; }
+.site-url-helper { font-size: 12px; color: #666; margin-bottom: 15px; }
+/* 24 by 24 pixels is the smallest target size WCAG 2.2 allows; #595959 and #767676 meet the contrast minimums. */
+#sp-info-app #sna-sites-refresh-btn { background: none !important; border: 1px solid #767676 !important; border-radius: 50% !important; color: #595959 !important; cursor: pointer; font-size: 13px !important; height: 24px; width: 24px; line-height: 1; padding: 0 !important; margin: 0 !important; flex-shrink: 0; }
+#sp-info-app #sna-sites-refresh-btn:hover { background: #f0f0f0 !important; color: #444 !important; border-color: #999 !important; }
+
+/* Spinning Circle CSS */
+.helper-spinner {
+    border: 2px solid #ddd;
+    border-top: 2px solid #0078d4;
+    border-radius: 50%;
+    width: 12px;
+    height: 12px;
+    animation: spin 1s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 6px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* URL input section collapse animation */
+#sna-url-section {
+    overflow: hidden;
+    transition: max-height 0.35s ease, opacity 0.3s ease;
+    max-height: 300px;
+    opacity: 1;
+}
+/* visibility: hidden removes the collapsed fields from keyboard focus and screen readers after the fade ends. */
+#sna-url-section.collapsed {
+    max-height: 0 !important;
+    opacity: 0;
+    visibility: hidden;
+    transition: max-height 0.35s ease, opacity 0.3s ease, visibility 0s linear 0.35s;
+    pointer-events: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* Start Over button */
+#sna-start-over-btn {
+    display: none;
+    text-align: right;
+    margin-bottom: 10px;
+}
+#sna-start-over-btn button {
+    background-color: #605e5c;
+    font-size: 13px;
+    padding: 7px 14px;
+    margin-bottom: 0;
+}
+#sna-start-over-btn button:hover { background-color: #3b3a39; }
+
+/* ID text — small and muted */
+.list-id-text {
+    font-size: 0.73rem;
+    color: #888;
+    word-break: break-all;
+    font-weight: 400;
+}
+
+/* Inline ID reveal (shown temporarily on ID button click) */
+.sna-id-inline {
+    font-size: 0.72rem;
+    color: #888;
+    font-family: 'Courier New', monospace;
+    word-break: break-all;
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+/* Item count badge */
+.item-count-badge {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+    background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
+    color: #fff;
+    padding: 2px 9px 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: 700;
+    margin-left: 8px;
+    vertical-align: middle;
+    white-space: nowrap;
+    line-height: 1.6;
+}
+.item-count-badge sup {
+    font-size: 0.65em;
+    font-weight: 400;
+    margin-left: 2px;
+    opacity: 0.85;
+}
+
+/* Print specific styling */
+@media print {
+    body { background-color: white; font-size: 12pt; }
+    #sna-url-section, #sna-start-over-btn { display: none !important; }
+    #site-url-input, label[for="site-url-input"], #site-suggestions, #site-url-helper-message, #sp-btn-gather { display: none !important; }
+    .section-header button { display: none !important; }
+    .hide-on-print { display: none !important; }
+    #sp-info-app { box-shadow: none; background: transparent; padding: 0; max-width: 100%; margin: 0; border: none; }
+    /* Force everything to render for printing, overriding the scrollbars and content-visibility */
+    .info-card { border: none; padding: 0 0 20px 0; margin-bottom: 20px; content-visibility: visible !important; }
+    .table-scroll-wrapper { max-height: none !important; overflow: visible !important; border: none !important; }
+    .print-section { page-break-after: always; break-after: page; }
+    details.permissions-section { background: transparent; border-left: 3px solid #ccc; page-break-inside: avoid; }
+    .fields-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .folders-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .item-count-badge { background: #555 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* Tabulator print: expand all rows, hide search */
+    .tabulator { height: auto !important; border: 1px solid #ccc !important; }
+    .tabulator-tableholder { height: auto !important; overflow: visible !important; }
+    .tabulator .tabulator-header { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .sna-table-search-wrap { display: none !important; }
+
+    .github-btn {
+        background-color: transparent !important;
+        color: #333 !important;
+        border: 1px solid #333;
+        padding: 5px 10px;
+    }
+
+    /* Automatically spell out the URL next to the link when printing */
+    .github-btn::after {
+        content: " (https://github.com/DepressionCenter/Sitenalyzer)";
+        font-weight: normal;
+        font-size: 11px;
+        color: #555;
+    }
+    .sna-pencil-btn { display: none !important; }
+    .sna-editor-controls { display: none !important; }
+}
+
+/* Taxonomy section */
+.sna-taxonomy-group {
+    margin-top: 10px;
+    padding: 10px;
+    background: #f3f2f1;
+    border-left: 4px solid #0078d4;
+    border-radius: 4px;
+}
+.sna-taxonomy-set {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: #faf9f8;
+    border-left: 3px solid #c8c6c4;
+    border-radius: 3px;
+}
+.sna-taxonomy-group > summary,
+.sna-taxonomy-set > summary { font-weight: 600; color: #005a9e; }
+
+/* Admin inline edit */
+.sna-editable-wrap { position: relative; display: inline; }
+.sna-pencil-btn {
+    background: transparent !important;
+    border: none !important;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px !important;
+    margin: 0 0 0 4px !important;
+    opacity: 0;
+    transition: opacity 0.15s;
+    vertical-align: middle;
+    color: #0078d4 !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+}
+.sna-editable-wrap:hover .sna-pencil-btn,
+.sna-editable-wrap:focus-within .sna-pencil-btn { opacity: 1; }
+.sna-pencil-btn:focus { opacity: 1; outline: 2px solid #0078d4; }
+/* Empty field: keep pencil at reduced opacity so admins can always discover it */
+.sna-editable-wrap--empty .sna-pencil-btn { opacity: 0.55; }
+.sna-editable-wrap--empty:hover .sna-pencil-btn { opacity: 1; }
+.sna-editor-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+}
+.sna-editor-field {
+    min-height: 60px;
+    padding: 6px 8px;
+    font-size: 13px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    border: 2px solid #0078d4;
+    border-radius: 4px;
+    background: #fff;
+    outline: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+}
+.sna-editor-controls { display: flex; gap: 6px; margin-top: 2px; }
+.sna-editor-save-btn {
+    background: #0078d4 !important;
+    color: #fff !important;
+    border: none !important;
+    padding: 4px 12px !important;
+    font-size: 12px !important;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 0 !important;
+    min-height: 0 !important;
+}
+.sna-editor-save-btn:hover { background: #005a9e !important; }
+.sna-editor-cancel-btn {
+    background: #fff !important;
+    color: #323130 !important;
+    border: 1px solid #8a8886 !important;
+    padding: 4px 12px !important;
+    font-size: 12px !important;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 0 !important;
+    min-height: 0 !important;
+}
+.sna-editor-cancel-btn:hover { background: #f3f2f1 !important; }
+
+/* Global search widget */
+#sna-global-search {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+#sna-search-toggle {
+    background: #0078d4;
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 48px;
+    height: 48px;
+    font-size: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+    transition: background 0.15s, transform 0.15s;
+}
+#sna-search-toggle:hover { background: #005a9e; transform: scale(1.08); }
+#sna-search-toggle:focus { outline: 3px solid #005a9e; outline-offset: 2px; }
+#sna-search-panel {
+    background: #fff;
+    border: 1px solid #c8c6c4;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    padding: 10px;
+    width: 320px;
+    max-width: calc(100vw - 56px);
+    order: -1;
+}
+#sna-search-input {
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 14px;
+    border: 1px solid #c8c6c4;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+#sna-search-input:focus { outline: 3px solid #0078d4; outline-offset: 1px; border-color: #0078d4; }
+#sna-search-results {
+    list-style: none;
+    padding: 0;
+    margin: 6px 0 0 0;
+    max-height: 300px;
+    overflow-y: auto;
+    border-top: 1px solid #edebe9;
+}
+#sna-search-results:empty { display: none; }
+.sna-search-result {
+    padding: 8px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #f3f2f1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.sna-search-result:last-child { border-bottom: none; }
+.sna-search-result:hover,
+.sna-search-result[aria-selected="true"] { background: #e8f3fb; }
+.sna-search-result-primary {
+    font-size: 13px;
+    font-weight: 600;
+    color: #323130;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sna-search-result-secondary {
+    font-size: 11px;
+    color: #555;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sna-search-result-breadcrumb {
+    font-size: 10px;
+    color: #999;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sna-search-no-results {
+    padding: 10px;
+    font-size: 13px;
+    color: #999;
+    font-style: italic;
+    text-align: center;
+}
+.sna-search-separator {
+    height: 0;
+    border: none;
+    border-top: 1px solid #c8c6c4;
+    margin: 4px 0;
+    padding: 0;
+    list-style: none;
+    pointer-events: none;
+}
+@keyframes sna-highlight-pulse {
+    0%   { outline: 4px solid #0078d4; outline-offset: 3px; background-color: #cce4f6; }
+    65%  { outline: 4px solid #0078d4; outline-offset: 3px; background-color: #cce4f6; }
+    100% { outline: none; outline-offset: 0; background-color: transparent; }
+}
+.sna-highlight-pulse {
+    animation: sna-highlight-pulse 1.8s ease-out forwards;
+    border-radius: 4px;
+}
+@media (max-width: 480px) {
+    #sna-search-panel { width: calc(100vw - 56px); }
+}
+@media print {
+    #sna-global-search { display: none !important; }
+}

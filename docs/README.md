@@ -17,6 +17,10 @@ for developers and maintainers.
 
 ### Guides
 
+- [Installing and using Sitenalyzer](usage.md): add Sitenalyzer to a SharePoint site, use it, and update it.
+- [Troubleshooting](troubleshooting.md): problems you might see after installing, with fixes.
+- [How Sitenalyzer works](architecture.md): its parts, how it starts on a page, and why it is built this way.
+- [Building and testing Sitenalyzer](development.md): build the files for SharePoint, run the tests, and update libraries.
 - [Documentation template](doc-template.md): starting structure for a knowledge base page.
 - [Skill authoring examples](skill-examples.md): optional recipes for common project types.
 

@@ -1,0 +1,69 @@
+<!--
+This file is part of Sitenalyzer
+sitenalyzer.html
+Author(s): Gabriel Mongefranco.
+Created: 2026-04-20
+Last Modified: 2026-10-14
+Summary: Markup for the Sitenalyzer app. The build puts this markup inside sitenalyzer.js,
+         which places it in the page's <div id="sitenalyzer-app"></div> at startup.
+         Keep code out of this file: no script tags and no inline event handlers such as onclick.
+Notes: See README file for documentation and full license information.
+Website: https://github.com/DepressionCenter/Sitenalyzer
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+	<div id="sna-copy-toast" role="status" aria-live="polite" class="sna-copy-toast"></div>
+	<div id="sp-info-app">
+		<div style="margin-bottom: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+		<h1 style="margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1;">
+			<span style="background: linear-gradient(135deg, #0078d4 0%, #003f7a 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Sitenalyzer</span>
+			
+			<span style="font-size: 0.5em; font-weight: 700; color: #ffffff; background-color: #107c41; padding: 2px 8px; border-radius: 10px; letter-spacing: 1px; position: relative; top: -0.6em; margin-left: 2px;">SP</span>
+		</h1>
+		<p style="margin: 0; font-size: 0.95em; color: #555; font-style: italic;">Data dictionary and security information extraction for SharePoint sites.</p>
+	</div>
+	
+    <div id="sna-url-section">
+        <div>
+            <label for="site-url-input" style="font-weight: bold;">Site URL:</label>
+            <div style="display:flex;align-items:center;gap:4px;margin:8px 0;">
+                <input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL" style="margin:0;flex:1;min-width:0;">
+                <button id="sna-sites-refresh-btn" class="hide-on-print" title="Refresh sites list" aria-label="Refresh sites list">&#8635;</button>
+            </div>
+            <ul id="site-suggestions"></ul>
+            <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
+        </div>
+        <button id="sp-btn-gather">Extract Site Information</button>
+    </div>
+    <div id="sna-start-over-btn">
+        <button aria-label="Start Over: clear results and enter a new site URL">&#8635; Start Over</button>
+    </div>
+    <div id="sp-loader">Fetching data from SharePoint... this may take a moment.</div>
+    <div id="sp-results"></div>
+    <div class="app-footer">
+    <div class="github-promo">
+        <a href="https://github.com/DepressionCenter/Sitenalyzer" target="_blank" class="github-btn">
+            <svg height="18" width="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+            </svg>
+            View <strong>Sitenalyzer</strong> source code on GitHub
+        </a>
+    </div>
+    <div class="copyright-info">
+        <strong>Sitenalyzer</strong> &copy; 2026 The Regents of the University of Michigan &nbsp;|&nbsp; 
+        <a href="https://depressioncenter.org" target="_blank">Eisenberg Family Depression Center</a>
+    </div>
+</div>
+</div>
