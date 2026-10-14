@@ -83,7 +83,7 @@ The tests check that:
 - Sharing link file IDs that aren't GUIDs are never sent to SharePoint, and Site Pages next-batch links to another site are never followed.
 - Failed requests show "could not read" instead of "none found".
 - The edit buttons appear only with the ManageWeb permission.
-- The **⤓ Data Dictionary** and **⤓ Permissions** buttons save workbooks with the expected sheets, columns, and column filters.
+- The **⤓ Data dictionary** and **⤓ Permissions** buttons save workbooks with the expected sheets, columns, and column filters.
 - A missing script or style sheet shows a message that names the file.
 - axe finds no WCAG 2.2 AA problems on the start screen, or on the results screen with every section open.
 

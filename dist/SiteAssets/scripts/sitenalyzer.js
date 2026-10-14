@@ -2366,8 +2366,8 @@ if (siteInfo) {
         '<div class="sna-report-actions hide-on-print">' +
             '<button class="icon-btn" data-action="collapse-all" aria-label="Collapse all sections" title="Collapse all sections">&#9650;</button>' +
             '<button class="icon-btn" data-action="expand-all" aria-label="Expand all sections" title="Expand all sections">&#9660;</button>' +
-            '<button class="csv-btn" data-action="export-xlsx" aria-label="Export Data Dictionary" title="Export Data Dictionary"><span aria-hidden="true">&#10515; </span>Data Dictionary</button>' +
-            '<button class="csv-btn" data-action="export-permissions" aria-label="Export Permissions" title="Export Permissions"><span aria-hidden="true">&#10515; </span>Permissions</button>' +
+            '<button class="csv-btn" data-action="export-xlsx" aria-label="Export data dictionary" title="Export data dictionary"><span aria-hidden="true">&#10515; </span>Data dictionary</button>' +
+            '<button class="csv-btn" data-action="export-permissions" aria-label="Export permissions" title="Export permissions"><span aria-hidden="true">&#10515; </span>Permissions</button>' +
             '<button class="print-btn" data-action="expand-print"><span aria-hidden="true">&#128424; </span>Print to PDF</button>' +
         '</div>' +
 

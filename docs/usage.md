@@ -67,7 +67,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 2. Keep the current site's address in the **Site URL** box, or type or pick another site. The list shows sites you can open.
 3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, and permissions. Large sites can take a minute.
 4. Open the sections to see column definitions, permissions, and folders. Use the search box on each table to filter it. **Expand all sections** and **Collapse all sections** open and close every section at once.
-5. To save the data dictionary as a spreadsheet, select **⤓ Data Dictionary**.
+5. To save the data dictionary as a spreadsheet, select **⤓ Data dictionary**.
 6. To save every permission as a spreadsheet, select **⤓ Permissions**. See [The permissions workbook](#the-permissions-workbook).
 7. To look at another site, select **Start over**.
 
