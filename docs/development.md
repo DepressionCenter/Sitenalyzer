@@ -73,12 +73,31 @@ npx playwright test
 The tests check that:
 
 - The app appears in the page with no console errors and no Content Security Policy violations.
-- The libraries and style sheets load from Site Assets.
+- The libraries and style sheets load from Site Assets, and the app adds no global names to the page.
+- The app starts when its `<div>` appears up to 5 seconds late, and writes an error when it never appears.
 - Every browser storage key starts with `sitenalyzer:`.
-- Extract Site Information shows the pretend site's lists and column tables.
-- Export Data Dictionary saves a workbook with the expected sheets.
+- **Extract site information** shows the pretend site's lists, column tables, permissions, sharing links, cleanup suggestions, and site pages.
+- **Who has access** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups.
+- **Check one person's access** works with the Enter key, and quotes in an email address are sent as data.
+- HTML in site, group, member, permission level, page, and file names shows as plain text.
+- Sharing link file IDs that aren't GUIDs are never sent to SharePoint, and Site Pages next-batch links to another site are never followed.
+- Failed requests show "could not read" instead of "none found".
+- The edit buttons appear only with the ManageWeb permission.
+- The **⤓ Data dictionary** and **⤓ Permissions** buttons save workbooks with the expected sheets, columns, and column filters.
 - A missing script or style sheet shows a message that names the file.
-- axe finds no WCAG 2.2 AA problems on the start screen or the results screen.
+- axe finds no WCAG 2.2 AA problems on the start screen, or on the results screen with every section open.
+
+The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresses, and IDs are made up. `openPretendSite(page, options)` takes these options:
+
+| Option | What it does |
+| --- | --- |
+| `missingFiles` | Answers these Site Assets file names with 404 Not Found. |
+| `extraHeadHtml` | Adds markup to the page head, such as an inline script that CSP must block. |
+| `omitMountDiv` | Leaves the app's `<div>` out of the page. |
+| `extraLists` | Adds lists to the site's list of lists. |
+| `answerOverrides` | Answers checked before the standard ones: `{ pattern, body }` or `{ pattern, answer(url, match) }`. Use `reply(403, body)` for an error. |
+
+It returns lists the test can check afterward: `consoleErrors`, `unexpectedRequests`, `siteAssetsRequests`, `apiRequests`, and `otherOriginRequests`. Requests to any other host are refused, so tests never reach the internet.
 
 Automated checks find only part of all accessibility problems. Check keyboard use, zoom to 200%, and a screen reader by hand when you change the interface.
 

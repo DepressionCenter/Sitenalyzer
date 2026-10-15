@@ -57,7 +57,7 @@ This page explains how to add Sitenalyzer to a SharePoint Online site, how to up
    ```
 
 9. Select **Save** in the code editor. Then select **Save** on the page to leave edit mode.
-10. Refresh the page. You should see the Sitenalyzer heading and a **Site URL** box.
+10. Refresh the page. You should see the Sitenalyzer heading and a **Site URL** box. Sitenalyzer waits up to 5 seconds for SharePoint to show the web part.
 
 The page must be saved directly in the Site Pages library, not in a folder inside it. The page code finds the scripts with the address `../SiteAssets/scripts/sitenalyzer.js`, which only works from there.
 
@@ -65,12 +65,71 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 
 1. Open the `sitenalyzer` page.
 2. Keep the current site's address in the **Site URL** box, or type or pick another site. The list shows sites you can open.
-3. Select **Extract Site Information**. Sitenalyzer reads the site's lists, libraries, columns, and permissions. Large sites can take a minute.
-4. Open the sections to see column definitions, permissions, and folders. Use the search box on each table to filter it.
-5. To save the data dictionary as a spreadsheet, select **Export Data Dictionary**.
-6. To look at another site, select **Start Over**.
+3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, and permissions. Large sites can take a minute.
+4. Open the sections to see column definitions, permissions, and folders. Use the search box on each table to filter it. **Expand all sections** and **Collapse all sections** open and close every section at once.
+5. To save the data dictionary as a spreadsheet, select **⤓ Data dictionary**.
+6. To save every permission as a spreadsheet, select **⤓ Permissions**. See [The permissions workbook](#the-permissions-workbook).
+7. To look at another site, select **Start over**.
 
 You must be an owner of a site to see all of its permissions. If you can manage the site, Sitenalyzer also lets you edit list and column descriptions.
+
+### Who can open what
+
+The box at the top of the site shows Sitenalyzer's results. These sections in it are about permissions:
+
+| Section | What it shows |
+| --- | --- |
+| The panel at the top | Guests from outside your organization, groups that include everyone in your organization, and sharing links that anyone can use. Guests inside SharePoint groups are listed too. |
+| **View site permissions** | Each person or group with permissions on the whole site, what kind of person or group it is, and its permission level. |
+| **Who has access, by person or group** | For each person or group: what they can do on the whole site, and the lists and libraries that have their own permissions. Open **Members** under a SharePoint group to see who is in it. |
+| **Check one person's access** | What one person can do on the site and in each list and library. See below. |
+| **Lists and libraries with their own permissions** | The lists and libraries that don't use the site's permissions. |
+| **Sharing links** | Each sharing link, the file it opens, and who can use it: **Anyone with the link**, **People in your organization**, or **Specific people**. |
+| **Lists and libraries to review for cleanup** | Lists not changed in 12 months, libraries with version history turned off, version history with no limit, and the largest lists. |
+| **Apps with access to this site** | Apps that were given permissions in SharePoint. Apps given access in Microsoft Entra ID, such as through Sites.Selected, aren't listed. |
+
+A permission level is a named set of permissions, such as Read or Contribute. Each list and library card also has a **Permissions** button that opens SharePoint's own permissions page for it.
+
+#### Limited Access
+
+SharePoint adds the Limited Access permission level by itself when someone shares a single item, file, or folder. A person with Limited Access on the site can open only what was shared with them. It does not let them open lists and libraries that use the site's permissions, so Sitenalyzer never counts it as access to those lists.
+
+SharePoint also creates a hidden group for each sharing link. Sitenalyzer leaves these groups out of **Who has access** and lists the links under **Sharing links** instead.
+
+When Sitenalyzer can't read something, such as a group's members, it says so. It never shows "none found" for something it could not read.
+
+#### Check one person's access
+
+1. Open **Check one person's access**.
+2. Type the person's email address, such as `user@med.umich.edu`, in **Email address or sign-in name**.
+3. Press Enter or select **Check access**.
+
+Sitenalyzer asks SharePoint what the person can do on the whole site and in each list and library. The result includes access the person gets through groups. Lists and libraries the person can't open are counted but not listed. You need to be a site owner to use this.
+
+If the email address isn't among the site's users, Sitenalyzer checks the usual Microsoft 365 sign-in name for it, such as `i:0#.f|membership|user@med.umich.edu`. If the results say **No access**, check the spelling.
+
+### Site pages
+
+The **Site pages** section lists the pages in the site's Site Pages library, sorted by name, with a link to each one. Folders and files that aren't pages are left out.
+
+Sitenalyzer reads Site Pages 2,000 items at a time, up to 10,000 items. If the library has more, the section says "Site Pages has more than 10,000 items. Sitenalyzer shows pages from the first 10,000 only."
+
+### The permissions workbook
+
+The **⤓ Permissions** button saves an Excel workbook named like `TestResearchSite_Permissions_2026-10-14.xlsx`. It holds what Sitenalyzer read, so it matches the screen. Every sheet has filter buttons on its header row.
+
+| Sheet | One row for each | What it is for |
+| --- | --- | --- |
+| About | fact about the export | The site, who exported it and when (in UTC), row counts, and what the workbook leaves out. |
+| Permissions | permission level a person or group has on the site or on one list or library | The full permission list for an audit, or for setting the same permissions up again. **Added by SharePoint** is **Yes** for Limited Access. |
+| Lists | list or library | Its ID, address, and whether it has its own permissions. |
+| Group_Members | member of a SharePoint group | Who is in each group. Guests are marked. |
+| Permission_Levels | permission level on the site | What each level allows, and whether this site uses it. Custom levels show **No** under **Built into SharePoint**. |
+| Site_Admins | site collection administrator | Site collection administrators have full control everywhere, but they don't appear on the Permissions sheet. |
+
+The workbook doesn't include permissions on single files, folders, or items, or the members of security and Microsoft 365 groups.
+
+**Privacy:** the workbook lists people's names and email addresses, and list names may describe a study. Store and share it the way you would other personal data. Don't attach it to a public issue or email it outside your team.
 
 ### Update to a newer version
 
@@ -82,13 +141,14 @@ You don't need to change the page unless the release notes say so.
 
 ### Conclusion
 
-You can now install Sitenalyzer on a site, use it to document the site, and update it. If something doesn't work, see [Troubleshooting](troubleshooting.md).
+You can now install Sitenalyzer on a site, use it to document the site and its permissions, and update it. If something doesn't work, see [Troubleshooting](troubleshooting.md).
 
 ### Additional resources
 
 - [Troubleshooting](troubleshooting.md)
 - [How Sitenalyzer works](architecture.md)
 - [Modern Script Editor web part](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor)
+- [Understanding permission levels in SharePoint](https://learn.microsoft.com/en-us/sharepoint/understanding-permission-levels)
 - [How to Connect to SharePoint from Scripts, Workflows or Data Pipelines](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245) (UM login required)
 
 [Back to README](../README.md)

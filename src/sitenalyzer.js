@@ -5,9 +5,11 @@ Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
 Last Modified: 2026-10-14
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
-         and saves a data dictionary as an Excel file. A Modern Script Editor web part loads this file
-         from the site's Site Assets library. At startup it adds the styles, loads the libraries from
-         Site Assets, places the app markup in <div id="sitenalyzer-app"></div>, and starts the app.
+         shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
+         A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
+         it adds the styles, loads the libraries from Site Assets, places the app markup in
+         <div id="sitenalyzer-app"></div>, and starts the app.
+         All code is inside one function, so none of its names can clash with other scripts on the page.
 Notes: See README file for documentation and full license information.
        Also see: https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245
 Website: https://github.com/DepressionCenter/Sitenalyzer
@@ -27,19 +29,37 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
+(function() {
+
 // ### Startup Settings ###
 
 // Id of the <div> in the page snippet (dist/SitePages/sitenalyzer.html.txt) that holds the app.
 var SNA_MOUNT_ID = 'sitenalyzer-app';
 
+// SharePoint can add the web part's <div> to the page after this file runs, so startup checks for it
+// every SNA_MOUNT_CHECK_INTERVAL_MS milliseconds and gives up after SNA_MOUNT_WAIT_MS milliseconds.
+var SNA_MOUNT_WAIT_MS = 5000;
+var SNA_MOUNT_CHECK_INTERVAL_MS = 100;
+
 // Style sheets loaded from the styles folder in Site Assets.
 var SNA_STYLE_FILES = ['tabulator_simple.min.css', 'sitenalyzer.css'];
 
 // Libraries loaded one at a time from the scripts folder in Site Assets, with the global each one creates.
+// isUsable checks that the global is the working library, not an empty object or another script's variable.
+// use stores the working library in the matching variable below.
 var SNA_LIBRARY_FILES = [
-    { file: 'xlsx.full.min.js', globalName: 'XLSX' },
-    { file: 'tabulator.min.js', globalName: 'Tabulator' }
+    { file: 'xlsx.full.min.js', globalName: 'XLSX',
+      isUsable: function(lib) { return !!(lib && lib.utils && typeof lib.utils.aoa_to_sheet === 'function' && typeof lib.write === 'function'); },
+      use: function(lib) { XLSX = lib; } },
+    { file: 'tabulator.min.js', globalName: 'Tabulator',
+      isUsable: function(lib) { return typeof lib === 'function'; },
+      use: function(lib) { Tabulator = lib; } }
 ];
+
+// The libraries Sitenalyzer uses, set at startup. They are kept here instead of being read from window.XLSX and
+// window.Tabulator, because on some pages the libraries load into another script's exports object instead.
+var XLSX = null;
+var Tabulator = null;
 
 // App markup from src/sitenalyzer.html. The build replaces the next line, so keep it exactly as written.
 var SNA_APP_HTML = [];
@@ -47,6 +67,25 @@ var SNA_APP_HTML = [];
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
 var SNA_SCRIPTS_FOLDER = snaFindScriptsFolder();
+
+// ### Report Settings ###
+
+// Site Pages is read in batches of SNA_SITE_PAGES_BATCH_SIZE items, up to SNA_SITE_PAGES_MAX items in all.
+// The batches have no sort order, because SharePoint rejects sorted requests on libraries with more than 5,000 items.
+var SNA_SITE_PAGES_MAX = 10000;
+var SNA_SITE_PAGES_BATCH_SIZE = 2000;
+
+// Most requests that run at the same time, such as group member lookups. Keeps large sites from being throttled.
+var SNA_MAX_PARALLEL_REQUESTS = 6;
+
+// Most files whose names are looked up for the sharing links section.
+var SNA_SHARING_LINK_NAME_LOOKUPS = 60;
+
+// Most site groups read when looking for sharing links. SharePoint creates one group for each sharing link.
+var SNA_SHARING_GROUPS_MAX = 5000;
+
+// Longest text accepted in the person check. 320 characters is the longest possible email address.
+var SNA_PERSON_CHECK_MAX_LENGTH = 320;
 
 /**
  * Data fetching logic adapted from DataLaVista (github.com/DepressionCenter/datalavista)
@@ -138,10 +177,22 @@ var _snaSiteInfo            = null;  // Site metadata from _api/web; used by XLS
 var _snaAllListsMeta        = [];    // Raw allLists.value objects; used by XLSX export
 var _snaCurrentUser         = null;  // Logged-in user { name, email, loginName } fetched at analysis time
 
+// Permission state, filled while the site is read. The access list and the permissions workbook use it.
+// _snaPermissionRows grain: one row per scope (the site or one list) per person or group per permission level.
+var _snaPermIndex        = {};    // One entry per person or group, keyed by Member.Id (or sign-in name when there is no Id)
+var _snaPermissionRows   = [];
+var _snaInheritedLists   = [];    // Lists that use the site's permissions: { id, title, url, isLib, rolesRead }
+var _snaUniqueLists      = [];    // Lists that have their own permissions: { id, title, url, isLib, rolesRead }
+var _snaRoleDefinitions  = null;  // Permission levels from /_api/web/roledefinitions, or null when they could not be read
+var _snaSiteAdmins       = null;  // Site collection administrators, or null when they could not be read
+var _snaSiteRolesRead    = false; // False when the site's permissions could not be read
+var _snaSharingLinks     = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
+var _snaUserCheckRunning = false;
+
 
 // Initialize all queued Tabulator tables after HTML is injected into the DOM.
 function initSnaTabulators() {
-  if (!window.Tabulator) { return; }
+  if (!Tabulator) { return; }
 
   _snaTablesQueue.forEach(function(tbl) {
     var el = document.getElementById(tbl.id);
@@ -149,10 +200,11 @@ function initSnaTabulators() {
 
     // Inject search input above the placeholder div
     var searchId = tbl.id + '-s';
+    var searchLabel = snaEscapeHtml(tbl.searchLabel);
     el.insertAdjacentHTML('beforebegin',
       '<div class="sna-table-search-wrap">' +
         '<input type="text" id="' + searchId + '" class="sna-table-search"' +
-        ' placeholder="Search ' + tbl.searchLabel + '..." aria-label="Search ' + tbl.searchLabel + '">' +
+        ' placeholder="Search ' + searchLabel + '..." aria-label="Search ' + searchLabel + '">' +
       '</div>'
     );
 
@@ -166,11 +218,11 @@ function initSnaTabulators() {
             var icon = rowData.typeIcon || '📝';
             var label = rowData.typeLabel || '';
             var val = cell.getValue() || '';
-            return '<span class="sna-type-icon" title="' + label + '" aria-hidden="true">' + icon + '</span>' + val;
+            return '<span class="sna-type-icon" title="' + snaEscapeHtml(label) + '" aria-hidden="true">' + icon + '</span>' + snaEscapeHtml(val);
           }
         },
-        { title: 'Internal Name', field: 'internalName', sorter: 'string', widthGrow: 2 },
-        { title: 'Data Type',     field: 'dataType',     sorter: 'string', widthGrow: 1.5 },
+        { title: 'Internal name', field: 'internalName', sorter: 'string', widthGrow: 2 },
+        { title: 'Data type',     field: 'dataType',     sorter: 'string', widthGrow: 1.5 },
         {
           title: 'Description', field: 'description', sorter: 'string', widthGrow: 3,
           formatter: 'textarea',
@@ -231,21 +283,21 @@ function initSnaTabulators() {
             });
           } : null
         },
-        { title: 'Lookup List',   field: 'lookupList',   sorter: 'string', widthGrow: 1.5 }
+        { title: 'Lookup list',   field: 'lookupList',   sorter: 'string', widthGrow: 1.5 }
       ];
     } else if (tbl.type === 'terms') {
       var termSetId = tbl.setId || '';
       columns = [
         {
-          title: 'Term Name', field: 'termName', sorter: 'string', widthGrow: 2,
+          title: 'Term name', field: 'termName', sorter: 'string', widthGrow: 2,
           formatter: function(cell) {
-            return '<span class="sna-type-icon" aria-hidden="true">&#127991;</span>' + (cell.getValue() || '');
+            return '<span class="sna-type-icon" aria-hidden="true">&#127991;</span>' + snaEscapeHtml(cell.getValue());
           }
         },
         {
-          title: 'GUID', field: 'termId', sorter: 'string', widthGrow: 2,
+          title: 'Term ID', field: 'termId', sorter: 'string', widthGrow: 2,
           formatter: function(cell) {
-            return '<span style="font-size:0.75rem;color:#888;">' + (cell.getValue() || '') + '</span>';
+            return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>';
           }
         },
         {
@@ -305,33 +357,42 @@ function initSnaTabulators() {
     } else if (tbl.type === 'folders') {
       columns = [
         {
-          title: 'Folder Name', field: 'name', sorter: 'string', widthGrow: 3,
+          title: 'Folder name', field: 'name', sorter: 'string', widthGrow: 3,
           formatter: function(cell) {
             var rowData = cell.getRow().getData();
             var icon = rowData.icon || '📂';
-            var val = cell.getValue() || '';
-            var url = rowData.folderUrl || '';
-            if (url) {
-              return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' +
-                '<span class="sna-folder-link" title="Open folder in new tab">' + val + '</span>';
-            }
-            return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' + val;
-          },
-          cellClick: function(e, cell) {
-            var url = cell.getRow().getData().folderUrl;
-            if (url) { snaOpenUrl(url); }
+            return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' +
+              snaLinkHtml(rowData.folderUrl, cell.getValue(), 'sna-folder-link');
           }
         },
         {
           title: 'Items', field: 'items', sorter: 'number', width: 95, hozAlign: 'right',
           formatter: function(cell) {
-            return '<span class="sna-tab-items-cell">' + (cell.getValue() !== null ? cell.getValue() : '-') + '</span>';
+            return '<span class="sna-tab-items-cell">' + (cell.getValue() !== null ? snaEscapeHtml(cell.getValue()) : '-') + '</span>';
           }
         },
         {
           title: 'Folder ID', field: 'folderId', sorter: 'string', widthGrow: 2,
           formatter: function(cell) {
-            return '<span class="list-id-text">' + (cell.getValue() || '') + '</span>';
+            return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>';
+          }
+        }
+      ];
+    } else if (tbl.type === 'pages') {
+      columns = [
+        {
+          title: 'Page', field: 'name', sorter: 'string', widthGrow: 3,
+          formatter: function(cell) {
+            return '<span class="sna-type-icon" aria-hidden="true">📄</span>' +
+              snaLinkHtml(cell.getRow().getData().url, cell.getValue(), 'sna-folder-link');
+          }
+        },
+        { title: 'File name', field: 'fileName', sorter: 'string', widthGrow: 2 },
+        { title: 'Last changed', field: 'modified', sorter: 'string', width: 130 },
+        {
+          title: 'Address', field: 'url', sorter: 'string', widthGrow: 3,
+          formatter: function(cell) {
+            return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>';
           }
         }
       ];
@@ -346,10 +407,27 @@ function initSnaTabulators() {
       selectable: false,
       placeholder: '<em>No data found.</em>'
     };
-    if (tbl.data.length > 7) { tabOpts.maxHeight = '360px'; }
+
+    // Long tables scroll inside a labeled region that keyboard users can focus and scroll.
+    // The region is outside the table because the table's grid role allows only rows inside it.
+    if (tbl.data.length > 7) {
+      var scrollRegion = document.createElement('div');
+      scrollRegion.className = 'sna-table-scroll';
+      scrollRegion.setAttribute('tabindex', '0');
+      scrollRegion.setAttribute('role', 'region');
+      scrollRegion.setAttribute('aria-label', 'Table of ' + tbl.searchLabel);
+      el.parentNode.insertBefore(scrollRegion, el);
+      scrollRegion.appendChild(el);
+    }
 
     var table = new Tabulator(el, tabOpts);
     _snaTabInstances[tbl.id] = table;
+    // Tabulator makes its inner scroll area focusable, which puts a focus stop with no role inside the grid.
+    // The table does not scroll by itself here, so that focus stop is removed.
+    table.on('tableBuilt', function() {
+      var holder = el.querySelector('.tabulator-tableholder');
+      if (holder) { holder.removeAttribute('tabindex'); }
+    });
 
     // Wire search input
     var searchEl = document.getElementById(searchId);
@@ -464,6 +542,138 @@ function snaEscapeHtml(value) {
     });
 }
 
+// Returns "1 list" or "3 lists", so messages built from counts read correctly.
+function snaCountText(count, singular, plural) {
+    return count + ' ' + (count === 1 ? singular : plural);
+}
+
+// Returns the scheme and host of an address, such as https://contoso.sharepoint.com, or '' when it is not a web address.
+function snaOrigin(address) {
+    try { return new URL(address).origin; } catch(e) { return ''; }
+}
+
+// True when address is a page or file inside the site at siteUrl (same scheme, host, and site path).
+// Used before following or showing an address that came from a SharePoint answer.
+function snaIsSameSiteUrl(address, siteUrl) {
+    var target, site;
+    try {
+        site   = new URL(xlsxStripSlash(siteUrl) + '/');
+        target = new URL(address, site.href);
+    } catch(e) {
+        return false;
+    }
+    if (target.origin !== site.origin) { return false; }
+    return target.pathname.toLowerCase().indexOf(site.pathname.toLowerCase()) === 0;
+}
+
+// True when address is a REST API address for the site at siteUrl, such as a next-batch link from SharePoint.
+function snaIsSameSiteApiUrl(address, siteUrl) {
+    if (!snaIsSameSiteUrl(address, siteUrl)) { return false; }
+    var sitePath = new URL(xlsxStripSlash(siteUrl) + '/').pathname.toLowerCase();
+    return new URL(address, xlsxStripSlash(siteUrl) + '/').pathname.toLowerCase().indexOf(sitePath + '_api/') === 0;
+}
+
+// Returns address as a full https address when it is on the SharePoint tenant being read, or on this page's own host;
+// otherwise ''. Addresses within the site, such as /sites/example/SiteAssets/logo.png, are completed with siteUrl's host.
+// Used before an address from SharePoint goes into <img src> or is opened in a new window.
+function snaSafeTenantUrl(address, siteUrl) {
+    var text = String(address || '').trim();
+    if (!text) { return ''; }
+    try {
+        var base = xlsxStripSlash(siteUrl || window.location.href) + '/';
+        var url = new URL(text, base);
+        if (url.protocol !== 'https:') { return ''; }
+        return (url.origin === snaOrigin(base) || url.origin === window.location.origin) ? url.href : '';
+    } catch(e) {
+        return '';
+    }
+}
+
+// Returns an escaped link that opens in a new tab, or the escaped text alone when there is no usable https address.
+function snaLinkHtml(address, text, className) {
+    var label = snaEscapeHtml(text);
+    if (!address || !/^https:\/\//i.test(String(address))) { return label; }
+    return '<a href="' + snaEscapeHtml(address) + '" target="_blank" rel="noopener noreferrer"' +
+        (className ? ' class="' + className + '"' : '') + '>' + label + '</a>';
+}
+
+// ### Permission Helpers ###
+
+// Permission numbers from SharePoint's PermissionKind list (Microsoft.SharePoint.Client.PermissionKind).
+// Kind n is bit n - 1 of the 64-bit permission mask: kinds 1 to 32 are in Low, kinds 33 to 64 are in High.
+var SNA_PERMISSION_KIND = {
+    ViewListItems: 1, AddListItems: 2, EditListItems: 3, DeleteListItems: 4, ApproveItems: 5,
+    OpenItems: 6, ViewVersions: 7, DeleteVersions: 8, CancelCheckout: 9, ManagePersonalViews: 10,
+    ManageLists: 12, ViewFormPages: 13, AnonymousSearchAccessList: 14, Open: 17, ViewPages: 18,
+    AddAndCustomizePages: 19, ApplyThemeAndBorder: 20, ApplyStyleSheets: 21, ViewUsageData: 22,
+    CreateSSCSite: 23, ManageSubwebs: 24, CreateGroups: 25, ManagePermissions: 26,
+    BrowseDirectories: 27, BrowseUserInfo: 28, AddDelPrivateWebParts: 29, UpdatePersonalWebParts: 30,
+    ManageWeb: 31, AnonymousSearchAccessWebLists: 32, UseClientIntegration: 37, UseRemoteAPIs: 38,
+    ManageAlerts: 39, CreateAlerts: 40, EditMyUserInfo: 41, EnumeratePermissions: 63, FullMask: 65
+};
+
+// Labels for the kinds of people and groups that can hold permissions.
+var SNA_PRINCIPAL_KIND_LABELS = {
+    person: 'Person',
+    app: 'App',
+    distributionList: 'Distribution list',
+    securityGroup: 'Security or Microsoft 365 group',
+    sharePointGroup: 'SharePoint group',
+    other: 'Other'
+};
+
+// True when the mask { High, Low } from SharePoint includes the permission kind from SNA_PERMISSION_KIND.
+// SharePoint sends High and Low as text holding unsigned 32-bit numbers; >>> 0 keeps them unsigned.
+function snaHasPermission(mask, kind) {
+    if (!mask) { return false; }
+    var high = (parseInt(mask.High, 10) || 0) >>> 0;
+    var low  = (parseInt(mask.Low, 10) || 0) >>> 0;
+    if (kind === SNA_PERMISSION_KIND.FullMask) { return high === 0x7FFFFFFF && low === 0xFFFFFFFF; }
+    var bit = kind - 1;
+    if (bit < 32) { return ((low >>> bit) & 1) === 1; }
+    return ((high >>> (bit - 32)) & 1) === 1;
+}
+
+// Returns the names of the permission kinds in a mask, such as "ViewListItems, Open", for the permissions workbook.
+function snaPermissionNames(mask) {
+    if (snaHasPermission(mask, SNA_PERMISSION_KIND.FullMask)) { return 'FullMask (all permissions)'; }
+    return Object.keys(SNA_PERMISSION_KIND).filter(function(name) {
+        return name !== 'FullMask' && snaHasPermission(mask, SNA_PERMISSION_KIND[name]);
+    }).join(', ');
+}
+
+// Returns which kind of person or group a role assignment Member is: a key of SNA_PRINCIPAL_KIND_LABELS.
+// Apps added through SharePoint have the user type, so they are recognized by "|ms.sp.ext|" in the sign-in name.
+// PrincipalType values: 1 user, 2 distribution list, 4 security group (including Microsoft 365 groups), 8 SharePoint group.
+function snaPrincipalKind(member) {
+    var m = member || {};
+    if (String(m.LoginName || '').indexOf('|ms.sp.ext|') > -1) { return 'app'; }
+    if (m.PrincipalType === 1) { return 'person'; }
+    if (m.PrincipalType === 2) { return 'distributionList'; }
+    if (m.PrincipalType === 4) { return 'securityGroup'; }
+    if (m.PrincipalType === 8) { return 'sharePointGroup'; }
+    return 'other';
+}
+
+// True for the Limited Access permission level. SharePoint adds it by itself when someone shares an item or folder.
+// RoleTypeKind 1 is Limited Access in every language; other hidden levels, such as Web-Only Limited Access, are treated the same.
+function snaIsLimitedAccessRole(binding) {
+    return !!binding && (binding.RoleTypeKind === 1 || binding.Hidden === true);
+}
+
+// True for groups that SharePoint creates by itself: one per sharing link, and the Limited Access System Group.
+function snaIsSharePointSystemGroup(title) {
+    var t = String(title || '');
+    return t.indexOf('SharingLinks.') === 0 || /^Limited Access System Group/i.test(t);
+}
+
+// True for guest accounts from outside the organization.
+function snaIsGuestLogin(loginName, title) {
+    var login = String(loginName || '').toLowerCase();
+    return login.indexOf('#ext#') > -1 || login.indexOf('urn:spo:guest') > -1 ||
+        String(title || '').toLowerCase().indexOf('(guest)') > -1;
+}
+
 var globalAccessibleSites = [];
 var globalExportedData = []; // To store field data for CSV export
 
@@ -493,6 +703,23 @@ async function spFetch(url, throttleRetries) {
     }
 
     return res.json();
+}
+
+// Runs worker(item, index) for every item, with at most limit calls running at the same time, and resolves
+// with the results in the same order as items. worker must catch its own errors; one rejection stops the run.
+async function snaMapWithLimit(items, limit, worker) {
+    var results = new Array(items.length);
+    var nextIndex = 0;
+    async function runNext() {
+        while (nextIndex < items.length) {
+            var index = nextIndex++;
+            results[index] = await worker(items[index], index);
+        }
+    }
+    var runners = [];
+    for (var r = 0; r < Math.min(limit, items.length); r++) { runners.push(runNext()); }
+    await Promise.all(runners);
+    return results;
 }
 
 // Returns the absolute URL of the current SharePoint site based on page context info or the URL path.
@@ -550,28 +777,611 @@ function getOutputTypeName(outputType) {
 }
 
 
-// Renders role assignments as HTML rows for display in permissions sections.
+// ### Permissions ###
+
+// File IDs in sharing link group names must look like this before Sitenalyzer asks SharePoint about them.
+var SNA_GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Names SharePoint shows for each kind of sharing link.
+var SNA_SHARING_LINK_LABELS = {
+    anyone: 'Anyone with the link',
+    organization: 'People in your organization',
+    specific: 'Specific people',
+    other: 'Other'
+};
+
+// Sorts objects by their title (or name) without regard to case.
+function snaByTitle(a, b) {
+    return String(a.title || a.Title || a.name || '').toLowerCase().localeCompare(String(b.title || b.Title || b.name || '').toLowerCase());
+}
+
+// Returns the permission level name for display. Limited Access gets a short explanation.
+function snaLevelText(name, isLimited) {
+    return isLimited ? name + ' (only items or folders shared with them)' : name;
+}
+
+// Renders role assignments as HTML rows for the permission sections. Every SharePoint value is escaped.
 function renderPermissionsHtml(roleAssignments) {
     if (!roleAssignments || roleAssignments.length === 0) {
-        return '<div class="perm-row">No explicit permissions found.</div>';
+        return '<div class="perm-row">No people or groups have permissions here.</div>';
     }
 
     var html = '';
-    try {
-        roleAssignments.forEach(function(ra) {
-            var memberName = ra.Member.Title ? ra.Member.Title : ra.Member.LoginName;
-            var isApp = ra.Member.PrincipalType === 4;
-            var roles = ra.RoleDefinitionBindings.map(function(r) { return r.Name; }).join(', ');
+    roleAssignments.forEach(function(ra) {
+        var member = ra.Member || {};
+        var memberName = member.Title || member.LoginName || '';
+        var levels = (ra.RoleDefinitionBindings || []).map(function(binding) {
+            return snaEscapeHtml(snaLevelText(binding.Name || '', snaIsLimitedAccessRole(binding)));
+        }).join(', ');
 
-            html += '<div class="perm-row"><strong>' + memberName + '</strong> ';
-            if (isApp) {
-                html += '<span class="app-tag">App Principal</span>';
-            }
-            html += '<br><span style="color:#666">Roles: ' + roles + '</span></div>';
-        });
-    } catch(err) { /* Simply skip */ }
-
+        html += '<div class="perm-row"><strong>' + snaEscapeHtml(memberName) + '</strong> ' +
+            '<span class="app-tag">' + SNA_PRINCIPAL_KIND_LABELS[snaPrincipalKind(member)] + '</span>' +
+            '<br><span class="sna-muted">Permission level: ' + levels + '</span></div>';
+    });
     return html;
+}
+
+// Clears the permission state. Called before a site is read and by Start over.
+function snaResetPermissionState() {
+    _snaPermIndex       = {};
+    _snaPermissionRows  = [];
+    _snaInheritedLists  = [];
+    _snaUniqueLists     = [];
+    _snaRoleDefinitions = null;
+    _snaSiteAdmins      = null;
+    _snaSiteRolesRead   = false;
+    _snaSharingLinks    = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
+}
+
+// Returns, and creates if needed, the access list entry for the person or group in a role assignment.
+function snaIndexPrincipal(ra) {
+    var member = ra.Member || {};
+    var hasId = member.Id !== undefined && member.Id !== null;
+    var key = hasId ? 'id:' + member.Id : 'login:' + (member.LoginName || member.Title || '');
+    if (!_snaPermIndex[key]) {
+        _snaPermIndex[key] = {
+            id:            hasId ? member.Id : '',
+            title:         member.Title || member.LoginName || '',
+            loginName:     member.LoginName || '',
+            email:         member.Email || '',
+            kind:          snaPrincipalKind(member),
+            isSystemGroup: member.PrincipalType === 8 && snaIsSharePointSystemGroup(member.Title),
+            siteLevels:    [],    // Permission levels on the whole site, other than Limited Access
+            siteLimited:   false, // True when the site gives them Limited Access only
+            lists:         [],    // { title, url, levels, limited } for lists that have their own permissions
+            members:       null,  // SharePoint group members, filled by snaExpandGroups
+            membersStatus: ''     // 'read' or 'failed' for SharePoint groups; '' when members are not looked up
+        };
+    }
+    return _snaPermIndex[key];
+}
+
+// Adds the role assignments of one scope (the site or one list) to the access list and to _snaPermissionRows.
+// scope is { scope: 'Site' or 'List', listId, listTitle, listUrl, listType }.
+function snaRecordRoleAssignments(roleAssignments, scope) {
+    (roleAssignments || []).forEach(function(ra) {
+        var entry = snaIndexPrincipal(ra);
+        var levels = [];
+        var hasLimited = false;
+        (ra.RoleDefinitionBindings || []).forEach(function(binding) {
+            var isLimited = snaIsLimitedAccessRole(binding);
+            if (isLimited) { hasLimited = true; } else { levels.push(binding.Name || ''); }
+            _snaPermissionRows.push({
+                scope:         scope.scope,
+                listTitle:     scope.listTitle || '',
+                listId:        scope.listId || '',
+                listUrl:       scope.listUrl || '',
+                listType:      scope.listType || '',
+                memberId:      entry.id,
+                memberName:    entry.title,
+                loginName:     entry.loginName,
+                email:         entry.email,
+                memberKind:    entry.kind,
+                level:         binding.Name || '',
+                levelId:       (binding.Id !== undefined && binding.Id !== null) ? binding.Id : '',
+                isLimited:     isLimited,
+                isSystemGroup: entry.isSystemGroup
+            });
+        });
+        if (scope.scope === 'Site') {
+            entry.siteLevels = entry.siteLevels.concat(levels);
+            entry.siteLimited = hasLimited && entry.siteLevels.length === 0;
+        } else {
+            entry.lists.push({ title: scope.listTitle || '', url: scope.listUrl || '', levels: levels, limited: hasLimited && levels.length === 0 });
+        }
+    });
+}
+
+// Renders the access list: each person or group, what they can do on the whole site, and the lists that have
+// their own permissions. Groups that SharePoint creates by itself are counted but left out.
+function renderPermissionsByPrincipal() {
+    var systemGroupCount = 0;
+    var entries = Object.keys(_snaPermIndex).map(function(key) { return _snaPermIndex[key]; }).filter(function(p) {
+        if (p.isSystemGroup) { systemGroupCount++; return false; }
+        return true;
+    });
+    var inheritedCount = _snaInheritedLists.length;
+    var unreadCount = _snaUniqueLists.filter(function(l) { return !l.rolesRead; }).length;
+    var html = '';
+
+    if (!_snaSiteRolesRead) {
+        html += '<p class="sna-note">Sitenalyzer could not read the site\'s permissions, so this list shows only lists and ' +
+            'libraries that have their own permissions. Ask a site owner to run Sitenalyzer on this site.</p>';
+    }
+    if (unreadCount > 0) {
+        html += '<p class="sna-note">Sitenalyzer could not read the permissions of ' +
+            snaCountText(unreadCount, 'list or library', 'lists and libraries') + ', so they are left out below.</p>';
+    }
+    if (entries.length === 0) {
+        return html + '<div class="perm-row">No people or groups found.</div>';
+    }
+
+    // People and groups with access to the whole site come first, then the rest by name.
+    entries.sort(function(a, b) {
+        var aSite = a.siteLevels.length > 0, bSite = b.siteLevels.length > 0;
+        if (aSite !== bSite) { return aSite ? -1 : 1; }
+        return snaByTitle(a, b);
+    });
+
+    var coversText = inheritedCount === 0 ? '' : ' This also covers ' +
+        snaCountText(inheritedCount, 'list or library that uses', 'lists and libraries that use') + ' the site\'s permissions.';
+
+    entries.forEach(function(p) {
+        var isGuest = snaIsGuestLogin(p.loginName, p.title);
+        html += '<div class="sna-principal-block">';
+        html += '<div class="sna-principal-name"><strong>' + snaEscapeHtml(p.title) + '</strong> ' +
+            '<span class="app-tag">' + SNA_PRINCIPAL_KIND_LABELS[p.kind] + '</span>' +
+            (isGuest ? ' <span class="app-tag sna-guest-tag">Guest</span>' : '') + '</div>';
+
+        if (p.siteLevels.length > 0) {
+            html += '<div class="sna-principal-line">Whole site: <strong>' + snaEscapeHtml(p.siteLevels.join(', ')) + '</strong>.' +
+                coversText + '</div>';
+        } else if (p.siteLimited) {
+            html += '<div class="sna-principal-line">Whole site: <strong>Limited Access</strong>. ' +
+                'They can open only the items or folders shared with them.</div>';
+        }
+
+        if (p.lists.length > 0) {
+            html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Lists and libraries with their own permissions for ' +
+                snaEscapeHtml(p.title) + '</caption><thead><tr><th scope="col">List or library with its own permissions</th>' +
+                '<th scope="col">Permission level</th></tr></thead><tbody>';
+            p.lists.slice().sort(snaByTitle).forEach(function(l) {
+                var levelText = l.limited ? snaLevelText('Limited Access', true) : l.levels.join(', ');
+                html += '<tr><td>' + snaLinkHtml(l.url, l.title) + '</td><td>' + snaEscapeHtml(levelText) + '</td></tr>';
+            });
+            html += '</tbody></table>';
+        }
+
+        if (p.kind === 'sharePointGroup') {
+            if (p.membersStatus === 'failed') {
+                html += '<div class="sna-principal-line sna-muted">Sitenalyzer could not read this group\'s members. ' +
+                    'You need to be a site owner to see them.</div>';
+            } else if (p.members && p.members.length === 0) {
+                html += '<div class="sna-principal-line sna-muted">This group has no members.</div>';
+            } else if (p.members) {
+                html += '<details class="sna-members"><summary>Members (' + p.members.length + ')</summary><ul class="sna-members-list">';
+                p.members.slice().sort(snaByTitle).forEach(function(m) {
+                    html += '<li>' + snaEscapeHtml(m.title) +
+                        (m.email ? ' <span class="sna-muted">(' + snaEscapeHtml(m.email) + ')</span>' : '') +
+                        (m.isGuest ? ' <span class="app-tag sna-guest-tag">Guest</span>' : '') + '</li>';
+                });
+                html += '</ul></details>';
+            }
+        } else if (p.kind === 'securityGroup') {
+            html += '<div class="sna-principal-line sna-muted">Microsoft Entra ID manages this group\'s members, so Sitenalyzer can\'t list them.</div>';
+        }
+        html += '</div>';
+    });
+
+    if (systemGroupCount > 0) {
+        html += '<p class="sna-note">Left out ' + snaCountText(systemGroupCount, 'group', 'groups') +
+            ' that SharePoint creates by itself for sharing links and Limited Access. The sharing links section lists the links.</p>';
+    }
+    return html;
+}
+
+// Reads the members of every SharePoint group in the access list, a few groups at a time.
+// Security and Microsoft 365 groups are managed in Microsoft Entra ID and can't be read through SharePoint.
+async function snaExpandGroups(targetUrl) {
+    var groups = Object.keys(_snaPermIndex).map(function(key) { return _snaPermIndex[key]; }).filter(function(p) {
+        return p.kind === 'sharePointGroup' && !p.isSystemGroup && /^\d+$/.test(String(p.id));
+    });
+    await snaMapWithLimit(groups, SNA_MAX_PARALLEL_REQUESTS, async function(p) {
+        try {
+            var res = await spFetch(targetUrl + '/_api/web/sitegroups(' + p.id + ')/users?$select=Id,Title,Email,LoginName,PrincipalType');
+            p.members = ((res && res.value) ? res.value : []).map(function(u) {
+                return {
+                    id:        (u.Id !== undefined && u.Id !== null) ? u.Id : '',
+                    title:     u.Title || u.LoginName || '',
+                    email:     u.Email || '',
+                    loginName: u.LoginName || '',
+                    kind:      snaPrincipalKind(u),
+                    isGuest:   snaIsGuestLogin(u.LoginName, u.Title)
+                };
+            });
+            p.membersStatus = 'read';
+        } catch(e) {
+            p.members = null;
+            p.membersStatus = 'failed';
+        }
+    });
+}
+
+// Turns a permission mask { High, Low } from getUserEffectivePermissions into a plain description.
+function snaDecodePermLevel(mask) {
+    var K = SNA_PERMISSION_KIND;
+    if (snaHasPermission(mask, K.FullMask) || snaHasPermission(mask, K.ManagePermissions) || snaHasPermission(mask, K.ManageWeb)) {
+        return 'Full control';
+    }
+    if (snaHasPermission(mask, K.ManageLists)) { return 'Can change list settings'; }
+    if (snaHasPermission(mask, K.AddListItems) || snaHasPermission(mask, K.EditListItems) || snaHasPermission(mask, K.DeleteListItems)) {
+        return 'Can edit items';
+    }
+    if (snaHasPermission(mask, K.ViewListItems)) { return 'Can view items'; }
+    if (snaHasPermission(mask, K.Open)) { return 'Can open only items shared with them'; }
+    return 'No access';
+}
+
+// Finds the sign-in name for an email address among the site's users.
+// Returns { login, title, found }. When the address is not found, it guesses the usual Microsoft 365 sign-in name.
+async function snaResolveUserLogin(text) {
+    if (text.indexOf('|') > -1) { return { login: text, title: text, found: true }; }
+    try {
+        // Single quotes are doubled so the address can't end the quoted value early.
+        var filter = "Email eq '" + text.replace(/'/g, "''") + "'";
+        var res = await spFetch(_snaTargetUrl + '/_api/web/siteusers?$select=Title,LoginName,Email&$filter=' + encodeURIComponent(filter));
+        if (res && res.value && res.value.length > 0) {
+            return { login: res.value[0].LoginName, title: res.value[0].Title || text, found: true };
+        }
+    } catch(e) { /* Uses the guessed sign-in name below. */ }
+    return { login: 'i:0#.f|membership|' + text, title: text, found: false };
+}
+
+// Renders the "Check one person's access" section. The button and the Enter key run snaCheckUserAccess.
+function snaRenderUserAccessTool() {
+    return '<details class="permissions-section hide-on-print">' +
+        '<summary>Check one person\'s access</summary>' +
+        '<p class="sna-note">Shows what one person can do on the site and in each list and library, including access through groups. ' +
+            'You need to be a site owner to use this.</p>' +
+        '<div class="sna-access-tool">' +
+            '<label for="sna-user-access-input">Email address or sign-in name</label>' +
+            '<div class="sna-access-row">' +
+                '<input type="text" id="sna-user-access-input" class="sna-access-input" autocomplete="off" spellcheck="false"' +
+                    ' maxlength="' + SNA_PERSON_CHECK_MAX_LENGTH + '" aria-describedby="sna-user-access-hint">' +
+                '<button type="button" class="sna-action-btn" data-action="check-user-access">Check access</button>' +
+            '</div>' +
+            '<div id="sna-user-access-hint" class="sna-muted">Such as user@med.umich.edu</div>' +
+        '</div>' +
+        '<div id="sna-user-access-status" class="sna-access-status" role="status"></div>' +
+        '<div id="sna-user-access-results"></div>' +
+    '</details>';
+}
+
+// Checks what one person can do on the site and in every list and library, and shows the result.
+async function snaCheckUserAccess() {
+    var input  = document.getElementById('sna-user-access-input');
+    var status = document.getElementById('sna-user-access-status');
+    var out    = document.getElementById('sna-user-access-results');
+    var button = document.querySelector('#sp-results [data-action="check-user-access"]');
+    if (!input || !status || !out || _snaUserCheckRunning) { return; }
+
+    var text = input.value.trim();
+    if (!text) {
+        out.innerHTML = '';
+        status.textContent = 'Enter an email address or sign-in name, such as user@med.umich.edu.';
+        input.focus();
+        return;
+    }
+    if (text.length > SNA_PERSON_CHECK_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) {
+        out.innerHTML = '';
+        status.textContent = 'Enter one email address or sign-in name, such as user@med.umich.edu.';
+        input.focus();
+        return;
+    }
+
+    _snaUserCheckRunning = true;
+    if (button) { button.disabled = true; }
+    out.innerHTML = '';
+    status.textContent = 'Checking access...';
+
+    try {
+        var person = await snaResolveUserLogin(text);
+        // Single quotes are doubled so the sign-in name can't end the quoted value early.
+        var userParam = "@u='" + encodeURIComponent(person.login.replace(/'/g, "''")) + "'";
+        var readLevel = async function(scopeUrl) {
+            try {
+                var res = await spFetch(scopeUrl + '/getUserEffectivePermissions(@u)?' + userParam);
+                return snaDecodePermLevel(res && res.GetUserEffectivePermissions ? res.GetUserEffectivePermissions : res);
+            } catch(e) {
+                return null;
+            }
+        };
+
+        var siteLevel = await readLevel(_snaTargetUrl + '/_api/web');
+        var listRows = await snaMapWithLimit(_snaAllListsMeta || [], SNA_MAX_PARALLEL_REQUESTS, async function(list) {
+            return {
+                title: list.Title || '',
+                url:   snaListUrl(list, _snaTargetUrl),
+                isLib: list.BaseType === 1,
+                level: await readLevel(_snaTargetUrl + "/_api/web/lists(guid'" + list.Id + "')")
+            };
+        });
+
+        var shownRows = listRows.filter(function(r) { return r.level !== 'No access'; }).sort(snaByTitle);
+        var noAccessCount = listRows.length - shownRows.length;
+        var uncheckedCount = listRows.filter(function(r) { return r.level === null; }).length + (siteLevel === null ? 1 : 0);
+
+        var html = '<table class="sna-perm-list-table"><caption>Access for ' + snaEscapeHtml(person.title) + '</caption>' +
+            '<thead><tr><th scope="col">Site, list, or library</th><th scope="col">What they can do</th></tr></thead><tbody>' +
+            '<tr><td>Whole site</td><td>' + snaEscapeHtml(siteLevel || 'Could not check') + '</td></tr>';
+        shownRows.forEach(function(r) {
+            html += '<tr><td><span aria-hidden="true">' + (r.isLib ? '📄 ' : '📋 ') + '</span>' + snaLinkHtml(r.url, r.title) + '</td>' +
+                '<td>' + snaEscapeHtml(r.level || 'Could not check') + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        if (noAccessCount > 0) {
+            html += '<p class="sna-note">Left out ' + snaCountText(noAccessCount, 'list or library', 'lists and libraries') +
+                ' this person can\'t open.</p>';
+        }
+        if (!person.found) {
+            html += '<p class="sna-note">Sitenalyzer didn\'t find this email address among the site\'s users, so it checked the sign-in name ' +
+                snaEscapeHtml(person.login) + '. If the results say No access, check the spelling.</p>';
+        }
+        out.innerHTML = html;
+        status.textContent = 'Finished checking access for ' + person.title + '.' + (uncheckedCount > 0
+            ? ' Sitenalyzer could not check ' + snaCountText(uncheckedCount, 'place', 'places') + '. You need to be a site owner to check them.'
+            : '');
+    } catch(e) {
+        console.warn('Sitenalyzer: access check failed:', e);
+        status.textContent = 'Sitenalyzer could not check this person\'s access. Refresh the page and try again.';
+    } finally {
+        _snaUserCheckRunning = false;
+        if (button) { button.disabled = false; }
+    }
+}
+
+// Returns why a person or group needs a second look (a guest, or a group that includes everyone), or null.
+function snaPrincipalRisk(loginName, title) {
+    var login = String(loginName || '').toLowerCase();
+    var t = String(title || '').toLowerCase();
+    if (snaIsGuestLogin(loginName, title)) { return 'Guest from outside your organization'; }
+    if (login.indexOf('spo-grid-all-users') > -1 || t.indexOf('everyone except external') > -1) { return 'Everyone in your organization'; }
+    if (login.indexOf('c:0(.s|true') > -1 || t === 'everyone') { return 'Everyone, including guests'; }
+    if (login.indexOf('c:0!.s|windows') > -1 || t.indexOf('all users (') > -1 || t.indexOf('authenticated users') > -1) {
+        return 'All signed-in users';
+    }
+    return null;
+}
+
+// Returns the people and groups that need a second look, guests first. Includes guests found inside SharePoint groups.
+function snaComputeRiskFlags() {
+    var flags = [];
+    Object.keys(_snaPermIndex).forEach(function(key) {
+        var p = _snaPermIndex[key];
+        if (p.isSystemGroup) { return; }
+        var reason = snaPrincipalRisk(p.loginName, p.title);
+        if (reason) {
+            var where = [];
+            if (p.siteLevels.length > 0) { where.push(p.siteLevels.join(', ') + ' on the whole site'); }
+            else if (p.siteLimited) { where.push('Limited Access on the whole site'); }
+            if (p.lists.length > 0) {
+                where.push('access to ' + snaCountText(p.lists.length, 'list or library that has its', 'lists and libraries that have their') + ' own permissions');
+            }
+            flags.push({ title: p.title, reason: reason, where: where.join('; ') });
+        }
+        (p.members || []).forEach(function(m) {
+            if (m.isGuest) { flags.push({ title: m.title, reason: 'Guest from outside your organization', where: 'member of ' + p.title }); }
+        });
+    });
+    flags.sort(function(a, b) {
+        var aGuest = a.reason.indexOf('Guest') === 0 ? 0 : 1;
+        var bGuest = b.reason.indexOf('Guest') === 0 ? 0 : 1;
+        if (aGuest !== bGuest) { return aGuest - bGuest; }
+        return snaByTitle(a, b);
+    });
+    return flags;
+}
+
+// Renders the panel at the top of the site card that lists guests, organization-wide groups, and links anyone can use.
+function snaRenderRiskFlags() {
+    var flags = snaComputeRiskFlags();
+    var anyoneLinkCount = _snaSharingLinks.links.filter(function(l) { return l.kind === 'anyone'; }).length;
+
+    if (flags.length === 0 && anyoneLinkCount === 0) {
+        if (!_snaSiteRolesRead) {
+            return '<div class="sna-risk-panel sna-risk-unknown"><h3 class="sna-risk-title">Sitenalyzer could not check for guests</h3>' +
+                '<p class="sna-risk-row">It could not read the site\'s permissions. Ask a site owner to run Sitenalyzer on this site.</p></div>';
+        }
+        return '<div class="sna-risk-panel sna-risk-clear"><h3 class="sna-risk-title"><span aria-hidden="true">&#10003; </span>' +
+            'No guests or organization-wide groups have access</h3></div>';
+    }
+
+    var html = '<div class="sna-risk-panel"><h3 class="sna-risk-title"><span aria-hidden="true">&#9888; </span>Review who has access</h3>' +
+        '<ul class="sna-risk-list">';
+    flags.forEach(function(f) {
+        html += '<li class="sna-risk-row"><strong>' + snaEscapeHtml(f.title) + '</strong>: <span class="sna-risk-reason">' +
+            snaEscapeHtml(f.reason) + '</span>' + (f.where ? ' (' + snaEscapeHtml(f.where) + ')' : '') + '</li>';
+    });
+    if (anyoneLinkCount > 0) {
+        html += '<li class="sna-risk-row"><span class="sna-risk-reason">' +
+            snaCountText(anyoneLinkCount, 'sharing link lets', 'sharing links let') + ' anyone with the link open a file.</span> ' +
+            'The sharing links section lists them.</li>';
+    }
+    return html + '</ul></div>';
+}
+
+// Renders the lists and libraries that have their own permissions instead of using the site's permissions.
+function snaRenderInheritanceReport() {
+    var unique = _snaUniqueLists.slice().sort(snaByTitle);
+    var total = unique.length + _snaInheritedLists.length;
+    if (total === 0) { return '<div class="perm-row">Sitenalyzer found no lists or libraries on this site.</div>'; }
+    if (unique.length === 0) { return '<div class="perm-row">Every list and library uses the site\'s permissions.</div>'; }
+
+    var html = '<p class="sna-note">' + unique.length + ' of ' + snaCountText(total, 'list or library', 'lists and libraries') + ' ' +
+        (unique.length === 1 ? 'has its' : 'have their') + ' own permissions.' +
+        (unique.length < total ? ' The rest use the site\'s permissions.' : '') + '</p>';
+    html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Lists and libraries with their own permissions</caption>' +
+        '<thead><tr><th scope="col">List or library</th><th scope="col">Type</th><th scope="col">Permissions</th></tr></thead><tbody>';
+    unique.forEach(function(u) {
+        html += '<tr><td><span aria-hidden="true">' + (u.isLib ? '📄 ' : '📋 ') + '</span>' + snaLinkHtml(u.url, u.title) + '</td>' +
+            '<td>' + (u.isLib ? 'Library' : 'List') + '</td>' +
+            '<td>' + (u.rolesRead ? 'Shown on its card' : 'Sitenalyzer could not read them') + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+}
+
+// Finds the site's sharing links. SharePoint creates one hidden group for each link, named
+// SharingLinks.<file ID>.<link type>.<link ID>, so reading the groups finds every link without opening each file.
+// Returns { links, failed, groupsCapped, lookupsCapped }.
+async function snaFetchSharingLinks(targetUrl) {
+    var result = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
+    var groups;
+    try {
+        var resp = await spFetch(targetUrl + '/_api/web/sitegroups?$select=Id,Title&$top=' + SNA_SHARING_GROUPS_MAX);
+        groups = (resp && resp.value) ? resp.value : [];
+    } catch(e) {
+        result.failed = true;
+        return result;
+    }
+    result.groupsCapped = groups.length >= SNA_SHARING_GROUPS_MAX;
+
+    groups.forEach(function(g) {
+        var title = String(g.Title || '');
+        if (title.indexOf('SharingLinks.') !== 0) { return; }
+        var parts = title.split('.');
+        if (parts.length < 3) { return; }
+        var linkType = parts[2];
+        var kind = 'other';
+        if (/anonymous/i.test(linkType)) { kind = 'anyone'; }
+        else if (/organization/i.test(linkType)) { kind = 'organization'; }
+        else if (/flexible/i.test(linkType)) { kind = 'specific'; }
+        var access = /edit/i.test(linkType) ? 'Can edit' : (/view/i.test(linkType) ? 'Can view' : '');
+        result.links.push({ fileId: parts[1], kind: kind, access: access, name: '', url: '' });
+    });
+
+    // Only IDs shaped like a GUID are sent to SharePoint; anything else is shown without a file name.
+    var fileIds = [];
+    result.links.forEach(function(l) {
+        var id = l.fileId.toLowerCase();
+        if (SNA_GUID_PATTERN.test(id) && fileIds.indexOf(id) === -1) { fileIds.push(id); }
+    });
+    result.lookupsCapped = fileIds.length > SNA_SHARING_LINK_NAME_LOOKUPS;
+
+    var files = {};
+    await snaMapWithLimit(fileIds.slice(0, SNA_SHARING_LINK_NAME_LOOKUPS), SNA_MAX_PARALLEL_REQUESTS, async function(fileId) {
+        try {
+            var file = await spFetch(targetUrl + "/_api/web/GetFileById('" + fileId + "')?$select=Name,ServerRelativeUrl");
+            if (file && file.Name) {
+                var fileUrl = snaOrigin(targetUrl) + encodeURI(file.ServerRelativeUrl || '');
+                files[fileId] = { name: file.Name, url: snaIsSameSiteUrl(fileUrl, targetUrl) ? fileUrl : '' };
+            }
+        } catch(e) { /* The link is shown without a file name. */ }
+    });
+    result.links.forEach(function(l) {
+        var file = files[l.fileId.toLowerCase()];
+        if (file) { l.name = file.name; l.url = file.url; }
+    });
+    return result;
+}
+
+// Renders the sharing links section, with links that anyone can use listed first.
+function snaRenderSharingLinks(result) {
+    if (result.failed) {
+        return '<div class="perm-row">Sitenalyzer could not read the sharing links. You need to be a site owner to see them.</div>';
+    }
+    var links = result.links;
+    if (links.length === 0) { return '<div class="perm-row">No sharing links found on this site.</div>'; }
+
+    var kindOrder = ['anyone', 'organization', 'specific', 'other'];
+    function countKind(kind) { return links.filter(function(l) { return l.kind === kind; }).length; }
+
+    var html = '<p class="sna-note">Found ' + snaCountText(links.length, 'sharing link', 'sharing links') + '. ' +
+        SNA_SHARING_LINK_LABELS.anyone + ': ' + countKind('anyone') + '. ' +
+        SNA_SHARING_LINK_LABELS.organization + ': ' + countKind('organization') + '. ' +
+        SNA_SHARING_LINK_LABELS.specific + ': ' + countKind('specific') + '.</p>';
+    html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Sharing links</caption>' +
+        '<thead><tr><th scope="col">File</th><th scope="col">Who can use the link</th><th scope="col">Access</th></tr></thead><tbody>';
+    links.slice().sort(function(a, b) {
+        var order = kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind);
+        return order !== 0 ? order : snaByTitle(a, b);
+    }).forEach(function(l) {
+        var fileCell = l.name
+            ? snaLinkHtml(l.url, l.name)
+            : '<span class="sna-muted">File name not available (file ID ' + snaEscapeHtml(l.fileId) + ')</span>';
+        var kindText = SNA_SHARING_LINK_LABELS[l.kind];
+        var kindCell = l.kind === 'anyone' ? '<span class="sna-risk-reason">' + kindText + '</span>' : kindText;
+        html += '<tr><td>' + fileCell + '</td><td>' + kindCell + '</td><td>' + snaEscapeHtml(l.access) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    if (result.lookupsCapped) {
+        html += '<p class="sna-note">Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.</p>';
+    }
+    if (result.groupsCapped) {
+        html += '<p class="sna-note">Sitenalyzer read the first ' + SNA_SHARING_GROUPS_MAX.toLocaleString('en-US') +
+            ' site groups only, so some sharing links may be missing.</p>';
+    }
+    return html;
+}
+
+// Renders cleanup suggestions from the list details already read: lists not changed in a year,
+// libraries with version history turned off, version history with no limit, and the largest lists.
+function snaRenderCleanupSignals() {
+    var lists = _snaAllListsMeta || [];
+    if (lists.length === 0) { return '<div class="perm-row">Sitenalyzer found no lists or libraries to review.</div>'; }
+
+    var now = new Date();
+    var cutoff = new Date(now.getFullYear(), now.getMonth() - 12, now.getDate());
+    var stale = [], noVersioning = [], unlimited = [];
+    lists.forEach(function(l) {
+        var changed = l.LastItemModifiedDate ? new Date(l.LastItemModifiedDate) : null;
+        if (changed && !isNaN(changed.getTime()) && changed < cutoff) { stale.push(l); }
+        if (l.BaseType === 1 && l.EnableVersioning === false) { noVersioning.push(l); }
+        if (l.EnableVersioning === true && l.MajorVersionLimit === 0) { unlimited.push(l); }
+    });
+    var largest = lists.filter(function(l) { return (l.ItemCount || 0) > 0; })
+        .sort(function(a, b) { return (b.ItemCount || 0) - (a.ItemCount || 0); }).slice(0, 5);
+
+    function listLink(l) { return snaLinkHtml(snaListUrl(l, _snaTargetUrl), l.Title || ''); }
+    function group(headClass, title, hint, items, rowText) {
+        var h = '<div class="sna-cleanup-group"><h3 class="sna-cleanup-head ' + headClass + '">' + title + ' (' + items.length + ')</h3>';
+        if (hint) { h += '<p class="sna-note">' + hint + '</p>'; }
+        if (items.length === 0) { return h + '<div class="sna-cleanup-row sna-muted">None found.</div></div>'; }
+        items.forEach(function(l) { h += '<div class="sna-cleanup-row">' + rowText(l) + '</div>'; });
+        return h + '</div>';
+    }
+
+    var html = group('sna-cleanup-warning', 'Not changed in the last 12 months', '', stale.sort(snaByTitle), function(l) {
+        return listLink(l) + ' <span class="sna-muted">(last changed ' + snaEscapeHtml(String(l.LastItemModifiedDate).substring(0, 10)) + ')</span>';
+    });
+    html += group('sna-cleanup-alert', 'Libraries with version history turned off', 'People can\'t get back an earlier copy of a file.',
+        noVersioning.sort(snaByTitle), listLink);
+    html += group('sna-cleanup-warning', 'Version history with no limit', 'Every earlier copy is kept, so these keep growing.',
+        unlimited.sort(snaByTitle), listLink);
+    html += group('', 'Largest lists and libraries', '', largest, function(l) {
+        return listLink(l) + ' <span class="sna-muted">(' + snaCountText(l.ItemCount || 0, 'item', 'items') + ')</span>';
+    });
+    return html;
+}
+
+// Reads the site's permission levels for the permissions workbook. Returns null when they could not be read.
+async function snaFetchRoleDefinitions(targetUrl) {
+    try {
+        var res = await spFetch(targetUrl + '/_api/web/roledefinitions?$select=Id,Name,Description,BasePermissions,Hidden,RoleTypeKind,Order');
+        return (res && res.value) ? res.value : [];
+    } catch(e) {
+        return null;
+    }
+}
+
+// Reads the site collection administrators. They have full control everywhere but don't appear in the site's permissions.
+// Returns null when they could not be read.
+async function snaFetchSiteAdmins(targetUrl) {
+    try {
+        var res = await spFetch(targetUrl + '/_api/web/siteusers?$select=Id,Title,Email,LoginName&$filter=IsSiteAdmin eq true');
+        return (res && res.value) ? res.value : [];
+    } catch(e) {
+        return null;
+    }
 }
 
 // Maps a SharePoint TypeAsString to the data-dictionary display_type enum.
@@ -620,6 +1430,24 @@ function xlsxStripSlash(s) {
     return r;
 }
 
+// Returns the address that opens a list or library: its default view, or a likely address built from its internal name.
+function snaListUrl(list, targetUrl) {
+    var site = xlsxStripSlash(targetUrl);
+    if (list.DefaultViewUrl) { return (snaOrigin(site) || window.location.origin) + list.DefaultViewUrl; }
+    var name = String(list.EntityTypeName || '').replace(/_x0020_/g, '%20');
+    return list.BaseTemplate === 101 ? site + '/' + name : site + '/Lists/' + name.replace(/List$/, '');
+}
+
+// Returns the Permissions button for a list or library card. It opens SharePoint's permissions page for that list.
+function snaPermissionsButtonHtml(list, targetUrl) {
+    var listId = '{' + String(list.Id || '').replace(/[{}]/g, '') + '}';
+    var isLib = list.BaseType === 1;
+    var url = xlsxStripSlash(targetUrl) + '/_layouts/15/user.aspx?obj=' + encodeURIComponent(listId + ',' + (isLib ? 'doclib' : 'list')) +
+        '&List=' + encodeURIComponent(listId);
+    return '<button class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(url) + '"' +
+        ' aria-label="Permissions: open the SharePoint permissions page for this ' + (isLib ? 'library' : 'list') + ' in a new window">Permissions</button>';
+}
+
 // Pascal case conversion (Upper Camel Case)
 function toPascalCase(str) {
   return str
@@ -632,16 +1460,52 @@ function toPascalCase(str) {
     .trim();
 }
 
-// Builds a SheetJS worksheet from a header array and data rows.
+// Builds a SheetJS worksheet from a header array and data rows, with filter buttons on the header row
+// and each column sized to its longest value (12 to 60 characters wide).
 function buildSheet(headers, rows) {
     var wsData = [headers].concat(rows);
     var ws = XLSX.utils.aoa_to_sheet(wsData);
     var cols = [];
-    for (var k = 0; k < headers.length; k++) {
-        cols.push({ wch: 20 });
+    for (var c = 0; c < headers.length; c++) {
+        var longest = String(headers[c] === null || headers[c] === undefined ? '' : headers[c]).length;
+        for (var r = 0; r < rows.length; r++) {
+            var value = rows[r] ? rows[r][c] : '';
+            var length = (value === null || value === undefined) ? 0 : String(value).length;
+            if (length > longest) { longest = length; }
+        }
+        cols.push({ wch: Math.min(Math.max(longest + 2, 12), 60) });
     }
     ws['!cols'] = cols;
+    if (headers.length > 0) {
+        ws['!autofilter'] = { ref: 'A1:' + XLSX.utils.encode_cell({ c: headers.length - 1, r: wsData.length - 1 }) };
+    }
     return ws;
+}
+
+// Saves a SheetJS workbook as an .xlsx download with the given file name.
+function snaDownloadWorkbook(wb, fileName) {
+    var wbArr = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    var blob  = new Blob([wbArr], { type: 'application/octet-stream' });
+    var dlUrl = URL.createObjectURL(blob);
+    var link  = document.createElement('a');
+    link.setAttribute('href', dlUrl);
+    link.setAttribute('download', fileName);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    // The browser has started the download by now; the delay keeps slower browsers from losing the file.
+    setTimeout(function() { URL.revokeObjectURL(dlUrl); }, 10000);
+}
+
+// Returns today's local date as YYYY-MM-DD, for file names.
+function snaDateStamp(date) {
+    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+}
+
+// Returns the site name in a form that is safe for a file name, such as TestResearchSite.
+function snaFileSafeSiteName(siteTitle) {
+    return toPascalCase(String(siteTitle || '').trim().replace(/\.?mm$/i, '').trim()) || 'Site';
 }
 
 // Exports a 9-tab Data Dictionary XLSX file using SheetJS.
@@ -660,10 +1524,8 @@ function exportToXLSX() {
     var group, termSets, termSet, terms, term;
 
     var now     = new Date();
-    var dateStr = now.getFullYear() + '-' +
-        String(now.getMonth() + 1).padStart(2, '0') + '-' +
-        String(now.getDate()).padStart(2, '0');
-    var exporterName    = (_snaCurrentUser && _snaCurrentUser.name)      ? _snaCurrentUser.name      : '';
+    var dateStr = snaDateStamp(now);
+    var exporterName   = (_snaCurrentUser && _snaCurrentUser.name)      ? _snaCurrentUser.name      : '';
     var exporterEmail   = (_snaCurrentUser && _snaCurrentUser.email)     ? _snaCurrentUser.email     : '';
     var techStewardId   = exporterEmail || xlsxNid(ec, 'STW_', 'stw');
     var stewardsRows = [];
@@ -923,17 +1785,123 @@ function exportToXLSX() {
     XLSX.utils.book_append_sheet(wb, buildSheet(H_VIZ, []),                 'Visualizations');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_STW, stewardsRows),        'Stewards');
 
-    var wbArr = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    var blob  = new Blob([wbArr], { type: 'application/octet-stream' });
-    var dlUrl = URL.createObjectURL(blob);
-    var link  = document.createElement('a');
-    link.setAttribute('href', dlUrl);
-    var safeSiteName = toPascalCase(siteTitle.trim().replace(/\.?mm$/i, '').trim()) || 'Site';
-    link.setAttribute('download', safeSiteName + '_Data_Dictionary_' + dateStr + '.xlsx');
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(siteTitle) + '_Data_Dictionary_' + dateStr + '.xlsx');
+}
+
+// Saves the permissions workbook: every permission on the site and its lists, with group members,
+// permission levels, and site collection administrators. Built from what Sitenalyzer already read, so it
+// makes no requests. Every cell is text, so values such as =SUM(...) in a name are never run as formulas.
+function exportPermissionsToXLSX() {
+    if (!_snaSiteInfo) {
+        snaShowToast('Extract site information first, then export the permissions.', true);
+        return;
+    }
+
+    var YES = 'Yes', NO = 'No';
+    var LIMITED_NOTE = 'SharePoint adds Limited Access by itself when someone shares an item or folder. ' +
+        'It does not give access to lists and libraries that use the site\'s permissions.';
+    var now       = new Date();
+    var siteTitle = _snaSiteInfo.Title || '';
+    var siteUrl   = _snaTargetUrl || _snaSiteInfo.Url || '';
+    function text(value) { return (value === null || value === undefined) ? '' : String(value); }
+    function textRows(rows) { return rows.map(function(row) { return row.map(text); }); }
+
+    // Permissions sheet. Grain: one row per scope (site or list) per person or group per permission level.
+    var permissionRows = _snaPermissionRows.slice().sort(function(a, b) {
+        if (a.scope !== b.scope) { return a.scope === 'Site' ? -1 : 1; }
+        var byList = a.listTitle.toLowerCase().localeCompare(b.listTitle.toLowerCase());
+        return byList !== 0 ? byList : a.memberName.toLowerCase().localeCompare(b.memberName.toLowerCase());
+    }).map(function(p) {
+        var notes = [];
+        if (p.isLimited) { notes.push(LIMITED_NOTE); }
+        if (p.isSystemGroup) { notes.push('SharePoint creates this group by itself, such as for a sharing link.'); }
+        return [p.scope, p.listTitle, p.listId, p.listUrl, p.listType, p.memberName, p.memberId, p.loginName, p.email,
+            SNA_PRINCIPAL_KIND_LABELS[p.memberKind], p.level, p.levelId, p.isLimited ? YES : NO, notes.join(' ')];
+    });
+
+    // Lists sheet. Grain: one row per list or library.
+    var listRows = _snaUniqueLists.map(function(l) { return { l: l, own: true }; })
+        .concat(_snaInheritedLists.map(function(l) { return { l: l, own: false }; }))
+        .sort(function(a, b) { return snaByTitle(a.l, b.l); })
+        .map(function(item) {
+            var l = item.l;
+            var readText = item.own ? (l.rolesRead ? YES : 'No. Sitenalyzer could not read them.') : 'Uses the site\'s permissions';
+            return [l.title, l.id, l.url, l.isLib ? 'Library' : 'List', item.own ? YES : NO, readText];
+        });
+
+    // Group_Members sheet. Grain: one row per SharePoint group per member; groups with no rows get one note row.
+    var memberRows = [];
+    Object.keys(_snaPermIndex).map(function(key) { return _snaPermIndex[key]; })
+        .filter(function(p) { return p.kind === 'sharePointGroup' && !p.isSystemGroup; })
+        .sort(snaByTitle)
+        .forEach(function(p) {
+            if (p.membersStatus === 'failed') {
+                memberRows.push([p.title, p.id, '', '', '', '', '', 'Sitenalyzer could not read this group\'s members.']);
+            } else if (p.members && p.members.length === 0) {
+                memberRows.push([p.title, p.id, '', '', '', '', '', 'This group has no members.']);
+            } else if (p.members) {
+                p.members.slice().sort(snaByTitle).forEach(function(m) {
+                    memberRows.push([p.title, p.id, m.title, m.id, m.loginName, m.email, SNA_PRINCIPAL_KIND_LABELS[m.kind],
+                        m.isGuest ? 'Guest from outside your organization' : '']);
+                });
+            }
+        });
+
+    // Permission_Levels sheet. Grain: one row per permission level.
+    var usedLevelIds = {};
+    _snaPermissionRows.forEach(function(p) { usedLevelIds[String(p.levelId)] = true; });
+    var levelRows = (_snaRoleDefinitions || []).slice().sort(function(a, b) { return (a.Order || 0) - (b.Order || 0); }).map(function(d) {
+        var mask = d.BasePermissions || {};
+        return [d.Name, d.Id, d.Description, mask.High, mask.Low, snaPermissionNames(mask),
+            d.Hidden ? YES : NO, d.RoleTypeKind ? YES : NO, usedLevelIds[String(d.Id)] ? YES : NO];
+    });
+    if (_snaRoleDefinitions === null) {
+        levelRows.push(['', '', 'Sitenalyzer could not read the permission levels.', '', '', '', '', '', '']);
+    }
+
+    // Site_Admins sheet. Grain: one row per site collection administrator.
+    var adminRows = (_snaSiteAdmins || []).slice().sort(snaByTitle).map(function(a) {
+        return [a.Title || '', a.Id, a.LoginName || '', a.Email || ''];
+    });
+    if (_snaSiteAdmins === null) {
+        adminRows.push(['', '', '', '', 'Sitenalyzer could not read the site collection administrators.']);
+    }
+
+    var exporter = _snaCurrentUser ? (_snaCurrentUser.name || _snaCurrentUser.email || '') : '';
+    var aboutRows = [
+        ['Site name', siteTitle],
+        ['Site address', siteUrl],
+        ['Site ID', _snaSiteInfo.Id || ''],
+        ['Exported by', exporter],
+        ['Exported at (UTC)', now.toISOString()],
+        ['Exported with', 'Sitenalyzer'],
+        ['Permission rows', permissionRows.length],
+        ['Lists and libraries', listRows.length],
+        ['Group member rows', memberRows.length],
+        ['Permission levels', _snaRoleDefinitions ? _snaRoleDefinitions.length : 'Could not read'],
+        ['Site collection administrators', _snaSiteAdmins ? _snaSiteAdmins.length : 'Could not read'],
+        ['Site permissions read', _snaSiteRolesRead ? YES : NO],
+        ['About Limited Access', LIMITED_NOTE],
+        ['About site collection administrators', 'They have full control of the whole site collection, but they are not listed on the Permissions sheet.'],
+        ['Not included', 'Permissions on single files, folders, and items; members of security and Microsoft 365 groups, which Microsoft Entra ID manages.'],
+        ['Personal data', 'This workbook lists names and email addresses, and list names may describe a study. Store and share it the way you would other personal data.']
+    ];
+
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildSheet(['Item', 'Value'], textRows(aboutRows)), 'About');
+    XLSX.utils.book_append_sheet(wb, buildSheet(['Scope', 'List or library', 'List ID', 'List address', 'List type',
+        'Person or group', 'Person or group ID', 'Sign-in name', 'Email', 'Person or group type',
+        'Permission level', 'Permission level ID', 'Added by SharePoint', 'Notes'], textRows(permissionRows)), 'Permissions');
+    XLSX.utils.book_append_sheet(wb, buildSheet(['List or library', 'List ID', 'List address', 'List type',
+        'Has its own permissions', 'Permissions read'], textRows(listRows)), 'Lists');
+    XLSX.utils.book_append_sheet(wb, buildSheet(['Group', 'Group ID', 'Member', 'Member ID', 'Sign-in name', 'Email',
+        'Member type', 'Notes'], textRows(memberRows)), 'Group_Members');
+    XLSX.utils.book_append_sheet(wb, buildSheet(['Permission level', 'Permission level ID', 'Description',
+        'Permission values (High)', 'Permission values (Low)', 'Permissions', 'Hidden', 'Built into SharePoint',
+        'Used on this site'], textRows(levelRows)), 'Permission_Levels');
+    XLSX.utils.book_append_sheet(wb, buildSheet(['Name', 'ID', 'Sign-in name', 'Email', 'Notes'], textRows(adminRows)), 'Site_Admins');
+
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(siteTitle) + '_Permissions_' + snaDateStamp(now) + '.xlsx');
 }
 
 // Copies text to clipboard and shows a brief toast notification; falls back to execCommand if needed.
@@ -985,6 +1953,8 @@ function snaHandleResultsClick(e) {
     if (action === 'collapse-all') { collapseAll(); }
     else if (action === 'expand-all') { expandAll(); }
     else if (action === 'export-xlsx') { exportToXLSX(); }
+    else if (action === 'export-permissions') { exportPermissionsToXLSX(); }
+    else if (action === 'check-user-access') { snaCheckUserAccess(); }
     else if (action === 'expand-print') { expandAndPrint(); }
     else if (action === 'scroll-top') {
         var el = document.getElementById('sp-info-app');
@@ -1025,16 +1995,26 @@ function snaCopyAndShowId(id, label, displayId) {
 }
 
 // Opens a URL in a new browser tab/window with noopener and noreferrer for security.
+// Only https addresses on the SharePoint tenant being read are opened, because some addresses come from SharePoint data.
 function snaOpenUrl(url) {
-    if (url) { window.open(url, '_blank', 'noopener,noreferrer'); }
+    if (!url) { return; }
+    var safeUrl = snaSafeTenantUrl(url, _snaTargetUrl);
+    if (!safeUrl) {
+        snaShowToast('Sitenalyzer opens only links to your SharePoint sites, so it didn\'t open this one.', true);
+        return;
+    }
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
 }
 
 // Resets all extracted data and UI state so the user can analyse a different site.
 function startOver() {
     document.getElementById('sp-results').innerHTML = '';
     globalExportedData = [];
+    _snaTablesQueue = [];
+    _snaTabInstances = {};
     _snaSearchIndex = [];
     _snaCardData    = [];
+    snaResetPermissionState();
     _snaTaxonomyData     = [];
     _snaSiteCollectionId = '';
     _snaTermStoreId      = '';
@@ -1112,10 +2092,11 @@ async function gatherSiteInformation() {
     _snaSiteInfo         = null;
     _snaAllListsMeta     = [];
     _snaCurrentUser = null;
+    snaResetPermissionState();
 
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
-        resultsDiv.innerHTML = '<div style="color: red; padding: 15px; border: 1px solid red; border-radius: 4px;"><strong>Error:</strong><br>Please enter or select a site URL.</div>';
+        resultsDiv.innerHTML = '<div style="color: #a80000; padding: 15px; border: 1px solid #a80000; border-radius: 4px;" role="alert">Enter or select a site URL, then select Extract site information.</div>';
         btn.disabled = false;
         loader.style.display = 'none';
         return;
@@ -1129,16 +2110,28 @@ async function gatherSiteInformation() {
         _snaCurrentUser = await getLoggedInUser(targetUrl).catch(function() { return null; });
         var siteRoles = null;
         try { siteRoles = await spFetch(`${targetUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`); } catch(err) { }
-        var appPrincipals = (siteRoles && siteRoles.value) ? siteRoles.value.filter(function(ra) { return ra.Member.PrincipalType === 4; }) : [];
+        _snaSiteRolesRead = !!(siteRoles && siteRoles.value);
+        if (_snaSiteRolesRead) { snaRecordRoleAssignments(siteRoles.value, { scope: 'Site' }); }
+        var appAssignments = _snaSiteRolesRead ? siteRoles.value.filter(function(ra) { return snaPrincipalKind(ra.Member) === 'app'; }) : [];
 
-        // Resolve admin status before the loop (single call); run taxonomy fetch concurrently.
+        // Resolve admin status before the loop (single call). The other reads run while the lists are read.
         _snaIsAdmin = await checkAdminPermissions(targetUrl).catch(function() { return false; });
         var taxonomyPromise = fetchTaxonomy(targetUrl).catch(function(e) { console.warn('taxonomy error', e); });
+        var sitePagesPromise = snaFetchSitePages(targetUrl).catch(function(e) {
+            console.warn('Sitenalyzer: Site Pages read failed:', e);
+            return { pages: [], truncated: false, failed: true, stoppedAtOtherSite: false };
+        });
+        var sharingPromise = snaFetchSharingLinks(targetUrl).catch(function(e) {
+            console.warn('Sitenalyzer: sharing links read failed:', e);
+            return { links: [], failed: true, groupsCapped: false, lookupsCapped: false };
+        });
+        var roleDefinitionsPromise = snaFetchRoleDefinitions(targetUrl);
+        var siteAdminsPromise = snaFetchSiteAdmins(targetUrl);
 
         var allLists = null;
         try {
 			// Adapted from DataLaVista's fetchSPLists() function (https://michmed.org/datalavista)
-			allLists = await spFetch(`${targetUrl}/_api/web/lists?$select=Id,EntityTypeName,Title,Description,ItemCount,BaseType,Hidden,ImageUrl,IsApplicationList,LastItemModifiedDate,BaseTemplate,HasUniqueRoleAssignments,DefaultViewUrl&$filter=(Hidden eq false and IsApplicationList eq false and BaseTemplate ne 115 and BaseTemplate ne 121 and BaseTemplate ne 330 and BaseTemplate ne 544 and Title ne 'MicroFeed' and EntityTypeName ne 'AppCatalog' and EntityTypeName ne 'FormServerTemplates' and EntityTypeName ne 'Style_x0020_Library') or (Title eq 'User Information List' or Title eq 'Events')`);
+			allLists = await spFetch(`${targetUrl}/_api/web/lists?$select=Id,EntityTypeName,Title,Description,ItemCount,BaseType,Hidden,ImageUrl,IsApplicationList,LastItemModifiedDate,BaseTemplate,HasUniqueRoleAssignments,DefaultViewUrl,EnableVersioning,EnableMinorVersions,MajorVersionLimit&$filter=(Hidden eq false and IsApplicationList eq false and BaseTemplate ne 115 and BaseTemplate ne 121 and BaseTemplate ne 330 and BaseTemplate ne 544 and Title ne 'MicroFeed' and EntityTypeName ne 'AppCatalog' and EntityTypeName ne 'FormServerTemplates' and EntityTypeName ne 'Style_x0020_Library') or (Title eq 'User Information List' or Title eq 'Events')`);
 		} catch(err) {}
         _snaAllListsMeta = (allLists && allLists.value) ? allLists.value : [];
 
@@ -1161,25 +2154,31 @@ async function gatherSiteInformation() {
             var isInherited = false;
             var listEditKey  = 'list:' + list.Id;
             var listDescBody = renderAdminDescWrap(list.Description || '', listEditKey);
-            var listDescHtml = (list.Description || _snaIsAdmin) ? '<p style="font-size: 13px; color: #666; margin: 5px 0 15px 0;"><strong>Description:</strong> ' + listDescBody + '</p>' : '';
+            var listDescHtml = (list.Description || _snaIsAdmin) ? '<p style="font-size: 13px; color: #595959; margin: 5px 0 15px 0;"><strong>Description:</strong> ' + listDescBody + '</p>' : '';
             var listTypeLabel = list.BaseTemplate === 101 ? "Document Library" : "List";
+            var listUrl = snaListUrl(list, targetUrl);
+            var listSummary = { id: list.Id || '', title: list.Title || '', url: listUrl, isLib: list.BaseType === 1, rolesRead: true };
 
             // 1. Fetch Roles or Handle Inheritance
             if (list.HasUniqueRoleAssignments === false) {
-                listRolesHtml = '<div class="perm-row">(inherited from site)</div>';
+                listRolesHtml = '<div class="perm-row">Uses the site\'s permissions.</div>';
                 isInherited = true;
+                _snaInheritedLists.push(listSummary);
             } else {
-                try {
-                    var guid = list.Id;
-                    var roleUrl = targetUrl + '/_api/web/lists(guid' + "'" + guid + "')/roleassignments?$expand=Member,RoleDefinitionBindings";
-                    var lRoles;
-                    try { lRoles = await spFetch(roleUrl); } catch(err) { }
-                    if (lRoles && lRoles.value && lRoles.value.length > 0) {
-                        listRolesHtml = renderPermissionsHtml(lRoles.value);
-                    } else {
-                        listRolesHtml = '<div class="perm-row">No explicit permissions found.</div>';
-                    }
-                } catch(e) { }
+                var roleUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/roleassignments?$expand=Member,RoleDefinitionBindings";
+                var lRoles = null;
+                try { lRoles = await spFetch(roleUrl); } catch(err) { }
+                listSummary.rolesRead = !!(lRoles && lRoles.value);
+                _snaUniqueLists.push(listSummary);
+                if (!listSummary.rolesRead) {
+                    listRolesHtml = '<div class="perm-row">Sitenalyzer could not read these permissions. You need to be a site owner to see them.</div>';
+                } else {
+                    listRolesHtml = renderPermissionsHtml(lRoles.value);
+                    snaRecordRoleAssignments(lRoles.value, {
+                        scope: 'List', listId: list.Id || '', listTitle: list.Title || '', listUrl: listUrl,
+                        listType: list.BaseType === 1 ? 'Library' : 'List'
+                    });
+                }
             }
 
             // 2. Fetch Field Definitions (via snaFetchFields — mirrors DLV fetchSPFields)
@@ -1245,12 +2244,12 @@ async function gatherSiteInformation() {
                     fieldsHtml = '<div class="perm-row">No visible fields found.</div>';
                 }
             } catch(e) {
-                fieldsHtml = '<div class="perm-row" style="color: red;">Error fetching fields.</div>';
+                fieldsHtml = '<div class="perm-row" style="color: #a80000;">Sitenalyzer could not read the columns. Refresh the page and try again.</div>';
             }
 
-            var colDefsDetails = '<details class="permissions-section"><summary>View Column Definitions</summary>' + fieldsHtml + '</details>';
+            var colDefsDetails = '<details class="permissions-section"><summary>View column definitions</summary>' + fieldsHtml + '</details>';
             var printHideClass = isInherited ? ' hide-on-print' : '';
-            var listRolesDetails = '<details class="permissions-section' + printHideClass + '"><summary>View ' + listTypeLabel + ' Permissions</summary>' + listRolesHtml + '</details>';
+            var listRolesDetails = '<details class="permissions-section' + printHideClass + '"><summary>View ' + (list.BaseTemplate === 101 ? 'library' : 'list') + ' permissions</summary>' + listRolesHtml + '</details>';
 
             // 3. Document Library Specifics vs List Specifics
             if (list.BaseTemplate === 101) {
@@ -1285,48 +2284,44 @@ async function gatherSiteInformation() {
                             _snaTablesQueue.push({ id: dTblId, type: 'folders', searchLabel: 'folders', data: foldersData });
                             foldersTableHtml = '<div id="' + dTblId + '"></div>';
                         } else {
-                            foldersTableHtml = '<p style="font-size:13px; color:#666; margin: 5px 0;">No top-level folders found.</p>';
+                            foldersTableHtml = '<p style="font-size:13px; color:#595959; margin: 5px 0;">No top-level folders found.</p>';
                         }
                     } else {
-                        foldersTableHtml = '<p style="font-size:13px; color:#666; margin: 5px 0;">No top-level folders found.</p>';
+                        foldersTableHtml = '<p style="font-size:13px; color:#595959; margin: 5px 0;">No top-level folders found.</p>';
                     }
                 } catch(e) {
-                    foldersTableHtml = '<p style="font-size:13px; color:red; margin: 5px 0;">Error loading folders: ' + e.message + '</p>';
+                    foldersTableHtml = '<p style="font-size:13px; color:#a80000; margin: 5px 0;">Sitenalyzer could not read the folders. Refresh the page and try again.</p>';
                 }
 
-                var libOpenUrl = list.DefaultViewUrl
-                    ? (window.location.origin + list.DefaultViewUrl)
-                    : (targetUrl.replace(/\/+$/, '') + '/' + list.EntityTypeName.replace(/_x0020_/g, '%20'));
                 var libIdLabel = 'Library ID';
                 var libIdDisplayId = 'sna-id-lib-' + i;
                 var libActionsHtml = '<div class="sna-card-actions hide-on-print">' +
                     '<span id="' + libIdDisplayId + '" class="sna-id-inline" style="display:none;" aria-live="polite"></span>' +
-                    '<button class="sna-action-btn" data-action="copy-show-id" data-id="' + list.Id + '" data-label="' + libIdLabel + '" data-display-id="' + libIdDisplayId + '" aria-label="Copy Library ID to clipboard" title="' + libIdLabel + ': ' + list.Id + '">ID</button>' +
-                    '<button class="sna-action-btn" data-action="open-url" data-url="' + libOpenUrl + '" aria-label="Open library in new window" title="Open Library">Open</button>' +
+                    '<button class="sna-action-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(list.Id) + '" data-label="' + libIdLabel + '" data-display-id="' + libIdDisplayId + '" aria-label="Copy Library ID to clipboard" title="' + libIdLabel + ': ' + snaEscapeHtml(list.Id) + '">ID</button>' +
+                    '<button class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(listUrl) + '" aria-label="Open library in new window" title="Open Library">Open</button>' +
+                    snaPermissionsButtonHtml(list, targetUrl) +
                     '</div>';
                 _snaCardData.push({ cardId: 'sna-card-lib-' + i, title: list.Title, internalName: list.EntityTypeName || '', listId: list.Id || '', isLib: true });
                 libsHtml += '<div class="info-card" id="sna-card-lib-' + i + '">' +
                     '<div class="sna-card-header">' +
-                        '<h3>📄 ' + snaEscapeHtml(list.Title) + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' +
+                        '<h3><span aria-hidden="true">📄 </span>' + snaEscapeHtml(list.Title) + ' <span class="item-count-badge">' + list.ItemCount + '<sup>' + (list.ItemCount === 1 ? 'item' : 'items') + '</sup></span></h3>' +
                         libActionsHtml +
                     '</div>' +
                     listDescHtml +
-                    '<details class="permissions-section"><summary>Top-Level Folders</summary>' + foldersTableHtml + '</details>' + colDefsDetails + listRolesDetails + '</div>';
+                    '<details class="permissions-section"><summary>Top-level folders</summary>' + foldersTableHtml + '</details>' + colDefsDetails + listRolesDetails + '</div>';
             } else {
-                var listOpenUrl = list.DefaultViewUrl
-                    ? (window.location.origin + list.DefaultViewUrl)
-                    : (targetUrl.replace(/\/+$/, '') + '/Lists/' + list.EntityTypeName.replace(/List$/, '').replace(/_x0020_/g, '%20'));
                 var listIdLabel = 'List ID';
                 var listIdDisplayId = 'sna-id-lst-' + i;
                 var listActionsHtml = '<div class="sna-card-actions hide-on-print">' +
                     '<span id="' + listIdDisplayId + '" class="sna-id-inline" style="display:none;" aria-live="polite"></span>' +
-                    '<button class="sna-action-btn" data-action="copy-show-id" data-id="' + list.Id + '" data-label="' + listIdLabel + '" data-display-id="' + listIdDisplayId + '" aria-label="Copy List ID to clipboard" title="' + listIdLabel + ': ' + list.Id + '">ID</button>' +
-                    '<button class="sna-action-btn" data-action="open-url" data-url="' + listOpenUrl + '" aria-label="Open list in new window" title="Open List">Open</button>' +
+                    '<button class="sna-action-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(list.Id) + '" data-label="' + listIdLabel + '" data-display-id="' + listIdDisplayId + '" aria-label="Copy List ID to clipboard" title="' + listIdLabel + ': ' + snaEscapeHtml(list.Id) + '">ID</button>' +
+                    '<button class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(listUrl) + '" aria-label="Open list in new window" title="Open List">Open</button>' +
+                    snaPermissionsButtonHtml(list, targetUrl) +
                     '</div>';
                 _snaCardData.push({ cardId: 'sna-card-lst-' + i, title: list.Title, internalName: list.EntityTypeName || '', listId: list.Id || '', isLib: false });
                 listsHtml += '<div class="info-card" id="sna-card-lst-' + i + '">' +
                     '<div class="sna-card-header">' +
-                        '<h3>📋 ' + snaEscapeHtml(list.Title) + ' <span class="item-count-badge">' + list.ItemCount + '<sup>items</sup></span></h3>' +
+                        '<h3><span aria-hidden="true">📋 </span>' + snaEscapeHtml(list.Title) + ' <span class="item-count-badge">' + list.ItemCount + '<sup>' + (list.ItemCount === 1 ? 'item' : 'items') + '</sup></span></h3>' +
                         listActionsHtml +
                     '</div>' +
                     listDescHtml +
@@ -1334,64 +2329,87 @@ async function gatherSiteInformation() {
             }
         }
 
-        // Wait for the taxonomy fetch that ran concurrently with the lists loop.
+        // Wait for the reads that ran while the lists were read. Group members are read after the lists,
+        // because lists with their own permissions can add more SharePoint groups.
         await taxonomyPromise;
+        await snaExpandGroups(targetUrl);
+        var sitePages = await sitePagesPromise;
+        _snaSharingLinks = await sharingPromise;
+        _snaRoleDefinitions = await roleDefinitionsPromise;
+        _snaSiteAdmins = await siteAdminsPromise;
 
 var siteInfoHtml = '';
 if (siteInfo) {
-    var hasLogo = siteInfo.SiteLogoUrl && siteInfo.SiteLogoUrl.trim().length > 9;
-    var titleIconHtml = hasLogo
-        ? '<img src="' + siteInfo.SiteLogoUrl.trim() + '" alt="Site logo" style="height: 80px; width: auto; object-fit: contain; margin: 2px 0; display: block; flex-shrink: 0;" />'
-        : '<span style="flex-shrink: 0;">🌐</span>';
+    var siteTitle = String(siteInfo.Title || '').trim();
+    // The logo is shown only from an https address on this tenant. SharePoint usually gives an address within the site.
+    var logoUrl = snaSafeTenantUrl(siteInfo.SiteLogoUrl, targetUrl);
+    var titleIconHtml = logoUrl
+        ? '<img src="' + snaEscapeHtml(logoUrl) + '" alt="Site logo" style="height: 80px; width: auto; object-fit: contain; margin: 2px 0; display: block; flex-shrink: 0;" />'
+        : '<span style="flex-shrink: 0;" aria-hidden="true">🌐</span>';
 
-    siteInfoHtml = '<div class="info-card" style="border-top: 4px solid #0078d4;">' +
-        '<div class="section-header" style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">' +
+    siteInfoHtml = '<div class="info-card sna-site-card">' +
+        '<div class="section-header">' +
             '<h2 style="display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; flex: 1; min-width: 0;">' +
                 titleIconHtml +
-                '<span style="white-space: normal; word-break: break-word; line-height: 1.3;">' + siteInfo.Title.trim() + '</span>' +
+                '<span style="white-space: normal; word-break: break-word; line-height: 1.3;">' + snaEscapeHtml(siteTitle) + '</span>' +
             '</h2>' +
-            '<div style="flex-shrink: 0;">' +
-                '<button class="icon-btn hide-on-print" data-action="collapse-all" aria-label="Collapse All" title="Collapse All">&#9650;</button>' +
-                '<button class="icon-btn hide-on-print" data-action="expand-all" aria-label="Expand All" title="Expand All">&#9660;</button>' +
-                '<button class="csv-btn hide-on-print" data-action="export-xlsx" title="Exports a multi-tab Data Dictionary spreadsheet (XLSX)">&#128229; Export Data Dictionary</button>' +
-                '<button class="print-btn" data-action="expand-print" title="Expands all sections and opens Print dialog">&#128424; Print to PDF</button>' +
-            '</div>' +
         '</div>' +
-        
+        '<div class="sna-report-actions hide-on-print">' +
+            '<button class="icon-btn" data-action="collapse-all" aria-label="Collapse all sections" title="Collapse all sections">&#9650;</button>' +
+            '<button class="icon-btn" data-action="expand-all" aria-label="Expand all sections" title="Expand all sections">&#9660;</button>' +
+            '<button class="csv-btn" data-action="export-xlsx" aria-label="Export data dictionary" title="Export data dictionary"><span aria-hidden="true">&#10515; </span>Data dictionary</button>' +
+            '<button class="csv-btn" data-action="export-permissions" aria-label="Export permissions" title="Export permissions"><span aria-hidden="true">&#10515; </span>Permissions</button>' +
+            '<button class="print-btn" data-action="expand-print"><span aria-hidden="true">&#128424; </span>Print to PDF</button>' +
+        '</div>' +
+
         '<div class="grid-container" style="display: flex; gap: 24px; flex-wrap: wrap; margin-top: 10px;">' +
-            '<div style="flex: 1; min-width: 300px; max-width: 100%;">' + 
-                '<div style="margin-bottom: 8px;"><strong>Site Name:</strong> ' + siteInfo.Title + '</div>' +
-                '<div style="margin-bottom: 8px;"><strong>Site ID:</strong> ' + siteInfo.Id + '</div>' +
-                '<div style="word-break: break-word; overflow-wrap: break-word;"><strong>Site URL:</strong> <a href="' + siteInfo.Url + '" target="_blank">' + siteInfo.Url + '</a></div>' +
+            '<div style="flex: 1; min-width: min(300px, 100%); max-width: 100%;">' +
+                '<div style="margin-bottom: 8px;"><strong>Site name:</strong> ' + snaEscapeHtml(siteTitle) + '</div>' +
+                '<div style="margin-bottom: 8px;"><strong>Site ID:</strong> ' + snaEscapeHtml(siteInfo.Id) + '</div>' +
+                '<div style="word-break: break-word; overflow-wrap: break-word;"><strong>Site URL:</strong> ' + snaLinkHtml(siteInfo.Url, siteInfo.Url) + '</div>' +
             '</div>' +
-            '<div style="flex: 1; min-width: 300px;">' + 
+            '<div style="flex: 1; min-width: min(300px, 100%);">' +
                 '<div><strong>Description:</strong> ' + renderAdminDescWrap((siteInfo.Description || '').toString().trim(), 'site') + '</div>' +
             '</div>' +
         '</div>';
 
-    if (siteRoles && siteRoles.value) {
-        var rolesHtml = renderPermissionsHtml(siteRoles.value);
-        siteInfoHtml += '<details class="permissions-section" style="margin-top: 24px;"><summary>View Site Permissions</summary>' + rolesHtml + '</details>';
-    }
+    // Guests, organization-wide groups, and links anyone can use.
+    siteInfoHtml += snaRenderRiskFlags();
 
-    var appPrincipalsInnerHtml = (appPrincipals && appPrincipals.length && appPrincipals.length > 0 ? renderPermissionsHtml(appPrincipals) : '<div class="perm-row"><em>No local app principals found.</em></div>');
-    
-    siteInfoHtml += '<details class="permissions-section" style="margin-top: 10px;"><summary>View App Principals (Apps with explicit site access)</summary>' +
-        '<p style="font-size: 12px; color: #666; margin: 5px 0 10px 0;">Note: Fetching all Entra ID applications globally assigned via Graph API requires Admin \'Application.Read.All\' tokens. This lists local SharePoint App Principals.</p>' +
-        appPrincipalsInnerHtml + '</details></div>';
+    siteInfoHtml += '<details class="permissions-section" style="margin-top: 24px;"><summary>View site permissions</summary>' +
+        (_snaSiteRolesRead
+            ? renderPermissionsHtml(siteRoles.value)
+            : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') +
+        '</details>';
+
+    siteInfoHtml += '<details class="permissions-section"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>';
+    siteInfoHtml += snaRenderUserAccessTool();
+    siteInfoHtml += '<details class="permissions-section"><summary>Lists and libraries with their own permissions (' + _snaUniqueLists.length + ')</summary>' +
+        snaRenderInheritanceReport() + '</details>';
+    siteInfoHtml += '<details class="permissions-section"><summary>Sharing links (' +
+        (_snaSharingLinks.failed ? 'could not read' : _snaSharingLinks.links.length) + ')</summary>' + snaRenderSharingLinks(_snaSharingLinks) + '</details>';
+    siteInfoHtml += '<details class="permissions-section"><summary>Lists and libraries to review for cleanup</summary>' + snaRenderCleanupSignals() + '</details>';
+
+    var appsInnerHtml = appAssignments.length > 0
+        ? renderPermissionsHtml(appAssignments)
+        : '<div class="perm-row">' + (_snaSiteRolesRead ? 'No apps have their own permissions on this site.' : 'Sitenalyzer could not read the site\'s permissions.') + '</div>';
+    siteInfoHtml += '<details class="permissions-section"><summary>Apps with access to this site</summary>' +
+        '<p class="sna-note">Apps given access in Microsoft Entra ID, such as through Sites.Selected, don\'t appear here. Ask your Microsoft 365 admin for that list.</p>' +
+        appsInnerHtml + '</details></div>';
 } else {
     console.warn('Unable to retrieve site info.');
 }
 
-        var libsSection = '<div class="main-section-header"><h2>📁 Document Libraries</h2></div>' + (libsHtml ? libsHtml : '<p style="padding-left: 10px;">No document libraries found.</p>');
-        var listsSection = '<div class="main-section-header"><h2>📑 Lists</h2></div>' + (listsHtml ? listsHtml : '<p style="padding-left: 10px;">No lists found.</p>');
+        var libsSection = '<div class="main-section-header"><h2><span aria-hidden="true">📁 </span>Document libraries</h2></div>' + (libsHtml ? libsHtml : '<p style="padding-left: 10px;">No document libraries found.</p>');
+        var listsSection = '<div class="main-section-header"><h2><span aria-hidden="true">📑 </span>Lists</h2></div>' + (listsHtml ? listsHtml : '<p style="padding-left: 10px;">No lists found.</p>');
 
         var taxonomySection = '<div class="print-section" id="sna-taxonomy-section">' + renderTaxonomySection() + '</div>';
         var finalHtml = '<div class="print-section">' + siteInfoHtml + '</div>' +
                         '<div class="print-section">' + libsSection + '</div>' +
                         '<div class="print-section">' + listsSection + '</div>' +
+                        '<div class="print-section" id="sna-site-pages-section">' + snaRenderSitePagesSection(sitePages) + '</div>' +
                         taxonomySection +
-                        '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button data-action="scroll-top">&#11014; Back to Top</button></div>';
+                        '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button data-action="scroll-top"><span aria-hidden="true">&#11014; </span>Back to top</button></div>';
 
         resultsDiv.innerHTML = finalHtml;
 
@@ -1400,7 +2418,7 @@ if (siteInfo) {
         // Build global search index after the browser paints results.
         setTimeout(buildSearchIndex, 0);
 
-        // Collapse URL input section and reveal Start Over button.
+        // Collapse URL input section and reveal the Start over button.
         var urlSection = document.getElementById('sna-url-section');
         if (urlSection) { urlSection.classList.add('collapsed'); }
         var startOverBtn = document.getElementById('sna-start-over-btn');
@@ -1409,7 +2427,8 @@ if (siteInfo) {
     } catch (error) {
         var errorMsg = error.message ? error.message : 'Unknown error occurred';
         console.warn('Error fetching data:', errorMsg);
-        resultsDiv.innerHTML = '<div style="color: red; padding: 15px; border: 1px solid red; border-radius: 4px;"><strong>Error fetching site information. You may not have admin rights for this site.</strong><br></div>';
+        resultsDiv.innerHTML = '<div style="color: #a80000; padding: 15px; border: 1px solid #a80000; border-radius: 4px;" role="alert"><strong>Sitenalyzer could not read this site.</strong> ' +
+            'Check the site URL and make sure you can open the site. To see all of its information, you need to be a site owner.</div>';
     } finally {
         btn.disabled = false;
         loader.style.display = 'none';
@@ -1429,7 +2448,7 @@ function buildSearchIndex() {
     _snaCardData.forEach(function(card) {
         var icon      = card.isLib ? '📁' : '📋';
         var typeLabel = card.isLib ? 'Library' : 'List';
-        var section   = card.isLib ? 'Document Libraries' : 'Lists';
+        var section   = card.isLib ? 'Document libraries' : 'Lists';
         _snaSearchIndex.push({
             icon:       icon,
             type:       typeLabel,
@@ -1674,14 +2693,11 @@ function snaRenderSearchResults(result, input, resultsList) {
     restShow.forEach(function(item) { resultsList.appendChild(makeResultLi(item)); });
 }
 
-// Checks if the current user has ManageWeb permission on the target site.
+// Checks if the current user has ManageWeb permission on the target site. Only then are the edit buttons shown.
 async function checkAdminPermissions(targetUrl) {
     try {
         var perms = await spFetch(targetUrl + '/_api/web/effectivebasePermissions');
-        // ManageWeb = bit 31 (1-indexed) in the 64-bit permission mask; bit 31 is the MSB of Low.
-        // Use unsigned right-shift to avoid JS signed-int sign extension on bit 31.
-        var lowUnsigned = (parseInt(perms.Low, 10) || 0) >>> 0;
-        return (lowUnsigned & 0x80000000) !== 0;
+        return snaHasPermission(perms, SNA_PERMISSION_KIND.ManageWeb);
     } catch(e) {
         return false;
     }
@@ -1765,14 +2781,98 @@ async function fetchTaxonomy(targetUrl) {
     }
 }
 
+// Reads the pages in the site's Site Pages library (template 119), whatever the library is called.
+// Items are read in batches by following SharePoint's next-batch link, which is used only when it points
+// to this site's REST API. Folders and files that are not .aspx pages are skipped.
+// Returns { pages, truncated, failed, stoppedAtOtherSite }, with pages sorted by name.
+async function snaFetchSitePages(targetUrl) {
+    var result = { pages: [], truncated: false, failed: false, stoppedAtOtherSite: false };
+    var libraries;
+    try {
+        var libsResp = await spFetch(targetUrl + '/_api/web/lists?$select=Id,Title,BaseTemplate&$filter=BaseTemplate eq 119');
+        libraries = (libsResp && libsResp.value) ? libsResp.value : [];
+    } catch(e) {
+        result.failed = true;
+        return result;
+    }
+
+    var origin = snaOrigin(targetUrl);
+    for (var i = 0; i < libraries.length; i++) {
+        var itemsRead = 0;
+        var nextUrl = targetUrl + "/_api/web/lists(guid'" + libraries[i].Id + "')/items" +
+            '?$select=Id,Title,FileLeafRef,FileRef,FSObjType,Modified&$top=' + SNA_SITE_PAGES_BATCH_SIZE;
+        try {
+            while (nextUrl) {
+                var json = await spFetch(nextUrl);
+                var items = (json && json.value) ? json.value : [];
+                itemsRead += items.length;
+                items.forEach(function(item) {
+                    var fileRef = String(item.FileRef || '');
+                    var fileName = String(item.FileLeafRef || fileRef.split('/').pop() || '');
+                    var isFolder = item.FSObjType === 1 || item.FSObjType === '1';
+                    if (isFolder || !fileRef || !/\.aspx$/i.test(fileName)) { return; }
+                    var pageUrl = origin + encodeURI(fileRef);
+                    result.pages.push({
+                        name:     (item.Title && String(item.Title).trim()) ? String(item.Title).trim() : fileName,
+                        fileName: fileName,
+                        url:      snaIsSameSiteUrl(pageUrl, targetUrl) ? pageUrl : '',
+                        modified: item.Modified ? String(item.Modified).substring(0, 10) : ''
+                    });
+                });
+
+                var nextLink = json ? (json['odata.nextLink'] || json['@odata.nextLink'] || '') : '';
+                nextUrl = '';
+                if (!nextLink) { break; }
+                if (itemsRead >= SNA_SITE_PAGES_MAX) { result.truncated = true; break; }
+                if (!snaIsSameSiteApiUrl(nextLink, targetUrl)) {
+                    console.warn('Sitenalyzer: stopped reading Site Pages because the next-batch link points to another site.');
+                    result.stoppedAtOtherSite = true;
+                    break;
+                }
+                nextUrl = new URL(nextLink, xlsxStripSlash(targetUrl) + '/').href;
+            }
+        } catch(e) {
+            result.failed = true;
+        }
+    }
+
+    result.pages.sort(snaByTitle);
+    return result;
+}
+
+// Renders the Site Pages section from the result of snaFetchSitePages.
+function snaRenderSitePagesSection(sitePages) {
+    var pages = sitePages.pages;
+    var html = '<div class="main-section-header"><h2><span aria-hidden="true">📄 </span>Site pages' +
+        (pages.length ? ' <span class="item-count-badge">' + pages.length + '<sup>' + (pages.length === 1 ? 'page' : 'pages') + '</sup></span>' : '') +
+        '</h2></div><div class="info-card">';
+    if (sitePages.failed) {
+        html += '<p class="sna-note">Sitenalyzer could not read all of the Site Pages library. The pages below may be incomplete.</p>';
+    }
+    if (sitePages.truncated) {
+        html += '<p class="sna-note">Site Pages has more than ' + SNA_SITE_PAGES_MAX.toLocaleString('en-US') + ' items. ' +
+            'Sitenalyzer shows pages from the first ' + SNA_SITE_PAGES_MAX.toLocaleString('en-US') + ' only.</p>';
+    }
+    if (sitePages.stoppedAtOtherSite) {
+        html += '<p class="sna-note">Sitenalyzer stopped reading Site Pages because SharePoint sent a link to a different site. The pages below may be incomplete.</p>';
+    }
+    if (pages.length > 0) {
+        _snaTablesQueue.push({ id: 'sna-tbl-pages', type: 'pages', searchLabel: 'pages', data: pages });
+        html += '<div id="sna-tbl-pages"></div>';
+    } else {
+        html += '<p>No site pages found.</p>';
+    }
+    return html + '</div>';
+}
+
 // Returns HTML wrapping a description string in an inline-editable span with a pencil button for admin users.
 function renderAdminDescWrap(text, editKey) {
-    var safeText  = (text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    if (!_snaIsAdmin) { return safeText || '<em style="color:#999;">No description.</em>'; }
+    var safeText  = snaEscapeHtml(text || '');
+    if (!_snaIsAdmin) { return safeText || '<em class="sna-muted">No description.</em>'; }
     var isEmpty    = !safeText;
     var emptyClass = isEmpty ? ' sna-editable-wrap--empty' : '';
-    var displayed  = isEmpty ? '<em style="color:#bbb;" title="No description. Click the pencil icon to add one.">⠀</em>' : safeText;
-    return '<span class="sna-editable-wrap' + emptyClass + '" data-edit-key="' + editKey + '">' +
+    var displayed  = isEmpty ? '<em class="sna-muted" title="No description. Select the pencil button to add one.">⠀</em>' : safeText;
+    return '<span class="sna-editable-wrap' + emptyClass + '" data-edit-key="' + snaEscapeHtml(editKey) + '">' +
            '<span class="sna-editable-text" data-sna-orig="' + safeText + '">' + displayed + '</span>' +
            '<button class="sna-pencil-btn" title="Edit description" aria-label="Edit description" data-action="start-edit">&#9998;</button>' +
            '</span>';
@@ -1780,18 +2880,18 @@ function renderAdminDescWrap(text, editKey) {
 
 // Renders the Taxonomy / Term Store section HTML from the fetched taxonomy data.
 function renderTaxonomySection() {
-    var header = '<div class="main-section-header"><h2>&#127991; Taxonomy / Term Store</h2></div>';
+    var header = '<div class="main-section-header"><h2><span aria-hidden="true">&#127991; </span>Taxonomy and term store</h2></div>';
     if (!_snaTaxonomyData || _snaTaxonomyData.length === 0) {
-        return header + '<p style="padding-left:10px;color:#666;">No site-collection-scoped taxonomy groups found.</p>';
+        return header + '<p style="padding-left:10px;color:#595959;">No term groups found for this site collection.</p>';
     }
 
     var html = header;
     _snaTaxonomyData.forEach(function(group) {
         var groupDescHtml = renderAdminDescWrap(group.groupDescription, 'termgroup:' + group.groupId);
         html += '<details class="sna-taxonomy-group">';
-        html += '<summary>&#128193; ' + group.groupName +
-                ' <span class="list-id-text" style="font-size:0.72rem;color:#595959;margin-left:6px;">' +
-                group.groupId + '</span></summary>';
+        html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(group.groupName) +
+                ' <span class="list-id-text" style="font-size:0.72rem;margin-left:6px;">' +
+                snaEscapeHtml(group.groupId) + '</span></summary>';
         if (group.groupDescription || _snaIsAdmin) {
             html += '<p style="font-size:13px;color:#555;margin:8px 0 6px 0;">' + groupDescHtml + '</p>';
         }
@@ -1800,19 +2900,19 @@ function renderTaxonomySection() {
             var setDescHtml  = renderAdminDescWrap(set.setDescription, 'termset:' + set.setId);
             var termCount    = set.terms ? set.terms.length : 0;
             html += '<details class="sna-taxonomy-set">';
-            html += '<summary>&#128193; ' + set.setName +
-                    ' <span class="item-count-badge">' + termCount + '<sup>terms</sup></span>' +
-                    ' <span class="list-id-text" style="font-size:0.72rem;color:#595959;margin-left:6px;">' +
-                    set.setId + '</span></summary>';
+            html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(set.setName) +
+                    ' <span class="item-count-badge">' + termCount + '<sup>' + (termCount === 1 ? 'term' : 'terms') + '</sup></span>' +
+                    ' <span class="list-id-text" style="font-size:0.72rem;margin-left:6px;">' +
+                    snaEscapeHtml(set.setId) + '</span></summary>';
             if (set.setDescription || _snaIsAdmin) {
                 html += '<p style="font-size:13px;color:#555;margin:8px 0 6px 0;">' + setDescHtml + '</p>';
             }
             if (termCount > 0) {
-                var tblId = 'sna-terms-' + set.setId.replace(/-/g, '');
+                var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
                 html += '<div id="' + tblId + '"></div>';
                 _snaTablesQueue.push({ id: tblId, type: 'terms', data: set.terms, searchLabel: set.setName + ' terms', setId: set.setId });
             } else {
-                html += '<p style="font-size:13px;color:#999;font-style:italic;margin:6px 0;">No terms found.</p>';
+                html += '<p class="sna-muted" style="font-size:13px;font-style:italic;margin:6px 0;">No terms found.</p>';
             }
             html += '</details>';
         });
@@ -2097,7 +3197,7 @@ function snaSaveEditFromEl(wrapEl) {
             wrapEl.classList.remove('sna-editable-wrap--empty');
         } else {
             wrapEl.classList.add('sna-editable-wrap--empty');
-            if (textEl) { textEl.innerHTML = '<em style="color:#bbb;">Click ✎ to add a description</em>'; }
+            if (textEl) { textEl.innerHTML = '<em class="sna-muted">Select ✎ to add a description</em>'; }
         }
         snaCancelEdit(wrapEl);
         snaShowToast('Description saved.');
@@ -2254,7 +3354,16 @@ function startApplication() {
     var startOverBtn = document.querySelector('#sna-start-over-btn button');
     if (startOverBtn) { startOverBtn.addEventListener('click', startOver); }
     var resultsDiv = document.getElementById('sp-results');
-    if (resultsDiv) { resultsDiv.addEventListener('click', snaHandleResultsClick); }
+    if (resultsDiv) {
+        resultsDiv.addEventListener('click', snaHandleResultsClick);
+        // Enter in the person check box runs the check, the same as the Check access button.
+        resultsDiv.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && e.target && e.target.id === 'sna-user-access-input') {
+                e.preventDefault();
+                snaCheckUserAccess();
+            }
+        });
+    }
 
     if (siteUrlInput) {
         siteUrlInput.value = currentBaseUrl;
@@ -2529,33 +3638,103 @@ function snaLoadStyle(fileName, folderUrl) {
     });
 }
 
-// Loads one library with a <script src> element unless its global already exists.
-// Resolves when the library has created its global; rejects otherwise.
+// Hides the page's module loaders while a library loads, and returns a function that puts them back.
+// UMD libraries such as SheetJS and Tabulator fill in window.exports or window.module.exports when the page
+// has them, or register with an AMD loader when window.define.amd is set. In both cases they never fill in their
+// own global; SheetJS leaves window.XLSX as an empty object. Other scripts on a SharePoint page can create these
+// names. The Modern Script Editor hides define.amd while it loads scripts for the same reason.
+function snaHideModuleLoaders() {
+    var saved = [];
+    function hide(owner, name) {
+        if (!owner || owner[name] === undefined || owner[name] === null) { return; }
+        try {
+            saved.push({ owner: owner, name: name, value: owner[name] });
+            owner[name] = undefined;
+        } catch(e) { /* A read-only name can't be hidden; snaFindLoadedLibrary then finds the library where it loaded. */ }
+    }
+    var restoreAmd = snaHideAmdLoader();
+    hide(window, 'exports');
+    hide(window, 'module');
+    return function restoreModuleLoaders() {
+        restoreAmd();
+        saved.forEach(function(item) {
+            try { item.owner[item.name] = item.value; } catch(e) { /* Nothing more can be done. */ }
+        });
+    };
+}
+
+// Keeps define.amd hidden until the returned function is called, and returns that function.
+// The Modern Script Editor runs sitenalyzer.js with define.amd already hidden, then puts define.amd back as soon as
+// sitenalyzer.js has run, which is before the libraries arrive. Setting define.amd to undefined once would be undone,
+// so define.amd is replaced with a getter that returns undefined. Any value assigned in the meantime is saved, and
+// the most recent one is put back afterward.
+function snaHideAmdLoader() {
+    var loader = window.define;
+    if (typeof loader !== 'function') { return function() {}; }
+    var hadOwnAmd = Object.prototype.hasOwnProperty.call(loader, 'amd');
+    var latestAmd = loader.amd;
+    try {
+        Object.defineProperty(loader, 'amd', {
+            configurable: true,
+            enumerable: true,
+            get: function() { return undefined; },
+            set: function(value) { latestAmd = value; }
+        });
+    } catch(e) {
+        // define.amd can't be replaced, so hide it the simple way and hope nothing puts it back too soon.
+        try { loader.amd = undefined; } catch(e2) { /* snaFindLoadedLibrary reports the problem. */ }
+        return function() { try { loader.amd = latestAmd; } catch(e3) { /* Nothing more can be done. */ } };
+    }
+    return function restoreAmd() {
+        delete loader.amd;
+        if (hadOwnAmd || latestAmd !== undefined) { loader.amd = latestAmd; }
+    };
+}
+
+// Returns the working copy of a library that just loaded, or null. It is usually the library's own global, but when
+// the page's exports or module.exports can't be hidden (such as a read-only window.exports), the library loads there.
+function snaFindLoadedLibrary(library) {
+    var candidates = [window[library.globalName]];
+    [window.exports, window.module && window.module.exports].forEach(function(target) {
+        if (target) { candidates.push(target[library.globalName], target); }
+    });
+    // Also checks names that scripts declared with let or const, which are not properties of window.
+    if (typeof exports !== 'undefined' && exports) { candidates.push(exports[library.globalName], exports); }
+    if (typeof module !== 'undefined' && module && module.exports) { candidates.push(module.exports[library.globalName], module.exports); }
+    for (var i = 0; i < candidates.length; i++) {
+        if (library.isUsable(candidates[i])) { return candidates[i]; }
+    }
+    return null;
+}
+
+// Loads one library with a <script src> element unless a usable copy is already on the page,
+// and stores it with library.use. Resolves when the library works; rejects otherwise.
 function snaLoadLibrary(library, folderUrl) {
-    if (window[library.globalName]) { return Promise.resolve(); }
+    if (library.isUsable(window[library.globalName])) {
+        library.use(window[library.globalName]);
+        return Promise.resolve();
+    }
     var url = new URL(library.file, folderUrl).href;
     return new Promise(function(resolve, reject) {
-        // UMD libraries register as AMD modules instead of creating globals when window.define.amd is set.
-        // The Modern Script Editor hides define.amd while it loads scripts for the same reason.
-        var savedAmd = (window.define && window.define.amd) ? window.define.amd : null;
-        if (savedAmd) { window.define.amd = null; }
-        function restoreAmd() {
-            if (savedAmd) { window.define.amd = savedAmd; }
-        }
+        var restoreModuleLoaders = snaHideModuleLoaders();
 
         var script = document.createElement('script');
         script.src = url;
         script.onload = function() {
-            restoreAmd();
-            if (window[library.globalName]) {
+            restoreModuleLoaders();
+            var loaded = snaFindLoadedLibrary(library);
+            if (loaded) {
+                library.use(loaded);
                 resolve();
             } else {
-                reject(snaStartupError(url + ' loaded but did not create window.' + library.globalName,
-                    snaMissingFileMessage(library.file, 'scripts')));
+                reject(snaStartupError(url + ' loaded but window.' + library.globalName + ' is missing or incomplete',
+                    'Sitenalyzer loaded ' + library.file + ', but another script on this page kept it from starting. ' +
+                    'Remove any other code from this page\'s web parts, then refresh the page. If this message appears again, ' +
+                    'ask your site administrator for help and mention the errors in the browser console.'));
             }
         };
         script.onerror = function() {
-            restoreAmd();
+            restoreModuleLoaders();
             reject(snaStartupError('Could not load ' + url, snaMissingFileMessage(library.file, 'scripts')));
         };
         document.head.appendChild(script);
@@ -2581,14 +3760,25 @@ function snaShowStartupError(mount, message) {
     mount.appendChild(alertBox);
 }
 
-// Entry point: loads the styles and libraries from Site Assets, shows the app markup, and starts the app.
+// Entry point: waits up to SNA_MOUNT_WAIT_MS milliseconds for the app <div>, then starts the app in it.
 function snaStart() {
-    var mount = document.getElementById(SNA_MOUNT_ID);
-    if (!mount) {
-        console.error('Sitenalyzer could not find <div id="' + SNA_MOUNT_ID + '"></div> on this page. ' +
-            'Paste the full contents of sitenalyzer.html.txt into the Modern Script Editor web part.');
-        return;
+    var deadline = Date.now() + SNA_MOUNT_WAIT_MS;
+    function checkForMount() {
+        var mount = document.getElementById(SNA_MOUNT_ID);
+        if (mount) {
+            snaStartInMount(mount);
+        } else if (Date.now() >= deadline) {
+            console.error('Sitenalyzer could not find <div id="' + SNA_MOUNT_ID + '"></div> on this page. ' +
+                'Paste the full contents of sitenalyzer.html.txt into the Modern Script Editor web part.');
+        } else {
+            setTimeout(checkForMount, SNA_MOUNT_CHECK_INTERVAL_MS);
+        }
     }
+    checkForMount();
+}
+
+// Loads the styles and libraries from Site Assets, shows the app markup in mount, and starts the app.
+function snaStartInMount(mount) {
     // The Modern Script Editor can run this file again for the same <div>; start the app only once.
     if (mount.getAttribute('data-sna-started') === 'true') { return; }
     mount.setAttribute('data-sna-started', 'true');
@@ -2622,3 +3812,5 @@ if (document.readyState === 'loading') {
 } else {
     snaStart();
 }
+
+})();

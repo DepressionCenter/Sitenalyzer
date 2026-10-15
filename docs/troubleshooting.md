@@ -57,6 +57,34 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 **Fix:** Replace the web part code with the current `dist/SitePages/sitenalyzer.html.txt`, and upload the current files from `dist/SiteAssets`. Remove any other code from the web part.
 
+### The console says Sitenalyzer could not find the app box
+
+**What you see:** The page is blank, and the browser console says "Sitenalyzer could not find `<div id="sitenalyzer-app"></div>` on this page."
+
+**Cause:** Sitenalyzer waited 5 seconds for the web part's `<div>` and didn't find it. The web part code is missing the `<div>` line, or the `id` was changed.
+
+**Fix:** Replace the web part code with the full contents of `dist/SitePages/sitenalyzer.html.txt`, then refresh the page.
+
+### Permission sections say "could not read"
+
+**What you see:** Messages such as "Sitenalyzer could not read this group's members" or **Sharing links (could not read)**.
+
+**Cause:** SharePoint refused the request because your account can't see that information. Site members and visitors can open a site but can't see its groups, sharing links, or permissions. Sitenalyzer says "could not read" instead of "none found" so you don't mistake missing information for an empty list.
+
+**Fix:** Ask a site owner or site collection administrator to run Sitenalyzer on the site, or to make you a site owner.
+
+### Check one person's access says "Could not check" or "No access" everywhere
+
+**Cause:** "Could not check" means SharePoint refused the request; you need to be a site owner. "No access" everywhere usually means the email address isn't one of the site's users. Sitenalyzer then checks the usual sign-in name, such as `i:0#.f|membership|user@med.umich.edu`, which may not match the person's account.
+
+**Fix:** Check the spelling of the email address. If the person signs in with a different name, type their full sign-in name, which contains a `|` character.
+
+### Site pages says it shows pages from the first 10,000 only
+
+**Cause:** The Site Pages library has more than 10,000 items. Sitenalyzer stops there so the page stays quick.
+
+**Fix:** Nothing is broken. To see every page, open the Site Pages library in SharePoint. A developer can change the limit with `SNA_SITE_PAGES_MAX` at the top of `src/sitenalyzer.js`.
+
 ### An old version still shows after an update
 
 **Cause:** The browser kept a saved copy of the old files.

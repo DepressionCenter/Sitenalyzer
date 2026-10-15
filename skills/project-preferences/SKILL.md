@@ -131,6 +131,20 @@ messages, help, and documentation. For example, "participant", not "subject" or
   Sitenalyzer on a page.
 - **Data dictionary:** the spreadsheet Sitenalyzer creates that describes a site's
   lists, libraries, and columns.
+- **Permissions workbook:** the spreadsheet Sitenalyzer creates that lists every
+  permission on a site and its lists, with group members and permission levels.
+- **Permission level:** a named set of permissions, such as Read or Contribute. Not
+  "role" or "role definition".
+- **Person or group:** anyone or anything that can hold a permission. Not "principal".
+- **Own permissions:** a list or library "has its own permissions" or "uses the site's
+  permissions". Not "unique permissions" or "inheritance".
+- **Limited Access:** the permission level SharePoint adds by itself when someone
+  shares a single item. Always explain that it gives access only to what was shared.
+- **Sharing link:** a link made with SharePoint's Share button. Name its kinds the way
+  SharePoint does: "Anyone with the link", "People in your organization", and
+  "Specific people".
+- **Sign-in name:** the account name SharePoint uses, such as
+  `i:0#.f|membership|user@med.umich.edu`. Not "login" or "claims".
 
 ### Project skills
 

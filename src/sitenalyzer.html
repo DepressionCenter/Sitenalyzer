@@ -28,11 +28,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 	<div id="sp-info-app">
 		<div style="margin-bottom: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
 		<h1 style="margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1;">
-			<span style="background: linear-gradient(135deg, #0078d4 0%, #003f7a 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Sitenalyzer</span>
+			<span style="background: linear-gradient(135deg, #00274c 0%, #174992 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Sitenalyzer</span>
 			
 			<span style="font-size: 0.5em; font-weight: 700; color: #ffffff; background-color: #107c41; padding: 2px 8px; border-radius: 10px; letter-spacing: 1px; position: relative; top: -0.6em; margin-left: 2px;">SP</span>
 		</h1>
-		<p style="margin: 0; font-size: 0.95em; color: #555; font-style: italic;">Data dictionary and security information extraction for SharePoint sites.</p>
+		<p style="margin: 0; font-size: 0.95em; color: #595959; font-style: italic;">Data dictionary and security information extraction for SharePoint sites.</p>
 	</div>
 	
     <div id="sna-url-section">
@@ -45,25 +45,25 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
             <ul id="site-suggestions"></ul>
             <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
         </div>
-        <button id="sp-btn-gather">Extract Site Information</button>
+        <button id="sp-btn-gather">Extract site information</button>
     </div>
     <div id="sna-start-over-btn">
-        <button aria-label="Start Over: clear results and enter a new site URL">&#8635; Start Over</button>
+        <button aria-label="Start over: clear results and enter a new site URL"><span aria-hidden="true">&#8635; </span>Start over</button>
     </div>
     <div id="sp-loader">Fetching data from SharePoint... this may take a moment.</div>
     <div id="sp-results"></div>
     <div class="app-footer">
+    <div class="copyright-info">
+        <strong>Sitenalyzer</strong> &copy; 2026 The Regents of the University of Michigan &nbsp;|&nbsp; 
+        <a href="https://depressioncenter.org" target="_blank" rel="noopener noreferrer">Eisenberg Family Depression Center</a>
+    </div>
     <div class="github-promo">
-        <a href="https://github.com/DepressionCenter/Sitenalyzer" target="_blank" class="github-btn">
+        <a href="https://github.com/DepressionCenter/Sitenalyzer" target="_blank" rel="noopener noreferrer" class="github-btn" aria-label="Code: Sitenalyzer source code on GitHub" title="Sitenalyzer source code on GitHub">
             <svg height="18" width="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                 <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
             </svg>
-            View <strong>Sitenalyzer</strong> source code on GitHub
+            Code
         </a>
-    </div>
-    <div class="copyright-info">
-        <strong>Sitenalyzer</strong> &copy; 2026 The Regents of the University of Michigan &nbsp;|&nbsp; 
-        <a href="https://depressioncenter.org" target="_blank">Eisenberg Family Depression Center</a>
     </div>
 </div>
 </div>
