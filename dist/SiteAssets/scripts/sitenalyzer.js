@@ -3672,13 +3672,42 @@ function snaHideModuleLoaders() {
             owner[name] = undefined;
         } catch(e) { /* A read-only name can't be hidden; snaFindLoadedLibrary then finds the library where it loaded. */ }
     }
-    hide(window.define, 'amd');
+    var restoreAmd = snaHideAmdLoader();
     hide(window, 'exports');
     hide(window, 'module');
     return function restoreModuleLoaders() {
+        restoreAmd();
         saved.forEach(function(item) {
             try { item.owner[item.name] = item.value; } catch(e) { /* Nothing more can be done. */ }
         });
+    };
+}
+
+// Keeps define.amd hidden until the returned function is called, and returns that function.
+// The Modern Script Editor runs sitenalyzer.js with define.amd already hidden, then puts define.amd back as soon as
+// sitenalyzer.js has run, which is before the libraries arrive. Setting define.amd to undefined once would be undone,
+// so define.amd is replaced with a getter that returns undefined. Any value assigned in the meantime is saved, and
+// the most recent one is put back afterward.
+function snaHideAmdLoader() {
+    var loader = window.define;
+    if (typeof loader !== 'function') { return function() {}; }
+    var hadOwnAmd = Object.prototype.hasOwnProperty.call(loader, 'amd');
+    var latestAmd = loader.amd;
+    try {
+        Object.defineProperty(loader, 'amd', {
+            configurable: true,
+            enumerable: true,
+            get: function() { return undefined; },
+            set: function(value) { latestAmd = value; }
+        });
+    } catch(e) {
+        // define.amd can't be replaced, so hide it the simple way and hope nothing puts it back too soon.
+        try { loader.amd = undefined; } catch(e2) { /* snaFindLoadedLibrary reports the problem. */ }
+        return function() { try { loader.amd = latestAmd; } catch(e3) { /* Nothing more can be done. */ } };
+    }
+    return function restoreAmd() {
+        delete loader.amd;
+        if (hadOwnAmd || latestAmd !== undefined) { loader.amd = latestAmd; }
     };
 }
 

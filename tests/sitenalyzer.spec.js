@@ -229,6 +229,38 @@ test('exports the data dictionary as an Excel file', async function({ page }, te
     });
 });
 
+test('loads working libraries when the Modern Script Editor puts back its AMD loader during loading', async function({ page }, testInfo) {
+    // The Modern Script Editor runs sitenalyzer.js with define.amd hidden, then puts define.amd back right after,
+    // while SheetJS is still downloading. Without care, SheetJS then registers with the AMD loader instead of
+    // filling in XLSX.
+    await page.addInitScript(function() {
+        var pageAmd = { fromPage: true };
+        window.__defineCalls = [];
+        window.define = function(name) { window.__defineCalls.push(typeof name === 'string' ? name : '(anonymous)'); };
+        window.define.amd = null;
+        new MutationObserver(function(changes) {
+            changes.forEach(function(change) {
+                change.addedNodes.forEach(function(node) {
+                    if (node.tagName === 'SCRIPT' && /xlsx\.full\.min\.js/.test(node.src)) {
+                        setTimeout(function() { window.define.amd = pageAmd; }, 0);
+                    }
+                });
+            });
+        }).observe(document, { childList: true, subtree: true });
+    });
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+
+    await expect(page.locator('#sna-tbl-pages .tabulator-row').first()).toBeVisible();
+    const { workbook } = await downloadWorkbook(page, testInfo, /Export permissions/i);
+    expect(workbook.SheetNames).toContain('Permissions');
+    const loader = await page.evaluate(function() {
+        return { defineCalls: window.__defineCalls, amdPutBack: !!(window.define.amd && window.define.amd.fromPage) };
+    });
+    expect(loader).toEqual({ defineCalls: [], amdPutBack: true });
+    expect(record.consoleErrors).toEqual([]);
+});
+
 test('lists who has access by person or group', async function({ page }) {
     const record = await openPretendSite(page);
     await extractSiteInformation(page);
