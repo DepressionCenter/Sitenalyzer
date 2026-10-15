@@ -185,35 +185,46 @@ test('exports the data dictionary as an Excel file', async function({ page }, te
     widths.forEach(function(width) { expect(width).toBeGreaterThanOrEqual(12); expect(width).toBeLessThanOrEqual(61); });
 });
 
-// Other SharePoint scripts can leave module loader globals behind. SheetJS then fills in window.exports instead of
-// window.XLSX, and an empty window.XLSX must not be mistaken for the library.
+// Other scripts on a SharePoint page, such as the loader the Modern Script Editor uses, can leave module loader globals
+// behind. SheetJS and Tabulator then load into exports or module.exports instead of window.XLSX and window.Tabulator.
+// Writable globals are hidden while the libraries load; read-only ones can't be, so Sitenalyzer finds the library where
+// it loaded. An empty window.XLSX must not be mistaken for the library either.
 [
-    { name: 'a global exports object', setup: function() { window.exports = { fromPage: true }; } },
-    { name: 'exports, module, an AMD loader, and an empty XLSX', setup: function() {
-        window.exports = { fromPage: true };
-        window.module = { exports: { fromPage: true } };
-        window.define = function() {};
-        window.define.amd = { fromPage: true };
-        window.XLSX = {};
-    } }
+    { name: 'a global exports object', hideable: true, script: 'window.exports = { fromPage: true };' },
+    { name: 'exports, module, an AMD loader, and an empty XLSX', hideable: true, script:
+        'window.exports = { fromPage: true }; window.module = { exports: { fromPage: true } };' +
+        'window.define = function() {}; window.define.amd = { fromPage: true }; window.XLSX = {};' },
+    { name: 'a read-only exports object', hideable: false, script:
+        'Object.defineProperty(window, "exports", { value: { fromPage: true }, writable: false, configurable: false });' },
+    { name: 'an exports object with only a getter', hideable: false, script:
+        'var pageExports = { fromPage: true };' +
+        'Object.defineProperty(window, "exports", { get: function() { return pageExports; }, configurable: false });' },
+    { name: 'read-only exports and module objects', hideable: false, script:
+        'Object.defineProperty(window, "exports", { value: { fromPage: true }, writable: false, configurable: false });' +
+        'Object.defineProperty(window, "module", { value: { exports: { fromPage: true } }, writable: false, configurable: false });',
+      // Tabulator replaces module.exports when module can't be hidden.
+      moduleReplaced: true }
 ].forEach(function(scenario) {
     test('loads working libraries when the page has ' + scenario.name, async function({ page }, testInfo) {
-        await page.addInitScript(scenario.setup);
+        await page.addInitScript({ content: scenario.script });
         const record = await openPretendSite(page);
         await extractSiteInformation(page);
 
+        // Tabulator draws the Site Pages table, and SheetJS saves the workbook.
+        await expect(page.locator('#sna-tbl-pages .tabulator-row').first()).toBeVisible();
         const { workbook } = await downloadWorkbook(page, testInfo, /Export permissions/i);
         expect(workbook.SheetNames).toContain('Permissions');
-        // The page's own globals are put back after the libraries load.
+
+        // The page's own objects are still in place afterward.
         const pageGlobals = await page.evaluate(function() {
             return {
-                exports: window.exports.fromPage === true && !('utils' in window.exports),
+                exports: window.exports.fromPage === true,
+                exportsUntouched: !('utils' in window.exports),
                 module: !window.module || window.module.exports.fromPage === true,
-                amd: !window.define || window.define.amd.fromPage === true,
-                tabulator: typeof window.Tabulator
+                amd: !window.define || window.define.amd.fromPage === true
             };
         });
-        expect(pageGlobals).toEqual({ exports: true, module: true, amd: true, tabulator: 'function' });
+        expect(pageGlobals).toEqual({ exports: true, exportsUntouched: scenario.hideable, module: !scenario.moduleReplaced, amd: true });
         expect(record.consoleErrors).toEqual([]);
     });
 });

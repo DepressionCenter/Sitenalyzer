@@ -46,12 +46,20 @@ var SNA_STYLE_FILES = ['tabulator_simple.min.css', 'sitenalyzer.css'];
 
 // Libraries loaded one at a time from the scripts folder in Site Assets, with the global each one creates.
 // isUsable checks that the global is the working library, not an empty object or another script's variable.
+// use stores the working library in the matching variable below.
 var SNA_LIBRARY_FILES = [
     { file: 'xlsx.full.min.js', globalName: 'XLSX',
-      isUsable: function(lib) { return !!(lib && lib.utils && typeof lib.utils.aoa_to_sheet === 'function' && typeof lib.write === 'function'); } },
+      isUsable: function(lib) { return !!(lib && lib.utils && typeof lib.utils.aoa_to_sheet === 'function' && typeof lib.write === 'function'); },
+      use: function(lib) { XLSX = lib; } },
     { file: 'tabulator.min.js', globalName: 'Tabulator',
-      isUsable: function(lib) { return typeof lib === 'function'; } }
+      isUsable: function(lib) { return typeof lib === 'function'; },
+      use: function(lib) { Tabulator = lib; } }
 ];
+
+// The libraries Sitenalyzer uses, set at startup. They are kept here instead of being read from window.XLSX and
+// window.Tabulator, because on some pages the libraries load into another script's exports object instead.
+var XLSX = null;
+var Tabulator = null;
 
 // App markup from src/sitenalyzer.html. The build replaces the next line, so keep it exactly as written.
 var SNA_APP_HTML = [];
@@ -184,7 +192,7 @@ var _snaUserCheckRunning = false;
 
 // Initialize all queued Tabulator tables after HTML is injected into the DOM.
 function initSnaTabulators() {
-  if (!window.Tabulator) { return; }
+  if (!Tabulator) { return; }
 
   _snaTablesQueue.forEach(function(tbl) {
     var el = document.getElementById(tbl.id);
@@ -3618,7 +3626,7 @@ function snaHideModuleLoaders() {
         try {
             saved.push({ owner: owner, name: name, value: owner[name] });
             owner[name] = undefined;
-        } catch(e) { /* A read-only name can't be hidden; the usable check after loading reports the problem. */ }
+        } catch(e) { /* A read-only name can't be hidden; snaFindLoadedLibrary then finds the library where it loaded. */ }
     }
     hide(window.define, 'amd');
     hide(window, 'exports');
@@ -3630,10 +3638,29 @@ function snaHideModuleLoaders() {
     };
 }
 
-// Loads one library with a <script src> element unless a usable copy is already on the page.
-// Resolves when the library's global works; rejects otherwise.
+// Returns the working copy of a library that just loaded, or null. It is usually the library's own global, but when
+// the page's exports or module.exports can't be hidden (such as a read-only window.exports), the library loads there.
+function snaFindLoadedLibrary(library) {
+    var candidates = [window[library.globalName]];
+    [window.exports, window.module && window.module.exports].forEach(function(target) {
+        if (target) { candidates.push(target[library.globalName], target); }
+    });
+    // Also checks names that scripts declared with let or const, which are not properties of window.
+    if (typeof exports !== 'undefined' && exports) { candidates.push(exports[library.globalName], exports); }
+    if (typeof module !== 'undefined' && module && module.exports) { candidates.push(module.exports[library.globalName], module.exports); }
+    for (var i = 0; i < candidates.length; i++) {
+        if (library.isUsable(candidates[i])) { return candidates[i]; }
+    }
+    return null;
+}
+
+// Loads one library with a <script src> element unless a usable copy is already on the page,
+// and stores it with library.use. Resolves when the library works; rejects otherwise.
 function snaLoadLibrary(library, folderUrl) {
-    if (library.isUsable(window[library.globalName])) { return Promise.resolve(); }
+    if (library.isUsable(window[library.globalName])) {
+        library.use(window[library.globalName]);
+        return Promise.resolve();
+    }
     var url = new URL(library.file, folderUrl).href;
     return new Promise(function(resolve, reject) {
         var restoreModuleLoaders = snaHideModuleLoaders();
@@ -3642,7 +3669,9 @@ function snaLoadLibrary(library, folderUrl) {
         script.src = url;
         script.onload = function() {
             restoreModuleLoaders();
-            if (library.isUsable(window[library.globalName])) {
+            var loaded = snaFindLoadedLibrary(library);
+            if (loaded) {
+                library.use(loaded);
                 resolve();
             } else {
                 reject(snaStartupError(url + ' loaded but window.' + library.globalName + ' is missing or incomplete',
