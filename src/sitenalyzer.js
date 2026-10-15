@@ -368,7 +368,7 @@ function initSnaTabulators() {
         {
           title: 'Items', field: 'items', sorter: 'number', width: 95, hozAlign: 'right',
           formatter: function(cell) {
-            return '<span class="sna-tab-items-cell">' + (cell.getValue() !== null ? cell.getValue() : '-') + '</span>';
+            return '<span class="sna-tab-items-cell">' + (cell.getValue() !== null ? snaEscapeHtml(cell.getValue()) : '-') + '</span>';
           }
         },
         {
@@ -571,6 +571,22 @@ function snaIsSameSiteApiUrl(address, siteUrl) {
     if (!snaIsSameSiteUrl(address, siteUrl)) { return false; }
     var sitePath = new URL(xlsxStripSlash(siteUrl) + '/').pathname.toLowerCase();
     return new URL(address, xlsxStripSlash(siteUrl) + '/').pathname.toLowerCase().indexOf(sitePath + '_api/') === 0;
+}
+
+// Returns address as a full https address when it is on the SharePoint tenant being read, or on this page's own host;
+// otherwise ''. Addresses within the site, such as /sites/example/SiteAssets/logo.png, are completed with siteUrl's host.
+// Used before an address from SharePoint goes into <img src> or is opened in a new window.
+function snaSafeTenantUrl(address, siteUrl) {
+    var text = String(address || '').trim();
+    if (!text) { return ''; }
+    try {
+        var base = xlsxStripSlash(siteUrl || window.location.href) + '/';
+        var url = new URL(text, base);
+        if (url.protocol !== 'https:') { return ''; }
+        return (url.origin === snaOrigin(base) || url.origin === window.location.origin) ? url.href : '';
+    } catch(e) {
+        return '';
+    }
 }
 
 // Returns an escaped link that opens in a new tab, or the escaped text alone when there is no usable https address.
@@ -1979,8 +1995,15 @@ function snaCopyAndShowId(id, label, displayId) {
 }
 
 // Opens a URL in a new browser tab/window with noopener and noreferrer for security.
+// Only https addresses on the SharePoint tenant being read are opened, because some addresses come from SharePoint data.
 function snaOpenUrl(url) {
-    if (url) { window.open(url, '_blank', 'noopener,noreferrer'); }
+    if (!url) { return; }
+    var safeUrl = snaSafeTenantUrl(url, _snaTargetUrl);
+    if (!safeUrl) {
+        snaShowToast('Sitenalyzer opens only links to your SharePoint sites, so it didn\'t open this one.', true);
+        return;
+    }
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
 }
 
 // Resets all extracted data and UI state so the user can analyse a different site.
@@ -2318,9 +2341,10 @@ async function gatherSiteInformation() {
 var siteInfoHtml = '';
 if (siteInfo) {
     var siteTitle = String(siteInfo.Title || '').trim();
-    var hasLogo = siteInfo.SiteLogoUrl && siteInfo.SiteLogoUrl.trim().length > 9;
-    var titleIconHtml = hasLogo
-        ? '<img src="' + snaEscapeHtml(siteInfo.SiteLogoUrl.trim()) + '" alt="Site logo" style="height: 80px; width: auto; object-fit: contain; margin: 2px 0; display: block; flex-shrink: 0;" />'
+    // The logo is shown only from an https address on this tenant. SharePoint usually gives an address within the site.
+    var logoUrl = snaSafeTenantUrl(siteInfo.SiteLogoUrl, targetUrl);
+    var titleIconHtml = logoUrl
+        ? '<img src="' + snaEscapeHtml(logoUrl) + '" alt="Site logo" style="height: 80px; width: auto; object-fit: contain; margin: 2px 0; display: block; flex-shrink: 0;" />'
         : '<span style="flex-shrink: 0;" aria-hidden="true">🌐</span>';
 
     siteInfoHtml = '<div class="info-card sna-site-card">' +

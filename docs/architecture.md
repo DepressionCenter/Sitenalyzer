@@ -98,6 +98,7 @@ Sitenalyzer keeps one permission row for each scope, person or group, and permis
 - File IDs from sharing link group names must look like a GUID before Sitenalyzer asks for the file.
 - Sitenalyzer follows the Site Pages next-batch link (`odata.nextLink`) only when it points to the same site's REST API. It stops after 10,000 items (`SNA_SITE_PAGES_MAX`) and doesn't sort on the server, because SharePoint rejects sorted requests on libraries with more than 5,000 items.
 - Links to shared files and to pages are shown only when they are on the same site.
+- The site logo is shown, and the **Open** and **Permissions** buttons open a new window, only for `https://` addresses on the SharePoint tenant being read. Addresses within the site, such as `/sites/example/SiteAssets/logo.png`, are completed with the site's host first.
 - Every cell in the permissions workbook is written as text, so a name such as `=SUM(A1)` can't run as a formula.
 
 ### Where the app markup comes from

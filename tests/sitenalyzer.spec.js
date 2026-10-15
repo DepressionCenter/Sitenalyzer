@@ -368,6 +368,12 @@ test('shows HTML in SharePoint names as plain text in every section', async func
             { pattern: /^\/_api\/web\/GetFileById\('[^']+'\)$/, body: { Name: unsafe('injected-file'), ServerRelativeUrl: SITE_PATH + '/Shared Documents/Unsafe.docx' } },
             { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), body: { value: [
                 { Id: 1, Title: unsafe('injected-page'), FileLeafRef: 'Unsafe.aspx', FileRef: SITE_PATH + '/SitePages/Unsafe.aspx', FSObjType: 0, Modified: '2026-09-01T00:00:00Z' }
+            ] } },
+            { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, body: { value: [
+                { Id: 'bbbbbbbb-0000-4000-8000-000000000009', InternalName: 'UnsafeColumn', Title: unsafe('injected-column'), TypeAsString: 'Text', Description: unsafe('injected-column-description') }
+            ] } },
+            { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/RootFolder\/Folders$/, body: { value: [
+                { Name: unsafe('injected-folder'), UniqueId: 'cccccccc-0000-4000-8000-000000000009', ItemCount: '<b id="injected-count">5</b>', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Unsafe' }
             ] } }
         ]
     });
@@ -376,11 +382,60 @@ test('shows HTML in SharePoint names as plain text in every section', async func
     await page.getByRole('button', { name: 'Expand all sections' }).click();
 
     await expect(page.locator('#sna-tbl-pages').getByRole('link', { name: 'Unsafe & "Name"' })).toBeVisible();
+    await expect(page.locator('#sna-card-lib-1 .tabulator').first().getByRole('link', { name: 'Unsafe & "Name"' })).toBeVisible();
+    await expect(page.locator('#sna-card-lst-0 .tabulator')).toContainText('Unsafe & "Name"');
     await expect(page.locator('[id^="injected-"]')).toHaveCount(0);
     await expect(section(page, 'Who has access, by person or group')).toContainText('Unsafe & "Name"');
     await expect(section(page, 'Sharing links')).toContainText('Unsafe & "Name"');
     expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
     expect(record.consoleErrors).toEqual([]);
+});
+
+[
+    { logo: 'javascript:alert(1)', expected: null },
+    { logo: 'https://example.com/logo.png', expected: null },
+    { logo: 'http://contoso.sharepoint.com/sites/testsite/SiteAssets/logo.png', expected: null },
+    { logo: SITE_PATH + '/SiteAssets/logo.png', expected: SITE_URL + '/SiteAssets/logo.png' }
+].forEach(function(scenario) {
+    test('shows the site logo only from an https address on the tenant: ' + scenario.logo, async function({ page }) {
+        await openPretendSite(page, {
+            answerOverrides: [
+                { pattern: /^\/_api\/web$/, body: { Title: 'Test Research Site', Url: SITE_URL, Id: '11111111-0000-4000-8000-000000000000', Description: '', SiteLogoUrl: scenario.logo } }
+            ]
+        });
+        await extractSiteInformation(page);
+        const logo = page.getByRole('img', { name: 'Site logo' });
+        if (scenario.expected) {
+            await expect(logo).toHaveAttribute('src', scenario.expected);
+        } else {
+            await expect(logo).toHaveCount(0);
+        }
+    });
+});
+
+test('opens only links on the SharePoint tenant', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+
+    // A link that SharePoint data could point anywhere is refused with a message.
+    const openButton = page.locator('#sna-card-lst-0').getByRole('button', { name: 'Open list in new window' });
+    await openButton.evaluate(function(button) { button.setAttribute('data-url', 'https://example.com/phish'); });
+    let popups = 0;
+    page.on('popup', function() { popups++; });
+    await openButton.click();
+    await expect(page.locator('#sna-copy-toast')).toHaveText('Sitenalyzer opens only links to your SharePoint sites, so it didn\'t open this one.');
+    expect(popups).toBe(0);
+
+    // A link on the tenant opens in a new window. The new window gets a stand-in page, so nothing reaches the network.
+    await page.context().route(SITE_URL + '/Lists/**', function(route) {
+        return route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Study Visits</title>' });
+    });
+    await openButton.evaluate(function(button, url) { button.setAttribute('data-url', url); }, SITE_URL + '/Lists/StudyVisits/AllItems.aspx');
+    const popupPromise = page.waitForEvent('popup');
+    await openButton.click();
+    const popup = await popupPromise;
+    await popup.waitForLoadState();
+    expect(popup.url()).toBe(SITE_URL + '/Lists/StudyVisits/AllItems.aspx');
 });
 
 test('does not look up sharing link files whose ID is not a GUID', async function({ page }) {
