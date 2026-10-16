@@ -1,0 +1,16 @@
+20 primary screens: no axe WCAG A/AA violations.
+Restored table filtering/sorting, copy ID, expand/collapse, advanced search, version-history warnings, start-over, safe deep links, and loading/failure states verified.
+Site dialog: keyboard focus stays inside; Escape returns focus; unapproved addresses rejected.
+Description injection is displayed as text, never markup.
+All six existing description types support inline Save/Cancel, keyboard editing, double-click, focus restoration, and updated print/XLSX output; list/library fields are independent.
+Review panels moved to Permissions; footer destinations and thumbnail available/missing/unavailable states verified.
+Global search finds content and treats script-like queries as text.
+Person checks accept only the documented example account.
+Both sample XLSX downloads opened successfully; site-wide rows, worksheet coverage, and literal formulas verified.
+Print includes all data independently of route/filter; browser chrome and controls excluded; tagged sample PDF generated.
+Research, limited, and empty dictionaries preserve asset/field relationships; unavailable lookups are labeled and omitted; taxonomy includes the production Term Store asset.
+Site switching resets search/person results; empty and partial-data states verified.
+Restored permission shortcuts and counts verified; access findings, known-none, and unknown states stay distinct; Site review and print coverage verified.
+320px reflow and 720px viewport equivalent to 200% desktop zoom checked; mobile list/detail navigation works.
+No browser script errors or external HTTP requests.
+All 38 gallery links restore captured state in fresh browser contexts; unknown actions and unauthorized edit states are ignored; complete gallery license header verified.
