@@ -81,6 +81,9 @@ Export_Info, Sources, Assets, Fields, Value_Sets, Relationships, Dashboards, Vis
 Dashboards and Visualizations keep their header-only structure.
 Choice values, taxonomy values, lookup relationships, required/default/indexed fields,
 calculation formulas, IDs, and export metadata are represented.
+Examples with taxonomy also include the production SharePoint Term Store asset.
+Lookup relationships reference exported assets and fields. If the target is unavailable,
+the preview omits the relationship and explains it in the field notes and Export_Info.
 The preview adds synthetic taxonomy-group descriptions to Export_Info so inline edits remain reviewable.
 
 The permissions workbook preserves About, Permissions, Lists, Group_Members,
@@ -92,6 +95,8 @@ Their columns remain present; real values still come from SharePoint in producti
 
 The verification script compares exported headers directly with the production builders.
 It checks worksheet names, lookup keys, all-site coverage, and literal formula text.
+Key checks cover complete, limited, and empty sites. Gallery links are checked in fresh browser contexts
+for the captured site, dialog, worksheet, search, expanded details, and editor state.
 No mockup change modifies the production export code.
 
 ### Design changes and integration boundaries

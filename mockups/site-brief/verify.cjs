@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 verify.cjs
 Author(s): [Author name].
 Created: 2026-10-15
-Last Modified: 2026-10-15
+Last Modified: 2026-10-16
 Summary: Checks the synthetic preview and captures review screenshots and a sample PDF.
 Notes: See README file for documentation and full license information.
 
@@ -34,6 +34,71 @@ const previewUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
 const output = path.join(__dirname, 'review');
 const captures = [];
 const checks = [];
+
+/** Reads the visible preview state so gallery links can be checked after a fresh page load. */
+async function describeView(page) {
+  return page.evaluate(() => {
+    const main = document.querySelector('main');
+    const dialog = document.querySelector('dialog[open]');
+    return {
+      siteUrl: document.querySelector('#app-header .site-address').textContent,
+      query: document.getElementById('report-search').value,
+      dialog: dialog?.querySelector('h2').textContent || '',
+      sheet: dialog?.querySelector('.workbook-tabs [aria-pressed="true"]')?.textContent || '',
+      edit: main.querySelector('textarea')?.closest('[data-edit-key]').dataset.editKey || '',
+      expanded: [...main.querySelectorAll('details')].flatMap((node, index) => node.open ? [index] : []).join(','),
+      access: /Access for Example reader/.test(main.textContent) || /Synthetic access check for Example reader/.test(document.getElementById('print-report').textContent) ? 'reader' : '',
+      invalidSite: dialog?.querySelector('#site-address') && dialog.querySelector('[role="alert"]').textContent ? '1' : '',
+      mainText: main.textContent,
+      dialogText: dialog?.textContent || '',
+      draft: main.querySelector('textarea')?.value || ''
+    };
+  });
+}
+
+/** Checks workbook keys and taxonomy metadata against the exported rows, including partial reports. */
+function assertDictionaryReferences(workbook, listCount, hasTaxonomy) {
+  const rows = name => XLSX.utils.sheet_to_json(workbook.Sheets[name]);
+  const sources = new Set(rows('Sources').map(row => row.source_id));
+  const assets = rows('Assets');
+  const assetIds = new Set(assets.map(row => row.asset_id));
+  const fields = rows('Fields');
+  const fieldIds = new Set(fields.map(row => row.field_id));
+  assert.equal(assets.length, listCount + Number(hasTaxonomy));
+  assert.equal(assetIds.size, assets.length);
+  assert.equal(fieldIds.size, fields.length);
+  for (const asset of assets) assert.ok(sources.has(asset.source_id));
+  for (const field of fields) assert.ok(assetIds.has(field.asset_id));
+  for (const relationship of rows('Relationships')) {
+    for (const end of ['from', 'to']) {
+      assert.ok(assetIds.has(relationship[end + '_asset_id']), 'Relationship asset must exist.');
+      assert.ok(fields.some(field => field.field_id === relationship[end + '_field_id'] && field.asset_id === relationship[end + '_asset_id']), 'Relationship field must belong to its asset.');
+    }
+  }
+  const stores = assets.filter(asset => asset.asset_type === 'SharePoint Term Store');
+  assert.equal(stores.length, Number(hasTaxonomy));
+  if (hasTaxonomy) {
+    const store = stores[0];
+    assert.equal(store.asset_id, store.source_id + '_termstore');
+    assert.equal(store.asset_name, 'TermStore');
+    assert.equal(store.asset_display_name, 'Term Store');
+    assert.equal(store.description, 'SharePoint Managed Metadata term store');
+    assert.equal(store.url, rows('Sources')[0].url + '/_layouts/15/termstoremanager.aspx');
+    assert.equal(store.technical_steward_id, 'owner@example.org');
+    assert.equal(store.refresh_frequency, 'Real-time');
+  }
+}
+
+/** Stores a relative, text-encoded gallery URL and the state needed to verify it. */
+async function recordCapture(page, name, description, file) {
+  const state = await describeView(page);
+  assert.doesNotMatch(state.mainText + state.dialogText, /\bundefined\b|\[object HTMLElement\]/, name + ': no serialized missing content.');
+  const params = new URLSearchParams();
+  for (const key of ['siteUrl', 'query', 'dialog', 'sheet', 'edit', 'expanded', 'access', 'invalidSite']) {
+    if (state[key]) params.set(key, state[key]);
+  }
+  captures.push({ name, description, file, href: '../index.html?' + params + '#' + (new URL(page.url()).hash.slice(1) || 'overview'), state, viewport: page.viewportSize() });
+}
 const screens = [
   ['overview', 'Overview', 'Site identity, summary, libraries, lists, and shortcuts.'],
   ['contents/libraries', 'Document libraries', 'Choose a library from the inventory.'],
@@ -75,7 +140,7 @@ async function verify() {
         window.scrollTo(0, 0);
       });
       await page.screenshot({ path: path.join(output, file), fullPage: true });
-      captures.push({ name, description, file, hash: page.url().split('#')[1] || 'overview' });
+      await recordCapture(page, name, description, file);
     };
     const audit = async name => {
       const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
@@ -283,7 +348,7 @@ async function verify() {
       const workbook = XLSX.read(fs.readFileSync(savedPath), { type: 'buffer' });
       if (kind === 'dictionary') {
         assert.deepEqual(workbook.SheetNames, ['Export_Info', 'Sources', 'Assets', 'Fields', 'Value_Sets', 'Relationships', 'Dashboards', 'Visualizations', 'Stewards']);
-        assert.equal(XLSX.utils.sheet_to_json(workbook.Sheets.Assets).length, 8);
+        assertDictionaryReferences(workbook, 8, true);
         assert.ok(XLSX.utils.sheet_to_json(workbook.Sheets.Value_Sets).length >= 8);
         const relationships = XLSX.utils.sheet_to_json(workbook.Sheets.Relationships);
         assert.equal(relationships.length, 1);
@@ -318,7 +383,7 @@ async function verify() {
     assert.doesNotMatch(reportText, /\[object HTMLElement\]/);
     await audit('Full print preview');
     await page.screenshot({ path: path.join(output, 'print-preview.png'), fullPage: true });
-    captures.push({ name: 'Full print report', description: 'Every collected section is expanded, including unvisited tabs and technical details.', file: 'print-preview.png', hash: 'print' });
+    await recordCapture(page, 'Full print report', 'Every collected section is expanded, including unvisited tabs and technical details.', 'print-preview.png');
     await page.emulateMedia({ media: 'print' });
     assert.equal(await page.locator('#app-header').isVisible(), false);
     assert.equal(await page.locator('#print-report').isVisible(), true);
@@ -331,6 +396,16 @@ async function verify() {
 
     await page.goto(previewUrl + '#guide');
     await page.getByRole('button', { name: 'Limited permissions example', exact: true }).click();
+    await page.getByRole('button', { name: 'Data dictionary (.xlsx)', exact: true }).click();
+    const limitedDownloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download sample (.xlsx)' }).click();
+    const limitedWorkbook = XLSX.read(fs.readFileSync(await (await limitedDownloadPromise).path()), { type: 'buffer' });
+    assertDictionaryReferences(limitedWorkbook, 3, true);
+    assert.equal(XLSX.utils.sheet_to_json(limitedWorkbook.Sheets.Relationships).length, 0, 'Unresolved lookups must not export empty relationship keys.');
+    const unavailableLookup = XLSX.utils.sheet_to_json(limitedWorkbook.Sheets.Fields).find(field => field.internal_name === 'ProjectLookup');
+    assert.match(unavailableLookup.notes, /Lookup target unavailable: Team tasks.*Project directory.*Relationship omitted/);
+    assert.match(JSON.stringify(XLSX.utils.sheet_to_json(limitedWorkbook.Sheets.Export_Info, { header: 1 })), /Lookup target unavailable: Team tasks.*Project directory.*Relationship omitted/);
+    await page.keyboard.press('Escape');
     assert.match(await page.locator('#app-header h1').textContent(), /operations/);
     assert.equal(await page.locator('main').getByRole('link', { name: 'Sharing links (unavailable)', exact: true }).count(), 1);
     assert.doesNotMatch(await page.locator('main').textContent(), /No guests or organization-wide groups have access/);
@@ -346,6 +421,13 @@ async function verify() {
     }
     await page.goto(previewUrl + '#guide');
     await page.getByRole('button', { name: 'Empty site without a logo', exact: true }).click();
+    await page.getByRole('button', { name: 'Data dictionary (.xlsx)', exact: true }).click();
+    const emptyDownloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download sample (.xlsx)' }).click();
+    const emptyWorkbook = XLSX.read(fs.readFileSync(await (await emptyDownloadPromise).path()), { type: 'buffer' });
+    assertDictionaryReferences(emptyWorkbook, 0, false);
+    await page.keyboard.press('Escape');
+    checks.push('Research, limited, and empty dictionaries preserve asset/field relationships; unavailable lookups are labeled and omitted; taxonomy includes the production Term Store asset.');
     await audit('Empty site');
     assert.equal(await page.locator('main').getByRole('link', { name: 'Apps with access to this site (0)', exact: true }).count(), 1);
     await capture('Empty site', 'Fallback site identity, no description, and empty inventory.');
@@ -384,8 +466,36 @@ async function verify() {
     assert.deepEqual(errors, []);
     assert.deepEqual(external, []);
     checks.push('No browser script errors or external HTTP requests.');
-    fs.writeFileSync(path.join(output, 'verification.txt'), checks.join('\n') + '\n');
     buildGallery();
+    const galleryUrl = pathToFileURL(path.join(output, 'index.html')).href;
+    await page.goto(galleryUrl);
+    const galleryLinks = await page.locator('.gallery-card > a:last-child').evaluateAll(nodes => nodes.map(node => node.href));
+    assert.equal(galleryLinks.length, captures.length);
+    for (let index = 0; index < captures.length; index++) {
+      const captured = captures[index];
+      const freshContext = await browser.newContext({ viewport: captured.viewport });
+      try {
+        const reopened = await freshContext.newPage();
+        reopened.on('pageerror', error => errors.push(error.message));
+        reopened.on('request', request => { if (/^https?:/.test(request.url())) external.push(request.url()); });
+        await reopened.goto(galleryLinks[index]);
+        assert.deepEqual(await describeView(reopened), captured.state, captured.name + ': gallery link restores the captured content and interactions.');
+      } finally { await freshContext.close(); }
+    }
+    await page.goto(previewUrl + '?dialog=constructor&edit=site&access=administrator&expanded=script&query=%3Cscript%3Ealert(1)%3C%2Fscript%3E#search');
+    assert.equal(await page.locator('dialog[open], main script').count(), 0);
+    assert.doesNotMatch(await page.locator('#print-report').textContent(), /Synthetic access check for/);
+    await page.goto(previewUrl + '?siteUrl=' + encodeURIComponent('https://example.sharepoint.com/sites/operations-example') + '&edit=list-documents#contents/libraries/documents/overview');
+    assert.equal(await page.locator('main textarea').count(), 0, 'Gallery links cannot open editors on a read-only example.');
+    await page.goto(previewUrl + '?siteUrl=https://unapproved.example.org&dialog=Choose+a+site#overview');
+    assert.match(await page.locator('main').textContent(), /This site could not be read/);
+    assert.equal(await page.locator('dialog[open]').count(), 0);
+    const galleryHeader = fs.readFileSync(path.join(output, 'index.html'), 'utf8').match(/^<!--[\s\S]*?-->/)?.[0] || '';
+    for (const label of ['This file is part of Sitenalyzer', 'index.html', 'Author(s): [Author name].', 'Created:', 'Last Modified:', 'Summary:', 'Notes:', 'Copyright © 2026', 'Permission is granted to copy, distribute and/or modify', 'GNU Free Documentation License, Version 1.3', 'no Invariant Sections', 'https://www.gnu.org/licenses/fdl-1.3.html']) assert.ok(galleryHeader.includes(label), 'Gallery header includes ' + label);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(external, []);
+    checks.push('All 38 gallery links restore captured state in fresh browser contexts; unknown actions and unauthorized edit states are ignored; complete gallery license header verified.');
+    fs.writeFileSync(path.join(output, 'verification.txt'), checks.join('\n') + '\n');
     console.log(checks.join('\n'));
     console.log(captures.length + ' screen captures and sample artifacts saved in mockups/site-brief/review.');
   } finally {
@@ -395,8 +505,25 @@ async function verify() {
 
 function buildGallery() {
   const escape = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const cards = captures.map(item => '<article class="gallery-card"><h2>' + escape(item.name) + '</h2><p>' + escape(item.description) + '</p><a href="' + escape(item.file) + '"><img loading="lazy" src="' + escape(item.file) + '" alt="' + escape(item.name + ': ' + item.description) + '"></a><a href="../index.html#' + escape(item.hash) + '">Open the interactive preview</a></article>').join('');
-  const license = '<!-- This file is part of Sitenalyzer. Copyright © 2026 The Regents of the University of Michigan. Licensed under GNU FDL v1.3 or later: https://www.gnu.org/licenses/fdl-1.3.html. All screen data is synthetic. -->';
+  const cards = captures.map(item => '<article class="gallery-card"><h2>' + escape(item.name) + '</h2><p>' + escape(item.description) + '</p><a href="' + escape(item.file) + '"><img loading="lazy" src="' + escape(item.file) + '" alt="' + escape(item.name + ': ' + item.description) + '"></a><a href="' + escape(item.href) + '">Open the interactive preview</a></article>').join('');
+  const license = `<!--
+This file is part of Sitenalyzer
+index.html
+Author(s): [Author name].
+Created: 2026-10-15
+Last Modified: 2026-10-16
+Summary: Captured synthetic interface states with links to the matching interactive preview.
+Notes: All screen data is synthetic. See README for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+Permission is granted to copy, distribute and/or modify this document
+under the terms of the GNU Free Documentation License, Version 1.3
+or any later version published by the Free Software Foundation;
+with no Invariant Sections, no Front-Cover Texts, and no Back-Cover Texts.
+You should have received a copy of the license included in the section entitled
+"GNU Free Documentation License". If not, see <https://www.gnu.org/licenses/fdl-1.3.html>.
+-->`;
   fs.writeFileSync(path.join(output, 'index.html'), license + '\n<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sitenalyzer: all design preview screens</title><link rel="stylesheet" href="../gallery.css"></head><body><header><p>Sitenalyzer design review</p><h1>Every screen, in one place</h1><p>Captured from the working mockup. All data is synthetic.</p><nav aria-label="Review artifacts"><a href="../index.html">Open interactive mockup</a><a href="synthetic-full-site-report.pdf">Open sample full report PDF</a><a href="verification.txt">Verification results</a></nav></header><main>' + cards + '</main></body></html>');
 }
 

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 preview.js
 Author(s): [Author name].
 Created: 2026-10-15
-Last Modified: 2026-10-15
+Last Modified: 2026-10-16
 Summary: Navigable synthetic UI, sample workbook downloads, and a complete print report.
 Notes: See README file for documentation and full license information.
 
@@ -569,7 +569,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     dialog.replaceChildren(
       el('div', { class: 'dialog-heading' }, el('h2', { id: 'dialog-title' }, title), button('Close', () => dialog.close(), 'small', 'close')),
       el('div', { class: 'dialog-body' }, content),
-      footer && el('div', { class: 'dialog-footer' }, footer));
+      ...(footer ? [el('div', { class: 'dialog-footer' }, footer)] : []));
     dialog.showModal();
   }
 
@@ -687,21 +687,30 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     const url = item => site.address + '/' + item.key;
     const sheet = (name, records, schema = name) => ({ name, rows: [schemas[schema], ...records.map(record => schemas[schema].map(key => String(record[key] ?? '')))] });
     if (kind === 'dictionary') {
-      const values = [], fields = [], relationships = [];
+      const values = [], fields = [], relationships = [], omittedLookups = [];
       site.objects.forEach(item => item.columns.forEach((column, index) => {
         const valueSet = column.choices ? 'choice-' + column.id : '';
         (column.choices ? column.choices.split(';').map(value => value.trim()) : []).forEach((choice, choiceIndex) => values.push({ value_set_id: valueSet, value_set_name: item.name + ' - ' + column.name, value_code: choice, value_label: choice, display_order: choiceIndex + 1, active: 'Y', is_missing_value: 'N' }));
         fields.push({ field_id: column.id, asset_id: item.guid, internal_name: column.internal, display_name: column.name, field_order: index + 1, description: column.description, display_type: column.type, native_type: column.type, calculation_formula: column.formula, length: column.maxLength, required: column.required ? 'Y' : 'N', nullable: column.required ? 'N' : 'Y', primary_key: column.internal === 'ID' ? 'Y' : 'N', indexed: column.indexed ? 'Y' : 'N', default_value: column.defaultValue, value_set_id: valueSet, sensitivity: 'Unknown', contains_phi: 'Unknown', status: 'Active' });
         if (column.lookup) {
-          const target = site.objects.find(candidate => column.lookup.startsWith(candidate.name));
-          relationships.push({ relationship_id: 'lookup-' + column.id, relationship_type: 'Lookup', from_asset_id: item.guid, from_field_id: column.id, to_asset_id: target?.guid, to_field_id: target?.columns.find(field => field.internal === 'ID')?.id, cardinality: 'M-1', join_type: 'Lookup', enforced: 'Y', description: column.description });
+          const target = site.objects.find(candidate => candidate.name === column.lookup.split(' → ')[0]);
+          const targetField = target?.columns.find(field => field.internal === 'ID');
+          if (target && targetField) {
+            relationships.push({ relationship_id: 'lookup-' + column.id, relationship_type: 'Lookup', from_asset_id: item.guid, from_field_id: column.id, to_asset_id: target.guid, to_field_id: targetField.id, cardinality: 'M-1', join_type: 'Lookup', enforced: 'Y', description: column.description });
+          } else {
+            const note = 'Lookup target unavailable: ' + item.name + ' / ' + column.name + ' → ' + column.lookup + '. Relationship omitted; review the target list with a site owner.';
+            fields[fields.length - 1].notes = note;
+            omittedLookups.push(['Omitted lookup: ' + column.id, note]);
+          }
         }
       }));
       site.terms.forEach(set => set.terms.forEach((term, index) => values.push({ value_set_id: set.id, value_set_name: set.name, description: set.description, value_code: term.id, value_label: term.name, value_definition: term.description, display_order: index + 1, active: 'Y', is_missing_value: 'N' })));
+      const assets = site.objects.map(item => ({ asset_id: item.guid, source_id: site.id, asset_name: item.key, asset_display_name: item.name, asset_type: item.kind === 'libraries' ? 'SharePoint Document Library' : 'SharePoint List', url: url(item), container: site.address, qualified_path: url(item), description: item.description, record_count: item.count, source_or_derived: 'Source', contains_phi: 'Unknown', contains_pii: 'Unknown', status: 'Active' }));
+      if (site.terms.length) assets.push({ asset_id: site.id + '_termstore', source_id: site.id, asset_name: 'TermStore', asset_display_name: 'Term Store', asset_type: 'SharePoint Term Store', url: site.address + '/_layouts/15/termstoremanager.aspx', container: site.address, qualified_path: site.address, description: 'SharePoint Managed Metadata term store', source_or_derived: 'Source', refresh_frequency: 'Real-time', contains_phi: 'Unknown', contains_pii: 'Unknown', technical_steward_id: 'owner@example.org', status: 'Active' });
       return [
-        { name: 'Export_Info', rows: [['export_id', 'SYNTHETIC_PREVIEW'], ['export_date', '2026-10-15'], ['exported_by', 'Example owner'], ['tool', 'Sitenalyzer'], ['tool_version', '1.0'], ['format_version', '1.0'], ['scope_notes', 'Synthetic example only: ' + site.address], ['contact_email', 'owner@example.org'], ...site.termGroups.map(group => ['Group description: ' + group.name, group.description])] },
+        { name: 'Export_Info', rows: [['export_id', 'SYNTHETIC_PREVIEW'], ['export_date', '2026-10-15'], ['exported_by', 'Example owner'], ['tool', 'Sitenalyzer'], ['tool_version', '1.0'], ['format_version', '1.0'], ['scope_notes', 'Synthetic example only: ' + site.address], ['contact_email', 'owner@example.org'], ...site.termGroups.map(group => ['Group description: ' + group.name, group.description]), ...omittedLookups] },
         sheet('Sources', [{ source_id: site.id, source_name: site.name, source_type: 'SharePoint', platform: 'SharePoint Online', url: site.address, database_or_site: site.name, description: site.description, refresh_frequency: 'Real-time', contains_phi: 'Unknown', contains_pii: 'Unknown', technical_steward_id: 'owner@example.org', status: 'Active' }]),
-        sheet('Assets', site.objects.map(item => ({ asset_id: item.guid, source_id: site.id, asset_name: item.key, asset_display_name: item.name, asset_type: item.kind === 'libraries' ? 'SharePoint Document Library' : 'SharePoint List', url: url(item), container: site.address, qualified_path: url(item), description: item.description, record_count: item.count, source_or_derived: 'Source', contains_phi: 'Unknown', contains_pii: 'Unknown', status: 'Active' }))),
+        sheet('Assets', assets),
         sheet('Fields', fields), sheet('Value_Sets', values), sheet('Relationships', relationships), sheet('Dashboards', []), sheet('Visualizations', []),
         sheet('Stewards', [{ steward_id: 'owner@example.org', name: 'Example owner', type: 'Person', role_default: 'Technical Steward', email: 'owner@example.org' }])
       ];
@@ -857,13 +866,45 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     if (focus) main.focus({ preventScroll: true });
   }
 
+  /**
+   * Restores gallery interactions from bounded query values and existing controls.
+   * @param {URLSearchParams} params Untrusted URL values; selectors and actions stay fixed here.
+   * @returns {void} Opens local preview controls without saving edits, downloading, or contacting a site.
+   * Existing edit permissions and dialog focus handling still apply.
+   */
+  function restoreGalleryState(params) {
+    const expanded = (params.get('expanded') || '').split(',').filter(value => /^\d{1,3}$/.test(value)).map(Number);
+    if (params.has('expanded')) main.querySelectorAll('details').forEach((detail, index) => { detail.open = expanded.includes(index); });
+    const editor = [...main.querySelectorAll('[data-edit-key]')].find(node => node.dataset.editKey === params.get('edit'));
+    editor?.querySelector('.pencil-button')?.click();
+    if (accessResult && document.getElementById('person-input')) document.getElementById('person-input').value = 'reader@example.org';
+    const openers = { 'Choose a site': 'Change site', 'Site settings': 'Site settings', 'Data dictionary': 'Data dictionary (.xlsx)', 'Permissions workbook': 'Permissions workbook (.xlsx)' };
+    const kind = params.get('dialog');
+    if (!Object.hasOwn(openers, kind)) return;
+    const opener = [...document.querySelectorAll('#app-header button')].find(node => node.textContent === openers[kind]);
+    if (!opener) return;
+    opener.focus(); opener.click();
+    if (kind === 'Choose a site' && params.get('invalidSite') === '1') {
+      const address = document.getElementById('site-address');
+      address.value = 'https://unapproved.example.org/site'; address.form.requestSubmit();
+    }
+    [...dialog.querySelectorAll('.workbook-tabs button')].find(node => node.textContent === params.get('sheet'))?.click();
+  }
+
   window.addEventListener('hashchange', () => render(true));
   window.addEventListener('beforeprint', () => document.getElementById('print-report').replaceChildren(['start', 'loading', 'error'].includes(route().page) ? el('p', {}, 'No site report has been collected.') : reportDocument()));
-  const requestedSite = new URLSearchParams(location.search).get('siteUrl');
+  const initialParams = new URLSearchParams(location.search);
+  const requestedSite = initialParams.get('siteUrl');
+  let validSite = true;
   if (requestedSite) {
     const match = sites.find(example => example.address.toLowerCase() === requestedSite.replace(/\/+$/, '').toLowerCase());
     if (match) site = match;
-    else location.hash = 'error';
+    else { validSite = false; location.hash = 'error'; }
+  }
+  if (validSite) {
+    query = (initialParams.get('query') || '').slice(0, 160);
+    if (!site.partial && initialParams.get('access') === 'reader') accessResult = 'Example reader';
   }
   render();
+  if (validSite) restoreGalleryState(initialParams);
 })();
