@@ -21,6 +21,9 @@ for developers and maintainers.
 - [Troubleshooting](troubleshooting.md): problems you might see after installing, with fixes.
 - [How Sitenalyzer works](architecture.md): its parts, how it starts on a page, and why it is built this way.
 - [Building and testing Sitenalyzer](development.md): build the files for SharePoint, run the tests, and update libraries.
+- [UI redesign handoff](ui-redesign.md): agreed design, implementation sequence, and production release checklist.
+- [Site brief design preview](design-preview.md): explore the proposed interface, synthetic examples, and full-report print layout.
+- [UI functionality coverage](design-parity.md): compare the current UI with the mockup and review integration boundaries.
 - [Documentation template](doc-template.md): starting structure for a knowledge base page.
 - [Skill authoring examples](skill-examples.md): optional recipes for common project types.
 

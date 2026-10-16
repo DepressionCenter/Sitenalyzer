@@ -1,0 +1,33 @@
+/*
+This file is part of Sitenalyzer
+gallery.css
+Author(s): [Author name].
+Created: 2026-10-15
+Last Modified: 2026-10-15
+Summary: Accessible screen gallery for the synthetic design preview.
+Notes: See README file for documentation and full license information.
+Copyright © 2026 The Regents of the University of Michigan
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along with this
+program. If not, see <https://www.gnu.org/licenses/>.
+*/
+* { box-sizing: border-box; }
+body { margin: 0; color: #173149; background: #edf2f7; font: 16px/1.6 "Segoe UI", Tahoma, sans-serif; }
+header { background: #00274c; color: white; padding: 40px max(20px, calc((100vw - 1360px)/2)); }
+h1 { margin: 0; font-size: clamp(1.8rem, 4vw, 2.8rem); line-height: 1.2; }
+header p { margin: 8px 0 18px; max-width: 75ch; }
+nav { display: flex; flex-wrap: wrap; gap: 12px; }
+nav a { padding: 10px 16px; color: #00274c; background: #ffcb05; border-radius: 4px; font-weight: 600; min-height: 44px; }
+main { max-width: 1400px; margin: auto; padding: 24px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.gallery-card { min-width: 0; background: white; padding: 22px; border: 1px solid #b9c9d6; border-radius: 6px; }
+h2 { margin: 0; font-size: 1.3rem; color: #00274c; }
+.gallery-card p { color: #526476; margin: 8px 0 18px; }
+.gallery-card img { display: block; width: 100%; max-height: 620px; object-fit: contain; object-position: top; border: 1px solid #b9c9d6; margin-bottom: 14px; }
+.gallery-card a { color: #174992; display: inline-block; min-height: 32px; }
+a:focus-visible { outline: 3px solid #a33e00; outline-offset: 4px; }
+@media(max-width: 750px) { main { grid-template-columns: 1fr; padding: 16px; } }
