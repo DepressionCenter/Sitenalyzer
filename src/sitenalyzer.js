@@ -87,6 +87,23 @@ var SNA_SHARING_GROUPS_MAX = 5000;
 // Longest text accepted in the person check. 320 characters is the longest possible email address.
 var SNA_PERSON_CHECK_MAX_LENGTH = 320;
 
+// ### Interface Settings ###
+
+// How the report remembers which section is open. 'hash' keeps it in the address after #sna/, so Back, Forward,
+// and reloading the page work; this was checked on a SharePoint page with the Modern Script Editor web part.
+// 'memory' keeps it inside the app only. Sitenalyzer changes to 'memory' by itself if the page rewrites the address.
+var SNA_ROUTE_MODE = 'hash';
+var SNA_ROUTE_PREFIX = '#sna/';
+
+// Tables with more rows than this get a filter box and a row count above them.
+var SNA_TABLE_FILTER_MIN_ROWS = 10;
+
+// Remembers the Show technical details switch in this browser. The value is '1' when it is on; no report data is stored.
+var SNA_TECHNICAL_DETAILS_KEY = 'sitenalyzer:technical-details';
+
+// Longest text accepted in Search this report.
+var SNA_SEARCH_MAX_LENGTH = 200;
+
 /**
  * Data fetching logic adapted from DataLaVista (github.com/DepressionCenter/datalavista)
  * License: GPLv3
@@ -156,14 +173,27 @@ function snaGetFieldTypeIcon(spType, calcType) {
   return SITEANALYZER_FIELD_TYPE_ICONS['text'].icon;
 }
 
-// _snaTablesQueue: populated during gatherSiteInformation; _snaTabInstances: live Tabulator instances for redraw on details-open and print.
+// _snaTablesQueue: tables the view being drawn asks for, built by initSnaTabulators once its markup is on the page.
+// _snaTabInstances: the Tabulator tables on screen, by element id. _snaTableFilters: filter box text by table id,
+// so a table's filter is kept when its view is closed and opened again.
 var _snaTablesQueue = [];
 var _snaTabInstances = {};
+var _snaTableFilters = {};
 
-// Global search state.
-var _snaSearchIndex    = [];
-var _snaCardData       = [];
-var _snaCurrentResults = [];
+// Search state. Each entry describes one list, library, column, folder, page, or term in the report.
+var _snaSearchIndex = [];
+
+// The collected report (see collectReport) and the view state of the report screen.
+var _snaReport = null;
+var _snaCollectionToken = 0;      // Changes when a collection starts or the report is cleared; older collections are dropped
+var _snaRoute = null;             // The view on screen, such as { section: 'contents', id: '<list ID>', tab: 'columns' }
+var _snaRouteMode = SNA_ROUTE_MODE;
+var _snaPendingNav = null;        // Focus target for the address change that Sitenalyzer itself just made
+var _snaContentsFilter = '';      // Text in the Contents name filter
+var _snaLastInventoryId = '';     // Contents item whose details were open last, so Back to results can return to it
+var _snaTechnicalDetails = false;
+var _snaUserCheckResult = null;   // The finished person check { input, status, html }, shown again when Permissions reopens
+var _snaUseAddressRoute = true;   // True until the first report opens; later reports start on Overview or the kept view
 
 // Taxonomy and admin edit state.
 var _snaTaxonomyData        = [];
@@ -190,227 +220,267 @@ var _snaSharingLinks     = { links: [], failed: false, groupsCapped: false, look
 var _snaUserCheckRunning = false;
 
 
-// Initialize all queued Tabulator tables after HTML is injected into the DOM.
+// ### Tables ###
+
+// Returns the Tabulator column settings for one table. tbl is a _snaTablesQueue entry: { id, type, data, searchLabel, setId }.
+// Technical columns belong to the same table and are shown only while Show technical details is on.
+function snaTableColumns(type, tbl) {
+  var technical = snaTechnicalDetailsOn();
+  function idFormatter(cell) { return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>'; }
+  function yesFormatter(cell) { return cell.getValue() ? 'Yes' : ''; }
+
+  if (type === 'fields') {
+    return [
+      {
+        title: 'Title', field: 'title', sorter: 'string', widthGrow: 2, minWidth: 140,
+        formatter: function(cell) {
+          var rowData = cell.getRow().getData();
+          var icon = rowData.typeIcon || '📝';
+          var label = rowData.typeLabel || '';
+          var val = cell.getValue() || '';
+          return '<span class="sna-type-icon" title="' + snaEscapeHtml(label) + '" aria-hidden="true">' + icon + '</span>' + snaEscapeHtml(val);
+        }
+      },
+      { title: 'Data type', field: 'dataType', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
+      {
+        title: 'Description', field: 'description', sorter: 'string', widthGrow: 3, minWidth: 180,
+        formatter: 'textarea',
+        editor: _snaIsAdmin ? function(cell, onRendered, success, cancel) {
+          var currentVal = cell.getValue() || '';
+          var wrap = document.createElement('div');
+          wrap.style.cssText = 'width:100%;box-sizing:border-box;';
+
+          var ta = document.createElement('textarea');
+          ta.value = currentVal;
+          // Extra bottom padding reserves room for the overlaid buttons
+          ta.style.cssText = 'display:block;width:100%;min-height:54px;resize:vertical;font-size:13px;padding:4px 6px 20px 6px;border:2px solid #0078d4;border-radius:3px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;box-sizing:border-box;line-height:1.5;';
+
+          ta.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+            else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); success(ta.value); }
+            // Shift+Enter / Alt+Enter → native newline in textarea
+          });
+
+          // Pull buttons up into the textarea's bottom-padding area via negative margin
+          var btnWrap = document.createElement('div');
+          btnWrap.style.cssText = 'display:flex;flex-direction:row;gap:2px;position:relative;z-index:2;margin-top:-18px;padding-left:4px;';
+
+          var S = 'width:18px;height:16px;padding:0;border-radius:2px;cursor:pointer;font-size:10px;line-height:16px;text-align:center;';
+
+          var saveBtn = document.createElement('button');
+          saveBtn.innerHTML = '&#10003;';
+          saveBtn.title     = 'Save (Enter)';
+          saveBtn.setAttribute('aria-label', 'Save');
+          saveBtn.style.cssText = S + 'background:#0078d4;color:#fff;border:none;';
+          saveBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+          saveBtn.addEventListener('click',     function(e) { e.stopPropagation(); success(ta.value); });
+
+          var cancelBtn = document.createElement('button');
+          cancelBtn.innerHTML = '&#10007;';
+          cancelBtn.title     = 'Cancel (Esc)';
+          cancelBtn.setAttribute('aria-label', 'Cancel');
+          cancelBtn.style.cssText = S + 'background:#fff;color:#605e5c;border:1px solid #8a8886;';
+          cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+          cancelBtn.addEventListener('click',     function(e) { e.stopPropagation(); cancel(); });
+
+          btnWrap.appendChild(saveBtn);
+          btnWrap.appendChild(cancelBtn);
+          wrap.appendChild(ta);
+          wrap.appendChild(btnWrap);
+
+          onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
+          return wrap;
+        } : false,
+        cellEdited: _snaIsAdmin ? function(cell) {
+          var row     = cell.getRow().getData();
+          var editKey = 'column:' + (row.listId || '') + ':' + (row.fieldId || row.internalName || '');
+          var text    = cell.getValue() || '';
+          snaSaveDescription(editKey, text).then(function() {
+            snaApplyDescriptionToReport(editKey, text);
+            snaShowToast('Description saved.');
+          }).catch(function(err) {
+            cell.restoreOldValue();
+            snaShowToast('Save failed: ' + (err.message || String(err)), true);
+          });
+        } : null
+      },
+      { title: 'Required', field: 'required', sorter: 'boolean', width: 120, formatter: yesFormatter },
+      { title: 'Choices', field: 'choices', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
+      { title: 'Lookup list', field: 'lookupList', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
+      { title: 'Internal name', field: 'internalName', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical },
+      { title: 'Lookup target', field: 'lookupTarget', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter },
+      { title: 'Column ID', field: 'fieldId', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter },
+      { title: 'Default value', field: 'defaultValue', sorter: 'string', widthGrow: 1.5, minWidth: 110, visible: technical },
+      { title: 'Max length', field: 'maxLength', sorter: 'number', width: 110, visible: technical },
+      { title: 'Indexed', field: 'indexed', sorter: 'boolean', width: 115, visible: technical, formatter: yesFormatter },
+      { title: 'Formula', field: 'formula', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical }
+    ];
+  }
+  if (type === 'terms') {
+    var termSetId = tbl.setId || '';
+    return [
+      {
+        title: 'Term name', field: 'termName', sorter: 'string', widthGrow: 2,
+        formatter: function(cell) {
+          return '<span class="sna-type-icon" aria-hidden="true">&#127991;</span>' + snaEscapeHtml(cell.getValue());
+        }
+      },
+      { title: 'Term ID', field: 'termId', sorter: 'string', widthGrow: 2, visible: technical, formatter: idFormatter },
+      {
+        title: 'Description', field: 'termDescription', sorter: 'string', widthGrow: 3,
+        formatter: 'textarea',
+        editor: _snaIsAdmin ? function(cell, onRendered, success, cancel) {
+          var currentVal = cell.getValue() || '';
+          var wrap = document.createElement('div');
+          wrap.style.cssText = 'width:100%;box-sizing:border-box;';
+
+          var ta = document.createElement('textarea');
+          ta.value = currentVal;
+          ta.style.cssText = 'display:block;width:100%;min-height:54px;resize:vertical;font-size:13px;padding:4px 6px 20px 6px;border:2px solid #0078d4;border-radius:3px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;box-sizing:border-box;line-height:1.5;';
+          ta.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+            else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); success(ta.value); }
+          });
+
+          var btnWrap = document.createElement('div');
+          btnWrap.style.cssText = 'display:flex;flex-direction:row;gap:2px;position:relative;z-index:2;margin-top:-18px;padding-left:4px;';
+          var S = 'width:18px;height:16px;padding:0;border-radius:2px;cursor:pointer;font-size:10px;line-height:16px;text-align:center;';
+
+          var saveBtn = document.createElement('button');
+          saveBtn.innerHTML = '&#10003;'; saveBtn.title = 'Save (Enter)';
+          saveBtn.setAttribute('aria-label', 'Save');
+          saveBtn.style.cssText = S + 'background:#0078d4;color:#fff;border:none;';
+          saveBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+          saveBtn.addEventListener('click',     function(e) { e.stopPropagation(); success(ta.value); });
+
+          var cancelBtn = document.createElement('button');
+          cancelBtn.innerHTML = '&#10007;'; cancelBtn.title = 'Cancel (Esc)';
+          cancelBtn.setAttribute('aria-label', 'Cancel');
+          cancelBtn.style.cssText = S + 'background:#fff;color:#605e5c;border:1px solid #8a8886;';
+          cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+          cancelBtn.addEventListener('click',     function(e) { e.stopPropagation(); cancel(); });
+
+          btnWrap.appendChild(saveBtn);
+          btnWrap.appendChild(cancelBtn);
+          wrap.appendChild(ta);
+          wrap.appendChild(btnWrap);
+
+          onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
+          return wrap;
+        } : false,
+        cellEdited: _snaIsAdmin ? function(cell) {
+          var row     = cell.getRow().getData();
+          var editKey = 'term:' + termSetId + ':' + (row.termId || '');
+          var text    = cell.getValue() || '';
+          snaSaveDescription(editKey, text).then(function() {
+            snaApplyDescriptionToReport(editKey, text);
+            snaShowToast('Description saved.');
+          }).catch(function(err) {
+            cell.restoreOldValue();
+            snaShowToast('Save failed: ' + (err.message || String(err)), true);
+          });
+        } : null
+      }
+    ];
+  }
+  if (type === 'folders') {
+    return [
+      {
+        title: 'Folder name', field: 'name', sorter: 'string', widthGrow: 3,
+        formatter: function(cell) {
+          var rowData = cell.getRow().getData();
+          var icon = rowData.icon || '📂';
+          return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' +
+            snaLinkHtml(rowData.folderUrl, cell.getValue(), 'sna-folder-link');
+        }
+      },
+      {
+        title: 'Items', field: 'items', sorter: 'number', width: 95, hozAlign: 'right',
+        formatter: function(cell) {
+          return '<span class="sna-tab-items-cell">' + (cell.getValue() !== null ? snaEscapeHtml(cell.getValue()) : '-') + '</span>';
+        }
+      },
+      { title: 'Folder ID', field: 'folderId', sorter: 'string', widthGrow: 2, visible: technical, formatter: idFormatter }
+    ];
+  }
+  if (type === 'pages') {
+    return [
+      {
+        title: 'Page', field: 'name', sorter: 'string', widthGrow: 3,
+        formatter: function(cell) {
+          return '<span class="sna-type-icon" aria-hidden="true">📄</span>' +
+            snaLinkHtml(cell.getRow().getData().url, cell.getValue(), 'sna-folder-link');
+        }
+      },
+      { title: 'File name', field: 'fileName', sorter: 'string', widthGrow: 2 },
+      { title: 'Last changed', field: 'modified', sorter: 'string', width: 130 },
+      { title: 'Address', field: 'url', sorter: 'string', widthGrow: 3, formatter: idFormatter }
+    ];
+  }
+  return [];
+}
+
+// Shows only the rows that contain text in any value, including values in hidden technical columns.
+function snaApplyTableFilter(table, text) {
+  var val = String(text || '').trim().toLowerCase();
+  if (!val) { table.clearFilter(); return; }
+  table.setFilter(function(data) {
+    var keys = Object.keys(data);
+    for (var k = 0; k < keys.length; k++) {
+      var v = data[keys[k]];
+      if (v && String(v).toLowerCase().indexOf(val) > -1) { return true; }
+    }
+    return false;
+  });
+}
+
+// Writes the row count under a table's filter box, such as "Showing 3 of 12 columns".
+function snaUpdateTableCount(countEl, shown, total, label) {
+  if (!countEl) { return; }
+  countEl.textContent = shown === total
+    ? 'Showing all ' + total + ' ' + label + '.'
+    : 'Showing ' + shown + ' of ' + total + ' ' + label + '.';
+}
+
+// Builds every table in _snaTablesQueue whose element is on the page, then empties the queue.
+// Returns one promise per table that resolves once the table has been drawn, so printing can wait for them.
 function initSnaTabulators() {
-  if (!Tabulator) { return; }
+  var built = [];
+  if (!Tabulator) { _snaTablesQueue = []; return built; }
 
   _snaTablesQueue.forEach(function(tbl) {
     var el = document.getElementById(tbl.id);
     if (!el) { return; }
 
-    // Inject search input above the placeholder div
-    var searchId = tbl.id + '-s';
-    var searchLabel = snaEscapeHtml(tbl.searchLabel);
-    el.insertAdjacentHTML('beforebegin',
-      '<div class="sna-table-search-wrap">' +
-        '<input type="text" id="' + searchId + '" class="sna-table-search"' +
-        ' placeholder="Search ' + searchLabel + '..." aria-label="Search ' + searchLabel + '">' +
-      '</div>'
-    );
-
-    var columns = [];
-    if (tbl.type === 'fields') {
-      columns = [
-        {
-          title: 'Title', field: 'title', sorter: 'string', widthGrow: 2,
-          formatter: function(cell) {
-            var rowData = cell.getRow().getData();
-            var icon = rowData.typeIcon || '📝';
-            var label = rowData.typeLabel || '';
-            var val = cell.getValue() || '';
-            return '<span class="sna-type-icon" title="' + snaEscapeHtml(label) + '" aria-hidden="true">' + icon + '</span>' + snaEscapeHtml(val);
-          }
-        },
-        { title: 'Internal name', field: 'internalName', sorter: 'string', widthGrow: 2 },
-        { title: 'Data type',     field: 'dataType',     sorter: 'string', widthGrow: 1.5 },
-        {
-          title: 'Description', field: 'description', sorter: 'string', widthGrow: 3,
-          formatter: 'textarea',
-          editor: _snaIsAdmin ? function(cell, onRendered, success, cancel) {
-            var currentVal = cell.getValue() || '';
-            var wrap = document.createElement('div');
-            wrap.style.cssText = 'width:100%;box-sizing:border-box;';
-
-            var ta = document.createElement('textarea');
-            ta.value = currentVal;
-            // Extra bottom padding reserves room for the overlaid buttons
-            ta.style.cssText = 'display:block;width:100%;min-height:54px;resize:vertical;font-size:13px;padding:4px 6px 20px 6px;border:2px solid #0078d4;border-radius:3px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;box-sizing:border-box;line-height:1.5;';
-
-            ta.addEventListener('keydown', function(e) {
-              if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-              else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); success(ta.value); }
-              // Shift+Enter / Alt+Enter → native newline in textarea
-            });
-
-            // Pull buttons up into the textarea's bottom-padding area via negative margin
-            var btnWrap = document.createElement('div');
-            btnWrap.style.cssText = 'display:flex;flex-direction:row;gap:2px;position:relative;z-index:2;margin-top:-18px;padding-left:4px;';
-
-            var S = 'width:18px;height:16px;padding:0;border-radius:2px;cursor:pointer;font-size:10px;line-height:16px;text-align:center;';
-
-            var saveBtn = document.createElement('button');
-            saveBtn.innerHTML = '&#10003;';
-            saveBtn.title     = 'Save (Enter)';
-            saveBtn.setAttribute('aria-label', 'Save');
-            saveBtn.style.cssText = S + 'background:#0078d4;color:#fff;border:none;';
-            saveBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
-            saveBtn.addEventListener('click',     function(e) { e.stopPropagation(); success(ta.value); });
-
-            var cancelBtn = document.createElement('button');
-            cancelBtn.innerHTML = '&#10007;';
-            cancelBtn.title     = 'Cancel (Esc)';
-            cancelBtn.setAttribute('aria-label', 'Cancel');
-            cancelBtn.style.cssText = S + 'background:#fff;color:#605e5c;border:1px solid #8a8886;';
-            cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
-            cancelBtn.addEventListener('click',     function(e) { e.stopPropagation(); cancel(); });
-
-            btnWrap.appendChild(saveBtn);
-            btnWrap.appendChild(cancelBtn);
-            wrap.appendChild(ta);
-            wrap.appendChild(btnWrap);
-
-            onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
-            return wrap;
-          } : false,
-          cellEdited: _snaIsAdmin ? function(cell) {
-            var row     = cell.getRow().getData();
-            var editKey = 'column:' + (row.listId || '') + ':' + (row.fieldId || row.internalName || '');
-            snaSaveDescription(editKey, cell.getValue() || '').then(function() {
-              snaShowToast('Description saved.');
-            }).catch(function(err) {
-              cell.restoreOldValue();
-              snaShowToast('Save failed: ' + (err.message || String(err)), true);
-            });
-          } : null
-        },
-        { title: 'Lookup list',   field: 'lookupList',   sorter: 'string', widthGrow: 1.5 }
-      ];
-    } else if (tbl.type === 'terms') {
-      var termSetId = tbl.setId || '';
-      columns = [
-        {
-          title: 'Term name', field: 'termName', sorter: 'string', widthGrow: 2,
-          formatter: function(cell) {
-            return '<span class="sna-type-icon" aria-hidden="true">&#127991;</span>' + snaEscapeHtml(cell.getValue());
-          }
-        },
-        {
-          title: 'Term ID', field: 'termId', sorter: 'string', widthGrow: 2,
-          formatter: function(cell) {
-            return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>';
-          }
-        },
-        {
-          title: 'Description', field: 'termDescription', sorter: 'string', widthGrow: 3,
-          formatter: 'textarea',
-          editor: _snaIsAdmin ? function(cell, onRendered, success, cancel) {
-            var currentVal = cell.getValue() || '';
-            var wrap = document.createElement('div');
-            wrap.style.cssText = 'width:100%;box-sizing:border-box;';
-
-            var ta = document.createElement('textarea');
-            ta.value = currentVal;
-            ta.style.cssText = 'display:block;width:100%;min-height:54px;resize:vertical;font-size:13px;padding:4px 6px 20px 6px;border:2px solid #0078d4;border-radius:3px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;box-sizing:border-box;line-height:1.5;';
-            ta.addEventListener('keydown', function(e) {
-              if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-              else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); success(ta.value); }
-            });
-
-            var btnWrap = document.createElement('div');
-            btnWrap.style.cssText = 'display:flex;flex-direction:row;gap:2px;position:relative;z-index:2;margin-top:-18px;padding-left:4px;';
-            var S = 'width:18px;height:16px;padding:0;border-radius:2px;cursor:pointer;font-size:10px;line-height:16px;text-align:center;';
-
-            var saveBtn = document.createElement('button');
-            saveBtn.innerHTML = '&#10003;'; saveBtn.title = 'Save (Enter)';
-            saveBtn.setAttribute('aria-label', 'Save');
-            saveBtn.style.cssText = S + 'background:#0078d4;color:#fff;border:none;';
-            saveBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
-            saveBtn.addEventListener('click',     function(e) { e.stopPropagation(); success(ta.value); });
-
-            var cancelBtn = document.createElement('button');
-            cancelBtn.innerHTML = '&#10007;'; cancelBtn.title = 'Cancel (Esc)';
-            cancelBtn.setAttribute('aria-label', 'Cancel');
-            cancelBtn.style.cssText = S + 'background:#fff;color:#605e5c;border:1px solid #8a8886;';
-            cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
-            cancelBtn.addEventListener('click',     function(e) { e.stopPropagation(); cancel(); });
-
-            btnWrap.appendChild(saveBtn);
-            btnWrap.appendChild(cancelBtn);
-            wrap.appendChild(ta);
-            wrap.appendChild(btnWrap);
-
-            onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
-            return wrap;
-          } : false,
-          cellEdited: _snaIsAdmin ? function(cell) {
-            var row     = cell.getRow().getData();
-            var editKey = 'term:' + termSetId + ':' + (row.termId || '');
-            snaSaveDescription(editKey, cell.getValue() || '').then(function() {
-              snaShowToast('Description saved.');
-            }).catch(function(err) {
-              cell.restoreOldValue();
-              snaShowToast('Save failed: ' + (err.message || String(err)), true);
-            });
-          } : null
-        }
-      ];
-    } else if (tbl.type === 'folders') {
-      columns = [
-        {
-          title: 'Folder name', field: 'name', sorter: 'string', widthGrow: 3,
-          formatter: function(cell) {
-            var rowData = cell.getRow().getData();
-            var icon = rowData.icon || '📂';
-            return '<span class="sna-type-icon" aria-hidden="true">' + icon + '</span>' +
-              snaLinkHtml(rowData.folderUrl, cell.getValue(), 'sna-folder-link');
-          }
-        },
-        {
-          title: 'Items', field: 'items', sorter: 'number', width: 95, hozAlign: 'right',
-          formatter: function(cell) {
-            return '<span class="sna-tab-items-cell">' + (cell.getValue() !== null ? snaEscapeHtml(cell.getValue()) : '-') + '</span>';
-          }
-        },
-        {
-          title: 'Folder ID', field: 'folderId', sorter: 'string', widthGrow: 2,
-          formatter: function(cell) {
-            return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>';
-          }
-        }
-      ];
-    } else if (tbl.type === 'pages') {
-      columns = [
-        {
-          title: 'Page', field: 'name', sorter: 'string', widthGrow: 3,
-          formatter: function(cell) {
-            return '<span class="sna-type-icon" aria-hidden="true">📄</span>' +
-              snaLinkHtml(cell.getRow().getData().url, cell.getValue(), 'sna-folder-link');
-          }
-        },
-        { title: 'File name', field: 'fileName', sorter: 'string', widthGrow: 2 },
-        { title: 'Last changed', field: 'modified', sorter: 'string', width: 130 },
-        {
-          title: 'Address', field: 'url', sorter: 'string', widthGrow: 3,
-          formatter: function(cell) {
-            return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>';
-          }
-        }
-      ];
+    // Tables longer than SNA_TABLE_FILTER_MIN_ROWS get a filter box with a row count under it.
+    // The full report for printing always shows every row, so it has no filter boxes.
+    var filterInput = null;
+    var countEl = null;
+    var total = tbl.data.length;
+    var isPrintView = !!(_snaRoute && _snaRoute.section === 'print');
+    if (total > SNA_TABLE_FILTER_MIN_ROWS && !isPrintView) {
+      var filterWrap = document.createElement('div');
+      filterWrap.className = 'sna-table-filter hide-on-print';
+      var filterLabel = document.createElement('label');
+      filterLabel.setAttribute('for', tbl.id + '-s');
+      filterLabel.textContent = 'Filter ' + tbl.searchLabel;
+      filterInput = document.createElement('input');
+      filterInput.type = 'search';
+      filterInput.id = tbl.id + '-s';
+      filterInput.className = 'sna-table-search';
+      filterInput.setAttribute('autocomplete', 'off');
+      countEl = document.createElement('p');
+      countEl.className = 'sna-table-count';
+      countEl.setAttribute('role', 'status');
+      filterWrap.appendChild(filterLabel);
+      filterWrap.appendChild(filterInput);
+      filterWrap.appendChild(countEl);
+      el.parentNode.insertBefore(filterWrap, el);
     }
-
-    var tabOpts = {
-      data: tbl.data,
-      columns: columns,
-      layout: 'fitColumns',
-      renderType: 'basic',
-      movableColumns: false,
-      selectable: false,
-      placeholder: '<em>No data found.</em>'
-    };
 
     // Long tables scroll inside a labeled region that keyboard users can focus and scroll.
     // The region is outside the table because the table's grid role allows only rows inside it.
-    if (tbl.data.length > 7) {
+    if (total > 7) {
       var scrollRegion = document.createElement('div');
       scrollRegion.className = 'sna-table-scroll';
       scrollRegion.setAttribute('tabindex', '0');
@@ -420,29 +490,42 @@ function initSnaTabulators() {
       scrollRegion.appendChild(el);
     }
 
-    var table = new Tabulator(el, tabOpts);
-    _snaTabInstances[tbl.id] = table;
-    // Tabulator makes its inner scroll area focusable, which puts a focus stop with no role inside the grid.
-    // The table does not scroll by itself here, so that focus stop is removed.
-    table.on('tableBuilt', function() {
-      var holder = el.querySelector('.tabulator-tableholder');
-      if (holder) { holder.removeAttribute('tabindex'); }
+    var table = new Tabulator(el, {
+      data: tbl.data,
+      columns: snaTableColumns(tbl.type, tbl),
+      layout: 'fitColumns',
+      renderType: 'basic',
+      movableColumns: false,
+      selectable: false,
+      placeholder: '<em>No data found.</em>'
     });
+    _snaTabInstances[tbl.id] = table;
 
-    // Wire search input
-    var searchEl = document.getElementById(searchId);
-    if (searchEl) {
-      searchEl.addEventListener('input', function() {
-        var val = this.value.trim().toLowerCase();
-        if (!val) { table.clearFilter(); return; }
-        table.setFilter(function(data) {
-          var keys = Object.keys(data);
-          for (var k = 0; k < keys.length; k++) {
-            var v = data[keys[k]];
-            if (v && String(v).toLowerCase().indexOf(val) > -1) { return true; }
-          }
-          return false;
+    table.on('dataFiltered', function(filters, rows) { snaUpdateTableCount(countEl, rows.length, total, tbl.searchLabel); });
+
+    built.push(new Promise(function(resolve) {
+      table.on('tableBuilt', function() {
+        // Tabulator makes its inner scroll area focusable, which puts a focus stop with no role inside the grid.
+        // The table does not scroll by itself here, so that focus stop is removed.
+        var holder = el.querySelector('.tabulator-tableholder');
+        if (holder) { holder.removeAttribute('tabindex'); }
+        if (filterInput) {
+          var saved = _snaTableFilters[tbl.id] || '';
+          filterInput.value = saved;
+          if (saved) { snaApplyTableFilter(table, saved); } else { snaUpdateTableCount(countEl, total, total, tbl.searchLabel); }
+        }
+        // A table in a column the browser has only just laid out can measure its width too early, so it redraws once.
+        requestAnimationFrame(function() {
+          if (_snaTabInstances[tbl.id] === table) { table.redraw(true); }
+          resolve();
         });
+      });
+    }));
+
+    if (filterInput) {
+      filterInput.addEventListener('input', function() {
+        _snaTableFilters[tbl.id] = filterInput.value;
+        snaApplyTableFilter(table, filterInput.value);
       });
     }
 
@@ -450,14 +533,28 @@ function initSnaTabulators() {
     var detailsParent = el.closest('details');
     if (detailsParent) {
       detailsParent.addEventListener('toggle', function() {
-        if (detailsParent.open && _snaTabInstances[tbl.id]) {
-          _snaTabInstances[tbl.id].redraw(true);
+        if (detailsParent.open && _snaTabInstances[tbl.id] === table) {
+          table.redraw(true);
         }
       });
     }
   });
 
   _snaTablesQueue = [];
+  return built;
+}
+
+// Removes the Tabulator tables inside rootEl before its markup is replaced, keeping each filter box's text.
+// Tables whose elements are already gone from the page are removed too.
+function snaDisposeViewTables(rootEl) {
+  Object.keys(_snaTabInstances).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el && rootEl && !rootEl.contains(el)) { return; }
+    var filterInput = document.getElementById(id + '-s');
+    if (filterInput) { _snaTableFilters[id] = filterInput.value; }
+    try { _snaTabInstances[id].destroy(); } catch(e) { /* The table was already removed with its element. */ }
+    delete _snaTabInstances[id];
+  });
 }
 
 // Fetches and filters field definitions for a list from the SharePoint REST API.
@@ -1038,8 +1135,10 @@ async function snaResolveUserLogin(text) {
 }
 
 // Renders the "Check one person's access" section. The button and the Enter key run snaCheckUserAccess.
+// A check that finished for this report is shown again, so opening another view and coming back keeps it.
 function snaRenderUserAccessTool() {
-    return '<details class="permissions-section hide-on-print">' +
+    var done = _snaUserCheckResult;
+    return '<details class="permissions-section hide-on-print" id="sna-perm-person"' + (done ? ' open' : '') + '>' +
         '<summary>Check one person\'s access</summary>' +
         '<p class="sna-note">Shows what one person can do on the site and in each list and library, including access through groups. ' +
             'You need to be a site owner to use this.</p>' +
@@ -1047,13 +1146,15 @@ function snaRenderUserAccessTool() {
             '<label for="sna-user-access-input">Email address or sign-in name</label>' +
             '<div class="sna-access-row">' +
                 '<input type="text" id="sna-user-access-input" class="sna-access-input" autocomplete="off" spellcheck="false"' +
-                    ' maxlength="' + SNA_PERSON_CHECK_MAX_LENGTH + '" aria-describedby="sna-user-access-hint">' +
-                '<button type="button" class="sna-action-btn" data-action="check-user-access">Check access</button>' +
+                    ' maxlength="' + SNA_PERSON_CHECK_MAX_LENGTH + '" aria-describedby="sna-user-access-hint"' +
+                    (done ? ' value="' + snaEscapeHtml(done.input) + '"' : '') + '>' +
+                '<button type="button" class="sna-action-btn" data-action="check-user-access"' + (_snaUserCheckRunning ? ' disabled' : '') + '>Check access</button>' +
             '</div>' +
             '<div id="sna-user-access-hint" class="sna-muted">Such as user@med.umich.edu</div>' +
         '</div>' +
-        '<div id="sna-user-access-status" class="sna-access-status" role="status"></div>' +
-        '<div id="sna-user-access-results"></div>' +
+        '<div id="sna-user-access-status" class="sna-access-status" role="status">' + (done ? snaEscapeHtml(done.status) : '') + '</div>' +
+        // done.html was built by snaCheckUserAccess with every SharePoint value escaped.
+        '<div id="sna-user-access-results">' + (done ? done.html : '') + '</div>' +
     '</details>';
 }
 
@@ -1079,16 +1180,35 @@ async function snaCheckUserAccess() {
         return;
     }
 
+    // The check belongs to the report it started on. If that report is replaced or cleared, its result is dropped.
+    var token = _snaCollectionToken;
+    var isCurrent = function() { return token === _snaCollectionToken; };
+    // The person may open another view while the check runs; results then go to the section shown when Permissions reopens.
+    var showResult = function(statusText, html) {
+        if (!isCurrent()) { return; }
+        _snaUserCheckResult = { input: text, status: statusText, html: html };
+        var liveStatus = document.getElementById('sna-user-access-status');
+        var liveOut = document.getElementById('sna-user-access-results');
+        if (liveOut) { liveOut.innerHTML = html; }
+        if (liveStatus) { liveStatus.textContent = statusText; }
+    };
+
     _snaUserCheckRunning = true;
+    _snaUserCheckResult = null;
     if (button) { button.disabled = true; }
     out.innerHTML = '';
     status.textContent = 'Checking access...';
+
+    // Kept from the start, because Start over and Change site replace these while the check runs.
+    var checkSiteUrl = _snaTargetUrl;
+    var checkLists = (_snaAllListsMeta || []).slice();
 
     try {
         var person = await snaResolveUserLogin(text);
         // Single quotes are doubled so the sign-in name can't end the quoted value early.
         var userParam = "@u='" + encodeURIComponent(person.login.replace(/'/g, "''")) + "'";
         var readLevel = async function(scopeUrl) {
+            if (!isCurrent()) { return null; }
             try {
                 var res = await spFetch(scopeUrl + '/getUserEffectivePermissions(@u)?' + userParam);
                 return snaDecodePermLevel(res && res.GetUserEffectivePermissions ? res.GetUserEffectivePermissions : res);
@@ -1097,15 +1217,16 @@ async function snaCheckUserAccess() {
             }
         };
 
-        var siteLevel = await readLevel(_snaTargetUrl + '/_api/web');
-        var listRows = await snaMapWithLimit(_snaAllListsMeta || [], SNA_MAX_PARALLEL_REQUESTS, async function(list) {
+        var siteLevel = await readLevel(checkSiteUrl + '/_api/web');
+        var listRows = await snaMapWithLimit(checkLists, SNA_MAX_PARALLEL_REQUESTS, async function(list) {
             return {
                 title: list.Title || '',
-                url:   snaListUrl(list, _snaTargetUrl),
+                url:   snaListUrl(list, checkSiteUrl),
                 isLib: list.BaseType === 1,
-                level: await readLevel(_snaTargetUrl + "/_api/web/lists(guid'" + list.Id + "')")
+                level: await readLevel(checkSiteUrl + "/_api/web/lists(guid'" + list.Id + "')")
             };
         });
+        if (!isCurrent()) { return; }
 
         var shownRows = listRows.filter(function(r) { return r.level !== 'No access'; }).sort(snaByTitle);
         var noAccessCount = listRows.length - shownRows.length;
@@ -1127,16 +1248,16 @@ async function snaCheckUserAccess() {
             html += '<p class="sna-note">Sitenalyzer didn\'t find this email address among the site\'s users, so it checked the sign-in name ' +
                 snaEscapeHtml(person.login) + '. If the results say No access, check the spelling.</p>';
         }
-        out.innerHTML = html;
-        status.textContent = 'Finished checking access for ' + person.title + '.' + (uncheckedCount > 0
+        showResult('Finished checking access for ' + person.title + '.' + (uncheckedCount > 0
             ? ' Sitenalyzer could not check ' + snaCountText(uncheckedCount, 'place', 'places') + '. You need to be a site owner to check them.'
-            : '');
+            : ''), html);
     } catch(e) {
         console.warn('Sitenalyzer: access check failed:', e);
-        status.textContent = 'Sitenalyzer could not check this person\'s access. Refresh the page and try again.';
+        showResult('Sitenalyzer could not check this person\'s access. Refresh the page and try again.', '');
     } finally {
         _snaUserCheckRunning = false;
-        if (button) { button.disabled = false; }
+        var liveButton = document.querySelector('#sp-results [data-action="check-user-access"]');
+        if (liveButton) { liveButton.disabled = false; }
     }
 }
 
@@ -1225,7 +1346,10 @@ function snaRenderInheritanceReport() {
     unique.forEach(function(u) {
         html += '<tr><td><span aria-hidden="true">' + (u.isLib ? '📄 ' : '📋 ') + '</span>' + snaLinkHtml(u.url, u.title) + '</td>' +
             '<td>' + (u.isLib ? 'Library' : 'List') + '</td>' +
-            '<td>' + (u.rolesRead ? 'Shown on its card' : 'Sitenalyzer could not read them') + '</td></tr>';
+            '<td>' + (u.rolesRead
+                ? '<a href="' + snaEscapeHtml(snaRouteHash({ section: 'contents', id: snaCleanListId(u.id), tab: 'permissions' })) + '">' +
+                    'See its permissions<span class="sna-visually-hidden"> for ' + snaEscapeHtml(u.title) + '</span></a>'
+                : 'Sitenalyzer could not read them') + '</td></tr>';
     });
     return html + '</tbody></table>';
 }
@@ -1945,8 +2069,22 @@ function snaShowToast(msg, isError) {
     }, 2200);
 }
 
-// Single delegated click handler for all dynamically generated buttons and links.
-function snaHandleResultsClick(e) {
+// One click handler for the whole app: links to report views (#sna/...) and every button or link with data-action.
+function snaHandleAppClick(e) {
+    // Links to report views open the view inside the app. Ctrl, Shift, and similar clicks keep the browser's own behavior.
+    var navLink = e.target.closest('a[href^="' + SNA_ROUTE_PREFIX + '"]');
+    if (navLink) {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) { return; }
+        e.preventDefault();
+        var route = snaParseRoute(navLink.getAttribute('href'));
+        if (!route || !_snaReport) { return; }
+        // A column search result opens its list's Columns tab with the table already filtered to that column.
+        var filterTable = navLink.getAttribute('data-filter-table');
+        if (filterTable) { _snaTableFilters[filterTable] = navLink.getAttribute('data-filter-text') || ''; }
+        snaNavigate(route, { focus: navLink.getAttribute('data-nav-focus') || 'heading' });
+        return;
+    }
+
     var target = e.target.closest('[data-action]');
     if (!target) { return; }
     var action = target.getAttribute('data-action');
@@ -1955,10 +2093,13 @@ function snaHandleResultsClick(e) {
     else if (action === 'export-xlsx') { exportToXLSX(); }
     else if (action === 'export-permissions') { exportPermissionsToXLSX(); }
     else if (action === 'check-user-access') { snaCheckUserAccess(); }
-    else if (action === 'expand-print') { expandAndPrint(); }
+    else if (action === 'print-report') { snaNavigate({ section: 'print' }, { focus: 'heading', print: true }); }
+    else if (action === 'change-site') { startOver(true); }
+    else if (action === 'start-over') { startOver(false); }
+    else if (action === 'refresh-report') { snaRefreshReport(); }
     else if (action === 'scroll-top') {
         var el = document.getElementById('sp-info-app');
-        if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        if (el) { el.scrollIntoView({ behavior: snaScrollBehavior(), block: 'start' }); }
     }
     else if (action === 'copy-show-id') {
         snaCopyAndShowId(
@@ -1982,15 +2123,20 @@ function snaHandleResultsClick(e) {
     }
 }
 
+// Smooth scrolling, unless the person asked their system to reduce motion.
+function snaScrollBehavior() {
+    return (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) ? 'auto' : 'smooth';
+}
+
 // Copy ID to clipboard and temporarily reveal it as small text next to the button.
 function snaCopyAndShowId(id, label, displayId) {
     snaCopyToClipboard(id, label);
-    var el = document.getElementById(displayId);
+    var el = displayId ? document.getElementById(displayId) : null;
     if (el) {
         el.textContent = id;
-        el.style.display = 'inline';
+        el.hidden = false;
         if (el._snaHideTimer) { clearTimeout(el._snaHideTimer); }
-        el._snaHideTimer = setTimeout(function() { el.style.display = 'none'; }, 5000);
+        el._snaHideTimer = setTimeout(function() { el.hidden = true; }, 5000);
     }
 }
 
@@ -2006,14 +2152,25 @@ function snaOpenUrl(url) {
     window.open(safeUrl, '_blank', 'noopener,noreferrer');
 }
 
-// Resets all extracted data and UI state so the user can analyse a different site.
-function startOver() {
-    document.getElementById('sp-results').innerHTML = '';
+// ### Collect the Report ###
+
+// Clears the collected report and everything drawn from it. Called before a site is read, by Start over, and by Change site.
+// Changing _snaCollectionToken makes any collection or person check still running drop its results.
+function snaClearReport() {
+    _snaCollectionToken++;
+    snaDisposeViewTables(null);
+    var results = document.getElementById('sp-results');
+    if (results) { results.innerHTML = ''; }
+    var header = document.getElementById('sna-site-header');
+    if (header) { header.innerHTML = ''; }
+    var search = document.getElementById('sna-report-search');
+    if (search) { search.value = ''; }
+
     globalExportedData = [];
     _snaTablesQueue = [];
     _snaTabInstances = {};
+    _snaTableFilters = {};
     _snaSearchIndex = [];
-    _snaCardData    = [];
     snaResetPermissionState();
     _snaTaxonomyData     = [];
     _snaSiteCollectionId = '';
@@ -2022,486 +2179,582 @@ function startOver() {
     _snaTargetUrl        = '';
     _snaSiteInfo         = null;
     _snaAllListsMeta     = [];
-    _snaCurrentUser = null;
+    _snaCurrentUser      = null;
     _snaRequestDigest    = null;
     _snaRequestDigestExpiry = 0;
-    var srPanel = document.getElementById('sna-search-panel');
-    if (srPanel) { srPanel.hidden = true; }
-    var srToggle = document.getElementById('sna-search-toggle');
-    if (srToggle) { srToggle.setAttribute('aria-expanded', 'false'); }
-    var srInput = document.getElementById('sna-search-input');
-    if (srInput) { srInput.setAttribute('aria-expanded', 'false'); srInput.value = ''; }
-    var srList = document.getElementById('sna-search-results');
-    if (srList) { srList.innerHTML = ''; }
-    var srCountEl = document.getElementById('sna-search-sr-count');
-    if (srCountEl) { srCountEl.textContent = ''; }
-    var urlSection = document.getElementById('sna-url-section');
-    if (urlSection) { urlSection.classList.remove('collapsed'); }
-    var startOverBtn = document.getElementById('sna-start-over-btn');
-    if (startOverBtn) { startOverBtn.style.display = 'none'; }
-    var input = document.getElementById('site-url-input');
-    if (input) { input.focus(); input.select(); }
+    _snaReport           = null;
+    _snaRoute            = null;
+    _snaPendingNav       = null;
+    _snaContentsFilter   = '';
+    _snaLastInventoryId  = '';
+    _snaUserCheckResult  = null;
 }
 
-// Expands all collapsible sections, redraws Tabulator tables, then opens the print dialog.
-function expandAndPrint() {
-    var detailsEls = document.querySelectorAll('#sp-results details');
-    detailsEls.forEach(function(d) { d.open = true; });
-    // Redraw all Tabulator instances so columns resize correctly when revealed
-    Object.keys(_snaTabInstances).forEach(function(k) {
-        if (_snaTabInstances[k]) { _snaTabInstances[k].redraw(true); }
-    });
-    window.print();
-}
-
-// Opens all collapsible <details> sections and redraws every Tabulator instance.
-function expandAll() {
-    var detailsEls = document.querySelectorAll('#sp-results details');
-    detailsEls.forEach(function(d) { d.open = true; });
-    Object.keys(_snaTabInstances).forEach(function(k) {
-        if (_snaTabInstances[k]) { _snaTabInstances[k].redraw(true); }
-    });
-}
-
-// Closes all collapsible <details> sections in the results area.
-function collapseAll() {
-    var detailsEls = document.querySelectorAll('#sp-results details');
-    detailsEls.forEach(function(d) { d.open = false; });
-}
-
-// Fetches all SharePoint site data (info, lists, fields, permissions, taxonomy) and renders the full report.
-async function gatherSiteInformation() {
+// Clears the report and returns to the start screen. Change site keeps the last address in the Site URL box so it can be
+// corrected; Start over puts back this page's own site address.
+function startOver(keepAddress) {
+    snaClearReport();
+    snaSetProgress('');
     var btn = document.getElementById('sp-btn-gather');
+    if (btn) { btn.disabled = false; }
+    var reportEl = document.getElementById('sna-report');
+    if (reportEl) { reportEl.hidden = true; }
+    var entry = document.getElementById('sna-entry');
+    if (entry) { entry.hidden = false; }
+    snaShowEntryMessage('');
+    snaRemoveRouteFromAddress();
+    var input = document.getElementById('site-url-input');
+    if (input) {
+        if (!keepAddress) { input.value = getBaseUrl(); }
+        input.focus();
+        input.select();
+    }
+}
+
+// Reads the same site again and reopens the view that was on screen.
+function snaRefreshReport() {
+    if (!_snaReport) { return; }
+    var input = document.getElementById('site-url-input');
+    if (input) { input.value = _snaReport.siteUrl; }
+    gatherSiteInformation({ keepRoute: true });
+}
+
+// Shows what Sitenalyzer is reading, such as "Reading lists and libraries: 3 of 12". '' clears it.
+function snaSetProgress(text) {
     var loader = document.getElementById('sp-loader');
-    var resultsDiv = document.getElementById('sp-results');
+    if (loader) { loader.textContent = text || ''; }
+}
+
+// Shows an error under the Site URL box, or clears it when message is ''. detail is an optional second sentence.
+function snaShowEntryMessage(message, detail) {
+    var box = document.getElementById('sna-entry-message');
+    if (!box) { return; }
+    box.innerHTML = '';
+    if (!message) { box.hidden = true; return; }
+    var strong = document.createElement('strong');
+    strong.textContent = message;
+    box.appendChild(strong);
+    if (detail) { box.appendChild(document.createTextNode(' ' + detail)); }
+    box.hidden = false;
+}
+
+// Builds the error thrown when a collection is no longer wanted, because the person started over or started another one.
+function snaCancelledError() {
+    var error = new Error('Sitenalyzer stopped reading the site because a newer request replaced it.');
+    error.snaCancelled = true;
+    return error;
+}
+
+// Reads a whole site and returns the report the views are drawn from. Also fills the globals that the workbooks use;
+// the report holds references to those same arrays and objects. Requests run in the same order as before the report
+// existed, so large sites are not read any faster or throttled any more. token is the _snaCollectionToken this
+// collection belongs to; when it changes, the collection stops with snaCancelledError.
+//
+// Report shape: { collectedAt (ISO 8601, UTC), siteUrl, site { title, url, id, description, logoUrl }, currentUser, isAdmin,
+// listsRead, lists [snaCollectList entries], pages (snaFetchSitePages result), taxonomy { groups, read, termStoreId,
+// siteCollectionId }, permissions { siteRolesRead, siteRoleAssignments, appAssignments, index, rows, inheritedLists,
+// uniqueLists, roleDefinitions, siteAdmins, sharingLinks }, coverage [{ area, status: 'read'|'partial'|'failed', note }] }.
+async function collectReport(targetUrl, onProgress, token) {
+    var progress = typeof onProgress === 'function' ? onProgress : function() {};
+    function stillWanted() {
+        if (token !== _snaCollectionToken) { throw snaCancelledError(); }
+    }
+
+    _snaTargetUrl = targetUrl;
+    progress('Reading the site...');
+    var siteInfo = await spFetch(`${targetUrl}/_api/web?$select=Title,Url,Id,Description,SiteLogoUrl`);
+    stillWanted();
+    _snaSiteInfo = siteInfo || {};
+    var currentUser = await getLoggedInUser(targetUrl).catch(function() { return null; });
+    stillWanted();
+    _snaCurrentUser = currentUser;
+    var siteRoles = null;
+    try { siteRoles = await spFetch(`${targetUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`); } catch(err) { }
+    stillWanted();
+    _snaSiteRolesRead = !!(siteRoles && siteRoles.value);
+    if (_snaSiteRolesRead) { snaRecordRoleAssignments(siteRoles.value, { scope: 'Site' }); }
+    var appAssignments = _snaSiteRolesRead ? siteRoles.value.filter(function(ra) { return snaPrincipalKind(ra.Member) === 'app'; }) : [];
+
+    // Resolve admin status before the loop (single call). The other reads run while the lists are read.
+    var isAdmin = await checkAdminPermissions(targetUrl).catch(function() { return false; });
+    stillWanted();
+    _snaIsAdmin = isAdmin;
+    var taxonomyPromise = fetchTaxonomy(targetUrl).catch(function(e) {
+        console.warn('taxonomy error', e);
+        return { groups: [], read: false, siteCollectionId: '', termStoreId: '' };
+    });
+    var sitePagesPromise = snaFetchSitePages(targetUrl).catch(function(e) {
+        console.warn('Sitenalyzer: Site Pages read failed:', e);
+        return { pages: [], truncated: false, failed: true, stoppedAtOtherSite: false };
+    });
+    var sharingPromise = snaFetchSharingLinks(targetUrl).catch(function(e) {
+        console.warn('Sitenalyzer: sharing links read failed:', e);
+        return { links: [], failed: true, groupsCapped: false, lookupsCapped: false };
+    });
+    var roleDefinitionsPromise = snaFetchRoleDefinitions(targetUrl);
+    var siteAdminsPromise = snaFetchSiteAdmins(targetUrl);
+
+    var allLists = null;
+    try {
+        // Adapted from DataLaVista's fetchSPLists() function (https://michmed.org/datalavista)
+        allLists = await spFetch(`${targetUrl}/_api/web/lists?$select=Id,EntityTypeName,Title,Description,ItemCount,BaseType,Hidden,ImageUrl,IsApplicationList,LastItemModifiedDate,BaseTemplate,HasUniqueRoleAssignments,DefaultViewUrl,EnableVersioning,EnableMinorVersions,MajorVersionLimit&$filter=(Hidden eq false and IsApplicationList eq false and BaseTemplate ne 115 and BaseTemplate ne 121 and BaseTemplate ne 330 and BaseTemplate ne 544 and Title ne 'MicroFeed' and EntityTypeName ne 'AppCatalog' and EntityTypeName ne 'FormServerTemplates' and EntityTypeName ne 'Style_x0020_Library') or (Title eq 'User Information List' or Title eq 'Events')`);
+    } catch(err) {}
+    stillWanted();
+    _snaAllListsMeta = (allLists && allLists.value) ? allLists.value : [];
+
+    // Build a map of list GUID -> Title for lookup field resolution
+    var listIdMap = {};
+    _snaAllListsMeta.forEach(function(lst) {
+        listIdMap[snaCleanListId(lst.Id)] = lst.Title;
+    });
+
+    var lists = [];
+    for (var i = 0; i < _snaAllListsMeta.length; i++) {
+        progress('Reading lists and libraries: ' + (i + 1) + ' of ' + _snaAllListsMeta.length);
+        lists.push(await snaCollectList(_snaAllListsMeta[i], targetUrl, listIdMap, stillWanted));
+    }
+
+    // Wait for the reads that ran while the lists were read. Group members are read after the lists,
+    // because lists with their own permissions can add more SharePoint groups.
+    progress('Reading permissions, pages, and terms...');
+    var taxonomy = await taxonomyPromise;
+    stillWanted();
+    _snaTaxonomyData     = taxonomy.groups;
+    _snaSiteCollectionId = taxonomy.siteCollectionId;
+    _snaTermStoreId      = taxonomy.termStoreId;
+    await snaExpandGroups(targetUrl);
+    var sitePages = await sitePagesPromise;
+    var sharingLinks = await sharingPromise;
+    var roleDefinitions = await roleDefinitionsPromise;
+    var siteAdmins = await siteAdminsPromise;
+    stillWanted();
+    _snaSharingLinks    = sharingLinks;
+    _snaRoleDefinitions = roleDefinitions;
+    _snaSiteAdmins      = siteAdmins;
+
+    var report = {
+        collectedAt: new Date().toISOString(),
+        siteUrl:     targetUrl,
+        site: {
+            title:       String(_snaSiteInfo.Title || '').trim(),
+            url:         _snaSiteInfo.Url || targetUrl,
+            id:          _snaSiteInfo.Id || '',
+            description: String(_snaSiteInfo.Description || '').trim(),
+            // The logo is shown only from an https address on this tenant. SharePoint usually gives an address within the site.
+            logoUrl:     snaSafeTenantUrl(_snaSiteInfo.SiteLogoUrl, targetUrl)
+        },
+        currentUser: _snaCurrentUser,
+        isAdmin:     _snaIsAdmin,
+        listsRead:   !!(allLists && allLists.value),
+        lists:       lists,
+        pages:       sitePages,
+        taxonomy: {
+            groups:           _snaTaxonomyData,
+            read:             taxonomy.read,
+            termStoreId:      _snaTermStoreId,
+            siteCollectionId: _snaSiteCollectionId
+        },
+        permissions: {
+            siteRolesRead:       _snaSiteRolesRead,
+            siteRoleAssignments: _snaSiteRolesRead ? siteRoles.value : [],
+            appAssignments:      appAssignments,
+            index:               _snaPermIndex,
+            rows:                _snaPermissionRows,
+            inheritedLists:      _snaInheritedLists,
+            uniqueLists:         _snaUniqueLists,
+            roleDefinitions:     _snaRoleDefinitions,
+            siteAdmins:          _snaSiteAdmins,
+            sharingLinks:        _snaSharingLinks
+        },
+        coverage: []
+    };
+    report.coverage = snaBuildCoverage(report);
+    return report;
+}
+
+// Reads one list or library: its permissions when it has its own, its columns, and, for document libraries, its
+// top-level folders. Adds its columns to globalExportedData and its permissions to the access list.
+// Returns { id, routeId, title, internalName, description, itemCount, isLib, baseTemplate, url, lastModified,
+// versioning { enabled, minor, majorLimit }, raw, permissions { inherits, rolesRead, roleAssignments },
+// columns [], columnsStatus 'read'|'empty'|'failed', folders [], foldersStatus 'read'|'empty'|'failed'|'' (lists) }.
+async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
+    var isDocLib = list.BaseTemplate === 101;
+    var listTypeLabel = isDocLib ? "Document Library" : "List";
+    var listUrl = snaListUrl(list, targetUrl);
+    var entry = {
+        id:            list.Id || '',
+        routeId:       snaCleanListId(list.Id),
+        title:         list.Title || '',
+        internalName:  list.EntityTypeName || '',
+        description:   list.Description || '',
+        itemCount:     list.ItemCount,
+        isLib:         isDocLib,
+        baseTemplate:  list.BaseTemplate,
+        url:           listUrl,
+        lastModified:  list.LastItemModifiedDate || '',
+        versioning:    { enabled: list.EnableVersioning, minor: list.EnableMinorVersions, majorLimit: list.MajorVersionLimit },
+        raw:           list,
+        permissions:   { inherits: list.HasUniqueRoleAssignments === false, rolesRead: true, roleAssignments: [] },
+        columns:       [],
+        columnsStatus: '',
+        folders:       [],
+        foldersStatus: ''
+    };
+    var listSummary = { id: list.Id || '', title: list.Title || '', url: listUrl, isLib: list.BaseType === 1, rolesRead: true };
+
+    // 1. Fetch Roles or Handle Inheritance
+    if (list.HasUniqueRoleAssignments === false) {
+        _snaInheritedLists.push(listSummary);
+    } else {
+        var roleUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/roleassignments?$expand=Member,RoleDefinitionBindings";
+        var lRoles = null;
+        try { lRoles = await spFetch(roleUrl); } catch(err) { }
+        stillWanted();
+        listSummary.rolesRead = !!(lRoles && lRoles.value);
+        entry.permissions.rolesRead = listSummary.rolesRead;
+        _snaUniqueLists.push(listSummary);
+        if (listSummary.rolesRead) {
+            entry.permissions.roleAssignments = lRoles.value;
+            snaRecordRoleAssignments(lRoles.value, {
+                scope: 'List', listId: list.Id || '', listTitle: list.Title || '', listUrl: listUrl,
+                listType: list.BaseType === 1 ? 'Library' : 'List'
+            });
+        }
+    }
+
+    // 2. Fetch Field Definitions (via snaFetchFields — mirrors DLV fetchSPFields)
+    try {
+        var lFields = await snaFetchFields(targetUrl, list.Id, isDocLib);
+        stillWanted();
+        entry.columnsStatus = (lFields && lFields.length > 0) ? 'read' : 'empty';
+        (lFields || []).forEach(function(f, fieldIdx) {
+            var returnType = '';
+            var typeDisplay = f.TypeAsString || '';
+            if (f.TypeAsString === 'Calculated' && f.CalculatedFieldTypeAsString) {
+                returnType = f.CalculatedFieldTypeAsString;
+                typeDisplay = 'Calculated (' + returnType + ')';
+            }
+            var lookupListName = '';
+            if (f.LookupList) {
+                var cleanGuid = snaCleanListId(f.LookupList);
+                lookupListName = listIdMap[cleanGuid] ? listIdMap[cleanGuid] : f.LookupList;
+            }
+            var choices = (f.Choices && f.Choices.results) ? f.Choices.results : (Array.isArray(f.Choices) ? f.Choices : []);
+            var maxLength = (f.MaxLength !== undefined && f.MaxLength !== null) ? f.MaxLength : '';
+            // Resolve human-readable label for icon tooltip
+            var resolvedForLabel = (f.TypeAsString === 'Calculated' && f.CalculatedFieldTypeAsString) ? f.CalculatedFieldTypeAsString : (f.TypeAsString || '');
+            entry.columns.push({
+                title:        f.Title || '',
+                internalName: f.InternalName || '',
+                dataType:     typeDisplay,
+                typeIcon:     snaGetFieldTypeIcon(f.TypeAsString, f.CalculatedFieldTypeAsString),
+                typeLabel:    resolvedForLabel,
+                description:  f.Description || '',
+                lookupList:   lookupListName,
+                listId:       list.Id || '',
+                fieldId:      f.Id || '',
+                required:     f.Required ? true : false,
+                choices:      choices.join('; '),
+                defaultValue: f.DefaultValue ? String(f.DefaultValue) : '',
+                maxLength:    maxLength,
+                indexed:      f.Indexed ? true : false,
+                formula:      f.Formula ? String(f.Formula) : '',
+                lookupTarget: f.LookupList ? String(f.LookupList) : ''
+            });
+            globalExportedData.push({
+                ListTitle:    list.Title,
+                ListType:     listTypeLabel,
+                FieldTitle:   f.Title,
+                InternalName: f.InternalName,
+                Type:         f.TypeAsString,
+                Description:  f.Description,
+                ReturnType:   returnType,
+                LookupListName: lookupListName,
+                LookupList:   f.LookupList ? f.LookupList : '',
+                Formula:      f.Formula ? f.Formula : '',
+                DefaultValue: f.DefaultValue ? f.DefaultValue : '',
+                FieldId:      f.Id,
+                ListGuid:     list.Id,
+                FieldOrder:   fieldIdx + 1,
+                Required:     f.Required ? true : false,
+                MaxLength:    maxLength,
+                Choices:      choices,
+                LookupField:  f.LookupField ? f.LookupField : '',
+                Indexed:      f.Indexed ? true : false
+            });
+        });
+    } catch(e) {
+        if (e && e.snaCancelled) { throw e; }
+        entry.columnsStatus = 'failed';
+    }
+
+    // 3. Top-level folders of document libraries. The Forms folder holds SharePoint's own forms, so it is left out.
+    if (isDocLib) {
+        var folders = null;
+        try {
+            var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId,ItemCount,ServerRelativeUrl";
+            folders = await spFetch(foldersUrl);
+        } catch(err) {
+            entry.foldersStatus = 'failed';
+        }
+        stillWanted();
+        if (entry.foldersStatus !== 'failed') {
+            var validFolders = ((folders && folders.value) ? folders.value : []).filter(function(fldr) { return fldr.Name !== 'Forms'; });
+            validFolders.forEach(function(fldr) {
+                // Build folder URL from ServerRelativeUrl (preferred) or fallback construction
+                var folderUrl = '';
+                if (fldr.ServerRelativeUrl) {
+                    folderUrl = targetUrl.replace(/\/+$/, '').split('/').slice(0, 3).join('/') + fldr.ServerRelativeUrl;
+                } else {
+                    folderUrl = targetUrl.replace(/\/+$/, '') + '/' + list.EntityTypeName + '/' + encodeURIComponent(fldr.Name || '');
+                }
+                entry.folders.push({
+                    icon:      '📂',
+                    name:      fldr.Name || '',
+                    folderUrl: folderUrl,
+                    items:     (fldr.ItemCount !== undefined && fldr.ItemCount !== null) ? fldr.ItemCount : null,
+                    folderId:  fldr.UniqueId || ''
+                });
+            });
+            entry.foldersStatus = entry.folders.length > 0 ? 'read' : 'empty';
+        }
+    }
+    return entry;
+}
+
+// Returns one row per part of the report, saying whether Sitenalyzer could read it: { area, status, note }.
+// status is 'read', 'partial' (read in part), or 'failed' (not read).
+function snaBuildCoverage(report) {
+    var rows = [];
+    var perms = report.permissions;
+    function add(area, status, note) { rows.push({ area: area, status: status, note: note || '' }); }
+    function countStatus(items, isFailed) {
+        var failed = items.filter(isFailed).length;
+        return { failed: failed, status: failed === 0 ? 'read' : (failed === items.length ? 'failed' : 'partial') };
+    }
+
+    add('Site name, address, and description', 'read');
+    add('Lists and libraries', report.listsRead ? 'read' : 'failed', report.listsRead ? '' :
+        'Sitenalyzer could not read the lists and libraries, so Contents has no columns or folders. Refresh the report to try again.');
+
+    var columns = countStatus(report.lists, function(l) { return l.columnsStatus === 'failed'; });
+    add('Columns', columns.status, columns.failed === 0 ? '' :
+        'Sitenalyzer could not read the columns of ' + snaCountText(columns.failed, 'list or library', 'lists and libraries') + '. Refresh the report to try again.');
+
+    var libraries = report.lists.filter(function(l) { return l.isLib; });
+    var folders = countStatus(libraries, function(l) { return l.foldersStatus === 'failed'; });
+    add('Top-level folders', folders.status, folders.failed === 0 ? '' :
+        'Sitenalyzer could not read the folders of ' + snaCountText(folders.failed, 'library', 'libraries') + '. Refresh the report to try again.');
+
+    add('Site permissions', perms.siteRolesRead ? 'read' : 'failed', perms.siteRolesRead ? '' :
+        'People and groups with access to the whole site, and apps, are not in this report. Ask a site owner to run Sitenalyzer on this site.');
+
+    var own = countStatus(perms.uniqueLists, function(l) { return !l.rolesRead; });
+    add('Permissions of lists and libraries that have their own', own.status, own.failed === 0 ? '' :
+        'Sitenalyzer could not read the permissions of ' + snaCountText(own.failed, 'list or library', 'lists and libraries') + '. You need to be a site owner to see them.');
+
+    var groups = Object.keys(perms.index).map(function(key) { return perms.index[key]; })
+        .filter(function(p) { return p.membersStatus === 'read' || p.membersStatus === 'failed'; });
+    var members = countStatus(groups, function(p) { return p.membersStatus === 'failed'; });
+    add('SharePoint group members', members.status, members.failed === 0 ? '' :
+        'Sitenalyzer could not read the members of ' + snaCountText(members.failed, 'group', 'groups') + '. You need to be a site owner to see them.');
+
+    var sharing = perms.sharingLinks;
+    var sharingNotes = [];
+    if (sharing.groupsCapped) { sharingNotes.push('Sitenalyzer read the first ' + SNA_SHARING_GROUPS_MAX.toLocaleString('en-US') + ' site groups only, so some sharing links may be missing.'); }
+    if (sharing.lookupsCapped) { sharingNotes.push('Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.'); }
+    add('Sharing links', sharing.failed ? 'failed' : (sharingNotes.length ? 'partial' : 'read'),
+        sharing.failed ? 'Sitenalyzer could not read the sharing links. You need to be a site owner to see them.' : sharingNotes.join(' '));
+
+    add('Permission levels', perms.roleDefinitions === null ? 'failed' : 'read', perms.roleDefinitions === null ?
+        'The permissions workbook does not describe the permission levels.' : '');
+    add('Site collection administrators', perms.siteAdmins === null ? 'failed' : 'read', perms.siteAdmins === null ?
+        'The permissions workbook does not list the site collection administrators.' : '');
+
+    var pages = report.pages;
+    var pageNotes = [];
+    if (pages.failed) { pageNotes.push('Sitenalyzer could not read all of the Site Pages library.'); }
+    if (pages.truncated) { pageNotes.push('Sitenalyzer read the first ' + SNA_SITE_PAGES_MAX.toLocaleString('en-US') + ' items only.'); }
+    if (pages.stoppedAtOtherSite) { pageNotes.push('Sitenalyzer stopped because SharePoint sent a link to a different site.'); }
+    add('Site pages', pageNotes.length === 0 ? 'read' : ((pages.failed && pages.pages.length === 0) ? 'failed' : 'partial'), pageNotes.join(' '));
+
+    add('Term store', report.taxonomy.read ? 'read' : 'failed', report.taxonomy.read ? '' :
+        'Sitenalyzer could not read the term store, so Taxonomy is empty.');
+    return rows;
+}
+
+// Reads the site in the Site URL box and shows its report. options.keepRoute reopens the view that was on screen,
+// for Refresh report. Otherwise the report opens the view in the address, such as #sna/taxonomy, or Overview.
+async function gatherSiteInformation(options) {
+    var opts = options || {};
+    var btn = document.getElementById('sp-btn-gather');
     var siteUrlInput = document.getElementById('site-url-input');
+    var entry = document.getElementById('sna-entry');
+    var reportEl = document.getElementById('sna-report');
+    // An address left in the browser history by an earlier report must not choose the view for a new site.
+    var startRoute = (opts.keepRoute && _snaRoute) ? _snaRoute : (_snaUseAddressRoute ? snaParseRoute(window.location.hash) : null);
 
-    btn.disabled = true;
-    loader.style.display = 'block';
-    resultsDiv.innerHTML = '';
-    globalExportedData = [];
-    _snaTablesQueue = [];
-    _snaTabInstances = {};
-    _snaCardData = [];
-    _snaSearchIndex = [];
-    _snaTaxonomyData     = [];
-    _snaSiteCollectionId = '';
-    _snaTermStoreId      = '';
-    _snaIsAdmin          = false;
-    _snaTargetUrl        = '';
-    _snaSiteInfo         = null;
-    _snaAllListsMeta     = [];
-    _snaCurrentUser = null;
-    snaResetPermissionState();
-
+    snaShowEntryMessage('');
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
-        resultsDiv.innerHTML = '<div style="color: #a80000; padding: 15px; border: 1px solid #a80000; border-radius: 4px;" role="alert">Enter or select a site URL, then select Extract site information.</div>';
-        btn.disabled = false;
-        loader.style.display = 'none';
+        snaShowEntryMessage('Enter or select a site URL, then select Extract site information.');
+        siteUrlInput.focus();
         return;
     }
 
+    snaClearReport();
+    var token = _snaCollectionToken;
+    if (reportEl) { reportEl.hidden = true; }
+    if (entry) { entry.hidden = false; }
+    btn.disabled = true;
+    snaSetProgress('Reading the site...');
+    if (opts.keepRoute) {
+        var loader = document.getElementById('sp-loader');
+        if (loader) { loader.focus(); }
+    }
+
     try {
-        _snaTargetUrl = targetUrl;
-        var siteInfo = null;
-        siteInfo = await spFetch(`${targetUrl}/_api/web?$select=Title,Url,Id,Description,SiteLogoUrl`);
-        _snaSiteInfo = siteInfo;
-        _snaCurrentUser = await getLoggedInUser(targetUrl).catch(function() { return null; });
-        var siteRoles = null;
-        try { siteRoles = await spFetch(`${targetUrl}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings`); } catch(err) { }
-        _snaSiteRolesRead = !!(siteRoles && siteRoles.value);
-        if (_snaSiteRolesRead) { snaRecordRoleAssignments(siteRoles.value, { scope: 'Site' }); }
-        var appAssignments = _snaSiteRolesRead ? siteRoles.value.filter(function(ra) { return snaPrincipalKind(ra.Member) === 'app'; }) : [];
-
-        // Resolve admin status before the loop (single call). The other reads run while the lists are read.
-        _snaIsAdmin = await checkAdminPermissions(targetUrl).catch(function() { return false; });
-        var taxonomyPromise = fetchTaxonomy(targetUrl).catch(function(e) { console.warn('taxonomy error', e); });
-        var sitePagesPromise = snaFetchSitePages(targetUrl).catch(function(e) {
-            console.warn('Sitenalyzer: Site Pages read failed:', e);
-            return { pages: [], truncated: false, failed: true, stoppedAtOtherSite: false };
-        });
-        var sharingPromise = snaFetchSharingLinks(targetUrl).catch(function(e) {
-            console.warn('Sitenalyzer: sharing links read failed:', e);
-            return { links: [], failed: true, groupsCapped: false, lookupsCapped: false };
-        });
-        var roleDefinitionsPromise = snaFetchRoleDefinitions(targetUrl);
-        var siteAdminsPromise = snaFetchSiteAdmins(targetUrl);
-
-        var allLists = null;
-        try {
-			// Adapted from DataLaVista's fetchSPLists() function (https://michmed.org/datalavista)
-			allLists = await spFetch(`${targetUrl}/_api/web/lists?$select=Id,EntityTypeName,Title,Description,ItemCount,BaseType,Hidden,ImageUrl,IsApplicationList,LastItemModifiedDate,BaseTemplate,HasUniqueRoleAssignments,DefaultViewUrl,EnableVersioning,EnableMinorVersions,MajorVersionLimit&$filter=(Hidden eq false and IsApplicationList eq false and BaseTemplate ne 115 and BaseTemplate ne 121 and BaseTemplate ne 330 and BaseTemplate ne 544 and Title ne 'MicroFeed' and EntityTypeName ne 'AppCatalog' and EntityTypeName ne 'FormServerTemplates' and EntityTypeName ne 'Style_x0020_Library') or (Title eq 'User Information List' or Title eq 'Events')`);
-		} catch(err) {}
-        _snaAllListsMeta = (allLists && allLists.value) ? allLists.value : [];
-
-        // Build a map of list GUID -> Title for lookup field resolution
-        var listIdMap = {};
-        if (allLists && allLists.value) {
-            allLists.value.forEach(function(lst) {
-                var cleanId = lst.Id.toLowerCase().replace(/[{}]/g, '');
-                listIdMap[cleanId] = lst.Title;
-            });
-        }
-
-        var libsHtml = '';
-        var listsHtml = '';
-
-        var listsFound = (allLists && allLists.value && allLists.value.length) ? allLists.value.length : 0;
-        for (var i = 0; i < listsFound; i++) {
-            var list = allLists.value[i];
-            var listRolesHtml = '';
-            var isInherited = false;
-            var listEditKey  = 'list:' + list.Id;
-            var listDescBody = renderAdminDescWrap(list.Description || '', listEditKey);
-            var listDescHtml = (list.Description || _snaIsAdmin) ? '<p style="font-size: 13px; color: #595959; margin: 5px 0 15px 0;"><strong>Description:</strong> ' + listDescBody + '</p>' : '';
-            var listTypeLabel = list.BaseTemplate === 101 ? "Document Library" : "List";
-            var listUrl = snaListUrl(list, targetUrl);
-            var listSummary = { id: list.Id || '', title: list.Title || '', url: listUrl, isLib: list.BaseType === 1, rolesRead: true };
-
-            // 1. Fetch Roles or Handle Inheritance
-            if (list.HasUniqueRoleAssignments === false) {
-                listRolesHtml = '<div class="perm-row">Uses the site\'s permissions.</div>';
-                isInherited = true;
-                _snaInheritedLists.push(listSummary);
-            } else {
-                var roleUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/roleassignments?$expand=Member,RoleDefinitionBindings";
-                var lRoles = null;
-                try { lRoles = await spFetch(roleUrl); } catch(err) { }
-                listSummary.rolesRead = !!(lRoles && lRoles.value);
-                _snaUniqueLists.push(listSummary);
-                if (!listSummary.rolesRead) {
-                    listRolesHtml = '<div class="perm-row">Sitenalyzer could not read these permissions. You need to be a site owner to see them.</div>';
-                } else {
-                    listRolesHtml = renderPermissionsHtml(lRoles.value);
-                    snaRecordRoleAssignments(lRoles.value, {
-                        scope: 'List', listId: list.Id || '', listTitle: list.Title || '', listUrl: listUrl,
-                        listType: list.BaseType === 1 ? 'Library' : 'List'
-                    });
-                }
-            }
-
-            // 2. Fetch Field Definitions (via snaFetchFields — mirrors DLV fetchSPFields)
-            var fieldsHtml = '';
-            try {
-                var isDocLib = list.BaseTemplate === 101;
-                var lFields = await snaFetchFields(targetUrl, list.Id, isDocLib);
-
-                if (lFields && lFields.length > 0) {
-                    var fieldsData = [];
-                    lFields.forEach(function(f, fieldIdx) {
-                        var returnType = '';
-                        var typeDisplay = f.TypeAsString || '';
-                        if (f.TypeAsString === 'Calculated' && f.CalculatedFieldTypeAsString) {
-                            returnType = f.CalculatedFieldTypeAsString;
-                            typeDisplay = 'Calculated (' + returnType + ')';
-                        }
-                        var lookupListName = '';
-                        if (f.LookupList) {
-                            var cleanGuid = String(f.LookupList).toLowerCase().replace(/[{}]/g, '');
-                            lookupListName = listIdMap[cleanGuid] ? listIdMap[cleanGuid] : f.LookupList;
-                        }
-                        var typeIcon = snaGetFieldTypeIcon(f.TypeAsString, f.CalculatedFieldTypeAsString);
-                        // Resolve human-readable label for icon tooltip
-                        var resolvedForLabel = (f.TypeAsString === 'Calculated' && f.CalculatedFieldTypeAsString) ? f.CalculatedFieldTypeAsString : (f.TypeAsString || '');
-                        fieldsData.push({
-                            title:        f.Title || '',
-                            internalName: f.InternalName || '',
-                            dataType:     typeDisplay,
-                            typeIcon:     typeIcon,
-                            typeLabel:    resolvedForLabel,
-                            description:  f.Description || '',
-                            lookupList:   lookupListName,
-                            listId:       list.Id || '',
-                            fieldId:      f.Id || ''
-                        });
-                        globalExportedData.push({
-                            ListTitle:    list.Title,
-                            ListType:     listTypeLabel,
-                            FieldTitle:   f.Title,
-                            InternalName: f.InternalName,
-                            Type:         f.TypeAsString,
-                            Description:  f.Description,
-                            ReturnType:   returnType,
-                            LookupListName: lookupListName,
-                            LookupList:   f.LookupList ? f.LookupList : '',
-                            Formula:      f.Formula ? f.Formula : '',
-                            DefaultValue: f.DefaultValue ? f.DefaultValue : '',
-                            FieldId:      f.Id,
-                            ListGuid:     list.Id,
-                            FieldOrder:   fieldIdx + 1,
-                            Required:     f.Required ? true : false,
-                            MaxLength:    (f.MaxLength !== undefined && f.MaxLength !== null) ? f.MaxLength : '',
-                            Choices:      (f.Choices && f.Choices.results) ? f.Choices.results : (Array.isArray(f.Choices) ? f.Choices : []),
-                            LookupField:  f.LookupField ? f.LookupField : '',
-                            Indexed:      f.Indexed ? true : false
-                        });
-                    });
-                    var fTblId = 'sna-tbl-f-' + i;
-                    _snaTablesQueue.push({ id: fTblId, type: 'fields', searchLabel: 'columns', data: fieldsData });
-                    fieldsHtml = '<div id="' + fTblId + '" class="sna-fields-table"></div>';
-                } else {
-                    fieldsHtml = '<div class="perm-row">No visible fields found.</div>';
-                }
-            } catch(e) {
-                fieldsHtml = '<div class="perm-row" style="color: #a80000;">Sitenalyzer could not read the columns. Refresh the page and try again.</div>';
-            }
-
-            var colDefsDetails = '<details class="permissions-section"><summary>View column definitions</summary>' + fieldsHtml + '</details>';
-            var printHideClass = isInherited ? ' hide-on-print' : '';
-            var listRolesDetails = '<details class="permissions-section' + printHideClass + '"><summary>View ' + (list.BaseTemplate === 101 ? 'library' : 'list') + ' permissions</summary>' + listRolesHtml + '</details>';
-
-            // 3. Document Library Specifics vs List Specifics
-            if (list.BaseTemplate === 101) {
-                var foldersTableHtml = '';
-                try {
-                    var foldersUrl = targetUrl + '/_api/web/lists(guid' + "'" + list.Id + "')/RootFolder/Folders?$select=Name,UniqueId,ItemCount,ServerRelativeUrl";
-                    var folders;
-                    try { folders = await spFetch(foldersUrl); } catch(err) { }
-                    
-                    if (folders && folders.value && folders.value.length > 0) {
-                        var validFolders = folders.value.filter(function(fldr) { return fldr.Name !== 'Forms'; });
-                        
-                        if (validFolders.length > 0) {
-                            var foldersData = [];
-                            validFolders.forEach(function(fldr) {
-                                // Build folder URL from ServerRelativeUrl (preferred) or fallback construction
-                                var folderUrl = '';
-                                if (fldr.ServerRelativeUrl) {
-                                    folderUrl = targetUrl.replace(/\/+$/, '').split('/').slice(0, 3).join('/') + fldr.ServerRelativeUrl;
-                                } else {
-                                    folderUrl = targetUrl.replace(/\/+$/, '') + '/' + list.EntityTypeName + '/' + encodeURIComponent(fldr.Name || '');
-                                }
-                                foldersData.push({
-                                    icon:     '📂',
-                                    name:     fldr.Name || '',
-                                    folderUrl: folderUrl,
-                                    items:    (fldr.ItemCount !== undefined && fldr.ItemCount !== null) ? fldr.ItemCount : null,
-                                    folderId: fldr.UniqueId || ''
-                                });
-                            });
-                            var dTblId = 'sna-tbl-d-' + i;
-                            _snaTablesQueue.push({ id: dTblId, type: 'folders', searchLabel: 'folders', data: foldersData });
-                            foldersTableHtml = '<div id="' + dTblId + '"></div>';
-                        } else {
-                            foldersTableHtml = '<p style="font-size:13px; color:#595959; margin: 5px 0;">No top-level folders found.</p>';
-                        }
-                    } else {
-                        foldersTableHtml = '<p style="font-size:13px; color:#595959; margin: 5px 0;">No top-level folders found.</p>';
-                    }
-                } catch(e) {
-                    foldersTableHtml = '<p style="font-size:13px; color:#a80000; margin: 5px 0;">Sitenalyzer could not read the folders. Refresh the page and try again.</p>';
-                }
-
-                var libIdLabel = 'Library ID';
-                var libIdDisplayId = 'sna-id-lib-' + i;
-                var libActionsHtml = '<div class="sna-card-actions hide-on-print">' +
-                    '<span id="' + libIdDisplayId + '" class="sna-id-inline" style="display:none;" aria-live="polite"></span>' +
-                    '<button class="sna-action-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(list.Id) + '" data-label="' + libIdLabel + '" data-display-id="' + libIdDisplayId + '" aria-label="Copy Library ID to clipboard" title="' + libIdLabel + ': ' + snaEscapeHtml(list.Id) + '">ID</button>' +
-                    '<button class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(listUrl) + '" aria-label="Open library in new window" title="Open Library">Open</button>' +
-                    snaPermissionsButtonHtml(list, targetUrl) +
-                    '</div>';
-                _snaCardData.push({ cardId: 'sna-card-lib-' + i, title: list.Title, internalName: list.EntityTypeName || '', listId: list.Id || '', isLib: true });
-                libsHtml += '<div class="info-card" id="sna-card-lib-' + i + '">' +
-                    '<div class="sna-card-header">' +
-                        '<h3><span aria-hidden="true">📄 </span>' + snaEscapeHtml(list.Title) + ' <span class="item-count-badge">' + list.ItemCount + '<sup>' + (list.ItemCount === 1 ? 'item' : 'items') + '</sup></span></h3>' +
-                        libActionsHtml +
-                    '</div>' +
-                    listDescHtml +
-                    '<details class="permissions-section"><summary>Top-level folders</summary>' + foldersTableHtml + '</details>' + colDefsDetails + listRolesDetails + '</div>';
-            } else {
-                var listIdLabel = 'List ID';
-                var listIdDisplayId = 'sna-id-lst-' + i;
-                var listActionsHtml = '<div class="sna-card-actions hide-on-print">' +
-                    '<span id="' + listIdDisplayId + '" class="sna-id-inline" style="display:none;" aria-live="polite"></span>' +
-                    '<button class="sna-action-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(list.Id) + '" data-label="' + listIdLabel + '" data-display-id="' + listIdDisplayId + '" aria-label="Copy List ID to clipboard" title="' + listIdLabel + ': ' + snaEscapeHtml(list.Id) + '">ID</button>' +
-                    '<button class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(listUrl) + '" aria-label="Open list in new window" title="Open List">Open</button>' +
-                    snaPermissionsButtonHtml(list, targetUrl) +
-                    '</div>';
-                _snaCardData.push({ cardId: 'sna-card-lst-' + i, title: list.Title, internalName: list.EntityTypeName || '', listId: list.Id || '', isLib: false });
-                listsHtml += '<div class="info-card" id="sna-card-lst-' + i + '">' +
-                    '<div class="sna-card-header">' +
-                        '<h3><span aria-hidden="true">📋 </span>' + snaEscapeHtml(list.Title) + ' <span class="item-count-badge">' + list.ItemCount + '<sup>' + (list.ItemCount === 1 ? 'item' : 'items') + '</sup></span></h3>' +
-                        listActionsHtml +
-                    '</div>' +
-                    listDescHtml +
-                    colDefsDetails + listRolesDetails + '</div>';
-            }
-        }
-
-        // Wait for the reads that ran while the lists were read. Group members are read after the lists,
-        // because lists with their own permissions can add more SharePoint groups.
-        await taxonomyPromise;
-        await snaExpandGroups(targetUrl);
-        var sitePages = await sitePagesPromise;
-        _snaSharingLinks = await sharingPromise;
-        _snaRoleDefinitions = await roleDefinitionsPromise;
-        _snaSiteAdmins = await siteAdminsPromise;
-
-var siteInfoHtml = '';
-if (siteInfo) {
-    var siteTitle = String(siteInfo.Title || '').trim();
-    // The logo is shown only from an https address on this tenant. SharePoint usually gives an address within the site.
-    var logoUrl = snaSafeTenantUrl(siteInfo.SiteLogoUrl, targetUrl);
-    var titleIconHtml = logoUrl
-        ? '<img src="' + snaEscapeHtml(logoUrl) + '" alt="Site logo" style="height: 80px; width: auto; object-fit: contain; margin: 2px 0; display: block; flex-shrink: 0;" />'
-        : '<span style="flex-shrink: 0;" aria-hidden="true">🌐</span>';
-
-    siteInfoHtml = '<div class="info-card sna-site-card">' +
-        '<div class="section-header">' +
-            '<h2 style="display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; flex: 1; min-width: 0;">' +
-                titleIconHtml +
-                '<span style="white-space: normal; word-break: break-word; line-height: 1.3;">' + snaEscapeHtml(siteTitle) + '</span>' +
-            '</h2>' +
-        '</div>' +
-        '<div class="sna-report-actions hide-on-print">' +
-            '<button class="icon-btn" data-action="collapse-all" aria-label="Collapse all sections" title="Collapse all sections">&#9650;</button>' +
-            '<button class="icon-btn" data-action="expand-all" aria-label="Expand all sections" title="Expand all sections">&#9660;</button>' +
-            '<button class="csv-btn" data-action="export-xlsx" aria-label="Export data dictionary" title="Export data dictionary"><span aria-hidden="true">&#10515; </span>Data dictionary</button>' +
-            '<button class="csv-btn" data-action="export-permissions" aria-label="Export permissions" title="Export permissions"><span aria-hidden="true">&#10515; </span>Permissions</button>' +
-            '<button class="print-btn" data-action="expand-print"><span aria-hidden="true">&#128424; </span>Print to PDF</button>' +
-        '</div>' +
-
-        '<div class="grid-container" style="display: flex; gap: 24px; flex-wrap: wrap; margin-top: 10px;">' +
-            '<div style="flex: 1; min-width: min(300px, 100%); max-width: 100%;">' +
-                '<div style="margin-bottom: 8px;"><strong>Site name:</strong> ' + snaEscapeHtml(siteTitle) + '</div>' +
-                '<div style="margin-bottom: 8px;"><strong>Site ID:</strong> ' + snaEscapeHtml(siteInfo.Id) + '</div>' +
-                '<div style="word-break: break-word; overflow-wrap: break-word;"><strong>Site URL:</strong> ' + snaLinkHtml(siteInfo.Url, siteInfo.Url) + '</div>' +
-            '</div>' +
-            '<div style="flex: 1; min-width: min(300px, 100%);">' +
-                '<div><strong>Description:</strong> ' + renderAdminDescWrap((siteInfo.Description || '').toString().trim(), 'site') + '</div>' +
-            '</div>' +
-        '</div>';
-
-    // Guests, organization-wide groups, and links anyone can use.
-    siteInfoHtml += snaRenderRiskFlags();
-
-    siteInfoHtml += '<details class="permissions-section" style="margin-top: 24px;"><summary>View site permissions</summary>' +
-        (_snaSiteRolesRead
-            ? renderPermissionsHtml(siteRoles.value)
-            : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') +
-        '</details>';
-
-    siteInfoHtml += '<details class="permissions-section"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>';
-    siteInfoHtml += snaRenderUserAccessTool();
-    siteInfoHtml += '<details class="permissions-section"><summary>Lists and libraries with their own permissions (' + _snaUniqueLists.length + ')</summary>' +
-        snaRenderInheritanceReport() + '</details>';
-    siteInfoHtml += '<details class="permissions-section"><summary>Sharing links (' +
-        (_snaSharingLinks.failed ? 'could not read' : _snaSharingLinks.links.length) + ')</summary>' + snaRenderSharingLinks(_snaSharingLinks) + '</details>';
-    siteInfoHtml += '<details class="permissions-section"><summary>Lists and libraries to review for cleanup</summary>' + snaRenderCleanupSignals() + '</details>';
-
-    var appsInnerHtml = appAssignments.length > 0
-        ? renderPermissionsHtml(appAssignments)
-        : '<div class="perm-row">' + (_snaSiteRolesRead ? 'No apps have their own permissions on this site.' : 'Sitenalyzer could not read the site\'s permissions.') + '</div>';
-    siteInfoHtml += '<details class="permissions-section"><summary>Apps with access to this site</summary>' +
-        '<p class="sna-note">Apps given access in Microsoft Entra ID, such as through Sites.Selected, don\'t appear here. Ask your Microsoft 365 admin for that list.</p>' +
-        appsInnerHtml + '</details></div>';
-} else {
-    console.warn('Unable to retrieve site info.');
-}
-
-        var libsSection = '<div class="main-section-header"><h2><span aria-hidden="true">📁 </span>Document libraries</h2></div>' + (libsHtml ? libsHtml : '<p style="padding-left: 10px;">No document libraries found.</p>');
-        var listsSection = '<div class="main-section-header"><h2><span aria-hidden="true">📑 </span>Lists</h2></div>' + (listsHtml ? listsHtml : '<p style="padding-left: 10px;">No lists found.</p>');
-
-        var taxonomySection = '<div class="print-section" id="sna-taxonomy-section">' + renderTaxonomySection() + '</div>';
-        var finalHtml = '<div class="print-section">' + siteInfoHtml + '</div>' +
-                        '<div class="print-section">' + libsSection + '</div>' +
-                        '<div class="print-section">' + listsSection + '</div>' +
-                        '<div class="print-section" id="sna-site-pages-section">' + snaRenderSitePagesSection(sitePages) + '</div>' +
-                        taxonomySection +
-                        '<div style="text-align: right; margin-top: 20px; padding-bottom: 20px;" class="hide-on-print"><button data-action="scroll-top"><span aria-hidden="true">&#11014; </span>Back to top</button></div>';
-
-        resultsDiv.innerHTML = finalHtml;
-
-        // Initialize Tabulator tables.
-        initSnaTabulators();
-        // Build global search index after the browser paints results.
-        setTimeout(buildSearchIndex, 0);
-
-        // Collapse URL input section and reveal the Start over button.
-        var urlSection = document.getElementById('sna-url-section');
-        if (urlSection) { urlSection.classList.add('collapsed'); }
-        var startOverBtn = document.getElementById('sna-start-over-btn');
-        if (startOverBtn) { startOverBtn.style.display = 'block'; }
-
+        var report = await collectReport(targetUrl, snaSetProgress, token);
+        if (token !== _snaCollectionToken) { return; }
+        _snaReport = report;
+        _snaUseAddressRoute = false;
+        buildSearchIndex();
+        renderFrame(report);
+        if (entry) { entry.hidden = true; }
+        if (reportEl) { reportEl.hidden = false; }
+        snaNavigate(startRoute || { section: 'overview' }, { replace: true, focus: 'heading', scroll: true });
     } catch (error) {
+        if (token !== _snaCollectionToken || (error && error.snaCancelled)) { return; }
         var errorMsg = error.message ? error.message : 'Unknown error occurred';
         console.warn('Error fetching data:', errorMsg);
-        resultsDiv.innerHTML = '<div style="color: #a80000; padding: 15px; border: 1px solid #a80000; border-radius: 4px;" role="alert"><strong>Sitenalyzer could not read this site.</strong> ' +
-            'Check the site URL and make sure you can open the site. To see all of its information, you need to be a site owner.</div>';
+        snaShowEntryMessage('Sitenalyzer could not read this site.',
+            'Check the site URL and make sure you can open the site. To see all of its information, you need to be a site owner.');
     } finally {
-        btn.disabled = false;
-        loader.style.display = 'none';
+        if (token === _snaCollectionToken) {
+            btn.disabled = false;
+            snaSetProgress('');
+        }
     }
 }
 
+// ### Search ###
 
-// Builds the in-memory search index from the gathered lists, columns, and taxonomy data.
+// Kinds of search results, in the order the results page lists them.
+var SNA_SEARCH_GROUPS = [
+    { kind: 'column', title: 'Columns' },
+    { kind: 'list',   title: 'Lists and libraries' },
+    { kind: 'folder', title: 'Folders' },
+    { kind: 'page',   title: 'Site pages' },
+    { kind: 'term',   title: 'Terms' }
+];
+
+// Builds the search index from the collected report: lists and libraries, columns, top-level folders, site pages,
+// and terms. label, sublabel, and breadcrumb are searched; sublabel holds internal names and IDs, so they are always
+// searchable even while technical details are hidden. summary is shown under each result, and technicalText only
+// while Show technical details is on. route is the address of the view the result opens.
 function buildSearchIndex() {
     _snaSearchIndex = [];
+    if (!_snaReport) { return; }
 
-    // Build a title → full card object map for column resolution
-    var titleToCard = {};
-    _snaCardData.forEach(function(card) { titleToCard[card.title] = card; });
-
-    // Index each list / library card
-    _snaCardData.forEach(function(card) {
-        var icon      = card.isLib ? '📁' : '📋';
-        var typeLabel = card.isLib ? 'Library' : 'List';
-        var section   = card.isLib ? 'Document libraries' : 'Lists';
+    _snaReport.lists.forEach(function(list) {
+        var section = list.isLib ? 'Document libraries' : 'Lists';
         _snaSearchIndex.push({
-            icon:       icon,
-            type:       typeLabel,
-            label:      card.title,
-            sublabel:   card.internalName + ' • ' + card.listId,
-            breadcrumb: section,
-            cardId:     card.cardId,
-            listTitle:  card.title,
-            listId:     card.listId,
-            columnName: '',
-            dataType:   ''
+            kind:          'list',
+            icon:          list.isLib ? '📁' : '📋',
+            type:          list.isLib ? 'Library' : 'List',
+            label:         list.title,
+            sublabel:      list.internalName + ' • ' + list.id,
+            breadcrumb:    section,
+            route:         snaRouteHash({ section: 'contents', id: list.routeId }),
+            listTitle:     list.title,
+            listId:        list.id,
+            columnName:    '',
+            dataType:      '',
+            summary:       list.description || 'No description.',
+            technicalText: list.internalName + ' • ' + list.id
+        });
+
+        // A column filter is only drawn above tables longer than SNA_TABLE_FILTER_MIN_ROWS.
+        var columnsTableId = 'sna-tbl-f-' + list.routeId;
+        var hasFilter = list.columns.length > SNA_TABLE_FILTER_MIN_ROWS;
+        var columnSeen = {};
+        list.columns.forEach(function(col) {
+            if (columnSeen[col.internalName]) { return; }
+            columnSeen[col.internalName] = true;
+            var name = col.title || col.internalName || '';
+            _snaSearchIndex.push({
+                kind:          'column',
+                icon:          '🔲',
+                type:          'Column',
+                label:         name,
+                sublabel:      (col.internalName || '') + ' • ' + (col.dataType || ''),
+                breadcrumb:    section + ' > ' + list.title,
+                route:         snaRouteHash({ section: 'contents', id: list.routeId, tab: 'columns' }),
+                listTitle:     list.title,
+                listId:        list.id,
+                columnName:    name,
+                dataType:      col.dataType || '',
+                summary:       list.title + (col.description ? ' / ' + col.description : ''),
+                technicalText: col.internalName || '',
+                filterTable:   hasFilter ? columnsTableId : '',
+                filterText:    hasFilter ? name : ''
+            });
+        });
+
+        list.folders.forEach(function(folder) {
+            _snaSearchIndex.push({
+                kind:          'folder',
+                icon:          '📂',
+                type:          'Folder',
+                label:         folder.name,
+                sublabel:      folder.folderId,
+                breadcrumb:    'Document libraries > ' + list.title,
+                route:         snaRouteHash({ section: 'contents', id: list.routeId, tab: 'folders' }),
+                listTitle:     list.title,
+                listId:        list.id,
+                columnName:    '',
+                dataType:      '',
+                summary:       list.title,
+                technicalText: folder.folderId
+            });
         });
     });
 
-    // Deduplicate columns by ListTitle+InternalName
-    var colSeen = {};
-    globalExportedData.forEach(function(row) {
-        var key = (row.ListTitle || '') + '|' + (row.InternalName || '');
-        if (colSeen[key]) { return; }
-        colSeen[key] = true;
-        var card           = titleToCard[row.ListTitle];
-        var cardId         = card ? card.cardId : null;
-        var listId         = card ? card.listId  : '';
-        var listTypePlural = row.ListType ? (row.ListType + 's') : 'Lists';
+    (_snaReport.pages.pages || []).forEach(function(page) {
         _snaSearchIndex.push({
-            icon:       '🔲',
-            type:       'Column',
-            label:      row.FieldTitle || row.InternalName || '',
-            sublabel:   (row.InternalName || '') + ' • ' + (row.Type || ''),
-            breadcrumb: listTypePlural + ' > ' + (row.ListTitle || ''),
-            cardId:     cardId,
-            listTitle:  row.ListTitle || '',
-            listId:     listId,
-            columnName: row.FieldTitle || row.InternalName || '',
-            dataType:   row.Type || ''
+            kind:          'page',
+            icon:          '📄',
+            type:          'Page',
+            label:         page.name,
+            sublabel:      page.fileName,
+            breadcrumb:    'Site pages',
+            route:         snaRouteHash({ section: 'contents', id: 'pages' }),
+            listTitle:     '',
+            listId:        '',
+            columnName:    '',
+            dataType:      '',
+            summary:       'Site pages / ' + page.fileName,
+            technicalText: ''
         });
     });
 
-    // Index taxonomy terms.
     _snaTaxonomyData.forEach(function(group) {
         (group.termSets || []).forEach(function(set) {
             (set.terms || []).forEach(function(term) {
                 _snaSearchIndex.push({
-                    icon:       '🏷️',
-                    type:       'Term',
-                    label:      term.termName || '',
-                    sublabel:   term.termId || '',
-                    breadcrumb: group.groupName + ' › ' + set.setName,
-                    cardId:     'sna-taxonomy-section',
-                    listTitle:  '',
-                    listId:     '',
-                    columnName: term.termName || '',
-                    dataType:   'Term'
+                    kind:          'term',
+                    icon:          '🏷️',
+                    type:          'Term',
+                    label:         term.termName || '',
+                    sublabel:      term.termId || '',
+                    breadcrumb:    group.groupName + ' › ' + set.setName,
+                    route:         snaRouteHash({ section: 'taxonomy' }),
+                    listTitle:     '',
+                    listId:        '',
+                    columnName:    term.termName || '',
+                    dataType:      'Term',
+                    summary:       group.groupName + ' / ' + set.setName + (term.termDescription ? ' / ' + term.termDescription : ''),
+                    technicalText: term.termId || ''
                 });
             });
         });
@@ -2545,7 +2798,7 @@ function snaSearchQuery(query) {
     var seen       = {};
 
     _snaSearchIndex.forEach(function(item) {
-        var dedupeKey = item.type + '|' + item.label + '|' + (item.cardId || '');
+        var dedupeKey = item.type + '|' + item.label + '|' + item.route + '|' + item.breadcrumb;
         if (seen[dedupeKey]) { return; }
 
         var labelMatch      = fieldMatches(item.label);
@@ -2582,115 +2835,16 @@ function snaSearchQuery(query) {
     };
 }
 
-// Closes the search panel and navigates to the selected result's card, scrolling and pulsing it.
-function snaSearchSelect(item) {
-    var panel       = document.getElementById('sna-search-panel');
-    var toggle      = document.getElementById('sna-search-toggle');
-    var input       = document.getElementById('sna-search-input');
-    var resultsList = document.getElementById('sna-search-results');
-
-    if (panel)       { panel.hidden = true; }
-    if (toggle)      { toggle.setAttribute('aria-expanded', 'false'); }
-    if (input)       { input.setAttribute('aria-expanded', 'false'); input.value = ''; }
-    if (resultsList) { resultsList.innerHTML = ''; }
-
-    if (!item || !item.cardId) { return; }
-    var el = document.getElementById(item.cardId);
-    if (!el) { return; }
-
-    // Open any collapsed <details> so the card content is visible
-    var detailEls = el.querySelectorAll('details');
-    for (var di = 0; di < detailEls.length; di++) { detailEls[di].open = true; }
-
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-    // Restart the pulse animation
-    el.classList.remove('sna-highlight-pulse');
-    void el.offsetWidth;
-    el.classList.add('sna-highlight-pulse');
-    el.addEventListener('animationend', function onPulseDone() {
-        el.classList.remove('sna-highlight-pulse');
-        el.removeEventListener('animationend', onPulseDone);
-    });
-}
-
-// Renders up to 20 search results into the dropdown: top 3 column hits first, then remaining hits sorted alphabetically.
-function snaRenderSearchResults(result, input, resultsList) {
-    resultsList.innerHTML = '';
-    _snaCurrentResults = [];
-
-    var srCount = document.getElementById('sna-search-sr-count');
-    var topCols = result.columns.slice(0, 3);
-
-    // Remaining: columns beyond top-3 + list/library hits — sorted alphabetically
-    var rest = result.columns.slice(3).concat(result.others);
-    rest.sort(function(a, b) {
-        var aText = (a.icon || '') + ' ' + (a.label || '');
-        var bText = (b.icon || '') + ' ' + (b.label || '');
-        return aText.localeCompare(bText);
-    });
-
-    var maxRest  = 20 - topCols.length;
-    var restShow = rest.slice(0, maxRest);
-    var total    = topCols.length + restShow.length;
-
-    if (total === 0) {
-        input.setAttribute('aria-expanded', 'false');
-        input.setAttribute('aria-activedescendant', '');
-        var noRes = document.createElement('li');
-        noRes.className = 'sna-search-no-results';
-        noRes.setAttribute('role', 'option');
-        noRes.setAttribute('aria-selected', 'false');
-        noRes.textContent = 'No results found.';
-        resultsList.appendChild(noRes);
-        if (srCount) { srCount.textContent = 'No results.'; }
-        return;
-    }
-
-    input.setAttribute('aria-expanded', 'true');
-    if (srCount) { srCount.textContent = total + ' result' + (total === 1 ? '' : 's') + '.'; }
-
-    function makeResultLi(item) {
-        var li = document.createElement('li');
-        li.className = 'sna-search-result';
-        li.setAttribute('role', 'option');
-        li.setAttribute('id', 'sna-search-opt-' + _snaCurrentResults.length);
-        li.setAttribute('aria-selected', 'false');
-        li.setAttribute('tabindex', '-1');
-
-        var primary = document.createElement('span');
-        primary.className = 'sna-search-result-primary';
-        primary.textContent = item.icon + ' ' + item.label;
-
-        var secondary = document.createElement('span');
-        secondary.className = 'sna-search-result-secondary';
-        secondary.textContent = item.type + ' • ' + (item.sublabel || '');
-
-        var breadcrumb = document.createElement('span');
-        breadcrumb.className = 'sna-search-result-breadcrumb';
-        breadcrumb.textContent = item.breadcrumb || '';
-
-        li.appendChild(primary);
-        li.appendChild(secondary);
-        li.appendChild(breadcrumb);
-        li.addEventListener('click', function() { snaSearchSelect(item); });
-
-        _snaCurrentResults.push(item);
-        return li;
-    }
-
-    topCols.forEach(function(item) { resultsList.appendChild(makeResultLi(item)); });
-
-    // Visual separator between priority columns and everything else
-    if (topCols.length > 0 && restShow.length > 0) {
-        var sep = document.createElement('li');
-        sep.className = 'sna-search-separator';
-        sep.setAttribute('role', 'separator');
-        sep.setAttribute('aria-hidden', 'true');
-        resultsList.appendChild(sep);
-    }
-
-    restShow.forEach(function(item) { resultsList.appendChild(makeResultLi(item)); });
+// Splits the result of snaSearchQuery into the groups of SNA_SEARCH_GROUPS, leaving out empty groups.
+// Columns keep their relevance order; the other groups are sorted by name.
+function snaGroupSearchResults(result) {
+    return SNA_SEARCH_GROUPS.map(function(group) {
+        var items = group.kind === 'column'
+            ? result.columns
+            : result.others.filter(function(item) { return item.kind === group.kind; })
+                .sort(function(a, b) { return (a.label || '').localeCompare(b.label || ''); });
+        return { kind: group.kind, title: group.title, items: items };
+    }).filter(function(group) { return group.items.length > 0; });
 }
 
 // Checks if the current user has ManageWeb permission on the target site. Only then are the edit buttons shown.
@@ -2719,16 +2873,18 @@ async function getRequestDigest(targetUrl) {
 }
 
 // Fetches site-collection-scoped taxonomy groups, term sets, and terms from the v2.1 term store API.
+// Returns { groups, read, siteCollectionId, termStoreId }. read is false when any request failed; groups then holds
+// what was read before the failure. Nothing is written to the report until the caller has the whole result.
 async function fetchTaxonomy(targetUrl) {
-    _snaTaxonomyData = [];
+    var result = { groups: [], read: false, siteCollectionId: '', termStoreId: '' };
     try {
         var siteData = await spFetch(targetUrl + '/_api/site?$select=Id');
-        _snaSiteCollectionId = siteData.Id || '';
-        if (!_snaSiteCollectionId) { return; }
+        result.siteCollectionId = siteData.Id || '';
+        if (!result.siteCollectionId) { return result; }
 
-        var termBase      = targetUrl + '/_api/v2.1/sites/' + _snaSiteCollectionId + '/termStore';
+        var termBase      = targetUrl + '/_api/v2.1/sites/' + result.siteCollectionId + '/termStore';
         var termStoreInfo = await spFetch(termBase);
-        _snaTermStoreId   = termStoreInfo.id || '';
+        result.termStoreId = termStoreInfo.id || '';
         var groupsData    = await spFetch(termBase + '/groups');
         var siteScopedGroups = (groupsData.value || []).filter(function(g) {
             return g.scope === 'siteCollection';
@@ -2774,11 +2930,13 @@ async function fetchTaxonomy(targetUrl) {
 
                 groupObj.termSets.push(setObj);
             }
-            _snaTaxonomyData.push(groupObj);
+            result.groups.push(groupObj);
         }
+        result.read = true;
     } catch(e) {
         console.warn('Sitenalyzer: taxonomy fetch failed:', e);
     }
+    return result;
 }
 
 // Reads the pages in the site's Site Pages library (template 119), whatever the library is called.
@@ -2840,12 +2998,10 @@ async function snaFetchSitePages(targetUrl) {
     return result;
 }
 
-// Renders the Site Pages section from the result of snaFetchSitePages.
+// Renders the Site Pages notes and table from the result of snaFetchSitePages. The caller adds the heading.
 function snaRenderSitePagesSection(sitePages) {
     var pages = sitePages.pages;
-    var html = '<div class="main-section-header"><h2><span aria-hidden="true">📄 </span>Site pages' +
-        (pages.length ? ' <span class="item-count-badge">' + pages.length + '<sup>' + (pages.length === 1 ? 'page' : 'pages') + '</sup></span>' : '') +
-        '</h2></div><div class="info-card">';
+    var html = '<div class="info-card">';
     if (sitePages.failed) {
         html += '<p class="sna-note">Sitenalyzer could not read all of the Site Pages library. The pages below may be incomplete.</p>';
     }
@@ -2878,22 +3034,26 @@ function renderAdminDescWrap(text, editKey) {
            '</span>';
 }
 
-// Renders the Taxonomy / Term Store section HTML from the fetched taxonomy data.
-function renderTaxonomySection() {
-    var header = '<div class="main-section-header"><h2><span aria-hidden="true">&#127991; </span>Taxonomy and term store</h2></div>';
+// Renders the term groups, term sets, and terms from the fetched taxonomy data. The caller adds the heading.
+// read is false when the term store could not be read, which is shown differently from a term store with no groups.
+// Group and term set IDs are shown only while Show technical details is on.
+function renderTaxonomySection(read) {
+    var technical = snaTechnicalDetailsOn();
     if (!_snaTaxonomyData || _snaTaxonomyData.length === 0) {
-        return header + '<p style="padding-left:10px;color:#595959;">No term groups found for this site collection.</p>';
+        return read === false
+            ? '<p class="sna-note">Sitenalyzer could not read the term store. Refresh the report to try again. If that does not work, ask your site owner whether you can open the term store.</p>'
+            : '<p class="sna-muted">No term groups found for this site collection.</p>';
     }
 
-    var html = header;
+    var html = read === false ? '<p class="sna-note">Sitenalyzer could not read all of the term store, so some term groups or terms may be missing.</p>' : '';
     _snaTaxonomyData.forEach(function(group) {
         var groupDescHtml = renderAdminDescWrap(group.groupDescription, 'termgroup:' + group.groupId);
         html += '<details class="sna-taxonomy-group">';
         html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(group.groupName) +
-                ' <span class="list-id-text" style="font-size:0.72rem;margin-left:6px;">' +
-                snaEscapeHtml(group.groupId) + '</span></summary>';
+                (technical ? ' <span class="list-id-text sna-summary-id">Term group ID ' + snaEscapeHtml(group.groupId) + '</span>' : '') +
+                '</summary>';
         if (group.groupDescription || _snaIsAdmin) {
-            html += '<p style="font-size:13px;color:#555;margin:8px 0 6px 0;">' + groupDescHtml + '</p>';
+            html += '<p class="sna-taxonomy-desc">' + groupDescHtml + '</p>';
         }
 
         group.termSets.forEach(function(set) {
@@ -2902,17 +3062,17 @@ function renderTaxonomySection() {
             html += '<details class="sna-taxonomy-set">';
             html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(set.setName) +
                     ' <span class="item-count-badge">' + termCount + '<sup>' + (termCount === 1 ? 'term' : 'terms') + '</sup></span>' +
-                    ' <span class="list-id-text" style="font-size:0.72rem;margin-left:6px;">' +
-                    snaEscapeHtml(set.setId) + '</span></summary>';
+                    (technical ? ' <span class="list-id-text sna-summary-id">Term set ID ' + snaEscapeHtml(set.setId) + '</span>' : '') +
+                    '</summary>';
             if (set.setDescription || _snaIsAdmin) {
-                html += '<p style="font-size:13px;color:#555;margin:8px 0 6px 0;">' + setDescHtml + '</p>';
+                html += '<p class="sna-taxonomy-desc">' + setDescHtml + '</p>';
             }
             if (termCount > 0) {
                 var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
                 html += '<div id="' + tblId + '"></div>';
                 _snaTablesQueue.push({ id: tblId, type: 'terms', data: set.terms, searchLabel: set.setName + ' terms', setId: set.setId });
             } else {
-                html += '<p class="sna-muted" style="font-size:13px;font-style:italic;margin:6px 0;">No terms found.</p>';
+                html += '<p class="sna-muted sna-taxonomy-desc">No terms found.</p>';
             }
             html += '</details>';
         });
@@ -3188,6 +3348,7 @@ function snaSaveEditFromEl(wrapEl) {
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
     snaSaveDescription(editKey, newText).then(function() {
+        snaApplyDescriptionToReport(editKey, newText);
         var textEl = wrapEl.querySelector('.sna-editable-text');
         if (textEl) {
             textEl.textContent    = newText || '';
@@ -3207,178 +3368,915 @@ function snaSaveEditFromEl(wrapEl) {
     });
 }
 
-// Creates and mounts the global fixed-position search widget (toggle button + panel) into the DOM.
-function snaSearchInit() {
-    var widget = document.createElement('div');
-    widget.id = 'sna-global-search';
-    widget.setAttribute('role', 'search');
-    widget.setAttribute('aria-label', 'Search site contents');
+// ### Keep the Report Up to Date After Edits ###
 
-    // Visually-hidden live region for screen readers
-    var srCount = document.createElement('div');
-    srCount.id = 'sna-search-sr-count';
-    srCount.setAttribute('role', 'status');
-    srCount.setAttribute('aria-live', 'polite');
-    srCount.setAttribute('aria-atomic', 'true');
-    srCount.style.position = 'absolute';
-    srCount.style.width    = '1px';
-    srCount.style.height   = '1px';
-    srCount.style.padding  = '0';
-    srCount.style.margin   = '-1px';
-    srCount.style.overflow = 'hidden';
-    srCount.style.clip     = 'rect(0,0,0,0)';
-    srCount.style.whiteSpace = 'nowrap';
-    srCount.style.border   = '0';
+// Writes a saved description into the report and into the globals the workbooks read, so views drawn later, search,
+// and both workbooks show the new text. editKey is the same key snaSaveDescription takes, such as 'list:<list ID>'.
+function snaApplyDescriptionToReport(editKey, text) {
+    var parts = String(editKey || '').split(':');
+    var kind = parts[0];
+    var value = text || '';
 
-    var toggle = document.createElement('button');
-    toggle.id = 'sna-search-toggle';
-    toggle.setAttribute('aria-label', 'Search site contents');
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.setAttribute('aria-controls', 'sna-search-panel');
-    toggle.setAttribute('title', 'Search lists, libraries and columns');
-    toggle.textContent = '🔍';
-
-    var panel = document.createElement('div');
-    panel.id = 'sna-search-panel';
-    panel.hidden = true;
-
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.id   = 'sna-search-input';
-    input.setAttribute('role', 'combobox');
-    input.setAttribute('aria-autocomplete', 'list');
-    input.setAttribute('aria-controls', 'sna-search-results');
-    input.setAttribute('aria-expanded', 'false');
-    input.setAttribute('aria-activedescendant', '');
-    input.setAttribute('placeholder', 'Search lists, columns…');
-    input.setAttribute('autocomplete', 'off');
-
-    var resultsList = document.createElement('ul');
-    resultsList.id = 'sna-search-results';
-    resultsList.setAttribute('role', 'listbox');
-    resultsList.setAttribute('aria-label', 'Search results');
-
-    panel.appendChild(input);
-    panel.appendChild(resultsList);
-    widget.appendChild(srCount);
-    widget.appendChild(panel);
-    widget.appendChild(toggle);
-    document.body.appendChild(widget);
-
-    // Toggle open/close
-    toggle.addEventListener('click', function() {
-        var nowHidden = panel.hidden;
-        panel.hidden  = !nowHidden;
-        toggle.setAttribute('aria-expanded', nowHidden ? 'true' : 'false');
-        if (nowHidden) { input.focus(); }
-    });
-
-    // Debounced search-on-input
-    var _debounce = null;
-    input.addEventListener('input', function() {
-        clearTimeout(_debounce);
-        var val = input.value.trim();
-        _debounce = setTimeout(function() {
-            if (val.length < 2) {
-                resultsList.innerHTML = '';
-                input.setAttribute('aria-expanded', 'false');
-                input.setAttribute('aria-activedescendant', '');
-                var srEl = document.getElementById('sna-search-sr-count');
-                if (srEl) { srEl.textContent = ''; }
-                return;
-            }
-            var result = snaSearchQuery(val);
-            snaRenderSearchResults(result, input, resultsList);
-        }, 180);
-    });
-
-    // Keyboard navigation: arrows, Enter, Escape
-    input.addEventListener('keydown', function(e) {
-        var opts    = resultsList.querySelectorAll('.sna-search-result');
-        var current = resultsList.querySelector('[aria-selected="true"]');
-        var optsArr = Array.prototype.slice.call(opts);
-        var idx     = current ? optsArr.indexOf(current) : -1;
-
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            var nextIdx = (idx + 1 >= opts.length) ? 0 : idx + 1;
-            if (current) { current.setAttribute('aria-selected', 'false'); }
-            if (opts[nextIdx]) {
-                opts[nextIdx].setAttribute('aria-selected', 'true');
-                input.setAttribute('aria-activedescendant', opts[nextIdx].id);
-                opts[nextIdx].scrollIntoView({ block: 'nearest' });
-            }
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            var prevIdx = (idx - 1 < 0) ? opts.length - 1 : idx - 1;
-            if (current) { current.setAttribute('aria-selected', 'false'); }
-            if (opts[prevIdx]) {
-                opts[prevIdx].setAttribute('aria-selected', 'true');
-                input.setAttribute('aria-activedescendant', opts[prevIdx].id);
-                opts[prevIdx].scrollIntoView({ block: 'nearest' });
-            }
-        } else if (e.key === 'Enter') {
-            e.preventDefault();
-            if (current && idx > -1 && _snaCurrentResults[idx]) {
-                snaSearchSelect(_snaCurrentResults[idx]);
-            } else if (opts.length === 1 && _snaCurrentResults[0]) {
-                snaSearchSelect(_snaCurrentResults[0]);
-            }
-        } else if (e.key === 'Escape') {
-            panel.hidden = true;
-            toggle.setAttribute('aria-expanded', 'false');
-            input.setAttribute('aria-expanded', 'false');
-            toggle.focus();
+    if (kind === 'site') {
+        if (_snaSiteInfo) { _snaSiteInfo.Description = value; }
+        if (_snaReport) { _snaReport.site.description = value; }
+    } else if (kind === 'list') {
+        var listId = snaCleanListId(parts[1]);
+        _snaAllListsMeta.forEach(function(l) { if (snaCleanListId(l.Id) === listId) { l.Description = value; } });
+        if (_snaReport) { _snaReport.lists.forEach(function(l) { if (l.routeId === listId) { l.description = value; } }); }
+    } else if (kind === 'column') {
+        var columnListId = snaCleanListId(parts[1]);
+        var fieldKey = parts.slice(2).join(':');
+        globalExportedData.forEach(function(row) {
+            if (snaCleanListId(row.ListGuid) !== columnListId) { return; }
+            if (row.FieldId ? row.FieldId === fieldKey : row.InternalName === fieldKey) { row.Description = value; }
+        });
+        if (_snaReport) {
+            _snaReport.lists.forEach(function(l) {
+                if (l.routeId !== columnListId) { return; }
+                l.columns.forEach(function(col) { if ((col.fieldId || col.internalName) === fieldKey) { col.description = value; } });
+            });
         }
-    });
+    } else if (kind === 'termgroup' || kind === 'termset' || kind === 'term') {
+        _snaTaxonomyData.forEach(function(group) {
+            if (kind === 'termgroup' && group.groupId === parts[1]) { group.groupDescription = value; }
+            (group.termSets || []).forEach(function(set) {
+                if (set.setId !== parts[1]) { return; }
+                if (kind === 'termset') { set.setDescription = value; }
+                if (kind === 'term') {
+                    (set.terms || []).forEach(function(term) { if (term.termId === parts[2]) { term.termDescription = value; } });
+                }
+            });
+        });
+    }
+    buildSearchIndex();
+}
 
-    // Close on outside click
-    document.addEventListener('click', function(e) {
-        if (!widget.contains(e.target)) {
-            panel.hidden = true;
-            toggle.setAttribute('aria-expanded', 'false');
-            input.setAttribute('aria-expanded', 'false');
-            resultsList.innerHTML = '';
+// ### Technical Details Switch ###
+
+// True while Show technical details is on. Technical values are always in search, the workbooks, and the full report.
+function snaTechnicalDetailsOn() {
+    return _snaTechnicalDetails;
+}
+
+// Reads the switch setting saved in this browser. Browser storage can be turned off, so a failed read leaves it off.
+function snaLoadTechnicalDetails() {
+    try { _snaTechnicalDetails = window.localStorage.getItem(SNA_TECHNICAL_DETAILS_KEY) === '1'; }
+    catch(e) { _snaTechnicalDetails = false; }
+}
+
+// Shows the switch setting on the switch and on the app, where the styles read it.
+function snaSyncTechnicalSwitch() {
+    var technicalSwitch = document.getElementById('sna-technical-switch');
+    if (technicalSwitch) { technicalSwitch.checked = _snaTechnicalDetails; }
+    var app = document.getElementById('sp-info-app');
+    if (app) { app.setAttribute('data-technical', _snaTechnicalDetails ? 'true' : 'false'); }
+}
+
+// Turns technical details on or off, saves the choice in this browser, and redraws the view with focus on the switch.
+function snaSetTechnicalDetails(isOn) {
+    _snaTechnicalDetails = !!isOn;
+    try {
+        if (_snaTechnicalDetails) { window.localStorage.setItem(SNA_TECHNICAL_DETAILS_KEY, '1'); }
+        else { window.localStorage.removeItem(SNA_TECHNICAL_DETAILS_KEY); }
+    } catch(e) { /* The setting lasts until the page is closed. */ }
+    snaSyncTechnicalSwitch();
+    var showsTechnical = ['overview', 'contents', 'taxonomy', 'search', 'print'];
+    if (_snaReport && _snaRoute && showsTechnical.indexOf(_snaRoute.section) > -1) {
+        renderApp(_snaRoute, { focus: 'switch', full: true });
+    }
+}
+
+// ### Report Addresses ###
+
+// Tabs in a list or library's details, and the parts of Permissions that an address can open.
+var SNA_DETAIL_TABS = ['overview', 'folders', 'columns', 'permissions'];
+var SNA_PERMISSION_ANCHORS = {
+    site: 'sna-perm-site', people: 'sna-perm-people', person: 'sna-perm-person',
+    own: 'sna-perm-own', sharing: 'sna-perm-sharing', apps: 'sna-perm-apps'
+};
+
+// The views of the report screen. inNav views have a link in the section navigation.
+var SNA_SECTIONS = {
+    overview:    { title: 'Overview',    inNav: true,  render: snaRenderOverview },
+    contents:    { title: 'Contents',    inNav: true,  render: snaRenderContents },
+    permissions: { title: 'Permissions', inNav: true,  render: snaRenderPermissions },
+    taxonomy:    { title: 'Taxonomy',    inNav: true,  render: snaRenderTaxonomy },
+    review:      { title: 'Site review', inNav: true,  render: snaRenderReview },
+    search:      { title: 'Search results', inNav: false, render: snaRenderSearch },
+    print:       { title: 'Full report', inNav: false, render: snaRenderPrint }
+};
+
+// Returns a list ID in the form used in addresses and element ids: lowercase, with only the characters a GUID has.
+// List IDs come from SharePoint, so anything else is removed before an ID goes into markup.
+function snaCleanListId(id) {
+    return String(id || '').toLowerCase().replace(/[^0-9a-f-]/g, '');
+}
+
+// Returns an empty view description for a section.
+function snaMakeRoute(section) {
+    return { section: section, id: '', tab: '', anchor: '', q: '' };
+}
+
+// Returns the decoded value of name in a query string such as 'q=study%20visits', or '' when it is missing or malformed.
+function snaReadQueryValue(query, name) {
+    var pairs = String(query || '').split('&');
+    for (var i = 0; i < pairs.length; i++) {
+        var eq = pairs[i].indexOf('=');
+        var key = eq > -1 ? pairs[i].substring(0, eq) : pairs[i];
+        if (key !== name) { continue; }
+        try { return decodeURIComponent(pairs[i].substring(eq + 1).replace(/\+/g, ' ')); }
+        catch(e) { return ''; }
+    }
+    return '';
+}
+
+// Reads a report address such as #sna/contents/<list ID>/columns or #sna/search?q=visit.
+// Returns null for addresses that are not Sitenalyzer's, such as #top, so the host page keeps those.
+// Addresses that start with #sna/ but don't match a view open the Overview. Only known sections, tabs, and parts
+// of Permissions are accepted, and list IDs must look like a GUID.
+function snaParseRoute(hash) {
+    var text = String(hash || '');
+    if (text.indexOf(SNA_ROUTE_PREFIX) !== 0) { return null; }
+    var rest = text.substring(SNA_ROUTE_PREFIX.length);
+    var query = '';
+    var queryStart = rest.indexOf('?');
+    if (queryStart > -1) {
+        query = rest.substring(queryStart + 1);
+        rest = rest.substring(0, queryStart);
+    }
+    var parts = rest.split('/');
+    var fallback = snaMakeRoute('overview');
+    var section = parts[0];
+    if (!Object.prototype.hasOwnProperty.call(SNA_SECTIONS, section)) { return fallback; }
+
+    var route = snaMakeRoute(section);
+    if (section === 'contents') {
+        if (parts.length > 3) { return fallback; }
+        if (parts[1]) {
+            var id = parts[1].toLowerCase();
+            if (id !== 'pages' && !SNA_GUID_PATTERN.test(id)) { return fallback; }
+            route.id = id;
+            if (id === 'pages') {
+                if (parts[2]) { return fallback; }
+            } else {
+                route.tab = parts[2] || 'overview';
+                if (SNA_DETAIL_TABS.indexOf(route.tab) === -1) { return fallback; }
+            }
         }
+    } else if (section === 'permissions') {
+        if (parts.length > 2) { return fallback; }
+        if (parts[1]) {
+            if (!Object.prototype.hasOwnProperty.call(SNA_PERMISSION_ANCHORS, parts[1])) { return fallback; }
+            route.anchor = parts[1];
+        }
+    } else {
+        if (parts.length > 1 && parts[1] !== '') { return fallback; }
+        if (section === 'search') { route.q = snaReadQueryValue(query, 'q').substring(0, SNA_SEARCH_MAX_LENGTH); }
+    }
+    return route;
+}
+
+// Returns the address for a view, the reverse of snaParseRoute, such as #sna/contents/<list ID>/columns.
+function snaRouteHash(route) {
+    var r = route || {};
+    var section = r.section || 'overview';
+    var hash = SNA_ROUTE_PREFIX + section;
+    if (section === 'contents' && r.id) {
+        hash += '/' + r.id;
+        if (r.id !== 'pages' && r.tab && r.tab !== 'overview') { hash += '/' + r.tab; }
+    }
+    if (section === 'permissions' && r.anchor) { hash += '/' + r.anchor; }
+    if (section === 'search') { hash += '?q=' + encodeURIComponent(r.q || ''); }
+    return hash;
+}
+
+// Removes a Sitenalyzer address from the browser's address bar without adding a history step.
+function snaRemoveRouteFromAddress() {
+    if (window.location.hash.indexOf(SNA_ROUTE_PREFIX) !== 0) { return; }
+    try { window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search); }
+    catch(e) { /* The address keeps the old view, which opens nothing until a report is shown. */ }
+}
+
+// Opens a view. options: { replace, focus, print, scroll }. replace changes the address without a history step.
+// focus is where keyboard focus goes: 'heading' (the default), 'tab', 'detail', 'inventory', 'switch', or 'none'.
+// In hash mode the address changes and the hashchange listener draws the view, so Back and Forward work too.
+function snaNavigate(route, options) {
+    var opts = options || {};
+    var target = snaParseRoute(snaRouteHash(route)) || snaMakeRoute('overview');
+    var hash = snaRouteHash(target);
+
+    if (_snaRouteMode !== 'hash') { renderApp(target, opts); return; }
+    if (opts.replace) {
+        try { window.history.replaceState(window.history.state, '', hash); } catch(e) { /* The view still opens. */ }
+        renderApp(target, opts);
+        return;
+    }
+    if (window.location.hash === hash) { renderApp(target, opts); return; }
+
+    _snaPendingNav = { hash: hash, options: opts };
+    window.location.hash = hash;
+    // Some pages rewrite the address right after it changes. Sitenalyzer then keeps views in memory instead.
+    // A newer view change by Sitenalyzer, or Back and Forward to another report address, is not a rewrite.
+    setTimeout(function() {
+        if (_snaRouteMode !== 'hash' || window.location.hash === hash) { return; }
+        if (!_snaPendingNav || _snaPendingNav.hash !== hash) { return; }
+        if (snaParseRoute(window.location.hash)) { return; }
+        _snaRouteMode = 'memory';
+        _snaPendingNav = null;
+        console.warn('Sitenalyzer: this page changed the address after Sitenalyzer set it. Back and Forward will not change Sitenalyzer views on this page.');
+        renderApp(target, opts);
+    }, 50);
+}
+
+// Draws the view in the address after the address changes, including through Back and Forward.
+function snaHandleHashChange() {
+    if (_snaRouteMode !== 'hash' || !_snaReport) { return; }
+    var route = snaParseRoute(window.location.hash);
+    if (!route) { return; }
+    var pending = _snaPendingNav;
+    _snaPendingNav = null;
+    var hash = snaRouteHash(route);
+    if (hash !== window.location.hash) {
+        try { window.history.replaceState(window.history.state, '', hash); } catch(e) { /* The view still opens. */ }
+    }
+    if (_snaRoute && snaRouteHash(_snaRoute) === hash) { return; }
+    renderApp(route, (pending && pending.hash === hash) ? pending.options : { focus: 'heading' });
+}
+
+// ### Draw the Report Screen ###
+
+// Draws a view in #sp-results. Staying in Contents replaces only the details, so the list and its filter stay in place.
+// options.full redraws the whole view; options.focus and options.print are described at snaNavigate.
+function renderApp(route, options) {
+    var opts = options || {};
+    var main = document.getElementById('sp-results');
+    if (!main || !_snaReport) { return; }
+    var previous = _snaRoute;
+    var detail = document.getElementById('sna-contents-detail');
+
+    if (!opts.full && previous && previous.section === 'contents' && route.section === 'contents' && detail) {
+        snaDisposeViewTables(detail);
+        detail.innerHTML = snaRenderContentsDetail(route, _snaReport);
+        snaUpdateInventorySelection(route);
+    } else {
+        snaDisposeViewTables(main);
+        main.innerHTML = SNA_SECTIONS[route.section].render(route, _snaReport);
+    }
+    _snaRoute = route;
+
+    if (route.section === 'print') {
+        main.querySelectorAll('details').forEach(function(d) { d.open = true; });
+    }
+    if (route.section === 'permissions' && route.anchor) {
+        var opened = document.getElementById(SNA_PERMISSION_ANCHORS[route.anchor]);
+        if (opened) { opened.open = true; }
+    }
+    var built = initSnaTabulators();
+    if (route.section === 'contents') { snaApplyInventoryFilter(); }
+    var search = document.getElementById('sna-report-search');
+    if (search && route.section === 'search') { search.value = route.q; }
+
+    snaUpdateNav(route);
+    snaFocusAfterRender(route, previous, opts);
+    if (route.section === 'print' && opts.print) { snaPrintWhenReady(built); }
+}
+
+// Marks the open section in the section navigation.
+function snaUpdateNav(route) {
+    document.querySelectorAll('#sna-report .sna-nav a[data-section]').forEach(function(link) {
+        if (link.getAttribute('data-section') === route.section) { link.setAttribute('aria-current', 'page'); }
+        else { link.removeAttribute('aria-current'); }
     });
 }
 
-// Entry point: wires all event handlers, loads the accessible sites list, and initialises the search widget.
+// Moves keyboard focus after a view is drawn, so focus never drops to the page itself. Scrolls the report into view
+// only when the section changed.
+function snaFocusAfterRender(route, previous, opts) {
+    var focus = opts.focus || 'heading';
+    if (focus === 'none') { return; }
+    var target = null;
+    var isAnchor = false;
+    if (focus === 'switch') { target = document.getElementById('sna-technical-switch'); }
+    else if (focus === 'tab') { target = document.querySelector('#sna-contents-detail .sna-detail-tabs a[aria-current="page"]'); }
+    else if (focus === 'detail') { target = document.getElementById('sna-detail-title'); }
+    else if (focus === 'inventory') { target = document.getElementById('sna-inv-' + _snaLastInventoryId); }
+    if (!target && route.section === 'permissions' && route.anchor) {
+        var opened = document.getElementById(SNA_PERMISSION_ANCHORS[route.anchor]);
+        target = opened ? opened.querySelector('summary') : null;
+        isAnchor = !!target;
+    }
+    if (!target) { target = document.getElementById('sna-section-title'); }
+    if (!target) { return; }
+
+    try { target.focus({ preventScroll: true }); } catch(e) { target.focus(); }
+    if (document.activeElement !== target) {
+        target = document.getElementById('sna-section-title');
+        if (target) { target.focus({ preventScroll: true }); }
+    }
+    if (focus === 'switch' || !target) { return; }
+    var sectionChanged = !previous || previous.section !== route.section;
+    if (isAnchor) {
+        target.scrollIntoView({ block: 'start' });
+    } else if (sectionChanged || opts.scroll) {
+        var reportEl = document.getElementById('sna-report');
+        if (reportEl) { reportEl.scrollIntoView({ block: 'start' }); }
+    } else {
+        target.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// Opens the print dialog once every table in the full report has been drawn, or after 5 seconds at most.
+function snaPrintWhenReady(built) {
+    var timeout = new Promise(function(resolve) { setTimeout(resolve, 5000); });
+    Promise.race([Promise.all(built), timeout]).then(function() {
+        requestAnimationFrame(function() { window.print(); });
+    });
+}
+
+// Opens every collapsible section in the view and redraws its tables, which can't measure themselves while closed.
+function expandAll() {
+    document.querySelectorAll('#sp-results details').forEach(function(d) { d.open = true; });
+    Object.keys(_snaTabInstances).forEach(function(k) {
+        if (_snaTabInstances[k]) { _snaTabInstances[k].redraw(true); }
+    });
+}
+
+// Closes every collapsible section in the view.
+function collapseAll() {
+    document.querySelectorAll('#sp-results details').forEach(function(d) { d.open = false; });
+}
+
+// Returns the Expand all details and Collapse all details buttons, for views with more than one collapsible section.
+function snaExpandCollapseHtml() {
+    return '<div class="sna-view-actions hide-on-print">' +
+        '<button type="button" class="sna-link-btn" data-action="expand-all">Expand all details</button>' +
+        '<button type="button" class="sna-link-btn" data-action="collapse-all">Collapse all details</button>' +
+    '</div>';
+}
+
+// Returns the heading every view starts with. Focus moves to it when the view opens, so it has tabindex="-1".
+function snaSectionTitleHtml(title, lead) {
+    return '<h2 id="sna-section-title" class="sna-section-title" tabindex="-1">' + snaEscapeHtml(title) + '</h2>' +
+        (lead ? '<p class="sna-lead">' + lead + '</p>' : '');
+}
+
+// Returns up to two initials from a site name, such as "TR" for Test Research Site, for the logo placeholder.
+function snaInitials(title) {
+    var words = String(title || '').trim().split(/\s+/).filter(function(w) { return /[a-z0-9]/i.test(w.charAt(0)); });
+    var initials = words.slice(0, 2).map(function(w) { return w.charAt(0).toUpperCase(); }).join('');
+    return initials || 'S';
+}
+
+// Returns a date and time in the person's own time zone, such as "Oct 19, 2026, 3:30 PM", or '' when it can't be read.
+function snaFormatDateTime(value) {
+    var date = new Date(value);
+    if (!value || isNaN(date.getTime())) { return ''; }
+    return date.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+// Returns a date such as "September 28, 2026", or '' when it can't be read.
+function snaFormatDate(value) {
+    var date = new Date(value);
+    if (!value || isNaN(date.getTime())) { return ''; }
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+// Fills in the site's name, logo, description, address, and collection time above the section navigation,
+// and points Site settings at the site that was read.
+function renderFrame(report) {
+    var header = document.getElementById('sna-site-header');
+    if (!header) { return; }
+    var site = report.site;
+    var logoHtml = site.logoUrl
+        ? '<img class="sna-site-logo" src="' + snaEscapeHtml(site.logoUrl) + '" alt="Site logo">'
+        : '<span class="sna-site-logo sna-site-logo-placeholder" aria-hidden="true">' + snaEscapeHtml(snaInitials(site.title)) + '</span>';
+    header.innerHTML = logoHtml +
+        '<div class="sna-site-text">' +
+            '<h1 class="sna-site-title">' + snaEscapeHtml(site.title || 'Untitled site') + '</h1>' +
+            '<p class="sna-site-desc">' + renderAdminDescWrap(site.description, 'site') + '</p>' +
+            '<p class="sna-site-address">' + snaLinkHtml(site.url, site.url) + '</p>' +
+        '</div>' +
+        '<div class="sna-site-meta">' +
+            '<span class="sna-tag">' + (report.isAdmin ? 'You can manage this site' : 'You can view this site') + '</span>' +
+            '<span>Collected <time datetime="' + snaEscapeHtml(report.collectedAt) + '">' + snaEscapeHtml(snaFormatDateTime(report.collectedAt)) + '</time></span>' +
+        '</div>';
+
+    var settingsLink = document.getElementById('sna-site-settings-link');
+    if (settingsLink) {
+        var settingsUrl = snaSafeTenantUrl(xlsxStripSlash(report.siteUrl) + '/_layouts/15/settings.aspx', report.siteUrl);
+        settingsLink.hidden = !settingsUrl;
+        settingsLink.setAttribute('href', settingsUrl || '#');
+    }
+    snaSyncTechnicalSwitch();
+}
+
+// Returns the list or library with this address ID, or null.
+function snaFindList(report, routeId) {
+    for (var i = 0; i < report.lists.length; i++) {
+        if (report.lists[i].routeId === routeId) { return report.lists[i]; }
+    }
+    return null;
+}
+
+// Returns the people and groups with access to the whole site, leaving out groups SharePoint creates by itself.
+function snaSitePrincipals(report) {
+    var index = report.permissions.index;
+    return Object.keys(index).map(function(key) { return index[key]; }).filter(function(p) {
+        return !p.isSystemGroup && (p.siteLevels.length > 0 || p.siteLimited);
+    });
+}
+
+// ### Overview ###
+
+// Draws the Overview: a grid of counts that link to their sections, and one short card per section.
+// A count that could not be read says Not read instead of 0.
+function snaRenderOverview(route, report) {
+    var perms = report.permissions;
+    var libraries = report.lists.filter(function(l) { return l.isLib; });
+    var plainLists = report.lists.filter(function(l) { return !l.isLib; });
+    var pagesNotRead = report.pages.failed && report.pages.pages.length === 0;
+    var termSets = 0;
+    report.taxonomy.groups.forEach(function(g) { termSets += (g.termSets || []).length; });
+    var items = 0, columns = 0, folders = 0, newest = '';
+    report.lists.forEach(function(l) {
+        items += Number(l.itemCount) || 0;
+        columns += l.columns.length;
+        folders += l.folders.length;
+        if (l.lastModified && (!newest || new Date(l.lastModified) > new Date(newest))) { newest = l.lastModified; }
+    });
+    var NOT_READ = 'Not read';
+    var listsValue = function(value) { return report.listsRead ? value : NOT_READ; };
+
+    // The label comes first in the markup, so screen readers say "Sharing links, Not read"; the styles show the value on top.
+    function count(value, singular, plural, href) {
+        var isNumber = typeof value === 'number';
+        var label = (isNumber && value === 1) ? singular : plural;
+        var inner = '<span class="sna-count-label">' + snaEscapeHtml(label) + '</span>' +
+            '<span class="sna-count-value">' + snaEscapeHtml(isNumber ? value.toLocaleString('en-US') : value) + '</span>';
+        return '<li class="sna-count">' + (href ? '<a class="sna-count-link" href="' + snaEscapeHtml(href) + '">' + inner + '</a>' : '<div class="sna-count-link">' + inner + '</div>') + '</li>';
+    }
+
+    var html = snaSectionTitleHtml('Overview', 'What this site contains and where to look next.');
+    html += '<ul class="sna-counts">' +
+        count(listsValue(libraries.length), 'Document library', 'Document libraries', '#sna/contents') +
+        count(listsValue(plainLists.length), 'List', 'Lists', '#sna/contents') +
+        count(pagesNotRead ? NOT_READ : report.pages.pages.length, 'Site page', 'Site pages', '#sna/contents/pages') +
+        count(listsValue(items), 'Item in lists and libraries', 'Items in lists and libraries', '') +
+        count(listsValue(columns), 'Column', 'Columns', '') +
+        count(listsValue(folders), 'Top-level folder', 'Top-level folders', '') +
+        count((report.taxonomy.read || termSets > 0) ? termSets : NOT_READ, 'Term set', 'Term sets', '#sna/taxonomy') +
+        count(perms.siteRolesRead ? snaSitePrincipals(report).length : NOT_READ, 'Person or group with site access', 'People and groups with site access', '#sna/permissions/people') +
+        count(listsValue(perms.uniqueLists.length), 'List or library with its own permissions', 'Lists and libraries with their own permissions', '#sna/permissions/own') +
+        count(perms.sharingLinks.failed ? NOT_READ : perms.sharingLinks.links.length, 'Sharing link', 'Sharing links', '#sna/permissions/sharing') +
+        count(perms.siteRolesRead ? perms.appAssignments.length : NOT_READ, 'App with access', 'Apps with access', '#sna/permissions/apps') +
+        count(report.listsRead ? (snaFormatDate(newest) || 'None found') : NOT_READ, 'Most recent change', 'Most recent change', '') +
+    '</ul>';
+
+    function card(title, text, links) {
+        return '<div class="sna-card"><h3 class="sna-card-title">' + snaEscapeHtml(title) + '</h3>' +
+            (text ? '<p class="sna-card-text">' + text + '</p>' : '') +
+            (links.length ? '<ul class="sna-card-links">' + links.map(function(l) {
+                return '<li><a href="' + snaEscapeHtml(l[1]) + '">' + snaEscapeHtml(l[0]) + '</a></li>';
+            }).join('') + '</ul>' : '') + '</div>';
+    }
+
+    var largest = report.lists.slice().sort(function(a, b) { return (Number(b.itemCount) || 0) - (Number(a.itemCount) || 0); })[0];
+    var contentsText = !report.listsRead ? 'Sitenalyzer could not read the lists and libraries.'
+        : (!largest ? 'This site has no lists or libraries.'
+        : 'The largest is ' + snaEscapeHtml(largest.title) + ', with ' + snaCountText(Number(largest.itemCount) || 0, 'item', 'items') + '.');
+    var sharingCount = perms.sharingLinks.failed ? 'could not read' : perms.sharingLinks.links.length;
+    var appsCount = perms.siteRolesRead ? perms.appAssignments.length : 'could not read';
+    var groupCount = report.taxonomy.groups.length;
+    var taxonomyText = (!report.taxonomy.read && groupCount === 0) ? 'Sitenalyzer could not read the term store.'
+        : (groupCount === 0 ? 'This site collection has no term groups.'
+        : snaCountText(groupCount, 'term group', 'term groups') + ' and ' + snaCountText(termSets, 'term set', 'term sets') + ' describe this site\'s content.');
+
+    var aboutHtml = '<div class="sna-card"><h3 class="sna-card-title">About this site</h3><dl class="sna-facts">' +
+        '<dt>Site address</dt><dd>' + snaLinkHtml(report.site.url, report.site.url) + '</dd>' +
+        '<dt>Collected</dt><dd>' + snaEscapeHtml(snaFormatDateTime(report.collectedAt)) + '</dd>' +
+        (snaTechnicalDetailsOn()
+            ? '<dt>Site ID</dt><dd><span class="list-id-text">' + snaEscapeHtml(report.site.id) + '</span> ' +
+                '<button type="button" class="sna-action-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(report.site.id) + '" data-label="Site ID">Copy site ID</button></dd>'
+            : '') +
+        '</dl>' + (snaTechnicalDetailsOn() ? '' : '<p class="sna-card-text">Turn on Show technical details to see the site ID.</p>') + '</div>';
+
+    html += '<div class="sna-cards">' +
+        card('Contents', contentsText, [['Browse lists and libraries', '#sna/contents'], ['Browse site pages', '#sna/contents/pages']]) +
+        card('Permissions', 'Who can open what on this site.', [
+            ['View site permissions', '#sna/permissions/site'],
+            ['Who has access, by person or group', '#sna/permissions/people'],
+            ['Check one person\'s access', '#sna/permissions/person'],
+            ['Lists and libraries with their own permissions (' + perms.uniqueLists.length + ')', '#sna/permissions/own'],
+            ['Sharing links (' + sharingCount + ')', '#sna/permissions/sharing'],
+            ['Apps with access to this site (' + appsCount + ')', '#sna/permissions/apps']
+        ]) +
+        card('Taxonomy', taxonomyText, [['Browse term groups and sets', '#sna/taxonomy']]) +
+        card('Site review', 'Older content, version history settings, the largest lists and libraries, and what this report could read.',
+            [['Lists and libraries to review for cleanup', '#sna/review']]) +
+        aboutHtml +
+    '</div>';
+    return html;
+}
+
+// ### Contents ###
+
+// Draws Contents: the list of document libraries, lists, and Site pages beside the details of the selected one.
+// On narrow screens the two stack, and the details offer Back to results.
+function snaRenderContents(route, report) {
+    return snaSectionTitleHtml('Site contents', 'Browse the site\'s libraries, lists, and pages. Select a name to see its details.') +
+        '<div id="sna-contents" class="sna-contents' + (route.id ? ' sna-contents-detail-open' : '') + '">' +
+            '<div id="sna-contents-inventory" class="sna-inventory">' + snaRenderInventory(route, report) + '</div>' +
+            '<div id="sna-contents-detail" class="sna-detail">' + snaRenderContentsDetail(route, report) + '</div>' +
+        '</div>';
+}
+
+// Returns the Contents list, grouped into Document libraries, Lists, and Site pages, with a name filter above it.
+function snaRenderInventory(route, report) {
+    function item(routeId, href, icon, name, meta) {
+        return '<li data-name="' + snaEscapeHtml(String(name).toLowerCase()) + '">' +
+            '<a id="sna-inv-' + routeId + '" class="sna-inventory-link" href="' + snaEscapeHtml(href) + '" data-nav-focus="detail"' +
+                (route.id === routeId ? ' aria-current="page"' : '') + '>' +
+                '<span class="sna-inventory-name"><span class="sna-inventory-icon" aria-hidden="true">' + icon + '</span>' + snaEscapeHtml(name) + '</span>' +
+                '<span class="sna-inventory-meta">' + snaEscapeHtml(meta) + '</span>' +
+            '</a></li>';
+    }
+    function group(title, lists, emptyText) {
+        var html = '<div class="sna-inventory-group"><h3 class="sna-inventory-heading">' + snaEscapeHtml(title) + ' (' + lists.length + ')</h3>';
+        if (lists.length === 0) { return html + '<p class="sna-muted">' + emptyText + '</p></div>'; }
+        html += '<ul class="sna-inventory-list">';
+        lists.slice().sort(snaByTitle).forEach(function(l) {
+            var meta = snaCountText(Number(l.itemCount) || 0, 'item', 'items') +
+                (l.permissions.inherits ? '' : ' · Has its own permissions');
+            html += item(l.routeId, snaRouteHash({ section: 'contents', id: l.routeId }), l.isLib ? '📄' : '📋', l.title, meta);
+        });
+        return html + '</ul><p class="sna-muted sna-inventory-none" hidden>No names match the filter.</p></div>';
+    }
+
+    var html = '<div class="sna-inventory-filter">' +
+        '<label for="sna-inventory-filter">Filter by name</label>' +
+        '<input type="search" id="sna-inventory-filter" class="sna-table-search" autocomplete="off" value="' + snaEscapeHtml(_snaContentsFilter) + '">' +
+        '<p id="sna-inventory-count" class="sna-table-count" role="status"></p>' +
+    '</div>';
+    if (!report.listsRead) {
+        html += '<p class="sna-note">Sitenalyzer could not read the lists and libraries. Refresh the report to try again.</p>';
+    }
+    html += group('Document libraries', report.lists.filter(function(l) { return l.isLib; }), 'No document libraries found.');
+    html += group('Lists', report.lists.filter(function(l) { return !l.isLib; }), 'No lists found.');
+    var pageCount = report.pages.pages.length;
+    html += '<div class="sna-inventory-group"><h3 class="sna-inventory-heading">Site pages</h3><ul class="sna-inventory-list">' +
+        item('pages', '#sna/contents/pages', '📄', 'Site pages', report.pages.failed && pageCount === 0 ? 'Not read' : snaCountText(pageCount, 'page', 'pages')) +
+        '</ul><p class="sna-muted sna-inventory-none" hidden>No names match the filter.</p></div>';
+    return html;
+}
+
+// Hides the Contents entries whose names don't contain the filter text, and says how many are shown.
+function snaApplyInventoryFilter() {
+    var inventory = document.getElementById('sna-contents-inventory');
+    if (!inventory) { return; }
+    var text = _snaContentsFilter.trim().toLowerCase();
+    var shown = 0, total = 0;
+    inventory.querySelectorAll('.sna-inventory-group').forEach(function(groupEl) {
+        var groupShown = 0;
+        var entries = groupEl.querySelectorAll('li[data-name]');
+        entries.forEach(function(li) {
+            var matches = !text || li.getAttribute('data-name').indexOf(text) > -1;
+            li.hidden = !matches;
+            if (matches) { groupShown++; }
+        });
+        total += entries.length;
+        shown += groupShown;
+        var none = groupEl.querySelector('.sna-inventory-none');
+        if (none) { none.hidden = !(entries.length > 0 && groupShown === 0); }
+    });
+    var countEl = document.getElementById('sna-inventory-count');
+    if (countEl) {
+        countEl.textContent = shown === total
+            ? 'Showing all ' + snaCountText(total, 'item', 'items') + '.'
+            : 'Showing ' + shown + ' of ' + snaCountText(total, 'item', 'items') + '.';
+    }
+}
+
+// Marks the selected entry in the Contents list after only the details were redrawn.
+function snaUpdateInventorySelection(route) {
+    document.querySelectorAll('#sna-contents-inventory .sna-inventory-link').forEach(function(link) {
+        if (link.id === 'sna-inv-' + route.id) { link.setAttribute('aria-current', 'page'); }
+        else { link.removeAttribute('aria-current'); }
+    });
+    var contents = document.getElementById('sna-contents');
+    if (contents) { contents.classList.toggle('sna-contents-detail-open', !!route.id); }
+}
+
+// Returns the ID, Open, and Permissions buttons for a list or library.
+function snaListActionsHtml(list) {
+    var kindWord = list.isLib ? 'library' : 'list';
+    var idLabel = list.isLib ? 'Library ID' : 'List ID';
+    var displayId = 'sna-id-' + list.routeId;
+    return '<div class="sna-card-actions hide-on-print">' +
+        '<span id="' + displayId + '" class="sna-id-inline" hidden aria-live="polite"></span>' +
+        '<button type="button" class="sna-action-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(list.id) + '" data-label="' + idLabel + '" data-display-id="' + displayId + '" aria-label="Copy ' + idLabel + ' to clipboard" title="' + idLabel + ': ' + snaEscapeHtml(list.id) + '">ID</button>' +
+        '<button type="button" class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(list.url) + '" aria-label="Open ' + kindWord + ' in new window" title="Open ' + (list.isLib ? 'Library' : 'List') + '">Open</button>' +
+        snaPermissionsButtonHtml(list.raw, _snaTargetUrl) +
+    '</div>';
+}
+
+// Describes a list's version history settings in a sentence.
+function snaVersioningText(versioning) {
+    if (versioning.enabled === false) { return 'Turned off.'; }
+    if (versioning.enabled !== true) { return 'Not reported.'; }
+    var text = versioning.majorLimit === 0 ? 'Turned on, with no limit on the number of versions.'
+        : (versioning.majorLimit > 0 ? 'Turned on. Keeps up to ' + snaCountText(versioning.majorLimit, 'version', 'versions') + '.' : 'Turned on.');
+    return text + (versioning.minor ? ' Also keeps draft versions.' : '');
+}
+
+// Returns the body of one tab of a list or library's details, and queues the tab's table.
+function snaRenderListTab(list, tab) {
+    if (tab === 'columns') {
+        if (list.columnsStatus === 'failed') { return '<p class="sna-error-text">Sitenalyzer could not read the columns. Refresh the report to try again.</p>'; }
+        if (list.columns.length === 0) { return '<p class="sna-muted">No visible columns found.</p>'; }
+        var columnsId = 'sna-tbl-f-' + list.routeId;
+        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', data: list.columns });
+        return '<div id="' + columnsId + '" class="sna-fields-table"></div>';
+    }
+    if (tab === 'folders') {
+        if (list.foldersStatus === 'failed') { return '<p class="sna-error-text">Sitenalyzer could not read the folders. Refresh the report to try again.</p>'; }
+        if (list.folders.length === 0) { return '<p class="sna-muted">No top-level folders found.</p>'; }
+        var foldersId = 'sna-tbl-d-' + list.routeId;
+        _snaTablesQueue.push({ id: foldersId, type: 'folders', searchLabel: 'folders', data: list.folders });
+        return '<div id="' + foldersId + '"></div>';
+    }
+    if (tab === 'permissions') {
+        if (list.permissions.inherits) { return '<div class="perm-row">Uses the site\'s permissions.</div>'; }
+        if (!list.permissions.rolesRead) { return '<div class="perm-row">Sitenalyzer could not read these permissions. You need to be a site owner to see them.</div>'; }
+        return renderPermissionsHtml(list.permissions.roleAssignments);
+    }
+    var changed = snaFormatDate(list.lastModified);
+    return '<dl class="sna-facts">' +
+        '<dt>Description</dt><dd>' + renderAdminDescWrap(list.description, 'list:' + list.id) + '</dd>' +
+        '<dt>Items</dt><dd>' + snaEscapeHtml(snaCountText(Number(list.itemCount) || 0, 'item', 'items')) + '</dd>' +
+        '<dt>Last changed</dt><dd>' + snaEscapeHtml(changed || 'Not reported.') + '</dd>' +
+        '<dt>Version history</dt><dd>' + snaEscapeHtml(snaVersioningText(list.versioning)) + '</dd>' +
+        '<dt>Permissions</dt><dd>' + (list.permissions.inherits ? 'Uses the site\'s permissions.' : 'Has its own permissions.') + '</dd>' +
+    '</dl>';
+}
+
+// Returns the details of the selected Contents entry, or a hint when nothing is selected.
+function snaRenderContentsDetail(route, report) {
+    if (!route.id) { return '<p class="sna-detail-empty">Select a document library, list, or Site pages to see its details.</p>'; }
+    var back = '<p class="sna-back"><a class="sna-back-link" href="#sna/contents" data-nav-focus="inventory">Back to results</a></p>';
+
+    if (route.id === 'pages') {
+        _snaLastInventoryId = 'pages';
+        var pageCount = report.pages.pages.length;
+        return back + '<div id="sna-site-pages-section">' +
+            '<h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1"><span aria-hidden="true">📄 </span>Site pages' +
+                (pageCount ? ' <span class="item-count-badge">' + pageCount + '<sup>' + (pageCount === 1 ? 'page' : 'pages') + '</sup></span>' : '') +
+            '</h3>' + snaRenderSitePagesSection(report.pages) + '</div>';
+    }
+
+    var list = snaFindList(report, route.id);
+    if (!list) {
+        return back + '<h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1">Not in this report</h3>' +
+            '<p class="sna-note">Sitenalyzer did not find this list or library in the report. The address may be from another site or an older report. Choose a name from the list.</p>';
+    }
+    _snaLastInventoryId = list.routeId;
+    var tab = (route.tab === 'folders' && !list.isLib) ? 'overview' : (route.tab || 'overview');
+    var tabs = [['overview', 'Overview']];
+    if (list.isLib) { tabs.push(['folders', 'Folders']); }
+    tabs.push(['columns', 'Columns'], ['permissions', 'Permissions']);
+
+    var html = back + '<div class="sna-detail-head">' +
+        '<h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1"><span aria-hidden="true">' + (list.isLib ? '📄 ' : '📋 ') + '</span>' +
+            snaEscapeHtml(list.title) + ' <span class="item-count-badge">' + snaEscapeHtml(list.itemCount) + '<sup>' + (list.itemCount === 1 ? 'item' : 'items') + '</sup></span></h3>' +
+        snaListActionsHtml(list) + '</div>';
+    if (snaTechnicalDetailsOn()) {
+        html += '<dl class="sna-tech-strip">' +
+            '<dt>' + (list.isLib ? 'Library ID' : 'List ID') + '</dt><dd>' + snaEscapeHtml(list.id) + '</dd>' +
+            '<dt>Internal name</dt><dd>' + snaEscapeHtml(list.internalName) + '</dd>' +
+            '<dt>Address</dt><dd>' + snaEscapeHtml(list.url) + '</dd>' +
+        '</dl>';
+    }
+    html += '<nav class="sna-detail-nav" aria-label="' + snaEscapeHtml(list.title) + ' details"><ul class="sna-detail-tabs">' +
+        tabs.map(function(t) {
+            return '<li><a href="' + snaEscapeHtml(snaRouteHash({ section: 'contents', id: list.routeId, tab: t[0] })) + '" data-nav-focus="tab"' +
+                (t[0] === tab ? ' aria-current="page"' : '') + '>' + t[1] + '</a></li>';
+        }).join('') + '</ul></nav>';
+    return html + '<div class="sna-detail-body">' + snaRenderListTab(list, tab) + '</div>';
+}
+
+// ### Permissions, Taxonomy, and Site Review ###
+
+// Draws Permissions: guests and organization-wide access first, then each permission report in its own section.
+function snaRenderPermissions(route, report) {
+    var perms = report.permissions;
+    var html = snaSectionTitleHtml('Permissions', 'Who can open what on this site.') + snaExpandCollapseHtml();
+    // Guests, organization-wide groups, and links anyone can use.
+    html += snaRenderRiskFlags();
+    html += '<details class="permissions-section" id="sna-perm-site"><summary>View site permissions</summary>' +
+        (perms.siteRolesRead
+            ? renderPermissionsHtml(perms.siteRoleAssignments)
+            : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') +
+        '</details>';
+    html += '<details class="permissions-section" id="sna-perm-people"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>';
+    html += snaRenderUserAccessTool();
+    html += '<details class="permissions-section" id="sna-perm-own"><summary>Lists and libraries with their own permissions (' + perms.uniqueLists.length + ')</summary>' +
+        snaRenderInheritanceReport() + '</details>';
+    html += '<details class="permissions-section" id="sna-perm-sharing"><summary>Sharing links (' +
+        (perms.sharingLinks.failed ? 'could not read' : perms.sharingLinks.links.length) + ')</summary>' + snaRenderSharingLinks(perms.sharingLinks) + '</details>';
+    html += '<details class="permissions-section" id="sna-perm-apps"><summary>Apps with access to this site</summary>' + snaRenderAppsHtml(report) + '</details>';
+    return html;
+}
+
+// Returns the apps that have their own permissions on the site.
+function snaRenderAppsHtml(report) {
+    var perms = report.permissions;
+    var inner = perms.appAssignments.length > 0
+        ? renderPermissionsHtml(perms.appAssignments)
+        : '<div class="perm-row">' + (perms.siteRolesRead ? 'No apps have their own permissions on this site.' : 'Sitenalyzer could not read the site\'s permissions.') + '</div>';
+    return '<p class="sna-note">Apps given access in Microsoft Entra ID, such as through Sites.Selected, don\'t appear here. Ask your Microsoft 365 admin for that list.</p>' + inner;
+}
+
+// Draws Taxonomy: the term groups, term sets, and terms this site collection can use.
+function snaRenderTaxonomy(route, report) {
+    var html = snaSectionTitleHtml('Taxonomy and term store', 'Term groups, term sets, and terms that this site collection uses to describe content.');
+    if (report.taxonomy.groups.length > 0) { html += snaExpandCollapseHtml(); }
+    if (snaTechnicalDetailsOn() && report.taxonomy.termStoreId) {
+        html += '<dl class="sna-tech-strip"><dt>Term store ID</dt><dd>' + snaEscapeHtml(report.taxonomy.termStoreId) + '</dd></dl>';
+    }
+    return html + '<div id="sna-taxonomy-section">' + renderTaxonomySection(report.taxonomy.read) + '</div>';
+}
+
+// Draws Site review: cleanup suggestions, then what this report could and could not read.
+function snaRenderReview(route, report) {
+    return snaSectionTitleHtml('Site review', 'Lists and libraries that may need cleanup, and what this report could read. Sitenalyzer does not change or delete anything.') +
+        '<div class="sna-review">' + snaRenderCleanupSignals() + '</div>' +
+        '<h3 class="sna-subsection-title">What this report could read</h3>' + snaRenderCoverageTable(report.coverage);
+}
+
+// Returns the coverage table: one row per part of the report, saying whether Sitenalyzer could read it.
+function snaRenderCoverageTable(coverage) {
+    var labels = { read: 'Read', partial: 'Partly read', failed: 'Not read' };
+    var html = '<table class="sna-perm-list-table sna-coverage-table"><caption class="sna-visually-hidden">What this report could read</caption>' +
+        '<thead><tr><th scope="col">Part of the report</th><th scope="col">Status</th><th scope="col">What this means</th></tr></thead><tbody>';
+    coverage.forEach(function(row) {
+        html += '<tr><th scope="row">' + snaEscapeHtml(row.area) + '</th>' +
+            '<td>' + snaEscapeHtml(labels[row.status] || row.status) + '</td>' +
+            '<td>' + snaEscapeHtml(row.note) + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+}
+
+// ### Search Results ###
+
+// Draws the results of Search this report, grouped by kind. Each result opens the view that shows it.
+function snaRenderSearch(route, report) {
+    var q = route.q || '';
+    var html = snaSectionTitleHtml('Search results', '');
+    if (q.trim().length < 2) {
+        return html + '<p>Enter at least 2 letters or numbers in Search this report, such as part of a list or column name.</p>';
+    }
+    var groups = snaGroupSearchResults(snaSearchQuery(q));
+    var total = 0;
+    groups.forEach(function(g) { total += g.items.length; });
+    if (total === 0) {
+        return html + '<p class="sna-lead">No results for "' + snaEscapeHtml(q) + '" in ' + snaEscapeHtml(report.site.title) + '.</p>' +
+            '<p class="sna-muted">Search covers only what Sitenalyzer read from this site, not the rest of SharePoint. ' +
+            'Try part of a name, or use * between words, such as visit*date.</p>';
+    }
+
+    var technical = snaTechnicalDetailsOn();
+    html += '<p class="sna-lead">' + snaCountText(total, 'result', 'results') + ' for "' + snaEscapeHtml(q) + '" in ' + snaEscapeHtml(report.site.title) + '.</p>';
+    if (groups.length > 1) { html += snaExpandCollapseHtml(); }
+    html += '<p class="sna-muted">Search looks at names, internal names, IDs, data types, and where each item is. ' +
+        'Use * between words, or put a phrase in quotes to find it exactly. Column matches come first.</p>';
+    groups.forEach(function(group) {
+        html += '<details class="sna-search-group" open><summary>' + snaEscapeHtml(group.title) + ' (' + group.items.length + ')</summary><ul class="sna-search-list">';
+        group.items.forEach(function(item) {
+            html += '<li class="sna-search-item"><a href="' + snaEscapeHtml(item.route) + '"' +
+                (item.filterTable ? ' data-filter-table="' + snaEscapeHtml(item.filterTable) + '" data-filter-text="' + snaEscapeHtml(item.filterText) + '"' : '') + '>' +
+                snaEscapeHtml(item.label) + '</a> <span class="app-tag">' + snaEscapeHtml(item.type) + '</span>' +
+                '<p class="sna-search-summary">' + snaEscapeHtml(item.summary) +
+                    (technical && item.technicalText ? '<br><span class="list-id-text">' + snaEscapeHtml(item.technicalText) + '</span>' : '') +
+                '</p></li>';
+        });
+        html += '</ul></details>';
+    });
+    return html;
+}
+
+// ### Full Report for Printing ###
+
+// Draws every part of the report on one page, with every section open, for Print full report / PDF.
+function snaRenderPrint(route, report) {
+    var html = snaSectionTitleHtml('Full report', '') +
+        '<p class="sna-note hide-on-print">This view shows the whole report so you can print it or save it as a PDF. ' +
+        '<a href="#sna/overview">Back to the overview</a></p>';
+
+    html += '<div class="print-section"><h3 class="sna-subsection-title">About this site</h3><dl class="sna-facts">' +
+        '<dt>Site address</dt><dd>' + snaEscapeHtml(report.site.url) + '</dd>' +
+        '<dt>Site ID</dt><dd>' + snaEscapeHtml(report.site.id) + '</dd>' +
+        '<dt>Collected</dt><dd>' + snaEscapeHtml(snaFormatDateTime(report.collectedAt)) + '</dd>' +
+    '</dl></div>';
+
+    function listBlock(list) {
+        var block = '<div class="sna-print-item"><h4>' + snaEscapeHtml(list.title) + '</h4>' +
+            '<p class="sna-muted">' + (list.isLib ? 'Library ID ' : 'List ID ') + snaEscapeHtml(list.id) +
+            ' · Internal name ' + snaEscapeHtml(list.internalName) + ' · ' + snaEscapeHtml(list.url) + '</p>' +
+            snaRenderListTab(list, 'overview');
+        if (list.isLib) { block += '<h5>Top-level folders</h5>' + snaRenderListTab(list, 'folders'); }
+        return block + '<h5>Columns</h5>' + snaRenderListTab(list, 'columns') +
+            '<h5>Permissions</h5>' + snaRenderListTab(list, 'permissions') + '</div>';
+    }
+    var libraries = report.lists.filter(function(l) { return l.isLib; }).sort(snaByTitle);
+    var plainLists = report.lists.filter(function(l) { return !l.isLib; }).sort(snaByTitle);
+    html += '<div class="print-section"><h3 class="sna-subsection-title">Document libraries</h3>' +
+        (libraries.length ? libraries.map(listBlock).join('') : '<p>No document libraries found.</p>') + '</div>';
+    html += '<div class="print-section"><h3 class="sna-subsection-title">Lists</h3>' +
+        (plainLists.length ? plainLists.map(listBlock).join('') : '<p>No lists found.</p>') + '</div>';
+    html += '<div class="print-section" id="sna-site-pages-section"><h3 class="sna-subsection-title">Site pages</h3>' + snaRenderSitePagesSection(report.pages) + '</div>';
+
+    var check = _snaUserCheckResult;
+    html += '<div class="print-section"><h3 class="sna-subsection-title">Permissions</h3>' + snaRenderRiskFlags() +
+        '<details class="permissions-section"><summary>Site permissions</summary>' +
+            (report.permissions.siteRolesRead ? renderPermissionsHtml(report.permissions.siteRoleAssignments)
+                : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') + '</details>' +
+        '<details class="permissions-section"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>' +
+        '<details class="permissions-section"><summary>Lists and libraries with their own permissions (' + report.permissions.uniqueLists.length + ')</summary>' + snaRenderInheritanceReport() + '</details>' +
+        '<details class="permissions-section"><summary>Sharing links</summary>' + snaRenderSharingLinks(report.permissions.sharingLinks) + '</details>' +
+        '<details class="permissions-section"><summary>Apps with access to this site</summary>' + snaRenderAppsHtml(report) + '</details>' +
+        '<h4>Check one person\'s access</h4>' +
+        (check ? '<p>' + snaEscapeHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
+    '</div>';
+    html += '<div class="print-section"><h3 class="sna-subsection-title">Taxonomy and term store</h3>' + renderTaxonomySection(report.taxonomy.read) + '</div>';
+    html += '<div class="print-section"><h3 class="sna-subsection-title">Site review</h3>' + snaRenderCleanupSignals() +
+        '<h4>What this report could read</h4>' + snaRenderCoverageTable(report.coverage) + '</div>';
+    return html;
+}
+
+// ### Start the App ###
+
+// Entry point: wires the event handlers, loads the accessible sites list, and reads the site in a ?siteUrl= link.
 function startApplication() {
     var currentBaseUrl = getBaseUrl();
     var siteUrlInput = document.getElementById('site-url-input');
     var siteSuggestions = document.getElementById('site-suggestions');
+    var app = document.getElementById('sp-info-app');
 
     var gatherBtn = document.getElementById('sp-btn-gather');
-    if (gatherBtn) { gatherBtn.addEventListener('click', gatherSiteInformation); }
-    var startOverBtn = document.querySelector('#sna-start-over-btn button');
-    if (startOverBtn) { startOverBtn.addEventListener('click', startOver); }
-    var resultsDiv = document.getElementById('sp-results');
-    if (resultsDiv) {
-        resultsDiv.addEventListener('click', snaHandleResultsClick);
+    if (gatherBtn) { gatherBtn.addEventListener('click', function() { gatherSiteInformation(); }); }
+    if (app) {
+        app.addEventListener('click', snaHandleAppClick);
         // Enter in the person check box runs the check, the same as the Check access button.
-        resultsDiv.addEventListener('keydown', function(e) {
+        app.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && e.target && e.target.id === 'sna-user-access-input') {
                 e.preventDefault();
                 snaCheckUserAccess();
             }
         });
+        app.addEventListener('input', function(e) {
+            if (e.target && e.target.id === 'sna-inventory-filter') {
+                _snaContentsFilter = e.target.value;
+                snaApplyInventoryFilter();
+            }
+        });
+        // The Modern Script Editor can run this file again; the address listener is added once for each app.
+        if (!app.hasAttribute('data-sna-routing')) {
+            app.setAttribute('data-sna-routing', 'true');
+            window.addEventListener('hashchange', snaHandleHashChange);
+        }
     }
+
+    var searchForm = document.getElementById('sna-search-form');
+    if (searchForm) {
+        searchForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var searchInput = document.getElementById('sna-report-search');
+            var q = searchInput ? searchInput.value.trim().substring(0, SNA_SEARCH_MAX_LENGTH) : '';
+            var route = snaMakeRoute('search');
+            route.q = q;
+            snaNavigate(route, { focus: 'heading' });
+        });
+    }
+
+    var technicalSwitch = document.getElementById('sna-technical-switch');
+    if (technicalSwitch) {
+        technicalSwitch.addEventListener('change', function() { snaSetTechnicalDetails(technicalSwitch.checked); });
+    }
+    snaLoadTechnicalDetails();
+    snaSyncTechnicalSwitch();
 
     if (siteUrlInput) {
         siteUrlInput.value = currentBaseUrl;
     }
 
     // Deep-link support: pre-fill and auto-run if a siteUrl query parameter is present.
+    // A report address after it, such as ?siteUrl=...#sna/taxonomy, opens that view once the site is read.
     var _urlParams = new URLSearchParams(window.location.search);
     var _siteUrlParam = _urlParams.get('siteUrl');
     if (_siteUrlParam && siteUrlInput) {
         siteUrlInput.value = _siteUrlParam;
         gatherSiteInformation();
     }
-
-    // Mount the global search widget.
-    snaSearchInit();
 
     // Sites list caching helpers.
     // Other apps on the same SharePoint host share this browser storage, so every key starts with "sitenalyzer:".

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-sharepoint.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: A pretend SharePoint Online site for the browser tests. Playwright answers every request to
          https://contoso.sharepoint.com itself: the page holds the code from dist/SitePages/sitenalyzer.html.txt,
          files under SiteAssets come from dist/SiteAssets, and REST API calls get the synthetic answers below.
@@ -229,8 +229,14 @@ const searchResults = {
 };
 
 // Each entry matches the part of the address after the site path. Order matters: first match wins.
-// An entry has a fixed body, or an answer(url, match) function for answers that depend on the address or query.
+// An entry has a fixed body, or an answer(url, match, request) function for answers that depend on the address,
+// query, or request; an answer function that returns undefined passes the request to the next entry.
+// method is GET unless the entry says otherwise. reply(204) answers a write with no body, as SharePoint does.
 const API_ANSWERS = [
+    { method: 'POST', pattern: /^\/_api\/contextinfo$/, body: { FormDigestValue: 'TEST-DIGEST-0001' } },
+    { method: 'PATCH', pattern: /^\/_api\/web$/, body: reply(204, null) },
+    { method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)$/, body: reply(204, null) },
+    { method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields\(guid'[^']+'\)$/, body: reply(204, null) },
     { pattern: /^\/_api\/web$/, body: siteInfo },
     { pattern: /^\/_api\/web\/currentUser$/, body: currentUser },
     { pattern: /^\/_api\/web\/roleassignments$/, body: siteRoleAssignments },
@@ -282,15 +288,17 @@ function buildPageHtml(extraHeadHtml, omitMountDiv) {
  * @param {boolean} [options.omitMountDiv] Leaves the app's <div id="sitenalyzer-app"> out of the page.
  * @param {object[]} [options.extraLists] More lists for the site to return, in the same shape as the lists above.
  * @param {object[]} [options.answerOverrides] Answers checked before the standard ones, in the same shape as
- *        API_ANSWERS: { pattern, body } or { pattern, answer(url, match) }. Use reply(status, body) for errors.
+ *        API_ANSWERS: { pattern, body } or { pattern, answer(url, match, request) }. Use reply(status, body) for errors.
+ * @param {string} [options.addressSuffix] Text added to the page address, such as '?siteUrl=...#sna/taxonomy'.
  * @returns {Promise<{consoleErrors: string[], unexpectedRequests: string[], siteAssetsRequests: {url: string, status: number}[],
- *          apiRequests: string[], otherOriginRequests: string[]}>} Lists the test can check after the page has run.
+ *          apiRequests: string[], otherOriginRequests: string[], writeRequests: {method: string, url: string, body: string}[]}>}
+ *          Lists the test can check after the page has run. writeRequests holds every request that is not a GET.
  */
 async function openPretendSite(page, options) {
     const settings = options || {};
     const missingFiles = settings.missingFiles || [];
     const answers = (settings.answerOverrides || []).concat(API_ANSWERS);
-    const record = { consoleErrors: [], unexpectedRequests: [], siteAssetsRequests: [], apiRequests: [], otherOriginRequests: [] };
+    const record = { consoleErrors: [], unexpectedRequests: [], siteAssetsRequests: [], apiRequests: [], otherOriginRequests: [], writeRequests: [] };
 
     page.on('console', function(message) {
         if (message.type() === 'error') { record.consoleErrors.push(message.text()); }
@@ -346,19 +354,26 @@ async function openPretendSite(page, options) {
         }
 
         if (pathname.startsWith(SITE_PATH + '/_api/')) {
+            const request = route.request();
+            const method = request.method();
             record.apiRequests.push(url.href);
+            if (method !== 'GET') { record.writeRequests.push({ method: method, url: url.href, body: request.postData() || '' }); }
             const apiPath = pathname.substring(SITE_PATH.length);
-            let match = null;
-            const answer = answers.find(function(entry) {
-                match = entry.pattern.exec(apiPath);
-                return match !== null;
-            });
-            if (answer) {
-                let body = answer.answer ? answer.answer(url, match) : answer.body;
+            let body;
+            for (const entry of answers) {
+                if ((entry.method || 'GET') !== method) { continue; }
+                const match = entry.pattern.exec(apiPath);
+                if (match === null) { continue; }
+                body = entry.answer ? entry.answer(url, match, request) : entry.body;
+                if (body !== undefined) { break; }
+            }
+            if (body !== undefined) {
                 let status = 200;
                 if (body && body[REPLY]) { status = body.status; body = body.body; }
                 if (body === lists && settings.extraLists) { body = { value: lists.value.concat(settings.extraLists) }; }
-                await route.fulfill({ status: status, contentType: 'application/json', body: JSON.stringify(body) });
+                await route.fulfill(status === 204
+                    ? { status: 204, body: '' }
+                    : { status: status, contentType: 'application/json', body: JSON.stringify(body) });
                 return;
             }
         }
@@ -367,8 +382,8 @@ async function openPretendSite(page, options) {
         await route.fulfill({ status: 404, contentType: 'text/plain', body: 'Not found' });
     });
 
-    await page.goto(PAGE_URL);
+    await page.goto(PAGE_URL + (settings.addressSuffix || ''));
     return record;
 }
 
-module.exports = { openPretendSite, reply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID };
+module.exports = { openPretendSite, reply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID };
