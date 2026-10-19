@@ -126,6 +126,7 @@ lookup targets, default values, maximum lengths, indexed flags, and calculation 
 When it is off, those values stay out of the tables and out of search result summaries,
 but search still matches them, and workbooks and the printed report always include them.
 Do not build a second "technical" table for the same rows. Add columns to the one table instead.
+Turning the switch on or off redraws the report; keyboard focus must return to the switch afterward.
 Production remembers the switch per browser under a key that starts with `sitenalyzer:`,
 such as `sitenalyzer:technical-details`. It stores no report data.
 The preview keeps the choice in memory only and accepts a `technical=1` address parameter for review links.
@@ -181,7 +182,10 @@ and an ID copy action with a manual-copy alternative.
 Keep Tabulator for production interactive tables, with the repository's bundled library.
 Sort by activating a column heading, as Tabulator headers already do, and expose the sort state to assistive
 technology. Show one filter box above a table only when it has more than 10 rows, with a row count under it.
-Do not add separate sort or direction controls. Preserve keyboard operation and safe text rendering.
+Do not add separate sort or direction controls at widths where the headings are visible.
+When a table stacks its rows on a narrow screen and its headings are no longer visible, show a labeled
+**Sort by** control above the table and take the hidden heading buttons out of the keyboard order.
+Preserve keyboard operation and safe text rendering.
 The mockup uses semantic HTML tables to demonstrate the interactions; those tables are not a new
 production dependency or a decision to remove Tabulator.
 Create, redraw, and dispose of production tables as their views open and close.
@@ -234,8 +238,9 @@ types, IDs, folders, pages, and taxonomy terms.
 Preserve quoted phrases and wildcard searches. Column matches remain prioritized.
 Group the results by kind, in this order: columns, lists and libraries, folders, site pages, terms.
 Each group shows its count and can be collapsed. Each result names its location and navigates directly
-to the relevant detail view. Result summaries leave out IDs and internal names unless technical details are on,
-although both stay searchable.
+to the relevant detail view. Result summaries show the location and description only. IDs and internal names,
+including list and library internal names, appear in summaries only when technical details are on,
+although both stay searchable at all times.
 An empty result explains that the search covers the collected report rather than all tenant content.
 
 The new results page replaces the floating search dropdown.

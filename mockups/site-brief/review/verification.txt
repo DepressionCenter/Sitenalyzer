@@ -11,6 +11,6 @@ Print includes all data independently of route/filter; browser chrome and contro
 Research, limited, and empty dictionaries preserve asset/field relationships; unavailable lookups are labeled and omitted; taxonomy includes the production Term Store asset.
 Site switching resets search/person results; empty and partial-data states verified.
 Overview counts and shortcuts verified; access findings, known-none, and unknown states stay distinct; Site review and print coverage verified.
-320px reflow and 720px viewport equivalent to 200% desktop zoom checked; mobile list/detail navigation works.
+320px reflow and 720px viewport equivalent to 200% desktop zoom checked; narrow screens keep a visible sort control; mobile list/detail navigation works.
 No browser script errors or external HTTP requests.
 All 38 gallery links restore captured state in fresh browser contexts; unknown actions and unauthorized edit states are ignored; complete gallery license header verified.

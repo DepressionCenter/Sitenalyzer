@@ -71,6 +71,7 @@ The new-site example shows the no-guests message. The operations example shows u
 Counts come from the selected example site's data and match the detail views.
 
 The preview uses standard HTML tables. Select a column heading to sort, and select it again to reverse the order.
+On screens 640 CSS pixels wide or narrower, the headings are stacked out of view and a **Sort by** control appears above the table instead.
 A filter box appears only above tables with more than 10 rows, such as the worksheet previews.
 The production app retains its bundled Tabulator library.
 Keeping Tabulator for interactive data tables is compatible with the proposed navigation and detail panels.

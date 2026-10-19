@@ -137,6 +137,7 @@ tbody th { background: none; font-size: .9rem; }
 .app-footer > span { min-width: 0; }
 .table-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 12px 0; }
 .table-tools > div { flex: 1 1 150px; min-width: 0; }
+.table-tools .narrow-sort { display: none; }
 .table-tools label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
 .table-tools input, .table-tools select { width: 100%; min-width: 0; min-height: 40px; border: 1px solid #788b9e; border-radius: 4px; padding: 6px; }
 .report-utilities { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 4px 24px 10px; border-bottom: 1px solid var(--line); }
@@ -344,6 +345,7 @@ dialog::backdrop { background: #00274c80; }
   .responsive tr { padding: 10px 0; border-bottom: 1px solid var(--line); }
   .responsive td { border: 0; padding: 5px 10px; display: grid; grid-template-columns: minmax(75px, .65fr) 1fr; gap: 10px; }
   .responsive td::before { content: attr(data-label); font-weight: 650; color: #314d67; font-size: .82rem; }
+  .table-tools .narrow-sort { display: block; }
   dl.facts { grid-template-columns: 1fr; }
   .facts dt { border: 0; padding-bottom: 0; font-weight: 600; }
   .facts dd { padding-top: 3px; }

@@ -172,6 +172,7 @@ async function verify() {
     assert.deepEqual(descending, [...ascending].reverse());
     assert.equal(await page.getByRole('button', { name: 'Expand all details', exact: true }).count(), 0, 'Expand all is absent when a view has no collapsible parts.');
     await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).check();
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'technical-toggle', 'Focus stays on the technical switch after it rerenders the page.');
     assert.deepEqual(await columnTable.locator('thead th').allTextContents(), ['Column', 'Internal name', 'Type', 'Description', 'Lookup target', 'Settings'], 'The technical switch adds columns to the same table.');
     assert.match(await page.locator('.detail-panel').textContent(), /Column ID: 00000000-0000-4000-8000-/);
     assert.match(await page.locator('.detail-panel .technical-strip').textContent(), /Internal name\s*documents/);
@@ -347,6 +348,13 @@ async function verify() {
     assert.ok(await page.locator('.result-group').count() >= 3, 'Results are grouped by kind.');
     assert.match(await page.locator('.result-group summary').first().textContent(), /^Columns \(\d+\)$/, 'Column matches come first.');
     assert.doesNotMatch(await page.locator('.result-list').first().textContent(), /00000000-0000-4000-8000/, 'IDs stay out of result summaries until technical details are on.');
+    await page.getByRole('searchbox', { name: 'Search this report' }).fill('old-tracker');
+    await page.getByRole('button', { name: 'Search report', exact: true }).click();
+    assert.ok(await page.locator('.result-list li').count() > 0, 'Internal names stay searchable.');
+    assert.doesNotMatch(await page.locator('main .result-list').textContent(), /old-tracker/, 'Internal names stay out of result summaries until technical details are on.');
+    await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).check();
+    assert.match(await page.locator('main .result-list').textContent(), /old-tracker/, 'Technical details show internal names in results.');
+    await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).uncheck();
     await page.getByRole('searchbox', { name: 'Search this report' }).fill('<script>alert(1)</script>');
     await page.getByRole('button', { name: 'Search report', exact: true }).click();
     assert.equal(await page.locator('main script').count(), 0);
@@ -480,7 +488,14 @@ async function verify() {
       await audit('320px ' + hash);
     }
     await page.goto(previewUrl + '#contents/libraries/documents/columns');
-    await capture('Narrow library detail', '320 CSS pixel layout with Back to results and stacked table content.');
+    const narrowSort = page.locator('.detail-panel').getByRole('combobox', { name: 'Sort by', exact: true });
+    assert.equal(await narrowSort.isVisible(), true, 'Narrow screens keep a visible sort control.');
+    assert.equal(await page.locator('.detail-panel thead button').first().evaluate(node => node.tabIndex), -1, 'Clipped heading buttons leave the tab order on narrow screens.');
+    await narrowSort.selectOption('0:desc');
+    const narrowOrder = await page.locator('.detail-panel tbody tr td:first-child').allTextContents();
+    assert.deepEqual(narrowOrder, [...narrowOrder].sort((a, b) => b.localeCompare(a, undefined, { numeric: true })));
+    await narrowSort.selectOption('');
+    await capture('Narrow library detail', '320 CSS pixel layout with Back to results, a visible Sort by control, and stacked table content.');
     await page.getByRole('button', { name: 'Edit description for Title in Documents', exact: true }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Inline editor fits 320px.');
     await audit('320px inline editor');
@@ -491,7 +506,7 @@ async function verify() {
     await page.setViewportSize({ width: 720, height: 525 });
     await page.goto(previewUrl + '#overview');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    checks.push('320px reflow and 720px viewport equivalent to 200% desktop zoom checked; mobile list/detail navigation works.');
+    checks.push('320px reflow and 720px viewport equivalent to 200% desktop zoom checked; narrow screens keep a visible sort control; mobile list/detail navigation works.');
     await page.emulateMedia({ reducedMotion: 'reduce', forcedColors: 'active' });
     await page.goto(previewUrl + '#contents/libraries/documents/columns');
     await capture('Forced colors', 'Windows high contrast emulation preserves selected item and navigation outlines.');

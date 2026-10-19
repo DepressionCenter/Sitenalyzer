@@ -59,6 +59,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
   let technical = false;
   // Tables shorter than this show no filter box, so small tables stay uncluttered.
   const FILTER_THRESHOLD = 10;
+  // Below this width the stylesheet stacks each table row, so column headings are read but not seen.
+  const narrowLayout = window.matchMedia('(max-width: 640px)');
   const main = document.getElementById('main-content');
   const dialog = document.getElementById('dialog');
   const paths = {
@@ -155,7 +157,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     const id = 'table-filter-' + (++tableNumber);
     const input = filterable ? el('input', { id, type: 'search', placeholder: 'Filter these rows', maxlength: 160 }) : null;
     const status = filterable ? el('p', { class: 'small muted', role: 'status' }) : null;
+    // On narrow screens the headings are stacked out of view, so a visible Sort by control stands in for them.
+    const sortSelect = el('select', { id: id + '-sort', onchange: () => {
+      const [column, direction] = sortSelect.value.split(':');
+      sortColumn = column === '' ? -1 : Number(column); descending = direction === 'desc'; draw();
+    } }, el('option', { value: '' }, 'Original order'), headers.flatMap((name, index) => [el('option', { value: index + ':asc' }, name + ' (A to Z)'), el('option', { value: index + ':desc' }, name + ' (Z to A)')]));
+    const syncHeadingFocus = () => grid.querySelectorAll('thead button').forEach(control => { control.tabIndex = narrowLayout.matches ? -1 : 0; });
     const draw = () => {
+      sortSelect.value = sortColumn < 0 ? '' : sortColumn + (descending ? ':desc' : ':asc');
+      syncHeadingFocus();
       const needle = input ? input.value.toLowerCase() : '';
       let selected = needle ? materialized.filter(row => row.textContent.toLowerCase().includes(needle)) : materialized;
       if (sortColumn >= 0) selected = selected.slice().sort((a, b) => a.cells[sortColumn].textContent.localeCompare(b.cells[sortColumn].textContent, undefined, { numeric: true }) * (descending ? -1 : 1));
@@ -170,11 +180,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     grid.querySelectorAll('th').forEach((th, index) => th.replaceChildren(el('button', { type: 'button', class: 'btn quiet small sort', onclick: () => {
       descending = sortColumn === index ? !descending : false; sortColumn = index; draw();
     } }, headers[index], el('span', { class: 'sort-mark', 'aria-hidden': 'true' }))));
-    if (filterable) {
-      input.addEventListener('input', draw);
-      wrap.prepend(el('div', { class: 'table-tools' }, el('div', {}, el('label', { for: id }, 'Filter rows'), input)));
-      wrap.append(status);
-    }
+    narrowLayout.addEventListener('change', syncHeadingFocus);
+    wrap.prepend(el('div', { class: 'table-tools' },
+      filterable && el('div', {}, el('label', { for: id }, 'Filter rows'), input),
+      el('div', { class: 'narrow-sort' }, el('label', { for: id + '-sort' }, 'Sort by'), sortSelect)));
+    if (filterable) { input.addEventListener('input', draw); wrap.append(status); }
     draw(); return wrap;
   }
 
@@ -182,6 +192,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
   function technicalSwitch() {
     const input = el('input', { id: 'technical-toggle', type: 'checkbox', checked: technical || null, onchange: event => {
       technical = event.target.checked; render();
+      // Rendering replaces the header, so focus returns to the new copy of the switch for keyboard users.
+      document.getElementById('technical-toggle')?.focus();
       announce(technical ? 'Technical details shown: internal names, IDs, lookup targets, and formulas.' : 'Technical details hidden.');
     } });
     return el('label', { class: 'switch', for: 'technical-toggle' }, input, el('span', {}, 'Show technical details'));
@@ -601,12 +613,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     const entries = [];
     site.objects.forEach(item => {
       const base = 'contents/' + item.kind + '/' + item.key + '/';
-      entries.push({ title: item.name, kind: item.kind === 'libraries' ? 'Library' : 'List', detail: [item.description, item.key, item.guid].join(' / '), path: base + 'overview' });
-      item.columns.forEach(column => entries.push({ title: column.name, kind: 'Column', detail: [item.name, column.description, column.internal, column.type, column.id, column.lookup || ''].join(' / '), path: base + 'columns' }));
-      item.folders.forEach(folder => entries.push({ title: folder.name, kind: 'Folder', detail: item.name + ' / ' + folder.id, path: base + 'folders' }));
+      // "plain" is what a result shows by default; "detail" adds internal names and IDs, and both are searched.
+      entries.push({ title: item.name, kind: item.kind === 'libraries' ? 'Library' : 'List', plain: item.description, detail: [item.description, item.key, item.guid].join(' / '), path: base + 'overview' });
+      item.columns.forEach(column => entries.push({ title: column.name, kind: 'Column', plain: [item.name, column.description].join(' / '), detail: [item.name, column.description, column.internal, column.type, column.id, column.lookup || ''].join(' / '), path: base + 'columns' }));
+      item.folders.forEach(folder => entries.push({ title: folder.name, kind: 'Folder', plain: item.name, detail: item.name + ' / ' + folder.id, path: base + 'folders' }));
     });
-    site.terms.forEach(set => set.terms.forEach(term => entries.push({ title: term.name, kind: 'Term', detail: [set.group, set.name, term.description, term.id].join(' / '), path: 'taxonomy/' + set.key })));
-    site.pages.forEach(page => entries.push({ title: page.name, kind: 'Page', detail: page.description, path: 'contents/pages/' + page.file + '/overview' }));
+    site.terms.forEach(set => set.terms.forEach(term => entries.push({ title: term.name, kind: 'Term', plain: [set.group, set.name, term.description].join(' / '), detail: [set.group, set.name, term.description, term.id].join(' / '), path: 'taxonomy/' + set.key })));
+    site.pages.forEach(page => entries.push({ title: page.name, kind: 'Page', plain: page.description, detail: page.description, path: 'contents/pages/' + page.file + '/overview' }));
     const exact = query.startsWith('"') && query.endsWith('"');
     const parts = (exact ? query.slice(1, -1) : query).toLowerCase().split(exact ? '\u0000' : '*');
     const matches = value => { let cursor = 0; for (const part of parts) { const found = value.toLowerCase().indexOf(part, cursor); if (found < 0) return false; cursor = found + part.length; } return true; };
@@ -614,8 +627,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     // Results are grouped by kind, columns first, so the column-first priority of production search is kept.
     const groups = [['Columns', ['Column']], ['Lists and libraries', ['Library', 'List']], ['Folders', ['Folder']], ['Site pages', ['Page']], ['Terms', ['Term']]]
       .map(([label, kinds]) => [label, results.filter(item => kinds.includes(item.kind))]).filter(([, items]) => items.length);
-    // IDs and internal names are search terms even when hidden, so matches stay findable without cluttering the summary.
-    const summary = item => technical ? item.detail : item.detail.split(' / ').filter(part => part && !/^[0-9a-f-]{36}$/i.test(part)).slice(0, 2).join(' / ');
+    const summary = item => technical ? item.detail : item.plain || 'No description provided.';
     announce(results.length + ' search results.');
     return el('div', {}, heading('Search results', query ? results.length + ' results for “' + query + '” in ' + site.name + '.' : 'Enter a word or phrase in Search this report.'),
       el('p', { class: 'small muted' }, 'Search names, internal names, IDs, data types, and descriptions. Use * between words or quotes for a literal phrase. Column matches appear first.'),
