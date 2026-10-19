@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: Browser tests for Sitenalyzer. Each test opens the built app from dist/ on a pretend SharePoint
          site (see pretend-sharepoint.js) that blocks inline scripts the way SharePoint Online does.
 Notes: See README file for documentation and full license information.
@@ -566,9 +566,9 @@ test('starts when the app box is added to the page after a short wait', async fu
     expect(record.consoleErrors).toEqual([]);
 });
 
-test('reports a missing app box after waiting 5 seconds', async function({ page }) {
+test('reports a missing app box after waiting 10 seconds', async function({ page }) {
     const record = await openPretendSite(page, { omitMountDiv: true });
-    await expect.poll(function() { return record.consoleErrors.join(' '); }, { timeout: 8000 })
+    await expect.poll(function() { return record.consoleErrors.join(' '); }, { timeout: 13000 })
         .toContain('Sitenalyzer could not find <div id="sitenalyzer-app"></div>');
 });
 

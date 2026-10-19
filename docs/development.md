@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -74,7 +74,7 @@ The tests check that:
 
 - The app appears in the page with no console errors and no Content Security Policy violations.
 - The libraries and style sheets load from Site Assets, and the app adds no global names to the page.
-- The app starts when its `<div>` appears up to 5 seconds late, and writes an error when it never appears.
+- The app starts when its `<div>` appears up to 10 seconds late, and writes an error when it never appears.
 - Every browser storage key starts with `sitenalyzer:`.
 - **Extract site information** shows the pretend site's lists, column tables, permissions, sharing links, cleanup suggestions, and site pages.
 - **Who has access** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups.

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/troubleshooting.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: Problems people can run into when installing or using Sitenalyzer, with causes and fixes.
 Notes: See README file for documentation and full license information.
 
@@ -61,7 +61,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 **What you see:** The page is blank, and the browser console says "Sitenalyzer could not find `<div id="sitenalyzer-app"></div>` on this page."
 
-**Cause:** Sitenalyzer waited 5 seconds for the web part's `<div>` and didn't find it. The web part code is missing the `<div>` line, or the `id` was changed.
+**Cause:** Sitenalyzer waited 10 seconds for the web part's `<div>` and didn't find it. The web part code is missing the `<div>` line, or the `id` was changed.
 
 **Fix:** Replace the web part code with the full contents of `dist/SitePages/sitenalyzer.html.txt`, then refresh the page.
 

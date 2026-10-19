@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -38,7 +38,7 @@ var SNA_MOUNT_ID = 'sitenalyzer-app';
 
 // SharePoint can add the web part's <div> to the page after this file runs, so startup checks for it
 // every SNA_MOUNT_CHECK_INTERVAL_MS milliseconds and gives up after SNA_MOUNT_WAIT_MS milliseconds.
-var SNA_MOUNT_WAIT_MS = 5000;
+var SNA_MOUNT_WAIT_MS = 10000;
 var SNA_MOUNT_CHECK_INTERVAL_MS = 100;
 
 // Style sheets loaded from the styles folder in Site Assets.

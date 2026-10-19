@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/architecture.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: How Sitenalyzer's files fit together, how it starts on a SharePoint page, and why it is built this way.
 Notes: See README file for documentation and full license information.
 
@@ -60,7 +60,7 @@ The diagram shows these steps:
 2. `sitenalyzer.js` works out which folder it came from. It uses the script's own address, and if that isn't available, the site address in `_spPageContextInfo` plus `/SiteAssets/scripts/`. The styles folder is `../styles/` from there.
 3. It adds `tabulator_simple.min.css` and `sitenalyzer.css` to the page.
 4. At the same time, it loads `xlsx.full.min.js` and then `tabulator.min.js`. While each one loads, it hides the page's module loaders (`define.amd`, `exports`, and `module`) and then puts them back. Other scripts on a SharePoint page can create these names, and when they exist the libraries fill them in instead of the `XLSX` and `Tabulator` globals that the app uses. The Modern Script Editor hides `define.amd` for the same reason, but it puts `define.amd` back as soon as `sitenalyzer.js` has run, which is before the libraries arrive. So Sitenalyzer keeps `define.amd` hidden until each library has loaded, saves any value assigned in the meantime, and then puts back the most recent one. Some pages have an `exports` or `module` object that can't be hidden, such as a read-only one. The library then loads into that object, so after each library loads, Sitenalyzer looks for the working copy in its global, in `exports`, and in `module.exports`. It keeps its own reference to each library instead of reading `window.XLSX` and `window.Tabulator`. A library counts as working only if it passes a check, such as having `XLSX.utils`; if neither place has a working copy, Sitenalyzer shows a message. A library that is already on the page is used only if it passes the same check.
-5. When every file has loaded, it places the app markup in `<div id="sitenalyzer-app">` and starts the app. SharePoint sometimes adds the web part's `<div>` to the page a little later, so Sitenalyzer checks for it every 100 milliseconds for up to 5 seconds. If the `<div>` never appears, it writes an error in the browser console. Both times are set at the top of `src/sitenalyzer.js` (`SNA_MOUNT_WAIT_MS` and `SNA_MOUNT_CHECK_INTERVAL_MS`).
+5. When every file has loaded, it places the app markup in `<div id="sitenalyzer-app">` and starts the app. SharePoint sometimes adds the web part's `<div>` to the page a little later, so Sitenalyzer checks for it every 100 milliseconds for up to 10 seconds. If the `<div>` never appears, it writes an error in the browser console. Both times are set at the top of `src/sitenalyzer.js` (`SNA_MOUNT_WAIT_MS` and `SNA_MOUNT_CHECK_INTERVAL_MS`).
 6. If any file fails to load, it shows a message in the `<div>` that names the file and tells the person which folder to copy it to.
 
 ### What Sitenalyzer asks SharePoint

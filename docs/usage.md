@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/usage.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: How to install, update, and use Sitenalyzer on a SharePoint Online site.
 Notes: See README file for documentation and full license information.
 
@@ -57,7 +57,7 @@ This page explains how to add Sitenalyzer to a SharePoint Online site, how to up
    ```
 
 9. Select **Save** in the code editor. Then select **Save** on the page to leave edit mode.
-10. Refresh the page. You should see the Sitenalyzer heading and a **Site URL** box. Sitenalyzer waits up to 5 seconds for SharePoint to show the web part.
+10. Refresh the page. You should see the Sitenalyzer heading and a **Site URL** box. Sitenalyzer waits up to 10 seconds for SharePoint to show the web part.
 
 The page must be saved directly in the Site Pages library, not in a folder inside it. The page code finds the scripts with the address `../SiteAssets/scripts/sitenalyzer.js`, which only works from there.
 
