@@ -1,9 +1,9 @@
 <!--
 This file is part of Sitenalyzer
 ui-redesign.md
-Author(s): [Author name].
+Author(s): Gabriel Mongefranco.
 Created: 2026-10-16
-Last Modified: 2026-10-16
+Last Modified: 2026-10-19
 Summary: Agreed UI direction, implementation requirements, and handoff for the Site brief redesign.
 Notes: See README for documentation and full license information.
 Copyright © 2026 The Regents of the University of Michigan
@@ -19,8 +19,13 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 This document records the agreed design for the next Sitenalyzer interface.
 It gives the next developer the decisions, reference screens, and checks needed to implement it.
-The production redesign is planned. This branch contains documentation and a working synthetic preview;
-it does not replace the app deployed to SharePoint.
+The production redesign is planned. The repository contains this documentation and a working synthetic preview;
+neither replaces the app deployed to SharePoint.
+
+The design was reviewed on October 19, 2026, against the production interface and revised in these ways:
+a lighter frame, a short Overview with counts instead of findings, one technical details switch instead of
+duplicate tables, header sorting with fewer table controls, cleanup findings kept out of Permissions,
+grouped search results, and editor keys that match production. The sections below describe the revised design.
 
 ### Start here
 
@@ -44,7 +49,7 @@ and export details.
 
 Use the Site brief direction with the list-and-detail layout from the second concept.
 Keep familiar SharePoint terms, visible report actions, and readable tables.
-Show technical details on demand without excluding them from search, workbooks, or print.
+Show technical details on demand, through one switch, without excluding them from search, workbooks, or print.
 
 The production baseline for this handoff is commit `64d74b4` on `main`.
 The [current architecture](architecture.md) remains the starting point.
@@ -61,7 +66,10 @@ The following issue status was checked on October 16, 2026:
 
 ### Agreed visual direction
 
-Use a restrained navy-and-maize frame around the queried site's identity and information.
+Use a light frame with navy text and a maize accent around the queried site's identity and information.
+The web part sits under SharePoint's own dark suite bar and site header, so the report adds no dark bar of its own.
+The utility bar is white with a thin rule, **Change site** and **Site settings** are outlined buttons,
+and the main navigation is navy text on white with a maize underline on the selected section.
 The site's logo, title, and description are the main identity. Sitenalyzer's own mark stays small.
 The layout uses clear rules, whitespace, modest corners, and text labels beside meaningful icons.
 Avoid decorative charts, gradients, oversized cards, and status colors without explanatory text.
@@ -70,8 +78,8 @@ The preview defines these starting values in `preview.css`:
 
 | Purpose | Starting value |
 | --- | --- |
-| Main navigation and headings | Navy `#00274c` |
-| Selected navigation | Maize `#ffcb05` with navy text |
+| Headings, navigation text, and the utility bar text | Navy `#00274c` on white |
+| Selected navigation | Navy text with a 4 CSS pixel maize `#ffcb05` underline |
 | Links | Blue `#174992` |
 | Body text | `#173149` |
 | Secondary text | `#526476` |
@@ -100,7 +108,7 @@ even when Sitenalyzer is hosted on a different site.
 
 | Main section | Purpose and secondary views |
 | --- | --- |
-| Overview | Site identity, counts, short library and list summaries, and shortcuts to permissions, taxonomy, site review, and site details. |
+| Overview | Site identity, a grid of counts, and one short card per section with links. No findings and no item tables. |
 | Contents | Document libraries, lists, and site pages. Select an item to read its details. |
 | Permissions | Overview; people and groups; one-person access check; own permissions; sharing links; apps. |
 | Taxonomy | Term groups, term sets, terms, descriptions, parent terms, IDs, and related columns. |
@@ -108,6 +116,19 @@ even when Sitenalyzer is hosted on a different site.
 
 Site review is the additional top-level section. It gives cleanup information a stable location.
 Exports stay in the shared action area rather than requiring a separate navigation tab.
+
+#### Technical details switch
+
+The utility row under the report actions holds one labeled switch, **Show technical details**.
+It is off by default. When it is on, every view adds its technical values to the tables and headings
+it already shows: internal names, column IDs, list and library IDs, folder IDs, term and term set IDs,
+lookup targets, default values, maximum lengths, indexed flags, and calculation formulas.
+When it is off, those values stay out of the tables and out of search result summaries,
+but search still matches them, and workbooks and the printed report always include them.
+Do not build a second "technical" table for the same rows. Add columns to the one table instead.
+Production remembers the switch per browser under a key that starts with `sitenalyzer:`,
+such as `sitenalyzer:technical-details`. It stores no report data.
+The preview keeps the choice in memory only and accepts a `technical=1` address parameter for review links.
 
 Use real navigation links for page changes and identify the current page programmatically.
 Do not apply tab roles to links unless the full keyboard behavior for a tab interface is implemented.
@@ -117,25 +138,25 @@ Preserve the inventory's filter and selection while moving between an item and i
 
 ### Overview and permission findings
 
-The overview retains the former header shortcuts, with counts where meaningful:
+The Overview is a short dashboard. It shows no findings, so the first screen stays calm;
+findings belong in Permissions and Site review. It contains:
 
-- View site permissions.
-- Who has access, by person or group.
-- Check one person's access.
-- Lists and libraries with their own permissions.
-- Sharing links.
-- Lists and libraries to review for cleanup.
-- Apps with access to this site.
+- A grid of counts, each linking to its section where one exists: document libraries, lists, site pages,
+  items in lists and libraries, columns, top-level folders, term sets, people and groups with site access,
+  lists and libraries with their own permissions, sharing links, apps with access, and the most recent change.
+  Counts that could not be read say **Not read** rather than 0.
+- One card per section with a sentence and links. The Permissions card keeps the former header shortcuts,
+  with counts where meaningful: view site permissions; who has access, by person or group; check one person's
+  access; lists and libraries with their own permissions; sharing links; and apps with access to this site.
+  The Site review card links to the cleanup findings. The About this site card opens the site details.
 
-Place the following findings on the Permissions overview, as requested:
+Place the following findings on the Permissions overview:
 
 - **Review guest and organization-wide access**.
 - **3 lists and libraries have their own permissions**.
-- **1 list has no description**.
 
+The missing-description finding is a cleanup finding, not an access finding. It appears only in Site review.
 The numbers above describe the synthetic example. Production counts must come from collected data.
-The missing-description notice can also link to the relevant cleanup record, but its primary
-summary placement is Permissions. It must not imply that a missing description grants access.
 
 Only show **No guests or organization-wide groups have access** when the relevant checks completed
 and found none. Missing or failed reads must say that access could not be checked.
@@ -152,13 +173,15 @@ and an ID copy action with a manual-copy alternative.
 | Detail view | Required information |
 | --- | --- |
 | Overview | Name, editable description, item count, last-changed date, version history, and relevant SharePoint actions. |
-| Folders, for libraries | Top-level folder names, item counts, IDs, and open actions. Preserve the current top-level scope. |
-| Columns | Title, internal name, data type, description, lookup target, and calculated return type where supplied. |
+| Folders, for libraries | Top-level folder names, item counts, and open actions. Folder IDs appear when technical details are on. Preserve the current top-level scope. |
+| Columns | Title, data type, description, required flag, choice values, and a plain note of the list a lookup column reads. With technical details on, the same table adds internal name, lookup target, column ID, default value, maximum length, indexed flag, and calculation formula. |
 | Permissions | Whether the item uses the site's permissions, assignments when available, and a management link. |
-| Technical details | IDs, defaults, required and indexed flags, maximum length, choice values, lookup relationships, and calculation formulas. |
+| Heading, with technical details on | The list or library ID with a copy action, its internal name, and its address, shown under the item actions. |
 
 Keep Tabulator for production interactive tables, with the repository's bundled library.
-Preserve filtering, sorting, row counts, keyboard operation, and safe text rendering.
+Sort by activating a column heading, as Tabulator headers already do, and expose the sort state to assistive
+technology. Show one filter box above a table only when it has more than 10 rows, with a row count under it.
+Do not add separate sort or direction controls. Preserve keyboard operation and safe text rendering.
 The mockup uses semantic HTML tables to demonstrate the interactions; those tables are not a new
 production dependency or a decision to remove Tabulator.
 Create, redraw, and dispose of production tables as their views open and close.
@@ -180,6 +203,7 @@ separate architecture decision. Thumbnails are optional decoration alongside com
 
 Permissions must retain site and separate list/library assignments, SharePoint group members,
 access grouped by person or group, and the explicit one-person check.
+The check says that it includes access through groups and that the person running it needs to be a site owner.
 Accept the existing supported email and SharePoint sign-in-name forms for that check.
 Show its site and list/library results only after the request completes.
 Cancel or ignore results from a previous site after switching sites.
@@ -191,11 +215,14 @@ Separate item-level access and Microsoft 365/security-group membership are outsi
 Apps granted through Microsoft Entra ID, including Sites.Selected, remain outside the reported app list.
 
 Taxonomy remains a main section, with editable group, set, and term descriptions.
-Preserve term names, parent relationships, IDs, term-set and group IDs, and related columns.
+Preserve term names, parent relationships, and related columns. Term IDs, term set IDs, group IDs,
+and the term store ID appear when technical details are on, and always in workbooks and print.
 Show empty term stores and unread term stores as different states.
 
-Site review includes content unchanged for 12 months, libraries with version history disabled,
-libraries with unlimited version history, and the five largest lists or libraries by item count.
+Site review shows one findings table with a row per list or library per condition: not changed in the
+last 12 months, version history turned off, version history with no limit, and description missing.
+Each row names the finding, the list or library, a short detail, and a next step.
+Below it come the five largest lists or libraries by item count and the report coverage table.
 It directs the person to review content; it does not delete anything or change retention settings.
 Collection coverage names missing or truncated sections and explains how that affects the report.
 
@@ -205,7 +232,10 @@ Collection coverage names missing or truncated sections and explains how that af
 It searches collected data, including unopened sections: names, descriptions, column internal names,
 types, IDs, folders, pages, and taxonomy terms.
 Preserve quoted phrases and wildcard searches. Column matches remain prioritized.
-Results identify their kind and location and navigate directly to the relevant detail view.
+Group the results by kind, in this order: columns, lists and libraries, folders, site pages, terms.
+Each group shows its count and can be collapsed. Each result names its location and navigates directly
+to the relevant detail view. Result summaries leave out IDs and internal names unless technical details are on,
+although both stay searchable.
 An empty result explains that the search covers the collected report rather than all tenant content.
 
 The new results page replaces the floating search dropdown.
@@ -214,8 +244,9 @@ They are separate implementations, and punctuation handling is not identical.
 Preserve established production query behavior unless a specific change is documented and reviewed.
 
 Local table filters affect only that table. They must not narrow a workbook or printed report.
-Keep **Refresh report**, **Start over**, **Expand all details**, **Collapse all details**, and **Back to top**.
-Expand/collapse applies to the current view. The full-report view provides all sections together.
+Keep **Refresh report**, **Start over**, and **Back to top** in the utility row with the technical details switch.
+Show **Expand all details** and **Collapse all details** only in a view that has more than one collapsible part,
+such as People and groups or grouped search results. The full-report view provides all sections together.
 Refresh reruns collection and updates the collection time; it must not silently discard an unsaved edit.
 
 ### Site entry and switching
@@ -242,7 +273,8 @@ The existing ManageWeb gate remains the starting point; a visible control never 
 
 Provide a labeled pencil button as the discoverable keyboard and touch action.
 Double-click is an additional shortcut. Entering edit mode focuses a labeled text area in place.
-Provide **Save** and **Cancel**, with Escape to cancel and Ctrl+Enter as an optional save shortcut.
+Provide **Save** and **Cancel**. Keep the production keys: Enter saves, Shift+Enter or Alt+Enter adds a line,
+and Escape cancels. Say so in the hint under the text area.
 Never depend on double-click or a keyboard shortcut as the only way to edit.
 
 While saving, show progress and prevent duplicate writes.
@@ -378,6 +410,8 @@ Before replacing the current UI, verify all of the following:
 - [ ] All six description kinds save through the current APIs, and denied or failed saves preserve drafts safely.
 - [ ] Permission counts and supporting rows agree; zero findings and unread results stay distinct.
 - [ ] Search and table behavior retain the current supported inputs and work without a mouse.
+- [ ] The technical details switch reveals every technical value the current interface shows, in every view, and its setting is remembered under the `sitenalyzer:` prefix.
+- [ ] The Overview shows counts and links only; access findings appear on Permissions and cleanup findings on Site review.
 - [ ] Both workbook schemas and relationships remain compatible, including all nine and six sheets respectively.
 - [ ] Print includes unopened sections and every collected row, independent of filters and Tabulator rendering.
 - [ ] Loading, empty, partial, truncated, denied, missing-image, and failed-image states are understandable.

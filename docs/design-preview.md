@@ -1,9 +1,9 @@
 <!--
 This file is part of Sitenalyzer
 design-preview.md
-Author(s): [Author name].
+Author(s): Gabriel Mongefranco.
 Created: 2026-10-15
-Last Modified: 2026-10-16
+Last Modified: 2026-10-19
 Summary: How to explore the standalone Site brief design preview.
 Copyright © 2026 The Regents of the University of Michigan
 Licensed under the GNU Free Documentation License v1.3 or later.
@@ -44,16 +44,16 @@ Window size and forced-color preferences still follow your browser settings.
 
 | Area | What you can review |
 | --- | --- |
-| Overview | Queried site logo, editable description, address, counted permission shortcuts, library and list summaries. |
+| Overview | Queried site logo, editable description, address, a grid of counts, and one card per section with links. |
 | Change site | Search for an example site or enter its exact example address. |
 | Contents | Library, list, and page browsing with an adjacent detail panel. |
-| Library details | Overview, folders, columns, permissions, technical details, and settings actions. |
+| Library details | Overview, folders, columns, permissions, and settings actions. Turn on **Show technical details** to add internal names, IDs, lookup targets, settings, and formulas to the same tables. |
 | List details | Overview, columns, permissions, descriptions, calculated columns, and internal names. |
-| Permissions | Guest and organization-wide access summary, separate-permission and missing-description findings, site permissions, people and groups, individual access, sharing links, and app access. |
+| Permissions | Guest and organization-wide access summary, the own-permissions finding, site permissions, people and groups, individual access, sharing links, and app access. |
 | Site page details | A synthetic thumbnail, plus examples where a thumbnail is missing or cannot load. |
-| Site review | Cleanup findings, missing descriptions, largest lists and libraries, access review links, and report coverage. |
+| Site review | One findings table (older content, version history, missing descriptions), largest lists and libraries, access review links, and report coverage. |
 | Taxonomy | Term groups, sets, terms, parent terms, IDs, and columns using a term set. |
-| Search | Results across names, descriptions, columns, folders, pages, and terms, plus an empty-results state. |
+| Search | Results grouped by kind across names, descriptions, columns, folders, pages, and terms, plus an empty-results state. |
 | Downloads | Worksheet previews and sample Excel data dictionaries and permissions workbooks. |
 | Print | Every collected section and expanded technical detail, regardless of the active tab or search. |
 | Alternative states | A site member who cannot read permissions, an empty site, and missing site branding. |
@@ -61,19 +61,25 @@ Window size and forced-color preferences still follow your browser settings.
 ### Working and simulated actions
 
 The access summary distinguishes findings, completed checks with no findings, and unavailable checks.
-It appears on the Permissions overview, with the separate-permission and missing-description findings.
+It appears on the Permissions overview with the own-permissions finding. Missing descriptions appear in Site review.
+
+The **Show technical details** switch in the utility row is off when the preview opens. Turn it on to see
+internal names, IDs, lookup targets, settings, and formulas in the tables and headings of every view.
+The preview keeps the setting until you reload; add `?technical=1` to the address to open a screen with it on.
 The research example contains a guest and a link anyone can use.
 The new-site example shows the no-guests message. The operations example shows unavailable permission checks.
 Counts come from the selected example site's data and match the detail views.
 
-The preview uses standard HTML tables with filtering and sorting. The production app retains its bundled Tabulator library.
+The preview uses standard HTML tables. Select a column heading to sort, and select it again to reverse the order.
+A filter box appears only above tables with more than 10 rows, such as the worksheet previews.
+The production app retains its bundled Tabulator library.
 Keeping Tabulator for interactive data tables is compatible with the proposed navigation and detail panels.
 The printable report uses separate tables so it can include every row and expanded detail.
 
 Navigation, search, site switching, description editing, sample Excel downloads, and printing work locally.
 Description edits last only until you reload the page.
 Use the pencil button or double-click the description to edit it in place.
-Select **Save** or **Cancel**. You can also press Escape to cancel or Ctrl+Enter to save.
+Select **Save** or **Cancel**. Enter saves, Shift+Enter adds a line, and Escape cancels, as in the current app.
 The pencil buttons work with a keyboard and have labels naming the description they edit.
 
 The site-owner example supports the same description types as the current production app:
@@ -136,8 +142,9 @@ Run this command from the repository root:
 node mockups/site-brief/verify.cjs
 ```
 
-The script checks navigation, keyboard focus in dialogs, input rejection, text-safe rendering,
-site switching, Excel content, print coverage, and narrow layouts.
+The script checks navigation, heading sort, the filter threshold, the technical details switch,
+keyboard focus in dialogs, input rejection, text-safe rendering, site switching, Excel content,
+print coverage, and narrow layouts.
 It checks dictionary keys for complete, limited, and empty examples and reopens every gallery link
 in a fresh browser context. It also verifies the generated gallery's complete license header.
 It scans the views with axe and writes screenshots, two synthetic workbooks, a tagged PDF,

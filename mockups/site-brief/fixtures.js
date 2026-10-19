@@ -1,9 +1,9 @@
 /*
 This file is part of Sitenalyzer
 fixtures.js
-Author(s): [Author name].
+Author(s): Gabriel Mongefranco.
 Created: 2026-10-15
-Last Modified: 2026-10-15
+Last Modified: 2026-10-19
 Summary: Synthetic sites and report data for the standalone design preview.
 Notes: See README file for documentation and full license information.
 
