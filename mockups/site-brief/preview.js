@@ -1,9 +1,9 @@
 /*
 This file is part of Sitenalyzer
 preview.js
-Author(s): [Author name].
+Author(s): Gabriel Mongefranco.
 Created: 2026-10-15
-Last Modified: 2026-10-16
+Last Modified: 2026-10-19
 Summary: Navigable synthetic UI, sample workbook downloads, and a complete print report.
 Notes: See README file for documentation and full license information.
 
@@ -54,6 +54,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
   let dialogOpener = null;
   let buildingReport = false;
   let tableNumber = 0;
+  // Technical details (internal names, IDs, lookup targets, formulas) are hidden until the person turns them on.
+  // The preview keeps this choice in memory only; production remembers it under the "sitenalyzer:" storage prefix.
+  let technical = false;
+  // Tables shorter than this show no filter box, so small tables stay uncluttered.
+  const FILTER_THRESHOLD = 10;
+  // Below this width the stylesheet stacks each table row, so column headings are read but not seen.
+  const narrowLayout = window.matchMedia('(max-width: 640px)');
   const main = document.getElementById('main-content');
   const dialog = document.getElementById('dialog');
   const paths = {
@@ -143,25 +150,59 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     body.append(...materialized);
     const wrap = el('div', { class: 'table-wrap' }, grid);
     if (buildingReport || !rows.length) return wrap;
-    const id = 'table-filter-' + (++tableNumber);
-    const input = el('input', { id, type: 'search', placeholder: 'Filter these rows', maxlength: 160 });
-    const sort = el('select', { id: id + '-sort' }, el('option', { value: '' }, 'Original order'), headers.map((name, index) => el('option', { value: String(index) }, name)));
+    // Column headings sort on activation, as Tabulator headers do in production. A filter box appears only for longer tables.
+    let sortColumn = -1;
     let descending = false;
-    const status = el('p', { class: 'small muted', role: 'status' });
-    const direction = button('Ascending', () => { descending = !descending; direction.textContent = descending ? 'Descending' : 'Ascending'; draw(); }, 'small');
+    const filterable = rows.length > FILTER_THRESHOLD;
+    const id = 'table-filter-' + (++tableNumber);
+    const input = filterable ? el('input', { id, type: 'search', placeholder: 'Filter these rows', maxlength: 160 }) : null;
+    const status = filterable ? el('p', { class: 'small muted', role: 'status' }) : null;
+    // On narrow screens the headings are stacked out of view, so a visible Sort by control stands in for them.
+    const sortSelect = el('select', { id: id + '-sort', onchange: () => {
+      const [column, direction] = sortSelect.value.split(':');
+      sortColumn = column === '' ? -1 : Number(column); descending = direction === 'desc'; draw();
+    } }, el('option', { value: '' }, 'Original order'), headers.flatMap((name, index) => [el('option', { value: index + ':asc' }, name + ' (A to Z)'), el('option', { value: index + ':desc' }, name + ' (Z to A)')]));
+    const syncHeadingFocus = () => grid.querySelectorAll('thead button').forEach(control => { control.tabIndex = narrowLayout.matches ? -1 : 0; });
     const draw = () => {
-      let selected = materialized.filter(row => row.textContent.toLowerCase().includes(input.value.toLowerCase()));
-      if (sort.value !== '') selected = selected.slice().sort((a, b) => a.cells[Number(sort.value)].textContent.localeCompare(b.cells[Number(sort.value)].textContent, undefined, { numeric: true }) * (descending ? -1 : 1));
+      sortSelect.value = sortColumn < 0 ? '' : sortColumn + (descending ? ':desc' : ':asc');
+      syncHeadingFocus();
+      const needle = input ? input.value.toLowerCase() : '';
+      let selected = needle ? materialized.filter(row => row.textContent.toLowerCase().includes(needle)) : materialized;
+      if (sortColumn >= 0) selected = selected.slice().sort((a, b) => a.cells[sortColumn].textContent.localeCompare(b.cells[sortColumn].textContent, undefined, { numeric: true }) * (descending ? -1 : 1));
       body.replaceChildren(...selected);
-      status.textContent = selected.length + ' of ' + rows.length + ' rows';
-      grid.querySelectorAll('th').forEach((th, index) => th.setAttribute('aria-sort', String(index) === sort.value ? (descending ? 'descending' : 'ascending') : 'none'));
+      if (status) status.textContent = selected.length + ' of ' + rows.length + ' rows';
+      grid.querySelectorAll('th').forEach((th, index) => {
+        th.setAttribute('aria-sort', index === sortColumn ? (descending ? 'descending' : 'ascending') : 'none');
+        // The arrow is decorative; aria-sort on the heading carries the meaning.
+        th.querySelector('.sort-mark').textContent = index === sortColumn ? (descending ? ' ▼' : ' ▲') : '';
+      });
     };
-    input.addEventListener('input', draw); sort.addEventListener('change', draw);
-    grid.querySelectorAll('th').forEach((th, index) => th.replaceChildren(button(headers[index], () => {
-      descending = sort.value === String(index) ? !descending : false; sort.value = String(index); direction.textContent = descending ? 'Descending' : 'Ascending'; draw();
-    }, 'quiet small')));
-    wrap.prepend(el('div', { class: 'table-tools' }, el('div', {}, el('label', { for: id }, 'Filter rows'), input), el('div', {}, el('label', { for: id + '-sort' }, 'Sort by'), sort), direction));
-    wrap.append(status); draw(); return wrap;
+    grid.querySelectorAll('th').forEach((th, index) => th.replaceChildren(el('button', { type: 'button', class: 'btn quiet small sort', onclick: () => {
+      descending = sortColumn === index ? !descending : false; sortColumn = index; draw();
+    } }, headers[index], el('span', { class: 'sort-mark', 'aria-hidden': 'true' }))));
+    narrowLayout.addEventListener('change', syncHeadingFocus);
+    wrap.prepend(el('div', { class: 'table-tools' },
+      filterable && el('div', {}, el('label', { for: id }, 'Filter rows'), input),
+      el('div', { class: 'narrow-sort' }, el('label', { for: id + '-sort' }, 'Sort by'), sortSelect)));
+    if (filterable) { input.addEventListener('input', draw); wrap.append(status); }
+    draw(); return wrap;
+  }
+
+  /** Returns a labeled switch that shows or hides technical values in every view. */
+  function technicalSwitch() {
+    const input = el('input', { id: 'technical-toggle', type: 'checkbox', checked: technical || null, onchange: event => {
+      technical = event.target.checked; render();
+      // Rendering replaces the header, so focus returns to the new copy of the switch for keyboard users.
+      document.getElementById('technical-toggle')?.focus();
+      announce(technical ? 'Technical details shown: internal names, IDs, lookup targets, and formulas.' : 'Technical details hidden.');
+    } });
+    return el('label', { class: 'switch', for: 'technical-toggle' }, input, el('span', {}, 'Show technical details'));
+  }
+
+  /** Technical facts for a heading: shown inline when the technical switch is on, always included in print. */
+  function technicalFacts(entries, copyLabel, copyText) {
+    if (!technical && !buildingReport) return null;
+    return el('div', { class: 'technical-strip' }, facts(entries), !buildingReport && copyLabel && copyValue(copyText, copyLabel));
   }
 
   function copyValue(value, label) {
@@ -222,18 +263,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
           el('p', { class: 'small' }, 'Includes the full report, regardless of filters or the selected tab.'))),
       el('div', { class: 'report-utilities' }, button('Refresh report', () => { query = ''; accessResult = null; render(true); announce('Example report refreshed. No SharePoint request was made.'); }, 'quiet small'),
         button('Start over', () => { query = ''; accessResult = null; go('start'); }, 'quiet small'),
-        button('Expand all details', () => main.querySelectorAll('details').forEach(detail => { detail.open = true; }), 'quiet small'),
-        button('Collapse all details', () => main.querySelectorAll('details').forEach(detail => { detail.open = false; }), 'quiet small')));
+        technicalSwitch()));
     document.getElementById('app-header').replaceChildren(header);
-  }
-
-  function inventory(kind, limit) {
-    const items = site.objects.filter(item => item.kind === kind);
-    if (!items.length) return empty('No ' + titleCase(kind).toLowerCase() + ' found', 'This example site has no ' + titleCase(kind).toLowerCase() + ' to show.');
-    return table(['Name', 'Description', 'Items', 'Permissions'], items.slice(0, limit || items.length).map(item => [
-      link(item.name, 'contents/' + kind + '/' + item.key + '/overview'), item.description || 'No description provided.', item.count,
-      pill(item.own ? 'Own permissions' : 'Site permissions', item.own ? 'attention' : '')
-    ]));
   }
 
   // A missing result means unknown; an empty result means the check completed without findings.
@@ -256,13 +287,24 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     return Object.hasOwn(counts, key) ? label + ' (' + counts[key] + ')' : label;
   }
 
+  // Access findings only. Missing descriptions are a cleanup finding and belong in Site review.
   function permissionFindings() {
     const own = site.objects.filter(item => item.own).length;
-    const missing = site.objects.filter(item => !item.description);
     const finding = (text, detail, label, path) => el('div', { class: 'finding' }, icon('shield'), el('div', {}, el('strong', {}, text), el('p', {}, detail)), link(label, path));
     return el('div', { class: 'permission-findings' },
-      own > 0 && finding(own + (own === 1 ? ' list or library has its own permissions' : ' lists and libraries have their own permissions'), 'Their access may differ from the rest of the site.', 'Review permissions', 'permissions/own'),
-      missing.map(item => finding('1 ' + (item.kind === 'libraries' ? 'library' : 'list') + ' has no description', item.name + ': a description helps people understand what this is for.', 'Edit or view description', 'contents/' + item.kind + '/' + item.key + '/overview')));
+      own > 0 && finding(own + (own === 1 ? ' list or library has its own permissions' : ' lists and libraries have their own permissions'), 'Their access may differ from the rest of the site.', 'Review permissions', 'permissions/own'));
+  }
+
+  // Cleanup findings from list details already read. Grain: one row per list or library per condition.
+  function cleanupFindings() {
+    const rows = [];
+    const target = item => buildingReport ? item.name : link(item.name, 'contents/' + item.kind + '/' + item.key + '/overview');
+    const stale = site.objects.filter(item => item.key === 'old-tracker');
+    stale.forEach(item => rows.push(['Not changed in the last 12 months', target(item), 'Last changed ' + item.changed, 'Review whether it is still needed']));
+    site.objects.filter(item => item.kind === 'libraries' && !item.versioningEnabled).forEach(item => rows.push(['Version history turned off', target(item), 'People cannot restore an earlier file version.', 'Review version settings']));
+    site.objects.filter(item => item.versioningEnabled && item.versionLimit === 0).forEach(item => rows.push(['Version history with no limit', target(item), 'Keeping every version can increase storage use.', 'Review version settings']));
+    site.objects.filter(item => !item.description).forEach(item => rows.push(['Description is missing', target(item), 'A description helps people understand what this is for.', 'Add a description']));
+    return rows;
   }
 
   function pageThumbnail(page, printing = false) {
@@ -274,21 +316,39 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
       el('figcaption', { class: 'small muted' }, 'Page thumbnail · Synthetic example. A thumbnail may show the page’s chosen image rather than its full layout.'));
   }
 
+  // The Overview is a short dashboard: counts and links only. Findings live in Permissions and Site review.
   function overview() {
+    const sum = (items, pick) => items.reduce((total, item) => total + pick(item), 0);
+    const unavailable = site.partial ? 'Not read' : null;
+    const latest = site.objects.map(item => item.changed).sort((a, b) => new Date(b) - new Date(a))[0] || 'No content yet';
+    const largest = [...site.objects].sort((a, b) => b.count - a.count)[0];
+    const stat = (value, label, path) => el('li', { class: 'stat' }, el('span', { class: 'stat-value' }, String(value)), path ? link(label, path, { class: 'stat-label' }) : el('span', { class: 'stat-label' }, label));
+    const card = (title, text, links) => el('section', { class: 'overview-card' }, el('h3', {}, title), text && el('p', {}, text), el('ul', {}, links.map(([label, path]) => el('li', {}, typeof path === 'function' ? button(label, path, 'quiet small') : link(label, path)))));
     return el('div', {},
-      heading('Your site at a glance', count('lists') + ' lists, ' + count('libraries') + ' document libraries, and ' + site.pages.length + ' pages.'),
-      el('div', { class: 'overview-grid' },
-        el('div', {},
-          ['libraries', 'lists'].map(kind => el('section', { class: 'section-block' },
-            el('div', { class: 'section-heading' }, el('h3', {}, icon(kind === 'libraries' ? 'folder' : 'list'), titleCase(kind) + ' (' + count(kind) + ')'), link('View all ' + (kind === 'libraries' ? 'libraries' : 'lists'), 'contents/' + kind)),
-            inventory(kind, 3)))),
-        el('aside', { class: 'directory', 'aria-label': 'More report sections' },
-          el('section', {}, el('h3', {}, 'Permissions'), el('ul', {}, [
-            ['View site permissions', 'overview'], ['Who has access, by person or group', 'people'], ['Check one person’s access', 'check'], ['Lists and libraries with their own permissions', 'own'], ['Sharing links', 'links'], ['Apps with access to this site', 'apps']
-          ].map(([label, path]) => el('li', {}, link(permissionLabel(path, label), 'permissions/' + path))))),
-          el('section', {}, el('h3', {}, 'Taxonomy'), el('p', {}, 'Explore the terms used to classify site content.'), link('Browse term groups and sets', 'taxonomy/projects')),
-          el('section', {}, el('h3', {}, 'Site review'), link('Lists and libraries to review for cleanup', 'review'), link('Browse site pages', 'contents/pages')),
-          el('section', {}, el('h3', {}, 'About this site'), button('View site details', siteDetails, 'quiet small')))));
+      heading('Overview', 'What this site contains and where to look next.'),
+      el('ul', { class: 'stats-grid', 'aria-label': 'Site counts' },
+        stat(count('libraries'), 'Document libraries', 'contents/libraries'),
+        stat(count('lists'), 'Lists', 'contents/lists'),
+        stat(site.pages.length, 'Site pages', 'contents/pages'),
+        stat(sum(site.objects, item => item.count), 'Items in lists and libraries'),
+        stat(sum(site.objects, item => item.columns.length), 'Columns'),
+        stat(sum(site.objects, item => item.folders.length), 'Top-level folders'),
+        stat(site.terms.length, 'Term sets', 'taxonomy/projects'),
+        stat(unavailable || site.sitePermissions.length, 'People and groups with site access', 'permissions/people'),
+        stat(site.objects.filter(item => item.own).length, 'Lists and libraries with their own permissions', 'permissions/own'),
+        stat(unavailable || site.links.length, 'Sharing links', 'permissions/links'),
+        stat(unavailable || site.apps.length, 'Apps with access', 'permissions/apps'),
+        stat(latest, 'Most recent change')),
+      el('div', { class: 'overview-cards' },
+        card('Contents', largest ? 'The largest is ' + largest.name + ', with ' + largest.count + ' items.' : 'This site has no lists or libraries yet.',
+          [['Browse document libraries', 'contents/libraries'], ['Browse lists', 'contents/lists'], ['Browse site pages', 'contents/pages']]),
+        card('Permissions', 'Who can open what on this site.', [
+          ['View site permissions', 'overview'], ['Who has access, by person or group', 'people'], ['Check one person’s access', 'check'], ['Lists and libraries with their own permissions', 'own'], ['Sharing links', 'links'], ['Apps with access to this site', 'apps']
+        ].map(([label, path]) => [permissionLabel(path, label), 'permissions/' + path])),
+        card('Taxonomy', site.terms.length ? site.termGroups.length + ' term groups and ' + site.terms.length + ' term sets classify this site’s content.' : 'No term sets are used on this site.', [['Browse term groups and sets', 'taxonomy/projects']]),
+        card('Site review', 'Older content, version history settings, the largest lists and libraries, and what this report could check.', [['Lists and libraries to review for cleanup', 'review']]),
+        card('About this site', technical ? null : 'Site ID, address, and collection time.', [['View site details', siteDetails]])),
+      technicalFacts([['Site ID', site.id], ['Address', site.address], ['Collected (UTC)', fixture.collectedUtc]], 'site ID', site.id));
   }
 
   function objectOverview(item) {
@@ -298,25 +358,30 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
       facts([['Items', item.count], ['Last changed', item.changed], ['Permissions', item.own ? 'Has its own permissions' : 'Uses the site’s permissions'], ['Version history', item.versioning]]));
   }
 
+  // One column table for every reader. The technical switch adds internal names, IDs, lookup targets, and settings
+  // to the same rows instead of repeating them in a second table. Print always includes them.
   function columnsTable(item, printing = false) {
-    return table(['Column', 'Type', 'Description'], item.columns.map(column => [
-      el('span', {}, el('strong', {}, column.name), printing && el('p', { class: 'small' }, 'Internal name: ' + column.internal), column.required && el('p', { class: 'small' }, 'Required')),
-      column.type,
-      el('div', {}, printing ? column.description : editableDescription(column, 'column-' + item.key + '-' + column.internal, column.name + ' in ' + item.name), column.termSet && !printing && el('p', {}, link('View terms in Taxonomy', 'taxonomy/' + column.termSet)),
-        printing && el('div', { class: 'small' }, el('p', {}, 'Column ID: ' + column.id),
-          el('p', {}, 'Default: ' + (column.defaultValue || 'None') + ' · Maximum length: ' + (column.maxLength || 'Not set') + ' · Indexed: ' + (column.indexed ? 'Yes' : 'No'))),
-        column.formula && el('p', { class: 'technical' }, 'Formula: ' + column.formula),
-        column.choices && el('p', { class: 'small' }, 'Choices: ' + column.choices),
-        column.lookup && el('p', { class: 'small' }, 'Lookup: ' + column.lookup))
-    ]));
+    const showTechnical = technical || printing;
+    const headers = showTechnical ? ['Column', 'Internal name', 'Type', 'Description', 'Lookup target', 'Settings'] : ['Column', 'Type', 'Description'];
+    return table(headers, item.columns.map(column => {
+      const cells = [el('span', {}, el('strong', {}, column.name), column.required && el('p', { class: 'small' }, 'Required'))];
+      if (showTechnical) cells.push(el('span', { class: 'technical' }, column.internal));
+      cells.push(column.type,
+        el('div', {}, printing ? column.description : editableDescription(column, 'column-' + item.key + '-' + column.internal, column.name + ' in ' + item.name),
+          column.termSet && !printing && el('p', {}, link('View terms in Taxonomy', 'taxonomy/' + column.termSet)),
+          column.choices && el('p', { class: 'small' }, 'Choices: ' + column.choices),
+          column.lookup && !showTechnical && el('p', { class: 'small' }, 'Looks up ' + column.lookup.split(' → ')[0]),
+          column.formula && showTechnical && el('p', { class: 'technical' }, 'Formula: ' + column.formula)));
+      if (showTechnical) cells.push(column.lookup || 'None',
+        el('div', { class: 'technical small' }, el('p', {}, 'Column ID: ' + column.id),
+          el('p', {}, 'Default: ' + (column.defaultValue || 'None') + ' · Maximum length: ' + (column.maxLength || 'Not set') + ' · Indexed: ' + (column.indexed ? 'Yes' : 'No'))));
+      return cells;
+    }));
   }
 
-  function technicalDetails(item, printing = false) {
-    const content = el('div', { class: 'technical' },
-      facts([['ID', item.guid], ['Internal name', item.key], ['Site address', site.address]]),
-      !printing && copyValue(item.guid, item.kind === 'libraries' ? 'library ID' : 'list ID'),
-      !printing && table(['Column', 'Internal name', 'Column ID', 'Required', 'Default', 'Maximum length', 'Indexed', 'Lookup target'], item.columns.map(column => [column.name, column.internal, column.id, column.required ? 'Yes' : 'No', column.defaultValue || 'None', column.maxLength || 'Not set', column.indexed ? 'Yes' : 'No', column.lookup || 'None'])));
-    return printing ? content : el('details', {}, el('summary', {}, 'Technical details: IDs and internal names'), content);
+  // IDs and internal names for a list or library. Shown beside the heading when the technical switch is on, and in print.
+  function technicalDetails(item) {
+    return technicalFacts([['ID', item.guid], ['Internal name', item.key], ['Address', site.address + '/' + item.key]], item.kind === 'libraries' ? 'library ID' : 'list ID', item.guid);
   }
 
   function objectPermissions(item) {
@@ -347,10 +412,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         facts([['Page file', selected.file], ['Library', 'Site Pages'], ['Last changed', selected.modified], ['Address', site.address + '/SitePages/' + selected.file]]),
         button('Open page', () => externalPreview('Open page', site.address + '/SitePages/' + selected.file), '', 'external'));
     } else if (selected) {
+      const folderHeaders = technical ? ['Folder', 'Items', 'Folder ID'] : ['Folder', 'Items'];
+      const folderRow = folder => {
+        const cells = [button(folder.name, () => externalPreview('Open folder', site.address + '/' + selected.key + '/' + encodeURIComponent(folder.name)), 'quiet small'), folder.count];
+        if (technical) cells.push(el('div', { class: 'technical' }, folder.id, copyValue(folder.id, 'folder ID')));
+        return cells;
+      };
       const selectedContent = detailName === 'columns' ? columnsTable(selected) : detailName === 'permissions' ? objectPermissions(selected)
-        : detailName === 'folders' ? (selected.folders.length ? table(['Folder', 'Items', 'Folder ID'], selected.folders.map(folder => [
-          button(folder.name, () => externalPreview('Open folder', site.address + '/' + selected.key + '/' + encodeURIComponent(folder.name)), 'quiet small'), folder.count, el('div', {}, folder.id, copyValue(folder.id, 'folder ID'))
-        ])) : empty('No top-level folders', 'This library has no top-level folders in the example report.'))
+        : detailName === 'folders' ? (selected.folders.length ? table(folderHeaders, selected.folders.map(folderRow)) : empty('No top-level folders', 'This library has no top-level folders in the example report.'))
           : objectOverview(selected);
       const itemPath = 'contents/' + kind + '/' + selected.key + '/';
       detail = el('div', {},
@@ -360,9 +429,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
           button('Open ' + (kind === 'libraries' ? 'library' : 'list'), () => externalPreview('Open ' + selected.name, site.address + '/' + selected.key), 'quiet small', 'external'),
           button((kind === 'libraries' ? 'Library' : 'List') + ' settings', () => externalPreview('Settings for ' + selected.name, site.address + '/_layouts/15/listedit.aspx?List=' + selected.guid), 'quiet small', 'settings'),
           button('Manage permissions', () => externalPreview('Manage permissions for ' + selected.name, site.address + '/_layouts/15/user.aspx?obj=' + selected.guid + ',doclib'), 'quiet small', 'people')),
+        technicalDetails(selected),
         el('nav', { class: 'subnav', 'aria-label': selected.name + ' details' },
           ['overview', ...(kind === 'libraries' ? ['folders'] : []), 'columns', 'permissions'].map(tab => link(tab[0].toUpperCase() + tab.slice(1), itemPath + tab, { 'aria-current': detailName === tab ? 'page' : null }))),
-        selectedContent, technicalDetails(selected));
+        selectedContent);
     }
     return el('div', {},
       heading('Site contents', 'Browse the site’s libraries, lists, and pages. Select a name to see its details.'),
@@ -421,7 +491,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
       el('p', {}, 'Apps with permissions granted through SharePoint appear here.'),
       site.apps.length ? table(['App', 'Permission level', 'Scope'], site.apps) : empty('No apps found', 'No SharePoint app permissions were found in this example.'),
       notice('Microsoft Entra app access is not included', 'Apps granted access through Microsoft Entra ID, including Sites.Selected, do not appear here. Ask your Microsoft 365 administrator for that list.'),
-      el('details', {}, el('summary', {}, 'Technical app details'), el('p', { class: 'technical' }, 'Synthetic app ID: 00000000-0000-4000-8000-000000000201'))
+      site.apps.length ? technicalFacts([['App ID', '00000000-0000-4000-8000-000000000201']]) : null
     );
     return el('div', {}, heading('Permissions', 'Understand who can open what across the site, its lists, and its libraries.'),
       el('div', { class: 'split-view' },
@@ -440,27 +510,22 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
   }
 
   function siteReview() {
-    return el('div', {}, heading('Site review', 'Review older content, missing descriptions, and what the report could check.'),
-      el('section', { class: 'section-block' }, el('h3', {}, 'Lists and libraries to review for cleanup'),
-      el('p', {}, 'Use these findings to decide what needs review. Older content may still need to be retained.'),
-      site.objects.some(item => item.key === 'old-tracker') ? table(['Finding', 'Content', 'Next action'], [
-        ['Not changed since June 12, 2024', 'Previous project tracker', link('View list', 'contents/lists/old-tracker/overview')],
-        ...site.objects.filter(item => !item.description).map(item => ['Description is missing', item.name, link('Review description', 'contents/' + item.kind + '/' + item.key + '/overview')])
-      ]) : notice('No cleanup findings in this example', 'No content matches the example review conditions.'),
-      versionReview(),
-      el('h4', {}, 'Largest lists and libraries'),
-      table(['Name', 'Items'], [...site.objects].sort((a, b) => b.count - a.count).slice(0, 5).map(item => [link(item.name, 'contents/' + item.kind + '/' + item.key + '/overview'), item.count])),
+    const rows = cleanupFindings();
+    return el('div', {}, heading('Site review', 'Older content, version history settings, the largest lists and libraries, and what this report could check.'),
+      el('section', { class: 'section-block' }, el('h3', {}, 'Lists and libraries to review for cleanup' + (rows.length ? ' (' + rows.length + ')' : '')),
+      el('p', {}, 'Use these findings to decide what needs review. Older content may still need to be retained, and nothing is changed from this page.'),
+      rows.length ? table(['Finding', 'List or library', 'Detail', 'Next step'], rows) : notice('No cleanup findings', 'No list or library matches the review conditions in this example.'),
+      largestTable(),
       el('p', { class: 'small muted' }, 'Review retention needs before changing content or version history. No content is deleted from this view.')
       ), reportCoverage(),
       el('section', { class: 'section-block' }, el('h3', {}, 'Review access'), link('Review guest and organization-wide access', 'permissions/overview'), el('br'),
         link('Lists and libraries with their own permissions', 'permissions/own'), el('p', {}, link('Apps with access to this site', 'permissions/apps'))));
   }
 
-  function versionReview() {
-    return el('div', {}, [
-      ['Libraries with version history turned off', site.objects.filter(item => item.kind === 'libraries' && !item.versioningEnabled), 'People cannot restore an earlier file version.'],
-      ['Version history with no limit', site.objects.filter(item => item.versioningEnabled && item.versionLimit === 0), 'Keeping every version can increase storage use.']
-    ].map(([label, items, hint]) => el('section', { class: 'section-block' }, el('h4', {}, label + ' (' + items.length + ')'), el('p', {}, hint), items.length ? table(['Name', 'Version history'], items.map(item => [buildingReport ? item.name : link(item.name, 'contents/' + item.kind + '/' + item.key + '/overview'), item.versioning])) : el('p', {}, 'None found.'))));
+  function largestTable() {
+    const items = [...site.objects].sort((a, b) => b.count - a.count).slice(0, 5);
+    return el('div', {}, el('h4', {}, 'Largest lists and libraries'),
+      items.length ? table(['Name', 'Items'], items.map(item => [buildingReport ? item.name : link(item.name, 'contents/' + item.kind + '/' + item.key + '/overview'), item.count])) : el('p', {}, 'No lists or libraries found.'));
   }
 
   function reportEntry() {
@@ -514,7 +579,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
       if (!['reader@example.org', 'i:0#.f|membership|reader@example.org'].includes(input.value.trim().toLowerCase())) { error.textContent = 'Use reader@example.org to try the synthetic access check. No real accounts can be checked in this preview.'; return; }
       error.textContent = ''; accessResult = 'Example reader'; drawResult();
     } }, el('div', { class: 'inline-form' }, el('div', { class: 'field' }, el('label', { for: 'person-input' }, 'Email address or sign-in name'), input), el('button', { type: 'submit', class: 'btn primary' }, 'Check access')), error);
-    return el('div', {}, el('p', {}, 'Check what one person can do on the site and in each list or library.'),
+    return el('div', {}, el('p', {}, 'Check what one person can do on the site and in each list or library, including access through groups. You need to be a site owner to use this.'),
       el('p', { class: 'small muted', id: 'person-hint' }, 'For this preview, use reader@example.org. All people and results are synthetic.'),
       form, result);
   }
@@ -530,35 +595,45 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         ])),
         el('section', { class: 'detail-section' }, el('p', { class: 'small muted' }, current.group + ' / Term set'),
           el('h3', {}, current.name), editableDescription(current, 'termset-' + current.key, current.name + ' term set'),
-          table(['Term', 'Description', 'Parent term', 'Term ID'], current.terms.map((term, index) => [term.name, editableDescription(term, 'term-' + current.key + '-' + index, term.name + ' term'), term.parent, el('div', {}, term.id, copyValue(term.id, 'term ID'))])),
+          technicalFacts([['Term set ID', current.id], ['Group ID', site.termGroups.find(group => group.name === current.group).id], ['Term store ID', site.termStoreId]], 'term set ID', current.id),
+          table(technical ? ['Term', 'Description', 'Parent term', 'Term ID'] : ['Term', 'Description', 'Parent term'], current.terms.map((term, index) => {
+            const cells = [term.name, editableDescription(term, 'term-' + current.key + '-' + index, term.name + ' term'), term.parent];
+            if (technical) cells.push(el('div', { class: 'technical' }, term.id, copyValue(term.id, 'term ID')));
+            return cells;
+          })),
           el('h4', { class: 'section-block' }, 'Where this term set is used'),
           (() => {
             const uses = site.objects.flatMap(item => item.columns.filter(column => column.termSet === current.key).map(column => [item, column]));
             return uses.length ? table(['List or library', 'Column'], uses.map(([item, column]) => [link(item.name, 'contents/' + item.kind + '/' + item.key + '/columns'), column.name]))
               : el('p', { class: 'muted' }, 'No columns in this example report use this term set.');
-          })(),
-          el('details', {}, el('summary', {}, 'Technical details: term set ID'), el('p', { class: 'technical' }, current.id), copyValue(current.id, 'term set ID'), facts([['Group ID', site.termGroups.find(group => group.name === current.group).id], ['Term store ID', site.termStoreId]])))));
+          })())));
   }
 
   function searchResults() {
     const entries = [];
     site.objects.forEach(item => {
       const base = 'contents/' + item.kind + '/' + item.key + '/';
-      entries.push({ title: item.name, kind: item.kind === 'libraries' ? 'Library' : 'List', detail: [item.description, item.key, item.guid].join(' / '), path: base + 'overview' });
-      item.columns.forEach(column => entries.push({ title: column.name, kind: 'Column', detail: [item.name, column.description, column.internal, column.type, column.id, column.lookup || ''].join(' / '), path: base + 'columns' }));
-      item.folders.forEach(folder => entries.push({ title: folder.name, kind: 'Folder', detail: item.name + ' / ' + folder.id, path: base + 'folders' }));
+      // "plain" is what a result shows by default; "detail" adds internal names and IDs, and both are searched.
+      entries.push({ title: item.name, kind: item.kind === 'libraries' ? 'Library' : 'List', plain: item.description, detail: [item.description, item.key, item.guid].join(' / '), path: base + 'overview' });
+      item.columns.forEach(column => entries.push({ title: column.name, kind: 'Column', plain: [item.name, column.description].join(' / '), detail: [item.name, column.description, column.internal, column.type, column.id, column.lookup || ''].join(' / '), path: base + 'columns' }));
+      item.folders.forEach(folder => entries.push({ title: folder.name, kind: 'Folder', plain: item.name, detail: item.name + ' / ' + folder.id, path: base + 'folders' }));
     });
-    site.terms.forEach(set => set.terms.forEach(term => entries.push({ title: term.name, kind: 'Term', detail: [set.group, set.name, term.description, term.id].join(' / '), path: 'taxonomy/' + set.key })));
-    site.pages.forEach(page => entries.push({ title: page.name, kind: 'Page', detail: page.description, path: 'contents/pages/' + page.file + '/overview' }));
+    site.terms.forEach(set => set.terms.forEach(term => entries.push({ title: term.name, kind: 'Term', plain: [set.group, set.name, term.description].join(' / '), detail: [set.group, set.name, term.description, term.id].join(' / '), path: 'taxonomy/' + set.key })));
+    site.pages.forEach(page => entries.push({ title: page.name, kind: 'Page', plain: page.description, detail: page.description, path: 'contents/pages/' + page.file + '/overview' }));
     const exact = query.startsWith('"') && query.endsWith('"');
     const parts = (exact ? query.slice(1, -1) : query).toLowerCase().split(exact ? '\u0000' : '*');
     const matches = value => { let cursor = 0; for (const part of parts) { const found = value.toLowerCase().indexOf(part, cursor); if (found < 0) return false; cursor = found + part.length; } return true; };
-    const results = query ? entries.filter(item => matches(item.title) || matches(item.detail)).sort((a, b) => (a.kind === 'Column' ? 0 : 1) - (b.kind === 'Column' ? 0 : 1) || a.title.localeCompare(b.title)) : [];
+    const results = query ? entries.filter(item => matches(item.title) || matches(item.detail)).sort((a, b) => a.title.localeCompare(b.title)) : [];
+    // Results are grouped by kind, columns first, so the column-first priority of production search is kept.
+    const groups = [['Columns', ['Column']], ['Lists and libraries', ['Library', 'List']], ['Folders', ['Folder']], ['Site pages', ['Page']], ['Terms', ['Term']]]
+      .map(([label, kinds]) => [label, results.filter(item => kinds.includes(item.kind))]).filter(([, items]) => items.length);
+    const summary = item => technical ? item.detail : item.plain || 'No description provided.';
     announce(results.length + ' search results.');
     return el('div', {}, heading('Search results', query ? results.length + ' results for “' + query + '” in ' + site.name + '.' : 'Enter a word or phrase in Search this report.'),
       el('p', { class: 'small muted' }, 'Search names, internal names, IDs, data types, and descriptions. Use * between words or quotes for a literal phrase. Column matches appear first.'),
-      results.length ? el('ul', { class: 'result-list' }, results.map(item => el('li', {}, link(item.title, item.path), pill(item.kind), el('p', {}, item.detail))))
-        : empty(query ? 'No matches found' : 'Search the current report', query ? 'Try a shorter phrase or a different word. You can also browse Contents or Taxonomy.' : 'Search names, descriptions, columns, folders, pages, and terms.'),
+      results.length ? groups.map(([label, items]) => el('details', { class: 'result-group', open: true }, el('summary', {}, label + ' (' + items.length + ')'),
+        el('ul', { class: 'result-list' }, items.map(item => el('li', {}, link(item.title, item.path), pill(item.kind), el('p', {}, summary(item)))))))
+        : empty(query ? 'No matches found' : 'Search the current report', query ? 'Try a shorter phrase or a different word. This search covers the collected report, not everything in your organization.' : 'Search names, descriptions, columns, folders, pages, and terms.'),
       link('Browse all site contents', 'contents/libraries', { class: 'btn' }));
   }
 
@@ -667,11 +742,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         target.description = area.value.trim();
         show(); render(); restoreFocus(); announce('Description saved in this preview only.');
       } }, el('label', { for: inputId }, 'Description for ' + label), area,
-        el('p', { id: inputId + '-hint', class: 'small muted' }, 'Preview only. Save keeps this change until you reload. Escape cancels; Ctrl+Enter saves.'),
+        el('p', { id: inputId + '-hint', class: 'small muted' }, 'Preview only. Save keeps this change until you reload. Enter saves, Shift+Enter adds a line, and Escape cancels.'),
         el('div', { class: 'actions' }, el('button', { type: 'submit', class: 'btn primary small' }, 'Save'), button('Cancel', cancel, 'small')));
+      // Same keys as the production editor: Enter saves, Shift+Enter or Alt+Enter adds a line, Escape cancels.
       area.addEventListener('keydown', event => {
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); }
-        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); form.requestSubmit(); }
+        if (event.key === 'Enter' && !event.shiftKey && !event.altKey) { event.preventDefault(); form.requestSubmit(); }
       });
       holder.replaceChildren(form); area.focus();
     };
@@ -788,7 +864,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         el('h4', {}, 'Column definitions'), columnsTable(item, true),
         kind === 'libraries' && el('div', {}, el('h4', {}, 'Top-level folders'), item.folders.length ? table(['Folder', 'Items', 'Folder ID'], item.folders.map(folder => [folder.name, folder.count, folder.id])) : el('p', {}, 'No top-level folders found.')),
         el('h4', {}, 'Permissions'), objectPermissions(item),
-        el('h4', {}, 'Technical details'), technicalDetails(item, true))));
+        el('h4', {}, 'Technical details'), technicalDetails(item))));
       doc.append(section);
     });
     const perms = el('section', { class: 'print-section' }, el('h2', {}, 'Site permissions and people'));
@@ -821,9 +897,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
       el('section', { class: 'print-section' }, el('h2', {}, 'Site pages'),
         site.pages.length ? table(['Name and address', 'Page file and last changed', 'Description and thumbnail'], site.pages.map(page => [el('div', {}, page.name, el('p', { class: 'small' }, site.address + '/SitePages/' + page.file)), el('div', {}, page.file, el('p', {}, page.modified)), el('div', {}, el('p', {}, page.description), pageThumbnail(page, true))])) : el('p', {}, 'No site pages found.'),
         reportCoverage(), el('h2', {}, 'Cleanup findings'),
-        site.objects.some(item => item.key === 'old-tracker') ? el('p', {}, 'Previous project tracker has not changed since June 12, 2024. Review its purpose and retention requirements before making changes.') : el('p', {}, 'No older-content findings in this example.'),
-        site.objects.filter(item => !item.description).map(item => el('p', {}, item.name + ' has no description.')),
-        versionReview(), el('h3', {}, 'Largest lists and libraries'), table(['Name', 'Items'], [...site.objects].sort((a, b) => b.count - a.count).slice(0, 5).map(item => [item.name, item.count]))),
+        cleanupFindings().length ? table(['Finding', 'List or library', 'Detail', 'Next step'], cleanupFindings()) : el('p', {}, 'No list or library matches the review conditions.'),
+        el('p', {}, 'Review retention needs before changing content or version history.'),
+        largestTable()),
       el('section', { class: 'report-end' }, el('h2', {}, 'Completed person access check'),
         accessResult ? el('div', {}, el('p', {}, 'Synthetic access check for ' + accessResult), table(['Location', 'Permission level'], [['Site', 'Read'], ...site.objects.map(item => [item.name, item.own ? 'No access' : 'Read'])]))
           : el('p', {}, 'No person access check has been run. This section contains no inferred access results.'),
@@ -859,6 +935,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     renderHeader();
     const pages = { overview, contents: contentBrowser, permissions, taxonomy, review: siteReview, search: searchResults, print: printPreview, guide, start: reportEntry, loading: reportEntry, error: reportEntry, incomplete: incompleteExample };
     main.replaceChildren(pages[current.page]());
+    // Expand all and Collapse all appear only in views that have more than one collapsible part.
+    if (main.querySelectorAll('details').length > 1) {
+      main.querySelector('.page-heading')?.after(el('div', { class: 'view-controls' },
+        button('Expand all details', () => main.querySelectorAll('details').forEach(detail => { detail.open = true; }), 'quiet small'),
+        button('Collapse all details', () => main.querySelectorAll('details').forEach(detail => { detail.open = false; }), 'quiet small')));
+    }
     main.append(el('div', { class: 'back-top' }, button('Back to top', () => { window.scrollTo(0, 0); document.getElementById('report-search')?.focus(); }, 'quiet small')));
     document.getElementById('print-report').replaceChildren(['start', 'loading', 'error'].includes(current.page) ? el('p', {}, 'No site report has been collected.') : reportDocument());
     const title = main.querySelector('h2');
@@ -904,6 +986,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
   if (validSite) {
     query = (initialParams.get('query') || '').slice(0, 160);
     if (!site.partial && initialParams.get('access') === 'reader') accessResult = 'Example reader';
+    technical = initialParams.get('technical') === '1';
   }
   render();
   if (validSite) restoreGalleryState(initialParams);

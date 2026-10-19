@@ -1,9 +1,9 @@
 /*
 This file is part of Sitenalyzer
 verify.cjs
-Author(s): [Author name].
+Author(s): Gabriel Mongefranco.
 Created: 2026-10-15
-Last Modified: 2026-10-16
+Last Modified: 2026-10-19
 Summary: Checks the synthetic preview and captures review screenshots and a sample PDF.
 Notes: See README file for documentation and full license information.
 
@@ -49,6 +49,7 @@ async function describeView(page) {
       expanded: [...main.querySelectorAll('details')].flatMap((node, index) => node.open ? [index] : []).join(','),
       access: /Access for Example reader/.test(main.textContent) || /Synthetic access check for Example reader/.test(document.getElementById('print-report').textContent) ? 'reader' : '',
       invalidSite: dialog?.querySelector('#site-address') && dialog.querySelector('[role="alert"]').textContent ? '1' : '',
+      technical: document.getElementById('technical-toggle')?.checked ? '1' : '',
       mainText: main.textContent,
       dialogText: dialog?.textContent || '',
       draft: main.querySelector('textarea')?.value || ''
@@ -94,17 +95,17 @@ async function recordCapture(page, name, description, file) {
   const state = await describeView(page);
   assert.doesNotMatch(state.mainText + state.dialogText, /\bundefined\b|\[object HTMLElement\]/, name + ': no serialized missing content.');
   const params = new URLSearchParams();
-  for (const key of ['siteUrl', 'query', 'dialog', 'sheet', 'edit', 'expanded', 'access', 'invalidSite']) {
+  for (const key of ['siteUrl', 'query', 'dialog', 'sheet', 'edit', 'expanded', 'access', 'invalidSite', 'technical']) {
     if (state[key]) params.set(key, state[key]);
   }
   captures.push({ name, description, file, href: '../index.html?' + params + '#' + (new URL(page.url()).hash.slice(1) || 'overview'), state, viewport: page.viewportSize() });
 }
 const screens = [
-  ['overview', 'Overview', 'Site identity, summary, libraries, lists, and shortcuts.'],
+  ['overview', 'Overview', 'Site identity, counts, and shortcuts into each section. No findings here.'],
   ['contents/libraries', 'Document libraries', 'Choose a library from the inventory.'],
   ['contents/libraries/documents/overview', 'Library overview', 'Description, item count, version history, and settings actions.'],
   ['contents/libraries/documents/folders', 'Library folders', 'Top-level folders and item counts.'],
-  ['contents/libraries/documents/columns', 'Library columns', 'Column meanings and links to taxonomy.'],
+  ['contents/libraries/documents/columns', 'Library columns', 'Column meanings and links to taxonomy, with technical details hidden.'],
   ['contents/libraries/resources/permissions', 'Library permissions', 'A library with permissions separate from the site.'],
   ['contents/lists', 'Lists', 'Browse the list inventory.'],
   ['contents/lists/equipment/overview', 'List overview', 'A list’s description, facts, and settings actions.'],
@@ -116,7 +117,7 @@ const screens = [
   ['permissions/own', 'Own permissions', 'Lists and libraries with separate access.'],
   ['permissions/links', 'Sharing links', 'Link audiences, access, and review actions.'],
   ['permissions/apps', 'Apps with access', 'SharePoint app access and Microsoft Entra coverage limits.'],
-  ['review', 'Review for cleanup', 'Site review tab: older content, missing descriptions, larger lists, and report coverage.'],
+  ['review', 'Review for cleanup', 'Site review tab: one findings table, the largest lists and libraries, and report coverage.'],
   ['taxonomy/projects', 'Taxonomy: projects', 'Term groups, sets, definitions, and where terms are used.'],
   ['taxonomy/topics', 'Taxonomy: hierarchy', 'Parent and child terms.'],
   ['guide', 'Preview guide', 'Links to every preview screen and alternative state.']
@@ -160,15 +161,35 @@ async function verify() {
     }
     await page.goto(previewUrl + '#contents/libraries/documents/columns');
     const columnTable = page.locator('.detail-panel > div > .table-wrap').first();
-    await columnTable.getByRole('searchbox', { name: 'Filter rows', exact: true }).fill('Project');
-    assert.equal(await columnTable.locator('tbody tr').count(), 1);
-    assert.ok(await page.locator('#print-report').getByText('Review date', { exact: true }).count() > 0, 'Print ignores table filters.');
-    await columnTable.getByRole('searchbox', { name: 'Filter rows', exact: true }).fill('');
-    await columnTable.getByRole('combobox', { name: 'Sort by', exact: true }).selectOption('0');
+    assert.equal(await columnTable.getByRole('searchbox', { name: 'Filter rows', exact: true }).count(), 0, 'Short tables have no filter box.');
+    assert.deepEqual(await columnTable.locator('thead th').allTextContents(), ['Column', 'Type', 'Description'], 'Technical columns are hidden by default.');
+    await columnTable.getByRole('button', { name: 'Column', exact: true }).click();
     const ascending = await columnTable.locator('tbody tr td:first-child').allTextContents();
-    await columnTable.getByRole('button', { name: 'Ascending', exact: true }).click();
+    assert.deepEqual(ascending, [...ascending].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+    assert.equal(await columnTable.locator('thead th').first().getAttribute('aria-sort'), 'ascending');
+    await columnTable.getByRole('button', { name: 'Column', exact: true }).click();
     const descending = await columnTable.locator('tbody tr td:first-child').allTextContents();
     assert.deepEqual(descending, [...ascending].reverse());
+    assert.equal(await page.getByRole('button', { name: 'Expand all details', exact: true }).count(), 0, 'Expand all is absent when a view has no collapsible parts.');
+    await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).check();
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'technical-toggle', 'Focus stays on the technical switch after it rerenders the page.');
+    assert.deepEqual(await columnTable.locator('thead th').allTextContents(), ['Column', 'Internal name', 'Type', 'Description', 'Lookup target', 'Settings'], 'The technical switch adds columns to the same table.');
+    assert.match(await page.locator('.detail-panel').textContent(), /Column ID: 00000000-0000-4000-8000-/);
+    assert.match(await page.locator('.detail-panel .technical-strip').textContent(), /Internal name\s*documents/);
+    assert.equal(await page.locator('main details').count(), 0, 'No duplicate technical details table remains.');
+    await page.goto(previewUrl + '#taxonomy/projects');
+    assert.ok((await page.locator('main thead').first().allTextContents()).join(' ').includes('Term ID'), 'Technical switch applies to every view.');
+    await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).uncheck();
+    assert.ok(!(await page.locator('main thead').first().allTextContents()).join(' ').includes('Term ID'));
+    await page.goto(previewUrl + '#contents/libraries/documents/columns');
+    await page.getByRole('button', { name: 'Data dictionary (.xlsx)', exact: true }).click();
+    await page.getByRole('button', { name: 'Fields', exact: true }).click();
+    const fieldsTable = page.locator('dialog .workbook-table .table-wrap');
+    await fieldsTable.getByRole('searchbox', { name: 'Filter rows', exact: true }).fill('ReviewDate');
+    assert.equal(await fieldsTable.locator('tbody tr').count(), 4, 'Long tables keep a filter box.');
+    assert.ok(await page.locator('#print-report').getByText('Review date', { exact: true }).count() > 0, 'Print ignores table filters.');
+    await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).first().click();
+    await page.goto(previewUrl + '#permissions/people');
     await page.getByRole('button', { name: 'Expand all details', exact: true }).click();
     assert.equal(await page.locator('main details:not([open])').count(), 0);
     await page.getByRole('button', { name: 'Collapse all details', exact: true }).click();
@@ -187,8 +208,12 @@ async function verify() {
       assert.ok(await page.locator('.result-list li').count() > 0, 'Advanced search: ' + text);
     }
     await page.goto(previewUrl + '#review');
-    assert.match(await page.locator('main').textContent(), /Libraries with version history turned off \(1\)/);
-    assert.match(await page.locator('main').textContent(), /Version history with no limit \(1\)/);
+    assert.match(await page.locator('main').textContent(), /Lists and libraries to review for cleanup \(4\)/);
+    assert.match(await page.locator('main').textContent(), /Version history turned off/);
+    assert.match(await page.locator('main').textContent(), /Version history with no limit/);
+    assert.match(await page.locator('main').textContent(), /Description is missing/);
+    assert.equal(await page.locator('main .table-wrap').count(), 3, 'Site review has one findings table, the largest table, and coverage.');
+    assert.equal(await page.getByRole('searchbox', { name: 'Filter rows', exact: true }).count(), 0, 'Short review tables carry no filter controls.');
     await page.getByRole('button', { name: 'Start over', exact: true }).click();
     await page.getByRole('heading', { name: 'Choose a site to analyze', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Data dictionary (.xlsx)', exact: true }).count(), 0);
@@ -198,10 +223,12 @@ async function verify() {
     await page.goto(previewUrl + '?siteUrl=' + encodeURIComponent('https://unapproved.example.org/site'));
     await page.getByRole('heading', { name: 'This site could not be read', exact: true }).waitFor();
     await page.goto(previewUrl + '#overview');
-    checks.push('Restored table filtering/sorting, copy ID, expand/collapse, advanced search, version-history warnings, start-over, safe deep links, and loading/failure states verified.');
+    checks.push('Header sorting, filter boxes on long tables only, the technical details switch, copy ID, per-view expand/collapse, advanced search, cleanup findings, start-over, safe deep links, and loading/failure states verified.');
     await page.goto(previewUrl + '#overview');
-    assert.equal(await page.locator('main .access-summary, main .finding').count(), 0, 'Overview has no review panels.');
-    for (const label of ['View site permissions', 'Who has access, by person or group', 'Check one person’s access', 'Lists and libraries with their own permissions (3)', 'Sharing links (3)', 'Apps with access to this site (1)', 'Lists and libraries to review for cleanup']) {
+    assert.equal(await page.locator('main .access-summary, main .finding, main table').count(), 0, 'Overview has no findings and no item tables.');
+    assert.equal(await page.locator('main .stat').count(), 12, 'Overview shows the count tiles.');
+    assert.match(await page.locator('main .stats-grid').textContent(), /610\s*Items in lists and libraries/);
+    for (const label of ['View site permissions', 'Who has access, by person or group', 'Check one person’s access', 'Lists and libraries with their own permissions (3)', 'Sharing links (3)', 'Apps with access to this site (1)', 'Lists and libraries to review for cleanup', 'Browse document libraries', 'Browse term groups and sets']) {
       assert.ok(await page.locator('main').getByRole('link', { name: label, exact: true }).count() > 0, label + ' is visible.');
     }
     assert.equal(await page.locator('.app-footer a').nth(0).getAttribute('href'), 'https://depressioncenter.org');
@@ -211,14 +238,15 @@ async function verify() {
     await page.goto(previewUrl + '#permissions/overview');
     assert.match(await page.locator('main .access-summary').textContent(), /Guests: 1 · Organization-wide groups: 0 · Links anyone can use: 1/);
     assert.match(await page.locator('main .permission-findings').textContent(), /3 lists and libraries have their own permissions/);
-    assert.match(await page.locator('main .permission-findings').textContent(), /1 list has no description/);
+    assert.doesNotMatch(await page.locator('main').textContent(), /has no description/, 'Missing descriptions are a Site review finding, not a permissions finding.');
     await page.getByRole('navigation', { name: 'Main report sections' }).getByRole('link', { name: 'Site review', exact: true }).click();
     await page.getByRole('heading', { name: 'What this report could check', exact: true }).waitFor();
     assert.equal(await page.getByRole('navigation', { name: 'Main report sections' }).getByRole('link', { name: 'Site review', exact: true }).getAttribute('aria-current'), 'page');
     await page.goto(previewUrl + '#contents/libraries/documents/columns');
-    await page.getByText('Technical details: IDs and internal names', { exact: true }).click();
-    await audit('Expanded technical details');
-    await capture('Technical details', 'Expanded IDs, internal column names, and required flags.');
+    await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).check();
+    await audit('Technical details shown');
+    await capture('Technical details', 'The technical switch adds internal names, IDs, lookup targets, settings, and formulas to the same tables.');
+    await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).uncheck();
     await page.goto(previewUrl + '#permissions/people');
     await page.locator('main details summary').first().click();
     await audit('Expanded group members');
@@ -278,7 +306,10 @@ async function verify() {
       assert.equal(await edit.evaluate(node => node === document.activeElement), true, 'Cancel restores focus: ' + key);
       await field.locator('.description-text').dblclick();
       await input.fill('Updated synthetic description for ' + label + '.');
-      await page.keyboard.press('Control+Enter');
+      await page.keyboard.press('Shift+Enter');
+      assert.equal(await page.locator('textarea').count(), 1, 'Shift+Enter keeps editing: ' + key);
+      await input.fill('Updated synthetic description for ' + label + '.');
+      await page.keyboard.press('Enter');
       assert.equal(await edit.evaluate(node => node === document.activeElement), true, 'Save restores focus: ' + key);
       assert.match(await field.textContent(), /Updated synthetic description/);
       assert.ok((await page.locator('#print-report').textContent()).includes('Updated synthetic description for ' + label + '.'), 'Print includes saved description: ' + key);
@@ -297,8 +328,8 @@ async function verify() {
     await page.getByRole('button', { name: 'Edit description for Previous project tracker', exact: true }).click();
     await page.getByLabel('Description for Previous project tracker', { exact: true }).fill('An archived tracker used for reference.');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await page.goto(previewUrl + '#permissions/overview');
-    assert.doesNotMatch(await page.locator('main .permission-findings').textContent(), /has no description/);
+    await page.goto(previewUrl + '#review');
+    assert.doesNotMatch(await page.locator('main').textContent(), /Description is missing/, 'Saving a description removes the cleanup finding.');
     await page.goto(previewUrl + '#contents/pages/Home.aspx/overview');
     assert.equal(await page.locator('main').getByRole('img', { name: /Synthetic thumbnail of Home/ }).count(), 1);
     await page.goto(previewUrl + '#contents/pages/Project-guidance.aspx/overview');
@@ -306,14 +337,24 @@ async function verify() {
     await page.goto(previewUrl + '#contents/pages/Team-resources.aspx/overview');
     assert.match(await page.locator('main').textContent(), /Page thumbnail could not be loaded/);
     await page.reload();
-    checks.push('All six existing description types support inline Save/Cancel, keyboard editing, double-click, focus restoration, and updated print/XLSX output; list/library fields are independent.');
-    checks.push('Review panels moved to Permissions; footer destinations and thumbnail available/missing/unavailable states verified.');
+    checks.push('All six existing description types support inline Save/Cancel, Enter to save, Shift+Enter for a new line, double-click, focus restoration, and updated print/XLSX output; list/library fields are independent.');
+    checks.push('Access findings stay on Permissions and cleanup findings on Site review; footer destinations and thumbnail available/missing/unavailable states verified.');
 
     await page.getByRole('searchbox', { name: 'Search this report' }).fill('project');
     await page.getByRole('button', { name: 'Search report', exact: true }).click();
     await audit('Search results');
-    await capture('Search results', 'Matches across names, descriptions, columns, folders, pages, and terms.');
+    await capture('Search results', 'Matches grouped by kind, columns first, across names, descriptions, columns, folders, pages, and terms.');
     assert.ok(await page.locator('.result-list li').count() > 0);
+    assert.ok(await page.locator('.result-group').count() >= 3, 'Results are grouped by kind.');
+    assert.match(await page.locator('.result-group summary').first().textContent(), /^Columns \(\d+\)$/, 'Column matches come first.');
+    assert.doesNotMatch(await page.locator('.result-list').first().textContent(), /00000000-0000-4000-8000/, 'IDs stay out of result summaries until technical details are on.');
+    await page.getByRole('searchbox', { name: 'Search this report' }).fill('old-tracker');
+    await page.getByRole('button', { name: 'Search report', exact: true }).click();
+    assert.ok(await page.locator('.result-list li').count() > 0, 'Internal names stay searchable.');
+    assert.doesNotMatch(await page.locator('main .result-list').textContent(), /old-tracker/, 'Internal names stay out of result summaries until technical details are on.');
+    await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).check();
+    assert.match(await page.locator('main .result-list').textContent(), /old-tracker/, 'Technical details show internal names in results.');
+    await page.getByRole('checkbox', { name: 'Show technical details', exact: true }).uncheck();
     await page.getByRole('searchbox', { name: 'Search this report' }).fill('<script>alert(1)</script>');
     await page.getByRole('button', { name: 'Search report', exact: true }).click();
     assert.equal(await page.locator('main script').count(), 0);
@@ -322,7 +363,7 @@ async function verify() {
     await capture('No search results', 'Text-safe search with an empty-results state.');
     await page.getByRole('searchbox', { name: 'Search this report' }).fill('');
     await page.getByRole('button', { name: 'Search report', exact: true }).click();
-    checks.push('Global search finds content and treats script-like queries as text.');
+    checks.push('Global search groups results by kind, finds content, and treats script-like queries as text.');
 
     await page.goto(previewUrl + '#permissions/check');
     await page.getByLabel('Email address or sign-in name').fill('someone@example.org');
@@ -377,7 +418,7 @@ async function verify() {
 
     await page.goto(previewUrl + '#print');
     const reportText = await page.locator('#print-report').textContent();
-    for (const text of ['Archive', 'Previous project tracker', 'Column definitions', 'Column ID:', 'Maximum length:', 'Top-level folders', 'Group members', 'Sharing links', 'Taxonomy', 'Example project B', 'Technical details', 'Example reader', 'Permission values (High)', 'Administrator details', 'Version history with no limit']) {
+    for (const text of ['Archive', 'Previous project tracker', 'Column definitions', 'Internal name', 'Column ID:', 'Maximum length:', 'Formula: =[DailyRate]*5', 'Top-level folders', 'Group members', 'Sharing links', 'Taxonomy', 'Example project B', 'Technical details', 'Example reader', 'Permission values (High)', 'Administrator details', 'Version history with no limit', 'Description is missing']) {
       assert.ok(reportText.toLowerCase().includes(text.toLowerCase()), 'Print report contains ' + text);
     }
     assert.doesNotMatch(reportText, /\[object HTMLElement\]/);
@@ -436,7 +477,7 @@ async function verify() {
     await page.goto(previewUrl + '#taxonomy');
     await capture('Empty taxonomy', 'Clear no-term-sets state.');
     checks.push('Site switching resets search/person results; empty and partial-data states verified.');
-    checks.push('Restored permission shortcuts and counts verified; access findings, known-none, and unknown states stay distinct; Site review and print coverage verified.');
+    checks.push('Overview counts and shortcuts verified; access findings, known-none, and unknown states stay distinct; Site review and print coverage verified.');
 
     await page.goto(previewUrl + '#guide');
     await page.getByRole('button', { name: 'Restore complete example', exact: true }).click();
@@ -447,7 +488,14 @@ async function verify() {
       await audit('320px ' + hash);
     }
     await page.goto(previewUrl + '#contents/libraries/documents/columns');
-    await capture('Narrow library detail', '320 CSS pixel layout with Back to results and stacked table content.');
+    const narrowSort = page.locator('.detail-panel').getByRole('combobox', { name: 'Sort by', exact: true });
+    assert.equal(await narrowSort.isVisible(), true, 'Narrow screens keep a visible sort control.');
+    assert.equal(await page.locator('.detail-panel thead button').first().evaluate(node => node.tabIndex), -1, 'Clipped heading buttons leave the tab order on narrow screens.');
+    await narrowSort.selectOption('0:desc');
+    const narrowOrder = await page.locator('.detail-panel tbody tr td:first-child').allTextContents();
+    assert.deepEqual(narrowOrder, [...narrowOrder].sort((a, b) => b.localeCompare(a, undefined, { numeric: true })));
+    await narrowSort.selectOption('');
+    await capture('Narrow library detail', '320 CSS pixel layout with Back to results, a visible Sort by control, and stacked table content.');
     await page.getByRole('button', { name: 'Edit description for Title in Documents', exact: true }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Inline editor fits 320px.');
     await audit('320px inline editor');
@@ -458,7 +506,7 @@ async function verify() {
     await page.setViewportSize({ width: 720, height: 525 });
     await page.goto(previewUrl + '#overview');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    checks.push('320px reflow and 720px viewport equivalent to 200% desktop zoom checked; mobile list/detail navigation works.');
+    checks.push('320px reflow and 720px viewport equivalent to 200% desktop zoom checked; narrow screens keep a visible sort control; mobile list/detail navigation works.');
     await page.emulateMedia({ reducedMotion: 'reduce', forcedColors: 'active' });
     await page.goto(previewUrl + '#contents/libraries/documents/columns');
     await capture('Forced colors', 'Windows high contrast emulation preserves selected item and navigation outlines.');
@@ -491,7 +539,7 @@ async function verify() {
     assert.match(await page.locator('main').textContent(), /This site could not be read/);
     assert.equal(await page.locator('dialog[open]').count(), 0);
     const galleryHeader = fs.readFileSync(path.join(output, 'index.html'), 'utf8').match(/^<!--[\s\S]*?-->/)?.[0] || '';
-    for (const label of ['This file is part of Sitenalyzer', 'index.html', 'Author(s): [Author name].', 'Created:', 'Last Modified:', 'Summary:', 'Notes:', 'Copyright © 2026', 'Permission is granted to copy, distribute and/or modify', 'GNU Free Documentation License, Version 1.3', 'no Invariant Sections', 'https://www.gnu.org/licenses/fdl-1.3.html']) assert.ok(galleryHeader.includes(label), 'Gallery header includes ' + label);
+    for (const label of ['This file is part of Sitenalyzer', 'index.html', 'Author(s): Gabriel Mongefranco.', 'Created:', 'Last Modified:', 'Summary:', 'Notes:', 'Copyright © 2026', 'Permission is granted to copy, distribute and/or modify', 'GNU Free Documentation License, Version 1.3', 'no Invariant Sections', 'https://www.gnu.org/licenses/fdl-1.3.html']) assert.ok(galleryHeader.includes(label), 'Gallery header includes ' + label);
     assert.deepEqual(errors, []);
     assert.deepEqual(external, []);
     checks.push('All 38 gallery links restore captured state in fresh browser contexts; unknown actions and unauthorized edit states are ignored; complete gallery license header verified.');
@@ -509,9 +557,9 @@ function buildGallery() {
   const license = `<!--
 This file is part of Sitenalyzer
 index.html
-Author(s): [Author name].
+Author(s): Gabriel Mongefranco.
 Created: 2026-10-15
-Last Modified: 2026-10-16
+Last Modified: 2026-10-19
 Summary: Captured synthetic interface states with links to the matching interactive preview.
 Notes: All screen data is synthetic. See README for documentation and full license information.
 

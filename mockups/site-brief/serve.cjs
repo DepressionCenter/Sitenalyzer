@@ -1,9 +1,9 @@
 /*
 This file is part of Sitenalyzer
 serve.cjs
-Author(s): [Author name].
+Author(s): Gabriel Mongefranco.
 Created: 2026-10-15
-Last Modified: 2026-10-15
+Last Modified: 2026-10-19
 Summary: Serves only the synthetic preview and its review artifacts on loopback.
 Notes: See README file for documentation and full license information.
 
