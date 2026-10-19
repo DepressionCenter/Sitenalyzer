@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 README.md - Main README file with overview, quick start guide and license information.
 Author(s): Gabriel Mongefranco
 Created: 2026-04-20
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: Provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -35,9 +35,9 @@ With Sitenalyzer, you can:
 + See who can open what, by person or group, with the members of each SharePoint group, and check what one person can do.
 + Spot guests, organization-wide access, and sharing links that anyone can use, and find lists and libraries to clean up.
 + Save a data dictionary or a permissions workbook as an Excel file, or print the report to PDF.
-+ Search across lists, libraries, columns, and folders, and see the site's pages.
-+ Edit list and column descriptions, if you own the site.
-+ Copy the site, list, and library IDs needed for Microsoft Graph and Microsoft Entra apps.
++ Move between an Overview, Contents, Permissions, Taxonomy, and Site review, and search the whole report, with results grouped by kind.
++ Edit site, list, column, and term descriptions, if you own the site.
++ Turn on technical details to see internal names, and copy the site, list, and library IDs needed for Microsoft Graph and Microsoft Entra apps.
 
 
 ## Quick Start Guide
@@ -49,7 +49,7 @@ With Sitenalyzer, you can:
 + Select the "{ }" button under Edit HTML Code to open the code editor. Copy the contents of [dist/SitePages/sitenalyzer.html.txt](dist/SitePages/sitenalyzer.html.txt) and paste them into the code editor. Select Save in the code editor to close it, then select Save on the page to leave edit mode.
 + Refresh the page.
 + Enter a site address, or keep the current site's address in the box, and select **Extract site information**.
-+ To save the data dictionary as a spreadsheet, select **⤓ Data dictionary**. To save every permission, select **⤓ Permissions**.
++ To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**. To save every permission, select **Permissions workbook (.xlsx)**.
 
 To install a newer version, copy the files from `dist/SiteAssets` again and replace the old ones. You don't need to change the page.
 

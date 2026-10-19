@@ -19,8 +19,8 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 This document records the agreed design for the next Sitenalyzer interface.
 It gives the next developer the decisions, reference screens, and checks needed to implement it.
-The production redesign is planned. The repository contains this documentation and a working synthetic preview;
-neither replaces the app deployed to SharePoint.
+The production redesign is in progress; see [Implementation status](#implementation-status).
+The synthetic preview in this repository is a review reference and does not replace the app deployed to SharePoint.
 
 The design was reviewed on October 19, 2026, against the production interface and revised in these ways:
 a lighter frame, a short Overview with counts instead of findings, one technical details switch instead of
@@ -367,9 +367,33 @@ This decision must not change how site data is stored or shared.
 No new dependency is approved by this design. Keep bundled Tabulator and SheetJS.
 Decisions about report caching, saving workbooks to SharePoint, or broader API permissions belong in separate work.
 
+### Implementation status
+
+The production app is being changed in three phases, each in its own pull request.
+
+**Phase 1 (frame, navigation, Overview, Contents, search, and the technical details switch)** is implemented.
+The production app now has the light frame, the site header, the five sections with their own `#sna/` addresses,
+the Overview counts and cards, the Contents list and detail tabs, grouped search results, the technical details
+switch, **Refresh report**, **Change site** (which returns to the start screen), and a full-report view for printing.
+Permissions, Taxonomy, and the cleanup suggestions in Site review are drawn by the earlier render functions inside
+the new sections. [How Sitenalyzer works](architecture.md#how-the-report-screen-works) describes the report model and the addresses.
+
+Phase 1 differs from this design in these ways:
+
+- Tables do not get a separate **Sort by** control on narrow screens. Tabulator keeps its column headings visible
+  at every width, and the tables scroll sideways inside their own area, so the headings stay available for sorting.
+  Phase 3 checks this again with real Tabulator behavior.
+- The report area is a `<div>`, not a `<main>` element, because the SharePoint page already has its own main landmark.
+- **Change site** returns to the start screen. The site dialog is planned for phase 2.
+- Printing uses a full-report view that draws every section with every part open. Phase 3 replaces it with a print
+  document built from the report data.
+
+**Phase 2 (Permissions, Taxonomy, Site review, inline editors, and the Change site dialog)** and
+**phase 3 (print document, page details, polish, and release)** are planned.
+
 ### Planned implementation sequence
 
-This sequence is for a later development session. It describes work that has not been implemented in production.
+This sequence was written before production work started. The implementation status above says which parts are done.
 
 1. Establish a production test baseline and map each row in the coverage audit to an acceptance check.
    Preserve the current source and export behavior while creating a repeatable synthetic test site.

@@ -67,11 +67,19 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### Permission sections say "could not read"
 
-**What you see:** Messages such as "Sitenalyzer could not read this group's members" or **Sharing links (could not read)**.
+**What you see:** Messages such as "Sitenalyzer could not read this group's members" or **Sharing links (could not read)**, or counts on the Overview that say **Not read**. **Site review** lists every part of the report that could not be read.
 
 **Cause:** SharePoint refused the request because your account can't see that information. Site members and visitors can open a site but can't see its groups, sharing links, or permissions. Sitenalyzer says "could not read" instead of "none found" so you don't mistake missing information for an empty list.
 
 **Fix:** Ask a site owner or site collection administrator to run Sitenalyzer on the site, or to make you a site owner.
+
+### Back and Forward don't change Sitenalyzer's section
+
+**What you see:** The browser's Back and Forward buttons leave Sitenalyzer on the same section, and the browser console says "this page changed the address after Sitenalyzer set it."
+
+**Cause:** Another script or web part on the page rewrote the page address right after Sitenalyzer changed it. Sitenalyzer then keeps track of the open section itself, so the section links still work.
+
+**Fix:** Nothing is broken. Use the section links in Sitenalyzer to move around. To get Back and Forward working, remove other web parts that change the page address from the `sitenalyzer` page.
 
 ### Check one person's access says "Could not check" or "No access" everywhere
 

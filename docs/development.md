@@ -76,16 +76,24 @@ The tests check that:
 - The libraries and style sheets load from Site Assets, and the app adds no global names to the page.
 - The app starts when its `<div>` appears up to 10 seconds late, and writes an error when it never appears.
 - Every browser storage key starts with `sitenalyzer:`.
-- **Extract site information** shows the pretend site's lists, column tables, permissions, sharing links, cleanup suggestions, and site pages.
-- **Who has access** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups.
-- **Check one person's access** works with the Enter key, and quotes in an email address are sent as data.
-- HTML in site, group, member, permission level, page, and file names shows as plain text.
+- **Extract site information** opens the Overview, and Contents shows the pretend site's lists, libraries, column tables, folders, permissions, and site pages.
+- The Overview counts link to their sections, and counts that could not be read say **Not read**.
+- The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.
+- **Back to results** on a narrow screen returns focus to the item, and nothing scrolls sideways at 320 pixels wide.
+- **Who has access** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. Cleanup suggestions and the coverage table are in Site review.
+- **Check one person's access** works with the Enter key, keeps its result when Permissions reopens, and sends quotes in an email address as data.
+- HTML in site, group, member, permission level, page, file, column, and folder names shows as plain text, including in search results.
 - Sharing link file IDs that aren't GUIDs are never sent to SharePoint, and Site Pages next-batch links to another site are never followed.
 - Failed requests show "could not read" instead of "none found".
-- The edit buttons appear only with the ManageWeb permission.
-- The **⤓ Data dictionary** and **⤓ Permissions** buttons save workbooks with the expected sheets, columns, and column filters.
+- The edit buttons appear only with the ManageWeb permission, and a saved list description appears in the data dictionary.
+- The **Data dictionary (.xlsx)** and **Permissions workbook (.xlsx)** buttons save workbooks with the expected sheets, columns, and column filters.
+- **Print full report / PDF** shows every section with every part open, then opens the print window once.
+- Each section has its own address, Back and Forward move between sections, a `?siteUrl=...#sna/taxonomy` link opens that section, unknown addresses open the Overview, and other page addresses such as `#top` are ignored.
+- **Refresh report** keeps the section, **Start over** removes the address, and **Change site** keeps the typed address.
+- **Show technical details** is off at first, shows internal names and IDs when on, returns focus to the switch, and is remembered under `sitenalyzer:technical-details`.
+- Search results are grouped by kind with columns first, quoted phrases and too-short searches work, internal names are found but shown only with technical details on, and a column result opens its Columns tab.
 - A missing script or style sheet shows a message that names the file.
-- axe finds no WCAG 2.2 AA problems on the start screen, or on the results screen with every section open.
+- axe finds no WCAG 2.2 AA problems on the start screen or in any section of the report screen.
 
 The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresses, and IDs are made up. `openPretendSite(page, options)` takes these options:
 
@@ -95,9 +103,10 @@ The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresse
 | `extraHeadHtml` | Adds markup to the page head, such as an inline script that CSP must block. |
 | `omitMountDiv` | Leaves the app's `<div>` out of the page. |
 | `extraLists` | Adds lists to the site's list of lists. |
-| `answerOverrides` | Answers checked before the standard ones: `{ pattern, body }` or `{ pattern, answer(url, match) }`. Use `reply(403, body)` for an error. |
+| `answerOverrides` | Answers checked before the standard ones: `{ pattern, body }` or `{ pattern, answer(url, match, request) }`. Use `reply(403, body)` for an error. An `answer` function that returns `undefined` passes the request on to the standard answers. Add `method: 'PATCH'` or another method for requests that are not GET. |
+| `addressSuffix` | Adds text to the page address, such as `?siteUrl=...#sna/taxonomy`. |
 
-It returns lists the test can check afterward: `consoleErrors`, `unexpectedRequests`, `siteAssetsRequests`, `apiRequests`, and `otherOriginRequests`. Requests to any other host are refused, so tests never reach the internet.
+The pretend site also answers the request digest (`POST /_api/contextinfo`) and description saves (`PATCH` on the site, a list, or a column) with 204 No Content. It returns lists the test can check afterward: `consoleErrors`, `unexpectedRequests`, `siteAssetsRequests`, `apiRequests`, `otherOriginRequests`, and `writeRequests`, which holds every request that is not a GET. Requests to any other host are refused, so tests never reach the internet.
 
 Automated checks find only part of all accessibility problems. Check keyboard use, zoom to 200%, and a screen reader by hand when you change the interface.
 
