@@ -2651,22 +2651,35 @@ function snaBuildCoverage(report) {
     add('Site name, address, and description', 'read');
     add('Lists and libraries', report.listsRead ? 'read' : 'failed', report.listsRead ? '' :
         'Sitenalyzer could not read the lists and libraries, so Contents has no columns or folders. Refresh the report to try again.');
+    // Columns, folders, and list permissions are read from each list, so they were not read when the lists were not.
+    if (!report.listsRead) {
+        var noLists = 'Sitenalyzer could not read the lists and libraries. Refresh the report to try again.';
+        add('Columns', 'failed', noLists);
+        add('Top-level folders', 'failed', noLists);
+    }
 
-    var columns = countStatus(report.lists, function(l) { return l.columnsStatus === 'failed'; });
-    add('Columns', columns.status, columns.failed === 0 ? '' :
-        'Sitenalyzer could not read the columns of ' + snaCountText(columns.failed, 'list or library', 'lists and libraries') + '. Refresh the report to try again.');
+    if (report.listsRead) {
+        var columns = countStatus(report.lists, function(l) { return l.columnsStatus === 'failed'; });
+        add('Columns', columns.status, columns.failed === 0 ? '' :
+            'Sitenalyzer could not read the columns of ' + snaCountText(columns.failed, 'list or library', 'lists and libraries') + '. Refresh the report to try again.');
 
-    var libraries = report.lists.filter(function(l) { return l.isLib; });
-    var folders = countStatus(libraries, function(l) { return l.foldersStatus === 'failed'; });
-    add('Top-level folders', folders.status, folders.failed === 0 ? '' :
-        'Sitenalyzer could not read the folders of ' + snaCountText(folders.failed, 'library', 'libraries') + '. Refresh the report to try again.');
+        var libraries = report.lists.filter(function(l) { return l.isLib; });
+        var folders = countStatus(libraries, function(l) { return l.foldersStatus === 'failed'; });
+        add('Top-level folders', folders.status, folders.failed === 0 ? '' :
+            'Sitenalyzer could not read the folders of ' + snaCountText(folders.failed, 'library', 'libraries') + '. Refresh the report to try again.');
+    }
 
     add('Site permissions', perms.siteRolesRead ? 'read' : 'failed', perms.siteRolesRead ? '' :
         'People and groups with access to the whole site, and apps, are not in this report. Ask a site owner to run Sitenalyzer on this site.');
 
     var own = countStatus(perms.uniqueLists, function(l) { return !l.rolesRead; });
-    add('Permissions of lists and libraries that have their own', own.status, own.failed === 0 ? '' :
-        'Sitenalyzer could not read the permissions of ' + snaCountText(own.failed, 'list or library', 'lists and libraries') + '. You need to be a site owner to see them.');
+    if (!report.listsRead) {
+        add('Permissions of lists and libraries that have their own', 'failed',
+            'Sitenalyzer could not read the lists and libraries. Refresh the report to try again.');
+    } else {
+        add('Permissions of lists and libraries that have their own', own.status, own.failed === 0 ? '' :
+            'Sitenalyzer could not read the permissions of ' + snaCountText(own.failed, 'list or library', 'lists and libraries') + '. You need to be a site owner to see them.');
+    }
 
     var groups = Object.keys(perms.index).map(function(key) { return perms.index[key]; })
         .filter(function(p) { return p.membersStatus === 'read' || p.membersStatus === 'failed'; });
@@ -2693,8 +2706,15 @@ function snaBuildCoverage(report) {
     if (pages.stoppedAtOtherSite) { pageNotes.push('Sitenalyzer stopped because SharePoint sent a link to a different site.'); }
     add('Site pages', pageNotes.length === 0 ? 'read' : ((pages.failed && pages.pages.length === 0) ? 'failed' : 'partial'), pageNotes.join(' '));
 
-    add('Term store', report.taxonomy.read ? 'read' : 'failed', report.taxonomy.read ? '' :
-        'Sitenalyzer could not read the term store, so Taxonomy is empty.');
+    // The term store can stop answering partway, after some term groups were read; Taxonomy shows those groups.
+    var taxonomy = report.taxonomy;
+    if (taxonomy.read) {
+        add('Term store', 'read');
+    } else if (taxonomy.groups.length > 0) {
+        add('Term store', 'partial', 'Sitenalyzer could not read all of the term store, so some term groups or terms may be missing from Taxonomy. Refresh the report to try again.');
+    } else {
+        add('Term store', 'failed', 'Sitenalyzer could not read the term store, so Taxonomy is empty. Refresh the report to try again.');
+    }
     return rows;
 }
 
@@ -3529,9 +3549,10 @@ function snaApplyDescriptionToReport(editKey, text) {
 
 // ### Technical Details Switch ###
 
-// True while Show technical details is on. Technical values are always in search, the workbooks, and the full report.
+// True while Show technical details is on, and always in the full report for printing.
+// Technical values are always in search and the workbooks too.
 function snaTechnicalDetailsOn() {
-    return _snaTechnicalDetails;
+    return _snaTechnicalDetails || !!(_snaRoute && _snaRoute.section === 'print');
 }
 
 // Reads the switch setting saved in this browser. Browser storage can be turned off, so a failed read leaves it off.
@@ -3557,7 +3578,7 @@ function snaSetTechnicalDetails(isOn) {
     } catch(e) { /* The setting lasts until the page is closed. */ }
     snaSyncTechnicalSwitch();
     snaRenderSiteTech();
-    var showsTechnical = ['contents', 'taxonomy', 'search', 'print'];
+    var showsTechnical = ['contents', 'taxonomy', 'search'];
     if (_snaReport && _snaRoute && showsTechnical.indexOf(_snaRoute.section) > -1) {
         renderApp(_snaRoute, { focus: 'switch', full: true });
     }
@@ -3730,6 +3751,8 @@ function renderApp(route, options) {
     if (!main || !_snaReport) { return; }
     var previous = _snaRoute;
     var detail = document.getElementById('sna-contents-detail');
+    // Set before drawing, because the full report reads it to include technical details.
+    _snaRoute = route;
 
     if (!opts.full && previous && previous.section === 'contents' && route.section === 'contents' && detail) {
         snaDisposeViewTables(detail);
@@ -3739,7 +3762,7 @@ function renderApp(route, options) {
         snaDisposeViewTables(main);
         main.innerHTML = SNA_SECTIONS[route.section].render(route, _snaReport);
     }
-    _snaRoute = route;
+    if (!previous || (previous.section === 'print') !== (route.section === 'print')) { snaRenderSiteTech(); }
 
     if (route.section === 'print') {
         main.querySelectorAll('details').forEach(function(d) { d.open = true; });

@@ -682,6 +682,48 @@ test('shows a Contents summary until a list or library is selected', async funct
     expect(hashOf(page)).toBe('#sna/contents');
 });
 
+test('reports columns, folders, and list permissions as not read when the lists could not be read', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+                return /Hidden eq false/.test(url.searchParams.get('$filter') || '') ? reply(403, { error: 'Access denied' }) : undefined;
+            } }
+        ]
+    });
+    await extractSiteInformation(page);
+    await gotoSection(page, 'Site review');
+    const coverage = page.locator('.sna-coverage-table');
+    await expect(coverage.getByRole('row', { name: /^Lists and libraries/ })).toContainText('Not read');
+    await expect(coverage.getByRole('row', { name: /^Columns/ })).toContainText('Not read');
+    await expect(coverage.getByRole('row', { name: /^Top-level folders/ })).toContainText('Not read');
+    await expect(coverage.getByRole('row', { name: /^Permissions of lists and libraries/ })).toContainText('Not read');
+    await expect(coverage.getByRole('row', { name: /^Columns/ })).toHaveCount(1);
+});
+
+test('reports the term store as partly read when it stops answering after some term groups', async function({ page }) {
+    const secondGroupId = 'dddddddd-0000-4000-8000-000000000002';
+    await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/groups$/, body: { value: [
+                { id: 'dddddddd-0000-4000-8000-000000000001', displayName: 'Test Term Group', description: '', scope: 'siteCollection' },
+                { id: secondGroupId, displayName: 'Second Term Group', description: '', scope: 'siteCollection' }
+            ] } },
+            { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/groups\/([^/]+)\/sets$/, answer: function(url, match) {
+                return match[1] === secondGroupId ? reply(403, { error: 'Access denied' }) : undefined;
+            } }
+        ]
+    });
+    await extractSiteInformation(page);
+    await gotoSection(page, 'Taxonomy');
+    await expect(page.locator('#sna-taxonomy-section')).toContainText('Test Term Group');
+    await expect(page.locator('#sna-taxonomy-section')).toContainText('Sitenalyzer could not read all of the term store');
+
+    await gotoSection(page, 'Site review');
+    const termStoreRow = page.locator('.sna-coverage-table').getByRole('row', { name: /^Term store/ });
+    await expect(termStoreRow).toContainText('Partly read');
+    await expect(termStoreRow).toContainText('some term groups or terms may be missing from Taxonomy');
+});
+
 // ### Permissions and Site Review ###
 
 test('lists who has access by person or group', async function({ page }) {
@@ -955,6 +997,15 @@ test('prints a full report with every section', async function({ page }) {
     await expect(results.locator('#sna-tbl-f-' + LIBRARY_ID + ' .tabulator-row')).toHaveCount(12);
     await expect(results.locator('.sna-table-filter')).toHaveCount(0);
     await expect(results).toContainText('No one\'s access was checked for this report.');
+
+    // The printed report includes technical details while the switch is off, and they go away after it.
+    await expect(page.getByRole('switch', { name: 'Show technical details' })).not.toBeChecked();
+    await expect(results.locator('#sna-tbl-f-' + LIST_ID + ' .tabulator-col', { hasText: 'Internal name' })).toBeVisible();
+    await expect(results).toContainText('Term set ID eeeeeeee-0000-4000-8000-000000000001');
+    await expect(page.locator('#sna-site-tech')).toContainText('Site ID 11111111-0000-4000-8000-000000000000');
+    await gotoSection(page, 'Taxonomy');
+    await expect(results).not.toContainText('Term set ID');
+    await expect(page.locator('#sna-site-tech')).toBeEmpty();
 });
 
 // ### Navigation and Addresses ###
