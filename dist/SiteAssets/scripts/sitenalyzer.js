@@ -185,8 +185,10 @@ var SNA_SITE_PAGES_BATCH_SIZE = 2000;
 // Most requests that run at the same time, such as group member lookups. Keeps large sites from being throttled.
 var SNA_MAX_PARALLEL_REQUESTS = 6;
 
-// Most files whose names are looked up for the sharing links section.
+// Most shared files and folders whose names are looked up for the sharing links section, and how many
+// lookups go in each $batch request. SharePoint answers each batch with one status for each lookup inside it.
 var SNA_SHARING_LINK_NAME_LOOKUPS = 60;
+var SNA_SHARING_LINK_BATCH_SIZE = 20;
 
 // Site groups read in each request when looking for sharing links, and the most read in all.
 // SharePoint creates one group for each sharing link, so a site with many links has many groups.
@@ -896,6 +898,105 @@ async function snaMapWithLimit(items, limit, worker) {
     return results;
 }
 
+// Returns byteCount random bytes from the browser's secure random number generator, as lowercase hex.
+function snaRandomHex(byteCount) {
+    var bytes = new Uint8Array(byteCount);
+    window.crypto.getRandomValues(bytes);
+    var hex = '';
+    for (var i = 0; i < bytes.length; i++) { hex += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16); }
+    return hex;
+}
+
+// Builds the body of a SharePoint $batch request that holds only GET requests, one part for each address,
+// in the multipart/mixed format SharePoint expects, with CRLF line endings.
+function snaBuildBatchBody(boundary, urls) {
+    var body = '';
+    urls.forEach(function(url) {
+        body += '--' + boundary + '\r\n' +
+            'Content-Type: application/http\r\n' +
+            'Content-Transfer-Encoding: binary\r\n\r\n' +
+            'GET ' + url + ' HTTP/1.1\r\n' +
+            'Accept: application/json;odata=nometadata\r\n\r\n';
+    });
+    return body + '--' + boundary + '--\r\n';
+}
+
+// Reads the answer to a $batch request. text is the answer's body and contentType its Content-Type header,
+// which names the boundary between parts; without one, the boundary is read from the first line of text.
+// Returns one { status, body } for each part, in the order the requests were sent. status is the part's HTTP
+// status, such as 200 or 404, or 0 when the part has none, and body is the part's JSON, or null.
+// Accepts CRLF and LF line endings.
+function snaParseBatchResponse(text, contentType) {
+    var source = String(text || '');
+    var headerMatch = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(String(contentType || ''));
+    var boundary = headerMatch ? (headerMatch[1] || headerMatch[2]) : '';
+    if (!boundary) {
+        var firstLine = /^\s*--(\S+)/.exec(source);
+        boundary = firstLine ? firstLine[1] : '';
+    }
+    if (!boundary) { return []; }
+
+    var results = [];
+    var parts = source.split('--' + boundary);
+    // parts[0] is any text before the first boundary; a part that starts with "--" follows the closing boundary.
+    for (var i = 1; i < parts.length; i++) {
+        var part = parts[i];
+        if (part.indexOf('--') === 0) { break; }
+        var statusMatch = /HTTP\/\d(?:\.\d)?\s+(\d{3})/.exec(part);
+        if (!statusMatch) { results.push({ status: 0, body: null }); continue; }
+        var afterStatus = part.substring(statusMatch.index);
+        var blankLine = /\r?\n\r?\n/.exec(afterStatus);
+        var bodyText = blankLine ? afterStatus.substring(blankLine.index + blankLine[0].length).trim() : '';
+        var body = null;
+        if (bodyText) {
+            try { body = JSON.parse(bodyText); } catch(e) { body = null; }
+        }
+        results.push({ status: parseInt(statusMatch[1], 10), body: body });
+    }
+    return results;
+}
+
+// Sends GET requests to the site in one $batch request and returns snaParseBatchResponse's result for them.
+// Every address must be on the site's own REST API, because SharePoint answers a batch only for one site.
+// A batch is a POST, so it needs a request digest, but it holds only reads and changes nothing on the site.
+// Throws when the batch itself fails or doesn't answer every request; retries 429 responses like spFetch.
+async function snaBatchGet(targetUrl, urls, throttleRetries) {
+    if (typeof throttleRetries === 'undefined') { throttleRetries = 5; }
+    var apiRoot = targetUrl + '/_api/';
+    urls.forEach(function(url) {
+        if (String(url).indexOf(apiRoot) !== 0 || /[\s]/.test(url)) {
+            throw new Error('Sitenalyzer sends only requests to this site\'s REST API in a batch.');
+        }
+    });
+    var boundary = 'batch_' + snaRandomHex(16);
+    var digest = await getRequestDigest(targetUrl);
+    var res = await fetch(targetUrl + '/_api/$batch', {
+        method: 'POST',
+        headers: {
+            'Accept': 'multipart/mixed',
+            'Content-Type': 'multipart/mixed; boundary=' + boundary,
+            'X-RequestDigest': digest
+        },
+        credentials: 'include',
+        body: snaBuildBatchBody(boundary, urls)
+    });
+
+    if (res.status === 429 && throttleRetries > 0) {
+        var retryAfterStr = res.headers.get('Retry-After');
+        var retryAfter = retryAfterStr ? parseInt(retryAfterStr, 10) : 10;
+        if (!(retryAfter >= 2)) { retryAfter = 2; }
+        await new Promise(function(r) { setTimeout(r, retryAfter * 1000); });
+        return snaBatchGet(targetUrl, urls, throttleRetries - 1);
+    }
+    if (!res.ok) { throw new Error('HTTP ' + res.status + ' — ' + targetUrl + '/_api/$batch'); }
+
+    var parts = snaParseBatchResponse(await res.text(), res.headers.get('Content-Type'));
+    if (parts.length !== urls.length) {
+        throw new Error('The $batch answer had ' + parts.length + ' parts for ' + urls.length + ' requests.');
+    }
+    return parts;
+}
+
 // Returns the absolute URL of the current SharePoint site based on page context info or the URL path.
 function getBaseUrl() {
     if (window._spPageContextInfo && window._spPageContextInfo.webAbsoluteUrl) {
@@ -1547,32 +1648,57 @@ async function snaFetchSharingLinks(targetUrl) {
         else if (/organization/i.test(linkType)) { kind = 'organization'; }
         else if (/flexible/i.test(linkType)) { kind = 'specific'; }
         var access = /edit/i.test(linkType) ? 'Can edit' : (/view/i.test(linkType) ? 'Can view' : '');
-        result.links.push({ fileId: parts[1], kind: kind, access: access, name: '', url: '' });
+        result.links.push({ itemId: parts[1], kind: kind, access: access, name: '', url: '', itemType: '' });
     });
 
-    // Only IDs shaped like a GUID are sent to SharePoint; anything else is shown without a file name.
-    var fileIds = [];
+    // Only IDs shaped like a GUID are sent to SharePoint; anything else is shown without a name.
+    var itemIds = [];
     result.links.forEach(function(l) {
-        var id = l.fileId.toLowerCase();
-        if (SNA_GUID_PATTERN.test(id) && fileIds.indexOf(id) === -1) { fileIds.push(id); }
+        var id = l.itemId.toLowerCase();
+        if (SNA_GUID_PATTERN.test(id) && itemIds.indexOf(id) === -1) { itemIds.push(id); }
     });
-    result.lookupsCapped = fileIds.length > SNA_SHARING_LINK_NAME_LOOKUPS;
+    result.lookupsCapped = itemIds.length > SNA_SHARING_LINK_NAME_LOOKUPS;
 
-    var files = {};
-    await snaMapWithLimit(fileIds.slice(0, SNA_SHARING_LINK_NAME_LOOKUPS), SNA_MAX_PARALLEL_REQUESTS, async function(fileId) {
-        try {
-            var file = await spFetch(targetUrl + "/_api/web/GetFileById('" + fileId + "')?$select=Name,ServerRelativeUrl");
-            if (file && file.Name) {
-                var fileUrl = snaOrigin(targetUrl) + encodeURI(file.ServerRelativeUrl || '');
-                files[fileId] = { name: file.Name, url: snaIsSameSiteUrl(fileUrl, targetUrl) ? fileUrl : '' };
-            }
-        } catch(e) { /* The link is shown without a file name. */ }
-    });
+    // A shared item can be a file, a folder, a list item, or a file deleted after it was shared. Files are looked up
+    // first; the IDs SharePoint doesn't find as files are looked up as folders. The rest are shown without a name.
+    var items = {};
+    var notFiles = await snaLookUpSharedItems(targetUrl, itemIds.slice(0, SNA_SHARING_LINK_NAME_LOOKUPS), 'GetFileById', 'file', items);
+    await snaLookUpSharedItems(targetUrl, notFiles, 'GetFolderById', 'folder', items);
     result.links.forEach(function(l) {
-        var file = files[l.fileId.toLowerCase()];
-        if (file) { l.name = file.name; l.url = file.url; }
+        var item = items[l.itemId.toLowerCase()];
+        if (item) { l.name = item.name; l.url = item.url; l.itemType = item.itemType; }
     });
     return result;
+}
+
+// Looks up the name and address of shared items with $batch requests to method, such as GetFileById, at most
+// SNA_SHARING_LINK_BATCH_SIZE in each. Adds each item found to found, keyed by its ID, as { name, url, itemType },
+// with url empty when the item isn't on this site. Returns the IDs SharePoint answered 404 Not Found for.
+// If a batch fails, the items not yet looked up are shown without a name.
+async function snaLookUpSharedItems(targetUrl, itemIds, method, itemType, found) {
+    var notFound = [];
+    for (var start = 0; start < itemIds.length; start += SNA_SHARING_LINK_BATCH_SIZE) {
+        var batchIds = itemIds.slice(start, start + SNA_SHARING_LINK_BATCH_SIZE);
+        var parts;
+        try {
+            parts = await snaBatchGet(targetUrl, batchIds.map(function(id) {
+                return targetUrl + '/_api/web/' + method + "('" + id + "')?$select=Name,ServerRelativeUrl";
+            }));
+        } catch(e) {
+            console.warn('Sitenalyzer: could not look up the names of some shared items, so they are shown without names.', e);
+            return notFound;
+        }
+        parts.forEach(function(part, index) {
+            var id = batchIds[index];
+            if (part.status === 200 && part.body && part.body.Name) {
+                var itemUrl = snaOrigin(targetUrl) + encodeURI(part.body.ServerRelativeUrl || '');
+                found[id] = { name: String(part.body.Name), url: snaIsSameSiteUrl(itemUrl, targetUrl) ? itemUrl : '', itemType: itemType };
+            } else if (part.status === 404) {
+                notFound.push(id);
+            }
+        });
+    }
+    return notFound;
 }
 
 // Returns the sentence that says some sharing links may be missing, or '' when every site group was read.
@@ -1608,21 +1734,21 @@ function snaRenderSharingLinks(result) {
         SNA_SHARING_LINK_LABELS.organization + ': ' + countKind('organization') + '. ' +
         SNA_SHARING_LINK_LABELS.specific + ': ' + countKind('specific') + '.</p>';
     html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Sharing links</caption>' +
-        '<thead><tr><th scope="col">File</th><th scope="col">Who can use the link</th><th scope="col">Access</th></tr></thead><tbody>';
+        '<thead><tr><th scope="col">Shared item</th><th scope="col">Who can use the link</th><th scope="col">Access</th></tr></thead><tbody>';
     links.slice().sort(function(a, b) {
         var order = kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind);
         return order !== 0 ? order : snaByTitle(a, b);
     }).forEach(function(l) {
-        var fileCell = l.name
-            ? snaLinkHtml(l.url, l.name)
-            : '<span class="sna-muted">File name not available (file ID ' + snaEscapeHtml(l.fileId) + ')</span>';
+        var itemCell = l.name
+            ? snaLinkHtml(l.url, l.name) + (l.itemType === 'folder' ? ' (folder)' : '')
+            : '<span class="sna-muted">No name found. It may be a list item or a deleted file. Item ID: ' + snaEscapeHtml(l.itemId) + '</span>';
         var kindText = SNA_SHARING_LINK_LABELS[l.kind];
         var kindCell = l.kind === 'anyone' ? '<span class="sna-risk-reason">' + kindText + '</span>' : kindText;
-        html += '<tr><td>' + fileCell + '</td><td>' + kindCell + '</td><td>' + snaEscapeHtml(l.access) + '</td></tr>';
+        html += '<tr><td>' + itemCell + '</td><td>' + kindCell + '</td><td>' + snaEscapeHtml(l.access) + '</td></tr>';
     });
     html += '</tbody></table>';
     if (result.lookupsCapped) {
-        html += '<p class="sna-note">Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.</p>';
+        html += '<p class="sna-note">Sitenalyzer looked up names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' shared items only.</p>';
     }
     if (groupsNote) { html += '<p class="sna-note">' + groupsNote + '</p>'; }
     return html;
@@ -2792,7 +2918,7 @@ function snaBuildCoverage(report) {
     var sharingNotes = [];
     var sharingGroupsNote = snaSharingGroupsNote(sharing);
     if (sharingGroupsNote) { sharingNotes.push(sharingGroupsNote); }
-    if (sharing.lookupsCapped) { sharingNotes.push('Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.'); }
+    if (sharing.lookupsCapped) { sharingNotes.push('Sitenalyzer looked up names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' shared items only.'); }
     add('Sharing links', sharing.failed ? 'failed' : (sharingNotes.length ? 'partial' : 'read'),
         sharing.failed ? 'Sitenalyzer could not read the sharing links. You need to be a site owner to see them.' : sharingNotes.join(' '));
 
@@ -3111,6 +3237,7 @@ async function getRequestDigest(targetUrl) {
         headers: { 'Accept': 'application/json;odata=nometadata', 'Content-Length': '0' },
         credentials: 'include'
     });
+    if (!res.ok) { throw new Error('HTTP ' + res.status + ' — ' + targetUrl + '/_api/contextinfo'); }
     var data = await res.json();
     _snaRequestDigest      = data.FormDigestValue;
     _snaRequestDigestExpiry = now + 25 * 60 * 1000;

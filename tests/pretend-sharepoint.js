@@ -57,6 +57,12 @@ function reply(status, body) {
     return { [REPLY]: true, status: status, body: body };
 }
 
+// Marks an answer sent as text with its own content type instead of JSON, such as rawReply(200, 'multipart/mixed; ...', text).
+const RAW = Symbol('raw');
+function rawReply(status, contentType, text) {
+    return { [RAW]: true, status: status, contentType: contentType, text: text };
+}
+
 const siteInfo = {
     Title: 'Test Research Site',
     Url: SITE_URL,
@@ -144,6 +150,8 @@ const siteGroups = {
 };
 
 const sharedFile = { Name: 'Visit Schedule.docx', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Visit Schedule.docx' };
+// The boundary between the parts of every $batch answer.
+const BATCH_RESPONSE_BOUNDARY = 'batchresponse_00000000-0000-4000-8000-0000000000bb';
 
 // Site users the person check can find by email address.
 const siteUsers = [
@@ -244,6 +252,8 @@ const searchResults = {
 // method is GET unless the entry says otherwise. reply(204) answers a write with no body, as SharePoint does.
 const API_ANSWERS = [
     { method: 'POST', pattern: /^\/_api\/contextinfo$/, body: { FormDigestValue: 'TEST-DIGEST-0001' } },
+    // Answers each GET inside a batch from this same table, so overrides for the requests inside also apply.
+    { method: 'POST', pattern: /^\/_api\/\$batch$/, answer: function(url, match, request, context) { return answerBatch(request, context); } },
     { method: 'PATCH', pattern: /^\/_api\/web$/, body: reply(204, null) },
     { method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)$/, body: reply(204, null) },
     { method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields\(guid'[^']+'\)$/, body: reply(204, null) },
@@ -260,6 +270,7 @@ const API_ANSWERS = [
     { pattern: /^\/_api\/web\/GetFileById\('([^']+)'\)$/, answer: function(url, match) {
         return match[1] === SHARED_FILE_ID ? sharedFile : reply(404, { error: 'File not found' });
     } },
+    { pattern: /^\/_api\/web\/GetFolderById\('([^']+)'\)$/, body: reply(404, { error: 'Folder not found' }) },
     { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
         return /BaseTemplate eq 119/.test(url.searchParams.get('$filter') || '') ? sitePagesLibrary : lists;
     } },
@@ -280,6 +291,56 @@ const API_ANSWERS = [
     { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms$/, body: terms },
     { pattern: /^\/_api\/search\/query$/, body: searchResults }
 ];
+
+// Splits a $batch request body into its parts and returns the method and address of each request inside.
+// Returns null when the body isn't a batch of plain requests, such as one with a change set.
+function readBatchRequests(body) {
+    const firstLine = body.split(/\r?\n/, 1)[0];
+    if (!/^--batch_[0-9A-Za-z_-]+$/.test(firstLine)) { return null; }
+    const requests = [];
+    const parts = body.split(firstLine);
+    for (let i = 1; i < parts.length; i++) {
+        const part = parts[i];
+        if (/^--/.test(part)) { break; }
+        if (/multipart\/mixed/i.test(part)) { return null; }
+        const requestLine = /^([A-Z]+) (\S+) HTTP\/1\.1\r?$/m.exec(part);
+        if (!requestLine) { return null; }
+        requests.push({ method: requestLine[1], address: requestLine[2] });
+    }
+    return requests;
+}
+
+// Builds one part of a $batch answer, as SharePoint does: an HTTP status line, headers, and a JSON body.
+function batchResponsePart(status, body) {
+    const statusText = { 200: 'OK', 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found', 500: 'Internal Server Error' }[status] || 'Status';
+    return '--' + BATCH_RESPONSE_BOUNDARY + '\r\n' +
+        'Content-Type: application/http\r\nContent-Transfer-Encoding: binary\r\n\r\n' +
+        'HTTP/1.1 ' + status + ' ' + statusText + '\r\n' +
+        'CONTENT-TYPE: application/json;odata=nometadata;streaming=true;charset=utf-8\r\n\r\n' +
+        JSON.stringify(body) + '\r\n';
+}
+
+// Answers a $batch request: each GET inside it is answered from the answer table and recorded like a request
+// of its own. A request inside that points to another site, or that isn't a GET, gets 400 Bad Request.
+async function answerBatch(request, context) {
+    const requests = readBatchRequests(request.postData() || '');
+    if (requests === null) { return reply(400, { error: 'Not a batch of plain requests' }); }
+    let text = '';
+    for (const inner of requests) {
+        let answer;
+        if (inner.method === 'GET' && inner.address.startsWith(SITE_URL + '/_api/')) {
+            const innerUrl = new URL(inner.address);
+            context.record.apiRequests.push(innerUrl.href);
+            answer = await context.findAnswer('GET', innerUrl, { method: function() { return 'GET'; }, postData: function() { return null; } });
+            if (answer === undefined) { context.record.unexpectedRequests.push(innerUrl.href); }
+        } else {
+            context.record.unexpectedRequests.push(inner.method + ' ' + inner.address);
+        }
+        if (answer === undefined) { answer = reply(400, { error: 'Bad request' }); }
+        text += answer && answer[REPLY] ? batchResponsePart(answer.status, answer.body) : batchResponsePart(200, answer);
+    }
+    return rawReply(200, 'multipart/mixed; boundary=' + BATCH_RESPONSE_BOUNDARY, text + '--' + BATCH_RESPONSE_BOUNDARY + '--\r\n');
+}
 
 // ### Pretend Site ###
 
@@ -303,18 +364,35 @@ function buildPageHtml(extraHeadHtml, omitMountDiv) {
  * @param {boolean} [options.omitMountDiv] Leaves the app's <div id="sitenalyzer-app"> out of the page.
  * @param {object[]} [options.extraLists] More lists for the site to return, in the same shape as the lists above.
  * @param {object[]} [options.answerOverrides] Answers checked before the standard ones, in the same shape as
- *        API_ANSWERS: { pattern, body } or { pattern, answer(url, match, request) }. Use reply(status, body) for errors.
- *        An answer function can return a promise, to hold the request until the test is ready.
+ *        API_ANSWERS: { pattern, body } or { pattern, answer(url, match, request) }. Use reply(status, body) for errors,
+ *        and rawReply(status, contentType, text) for an answer that isn't JSON. An answer function can return a
+ *        promise, to hold the request until the test is ready. Overrides also answer the requests inside a $batch.
  * @param {string} [options.addressSuffix] Text added to the page address, such as '?siteUrl=...#sna/taxonomy'.
  * @returns {Promise<{consoleErrors: string[], unexpectedRequests: string[], siteAssetsRequests: {url: string, status: number}[],
  *          apiRequests: string[], otherOriginRequests: string[], writeRequests: {method: string, url: string, body: string}[]}>}
  *          Lists the test can check after the page has run. writeRequests holds every request that is not a GET.
+ *          apiRequests also holds each request inside a $batch, after the batch itself.
  */
 async function openPretendSite(page, options) {
     const settings = options || {};
     const missingFiles = settings.missingFiles || [];
     const answers = (settings.answerOverrides || []).concat(API_ANSWERS);
     const record = { consoleErrors: [], unexpectedRequests: [], siteAssetsRequests: [], apiRequests: [], otherOriginRequests: [], writeRequests: [] };
+
+    // Returns the answer to one API request, from the overrides and then the standard answers, or undefined when none matches.
+    async function findAnswer(method, url, request) {
+        const apiPath = decodeURIComponent(url.pathname).substring(SITE_PATH.length);
+        for (const entry of answers) {
+            if ((entry.method || 'GET') !== method) { continue; }
+            const match = entry.pattern.exec(apiPath);
+            if (match === null) { continue; }
+            const body = entry.answer ? await entry.answer(url, match, request, context) : entry.body;
+            if (body === lists && settings.extraLists) { return { value: lists.value.concat(settings.extraLists) }; }
+            if (body !== undefined) { return body; }
+        }
+        return undefined;
+    }
+    const context = { record: record, findAnswer: findAnswer };
 
     page.on('console', function(message) {
         if (message.type() === 'error') { record.consoleErrors.push(message.text()); }
@@ -380,19 +458,14 @@ async function openPretendSite(page, options) {
             const method = request.method();
             record.apiRequests.push(url.href);
             if (method !== 'GET') { record.writeRequests.push({ method: method, url: url.href, body: request.postData() || '' }); }
-            const apiPath = pathname.substring(SITE_PATH.length);
-            let body;
-            for (const entry of answers) {
-                if ((entry.method || 'GET') !== method) { continue; }
-                const match = entry.pattern.exec(apiPath);
-                if (match === null) { continue; }
-                body = entry.answer ? await entry.answer(url, match, request) : entry.body;
-                if (body !== undefined) { break; }
-            }
+            let body = await findAnswer(method, url, request);
             if (body !== undefined) {
+                if (body && body[RAW]) {
+                    await route.fulfill({ status: body.status, contentType: body.contentType, body: body.text });
+                    return;
+                }
                 let status = 200;
                 if (body && body[REPLY]) { status = body.status; body = body.body; }
-                if (body === lists && settings.extraLists) { body = { value: lists.value.concat(settings.extraLists) }; }
                 await route.fulfill(status === 204
                     ? { status: 204, body: '' }
                     : { status: status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -408,4 +481,4 @@ async function openPretendSite(page, options) {
     return record;
 }
 
-module.exports = { openPretendSite, reply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID };
+module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID };

@@ -65,7 +65,7 @@ The diagram shows these steps:
 
 ### What Sitenalyzer asks SharePoint
 
-Every request is a read made with the signed-in person's own permissions. The only writes are the description edits that site owners make on purpose.
+Every request is a read made with the signed-in person's own permissions. The only writes are the description edits that site owners make on purpose. The `$batch` requests for shared item names are sent as POST requests, but they hold only reads and change nothing on the site.
 
 | Request | Why |
 | --- | --- |
@@ -74,14 +74,26 @@ Every request is a read made with the signed-in person's own permissions. The on
 | `/_api/web/roleassignments`, `/_api/web/lists(guid'…')/roleassignments` | Who has which permission level on the site, and on each list or library that has its own permissions. |
 | `/_api/web/lists` | Lists and libraries, with version history settings and last-changed dates for the cleanup suggestions. |
 | `/_api/web/sitegroups(<ID>)/users` | Members of each SharePoint group in the permission list. |
-| `/_api/web/sitegroups` and `/_api/web/GetFileById('…')` | Sharing links, read from the hidden `SharingLinks.*` groups, and the names of up to 60 shared files. |
+| `/_api/web/sitegroups` | Sharing links, read from the hidden `SharingLinks.*` groups. |
+| `/_api/contextinfo` and `/_api/$batch`, holding `GetFileById('…')` and then `GetFolderById('…')` | The names and addresses of up to 60 shared files and folders. See [How shared items are named](#how-shared-items-are-named). |
 | `/_api/web/roledefinitions`, `/_api/web/siteusers?$filter=IsSiteAdmin eq true` | Permission levels and site collection administrators, for the permissions workbook. |
 | `/_api/web/lists?$filter=BaseTemplate eq 119` and its `items` | The Site Pages library and its pages. |
 | `/_api/web/lists(guid'...')/items(<ID>)?$select=BannerImageUrl` | The image chosen for one site page, read only when its details open. |
 | `/_api/web/siteusers?$filter=Email eq '…'` and `getUserEffectivePermissions(@u)` | Only when someone uses **Check one person's access**. |
 | Fields, root folders, and the term store (`/_api/v2.1/sites/…/termStore`) | Columns, top-level folders, and terms for the data dictionary. |
 
-Group member lookups, file name lookups, and person checks run at most 6 at a time (`SNA_MAX_PARALLEL_REQUESTS`), so large sites aren't slowed down by SharePoint's request limits.
+Group member lookups and person checks run at most 6 at a time (`SNA_MAX_PARALLEL_REQUESTS`), so large sites aren't slowed down by SharePoint's request limits.
+
+#### How shared items are named
+
+SharePoint names each sharing link group `SharingLinks.<item ID>.<link type>.<link ID>`. The shared item can be a file, a folder, a list item, or a file someone deleted after sharing it. Sitenalyzer looks up the names this way:
+
+1. It gets a request digest from `/_api/contextinfo`, because SharePoint accepts a `$batch` request only with one.
+2. It sends `GetFileById('<item ID>')?$select=Name,ServerRelativeUrl` for each item in `$batch` requests, up to 20 lookups in each (`SNA_SHARING_LINK_BATCH_SIZE`) and 60 in all (`SNA_SHARING_LINK_NAME_LOOKUPS`). A batch is one `multipart/mixed` request that holds several GET requests, and SharePoint answers it with one status for each.
+3. It sends `GetFolderById` in the same way for the items SharePoint answered 404 Not Found for, so links to folders show the folder's name with "(folder)".
+4. Items that still aren't found, such as list items and deleted files, are shown with "No name found" and their ID.
+
+Because SharePoint answers the batch itself with 200 OK, the browser console shows no failed request for items that aren't files. The answer is read by `snaParseBatchResponse`, which accepts CRLF and LF line endings. If the digest or a batch fails, the links that haven't been named yet are shown without names. A batch holds only GET requests to the site's own REST API, and `snaBatchGet` refuses any other address.
 
 ### How permissions are counted
 
@@ -96,7 +108,7 @@ Sitenalyzer keeps one permission row for each scope, person or group, and permis
 
 - Every name, title, and address from SharePoint is escaped before it is added to the page, so HTML in a list or group name shows as plain text.
 - The person check doubles single quotes in the email address before it goes into `$filter` and `@u`, and accepts at most 320 characters with no control characters.
-- File IDs from sharing link group names must look like a GUID before Sitenalyzer asks for the file.
+- Item IDs from sharing link group names must look like a GUID before Sitenalyzer asks for the file or folder.
 - Sitenalyzer reads the site groups 5,000 at a time (`SNA_SHARING_GROUPS_BATCH_SIZE`) with `$top` and `$skip`, up to 50,000 groups (`SNA_SHARING_GROUPS_MAX`). If it stops early, because it reached that limit or a later request failed, the sharing links section, the guest finding, and Report coverage say that some sharing links may be missing, instead of saying there are none.
 - Sitenalyzer follows the Site Pages next-batch link (`odata.nextLink`) only when it points to the same site's REST API. It stops after 10,000 items (`SNA_SITE_PAGES_MAX`) and doesn't sort on the server, because SharePoint rejects sorted requests on libraries with more than 5,000 items.
 - Links to shared files and to pages are shown only when they are on the same site.

@@ -145,7 +145,7 @@ The **Permissions** section lists its parts on the left. Select one to open it.
 | **People and groups** | For each person or group: what they can do on the whole site, and the lists and libraries that have their own permissions. Open **Members** under a SharePoint group to see who is in it. |
 | **Check a person's access** | What one person can do on the site and in each list and library. See below. |
 | **Own permissions** | The lists and libraries that don't use the site's permissions. |
-| **Sharing links** | Each sharing link, the file it opens, and who can use it: **Anyone with the link**, **People in your organization**, or **Specific people**. |
+| **Sharing links** | Each sharing link, the file or folder it opens, and who can use it: **Anyone with the link**, **People in your organization**, or **Specific people**. A link to a list item, or to a file deleted after it was shared, says "No name found" and shows the item's ID. |
 | **Apps with access** | Apps that were given permissions in SharePoint. Apps given access in Microsoft Entra ID, such as through Sites.Selected, aren't listed. |
 
 A permission level is a named set of permissions, such as Read or Contribute. In **People and groups**, **Expand all details** and **Collapse all details** open and close every group's member list at once. The Overview links straight to each part.

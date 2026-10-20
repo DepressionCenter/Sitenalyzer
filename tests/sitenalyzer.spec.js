@@ -27,7 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { openPretendSite, reply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID } = require('./pretend-sharepoint');
+const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID } = require('./pretend-sharepoint');
 // The pretend site's one term set, Study Arms.
 const TERM_SET_ID = 'eeeeeeee-0000-4000-8000-000000000001';
 
@@ -136,6 +136,30 @@ function sheetRows(workbook, sheetName) {
 // Returns the addresses of the API requests, parsed, so tests can check paths and query values.
 function apiUrls(record) {
     return record.apiRequests.map(function(address) { return new URL(address); });
+}
+
+// Returns the request lines inside a $batch request body, such as 'GET https://... HTTP/1.1'.
+function batchRequestLines(body) {
+    return (body.match(/^[A-Z]+ \S+ HTTP\/1\.1\r?$/gm) || []).map(function(line) { return line.replace(/\r$/, ''); });
+}
+
+// Returns the requests that could change the site: every request that isn't a GET, except the request digest
+// and $batch requests that hold only GET requests to this site.
+function changeRequests(record) {
+    return record.writeRequests.filter(function(r) {
+        const pathname = new URL(r.url).pathname;
+        if (r.method === 'POST' && pathname === SITE_PATH + '/_api/contextinfo') { return false; }
+        if (r.method === 'POST' && pathname === SITE_PATH + '/_api/$batch') {
+            const lines = batchRequestLines(r.body);
+            return lines.length === 0 || !lines.every(function(line) { return line.indexOf('GET ' + SITE_URL + '/_api/') === 0; });
+        }
+        return true;
+    });
+}
+
+// Returns the $batch requests the page sent.
+function batchRequests(record) {
+    return record.writeRequests.filter(function(r) { return r.method === 'POST' && new URL(r.url).pathname === SITE_PATH + '/_api/$batch'; });
 }
 
 // Returns the part of the page address after #, such as 'sna/overview'.
@@ -1114,12 +1138,115 @@ test('does not look up sharing link files whose ID is not a GUID', async functio
 
     const sharing = await openPermissionPart(page, 'Sharing links (1)');
     await expect(sharing).toContainText('Anyone with the link');
-    await expect(sharing).toContainText('File name not available');
+    await expect(sharing).toContainText('No name found. It may be a list item or a deleted file.');
     await openPermissionPart(page, 'Site permissions');
     await expect(page.locator('.sna-risk-panel')).toContainText('1 sharing link lets anyone with the link open a file.');
     await expect(page.locator('.sna-risk-panel').getByRole('link', { name: 'Review sharing links (1)' })).toHaveAttribute('href', '#sna/permissions/sharing');
-    expect(apiUrls(record).filter(function(u) { return /GetFileById/i.test(u.pathname); })).toEqual([]);
+    expect(apiUrls(record).filter(function(u) { return /GetF(ile|older)ById/i.test(u.pathname); })).toEqual([]);
+    expect(batchRequests(record)).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
+});
+
+// The pretend site's sharing link groups for a shared file, a shared folder, and an item that is neither,
+// such as a list item. The file is the pretend site's own shared file.
+const SHARED_FOLDER_ID = '44444444-0000-4000-8000-000000000002';
+const SHARED_LIST_ITEM_ID = '44444444-0000-4000-8000-000000000003';
+const THREE_SHARED_ITEMS = [
+    { pattern: /^\/_api\/web\/sitegroups$/, body: { value: [
+        { Id: 61, Title: 'SharingLinks.' + SHARED_FILE_ID + '.OrganizationView.66666666-0000-4000-8000-000000000011' },
+        { Id: 62, Title: 'SharingLinks.' + SHARED_FOLDER_ID + '.FlexibleEdit.66666666-0000-4000-8000-000000000012' },
+        { Id: 63, Title: 'SharingLinks.' + SHARED_LIST_ITEM_ID + '.AnonymousView.66666666-0000-4000-8000-000000000013' }
+    ] } },
+    { pattern: /^\/_api\/web\/GetFolderById\('([^']+)'\)$/, answer: function(url, match) {
+        return match[1] === SHARED_FOLDER_ID ? { Name: 'Consent Forms', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Consent Forms' } : undefined;
+    } }
+];
+
+test('names shared files and folders from batch requests, with no failed requests in the console', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: OWNERS_ONLY_ANSWERS.concat(THREE_SHARED_ITEMS) });
+    await extractSiteInformation(page);
+
+    const sharing = await openPermissionPart(page, 'Sharing links (3)');
+    await expect(sharing.getByRole('columnheader', { name: 'Shared item' })).toBeVisible();
+    await expect(sharing.getByRole('link', { name: 'Visit Schedule.docx' })).toHaveAttribute('href', SITE_URL + '/Shared%20Documents/Visit%20Schedule.docx');
+    const folderRow = sharing.getByRole('row', { name: /Consent Forms/ });
+    await expect(folderRow).toContainText('Consent Forms (folder)');
+    await expect(folderRow.getByRole('link', { name: 'Consent Forms' })).toHaveAttribute('href', SITE_URL + '/Shared%20Documents/Consent%20Forms');
+    await expect(sharing.getByRole('row', { name: new RegExp(SHARED_LIST_ITEM_ID) }))
+        .toContainText('No name found. It may be a list item or a deleted file. Item ID: ' + SHARED_LIST_ITEM_ID);
+
+    // Files are looked up first, in one batch; the two IDs that aren't files are then looked up as folders.
+    const batches = batchRequests(record);
+    expect(batches.length).toBe(2);
+    expect(batchRequestLines(batches[0].body)).toEqual([SHARED_FILE_ID, SHARED_FOLDER_ID, SHARED_LIST_ITEM_ID].map(function(id) {
+        return 'GET ' + SITE_URL + "/_api/web/GetFileById('" + id + "')?$select=Name,ServerRelativeUrl HTTP/1.1";
+    }));
+    expect(batchRequestLines(batches[1].body)).toEqual([SHARED_FOLDER_ID, SHARED_LIST_ITEM_ID].map(function(id) {
+        return 'GET ' + SITE_URL + "/_api/web/GetFolderById('" + id + "')?$select=Name,ServerRelativeUrl HTTP/1.1";
+    }));
+    batches.forEach(function(batch) { expect(batch.body).toMatch(/^--batch_[0-9a-f]{32}\r\n/); });
+    expect(changeRequests(record)).toEqual([]);
+    expect(apiUrls(record).filter(function(u) { return /GetF(ile|older)ById/i.test(u.pathname) && !u.href.startsWith(SITE_URL + '/_api/'); })).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('sends at most 20 lookups in each batch request', async function({ page }) {
+    const groups = [];
+    for (let i = 1; i <= 25; i++) {
+        const id = '44444444-0000-4000-8000-0000000001' + String(i).padStart(2, '0');
+        groups.push({ Id: 100 + i, Title: 'SharingLinks.' + id + '.OrganizationView.66666666-0000-4000-8000-000000000001' });
+    }
+    const record = await openPretendSite(page, {
+        answerOverrides: OWNERS_ONLY_ANSWERS.concat([{ pattern: /^\/_api\/web\/sitegroups$/, body: { value: groups } }])
+    });
+    await extractSiteInformation(page);
+
+    await expect(await openPermissionPart(page, 'Sharing links (25)')).toContainText('No name found');
+    expect(batchRequests(record).map(function(batch) { return batchRequestLines(batch.body).length; })).toEqual([20, 5, 20, 5]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+for (const failure of [
+    { name: 'a batch request', answer: { method: 'POST', pattern: /^\/_api\/\$batch$/, body: reply(500, { error: 'Server error' }) } },
+    { name: 'the request digest', answer: { method: 'POST', pattern: /^\/_api\/contextinfo$/, body: reply(403, { error: 'Access denied' }) } }
+]) {
+    test('shows sharing links without names when ' + failure.name + ' fails', async function({ page }) {
+        await openPretendSite(page, { answerOverrides: OWNERS_ONLY_ANSWERS.concat(THREE_SHARED_ITEMS, [failure.answer]) });
+        await extractSiteInformation(page);
+        const sharing = await openPermissionPart(page, 'Sharing links (3)');
+        await expect(sharing.getByText('No name found. It may be a list item or a deleted file.')).toHaveCount(3);
+        await expect(sharing.getByRole('link')).toHaveCount(0);
+    });
+}
+
+test('reads a batch answer with LF line endings, parts in quotes, and a part that failed', async function({ page }) {
+    // The answer names its boundary in quotes, uses LF line endings, and the second lookup failed with 500.
+    const boundary = 'batchresponse_test-0001';
+    const part = function(status, statusText, body) {
+        return '--' + boundary + '\nContent-Type: application/http\nContent-Transfer-Encoding: binary\n\n' +
+            'HTTP/1.1 ' + status + ' ' + statusText + '\nCONTENT-TYPE: application/json;odata=nometadata\n\n' + JSON.stringify(body) + '\n';
+    };
+    const record = await openPretendSite(page, {
+        answerOverrides: OWNERS_ONLY_ANSWERS.concat(THREE_SHARED_ITEMS, [{ method: 'POST', pattern: /^\/_api\/\$batch$/, answer: function(url, match, request) {
+            if (/GetFolderById/.test(request.postData())) { return undefined; }
+            return rawReply(200, 'multipart/mixed; boundary="' + boundary + '"',
+                part(200, 'OK', { Name: 'Visit Schedule.docx', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Visit Schedule.docx' }) +
+                part(500, 'Internal Server Error', { error: 'Server error' }) +
+                part(404, 'Not Found', { error: 'File not found' }) +
+                '--' + boundary + '--\n');
+        } }])
+    });
+    await extractSiteInformation(page);
+
+    const sharing = await openPermissionPart(page, 'Sharing links (3)');
+    await expect(sharing.getByRole('link', { name: 'Visit Schedule.docx' })).toBeVisible();
+    // The item that failed isn't looked up again as a folder; the item that wasn't found is.
+    await expect(sharing.getByText('No name found')).toHaveCount(2);
+    expect(batchRequestLines(batchRequests(record)[1].body)).toEqual([
+        'GET ' + SITE_URL + "/_api/web/GetFolderById('" + SHARED_LIST_ITEM_ID + "')?$select=Name,ServerRelativeUrl HTTP/1.1"
+    ]);
+    expect(record.consoleErrors).toEqual([]);
 });
 
 // Answers the site groups request in pages, as SharePoint does with $top and $skip. Group IDs start at 1000.
@@ -1306,7 +1433,7 @@ test('edits a column description in its table with the editor keys', async funct
     await expect(editor).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Edit description of Visit Date' })).toBeFocused();
     await expect(detail.locator('.tabulator-row', { hasText: 'Visit Date' })).toContainText('Planned date of the visit.');
-    expect(record.writeRequests).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
 
     // Double-clicking the text opens the editor too. Shift+Enter and Alt+Enter add lines, and Enter saves.
     await detail.locator('.tabulator-row', { hasText: 'Visit Date' }).locator('.sna-editable-text').dblclick();
@@ -1467,7 +1594,7 @@ test('keeps an unsaved draft across views and asks before Refresh report discard
     await expect.poll(siteReads).toBe(2);
     await expect(page.locator('#sna-detail-title')).toContainText('Study Visits');
     await expect(page.locator('#sp-results textarea')).toHaveCount(0);
-    expect(record.writeRequests).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
 });
 
 test('saves term group, term set, term, and site descriptions through their own addresses', async function({ page }) {

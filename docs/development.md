@@ -82,10 +82,11 @@ The tests check that:
 - **Back to results** on a narrow screen returns focus to the item, and nothing scrolls sideways at 320 pixels wide.
 - Each part of **Permissions** opens from its navigation with its own address. **People and groups** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. **Site permissions** shows the guest finding with links, the own permissions finding, the site collection administrators, and the permission levels, and says what it couldn't check instead of saying no guests have access.
 - Sharing links are found in site groups read 5,000 at a time. When a later request fails, Site permissions, Sharing links, and Report coverage say some sharing links may be missing.
+- Shared files and folders are named from `$batch` requests of at most 20 lookups, files first and then folders, with no failed requests in the console. An item that is neither says "No name found". When the batch or the request digest fails, the links are shown without names. Batch answers with LF line endings, a boundary in quotes, or a failed part are read correctly.
 - **Site review** shows one row per list or library per cleanup finding, the largest lists and libraries, and the coverage table.
 - **Check a person's access** works with the Enter key, keeps its result when Permissions reopens, and sends quotes in an email address as data.
 - HTML in site, group, member, permission level, page, file, column, and folder names shows as plain text, including in search results.
-- Sharing link file IDs that aren't GUIDs are never sent to SharePoint, and Site Pages next-batch links to another site are never followed.
+- Sharing link item IDs that aren't GUIDs are never sent to SharePoint, and Site Pages next-batch links to another site are never followed.
 - Failed requests show "could not read" instead of "none found".
 - The edit buttons appear only with the ManageWeb permission. The description editor opens from its button or a double-click, Escape cancels, Shift+Enter and Alt+Enter add lines, and Enter saves. The site, list, column, term group, term set, and term descriptions save to their own addresses, and saved text appears in search and the data dictionary.
 - A failed save keeps the draft and says why, the next save works, an unsaved draft stays while other views open, the print document leaves it out, and **Refresh report** asks before discarding it.
@@ -112,10 +113,10 @@ The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresse
 | `extraHeadHtml` | Adds markup to the page head, such as an inline script that CSP must block. |
 | `omitMountDiv` | Leaves the app's `<div>` out of the page. |
 | `extraLists` | Adds lists to the site's list of lists. |
-| `answerOverrides` | Answers checked before the standard ones: `{ pattern, body }` or `{ pattern, answer(url, match, request) }`. Use `reply(403, body)` for an error. An `answer` function that returns `undefined` passes the request on to the standard answers. Add `method: 'PATCH'` or another method for requests that are not GET. |
+| `answerOverrides` | Answers checked before the standard ones: `{ pattern, body }` or `{ pattern, answer(url, match, request) }`. Use `reply(403, body)` for an error, and `rawReply(200, contentType, text)` for an answer that isn't JSON. An `answer` function that returns `undefined` passes the request on to the standard answers. Add `method: 'PATCH'` or another method for requests that are not GET. Overrides also answer the GET requests inside a `$batch`. |
 | `addressSuffix` | Adds text to the page address, such as `?siteUrl=...#sna/taxonomy`. |
 
-The pretend site also answers the request digest (`POST /_api/contextinfo`) and description saves (`PATCH` on the site, a list, or a column) with 204 No Content. It returns lists the test can check afterward: `consoleErrors`, `unexpectedRequests`, `siteAssetsRequests`, `apiRequests`, `otherOriginRequests`, and `writeRequests`, which holds every request that is not a GET. Requests to any other host are refused, so tests never reach the internet.
+The pretend site also answers the request digest (`POST /_api/contextinfo`), and answers description saves (`PATCH` on the site, a list, or a column) with 204 No Content. It answers `POST /_api/$batch` by answering each GET inside the batch from the same answers, and sends them back as one `multipart/mixed` answer. It returns lists the test can check afterward: `consoleErrors`, `unexpectedRequests`, `siteAssetsRequests`, `apiRequests`, `otherOriginRequests`, and `writeRequests`, which holds every request that is not a GET. `apiRequests` also holds each request inside a batch. In the tests, `changeRequests(record)` leaves out the request digest and batches that hold only GET requests to the site, so it lists only requests that could change the site. Requests to any other host are refused, so tests never reach the internet.
 
 Automated checks find only part of all accessibility problems. Check keyboard use, zoom to 200%, and a screen reader by hand when you change the interface.
 
