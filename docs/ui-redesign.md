@@ -413,7 +413,7 @@ Phase 2 differs from this design in these ways:
   findings, the site's permission table, the site collection administrators, and **Permission levels explained**.
 - Taxonomy has no parent term column and no "Where this term set is used" table. Sitenalyzer reads the terms of each term
   set without their parent terms, and does not read which term set a managed metadata column uses. Showing either needs new
-  requests, which are left for separate work.
+  requests. [Issue #14](https://github.com/DepressionCenter/Sitenalyzer/issues/14) tracks adding them.
 - An unsaved description is kept when the person opens another view, rather than prompting on every view change. Only
   **Refresh report**, **Start over**, opening another site, and closing the page ask before discarding it.
 

@@ -96,6 +96,7 @@ Sitenalyzer keeps one permission row for each scope, person or group, and permis
 - Every name, title, and address from SharePoint is escaped before it is added to the page, so HTML in a list or group name shows as plain text.
 - The person check doubles single quotes in the email address before it goes into `$filter` and `@u`, and accepts at most 320 characters with no control characters.
 - File IDs from sharing link group names must look like a GUID before Sitenalyzer asks for the file.
+- Sitenalyzer reads the site groups 5,000 at a time (`SNA_SHARING_GROUPS_BATCH_SIZE`) with `$top` and `$skip`, up to 50,000 groups (`SNA_SHARING_GROUPS_MAX`). If it stops early, because it reached that limit or a later request failed, the sharing links section, the guest finding, and Report coverage say that some sharing links may be missing, instead of saying there are none.
 - Sitenalyzer follows the Site Pages next-batch link (`odata.nextLink`) only when it points to the same site's REST API. It stops after 10,000 items (`SNA_SITE_PAGES_MAX`) and doesn't sort on the server, because SharePoint rejects sorted requests on libraries with more than 5,000 items.
 - Links to shared files and to pages are shown only when they are on the same site.
 - The site logo is shown, and the **Open** and **Permissions** buttons open a new window, only for `https://` addresses on the SharePoint tenant being read. Addresses within the site, such as `/sites/example/SiteAssets/logo.png`, are completed with the site's host first.

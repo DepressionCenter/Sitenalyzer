@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -188,8 +188,10 @@ var SNA_MAX_PARALLEL_REQUESTS = 6;
 // Most files whose names are looked up for the sharing links section.
 var SNA_SHARING_LINK_NAME_LOOKUPS = 60;
 
-// Most site groups read when looking for sharing links. SharePoint creates one group for each sharing link.
-var SNA_SHARING_GROUPS_MAX = 5000;
+// Site groups read in each request when looking for sharing links, and the most read in all.
+// SharePoint creates one group for each sharing link, so a site with many links has many groups.
+var SNA_SHARING_GROUPS_BATCH_SIZE = 5000;
+var SNA_SHARING_GROUPS_MAX = 50000;
 
 // Longest text accepted in the person check. 320 characters is the longest possible email address.
 var SNA_PERSON_CHECK_MAX_LENGTH = 320;
@@ -331,7 +333,7 @@ var _snaUniqueLists      = [];    // Lists that have their own permissions: { id
 var _snaRoleDefinitions  = null;  // Permission levels from /_api/web/roledefinitions, or null when they could not be read
 var _snaSiteAdmins       = null;  // Site collection administrators, or null when they could not be read
 var _snaSiteRolesRead    = false; // False when the site's permissions could not be read
-var _snaSharingLinks     = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
+var _snaSharingLinks     = { links: [], failed: false, groupsCapped: false, groupsPageFailed: false, lookupsCapped: false };
 var _snaUserCheckRunning = false;
 
 
@@ -988,7 +990,7 @@ function snaResetPermissionState() {
     _snaRoleDefinitions = null;
     _snaSiteAdmins      = null;
     _snaSiteRolesRead   = false;
-    _snaSharingLinks    = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
+    _snaSharingLinks    = { links: [], failed: false, groupsCapped: false, groupsPageFailed: false, lookupsCapped: false };
 }
 
 // Returns, and creates if needed, the access list entry for the person or group in a role assignment.
@@ -1383,17 +1385,27 @@ function snaRenderRiskFlags() {
     if (unreadLists > 0) { gaps.push('the permissions of ' + snaCountText(unreadLists, 'list or library', 'lists and libraries')); }
     if (unreadGroups > 0) { gaps.push('the members of ' + snaCountText(unreadGroups, 'group', 'groups')); }
     if (_snaSharingLinks.failed) { gaps.push('the sharing links'); }
-    var gapText = gaps.length === 0 ? '' : 'Sitenalyzer could not read ' + snaJoinWords(gaps) +
-        ', so this check may be missing some people or links. You need to be a site owner to see them.';
+    var gapNotes = [];
+    if (gaps.length > 0) {
+        gapNotes.push('Sitenalyzer could not read ' + snaJoinWords(gaps) +
+            ', so this check may be missing some people or links. You need to be a site owner to see them.');
+    }
+    var sharingGroupsNote = snaSharingGroupsNote(_snaSharingLinks);
+    if (sharingGroupsNote) { gapNotes.push(sharingGroupsNote); }
+    var gapText = gapNotes.join(' ');
 
     if (flags.length === 0 && anyoneLinkCount === 0) {
         if (!_snaSiteRolesRead) {
             return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">Sitenalyzer could not check for guests</h4>' +
                 '<p class="sna-risk-row">It could not read the site\'s permissions. Ask a site owner to run Sitenalyzer on this site.</p></div>';
         }
-        if (gapText) {
+        if (gaps.length > 0) {
             return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">No guests or organization-wide groups found in the permissions Sitenalyzer could read</h4>' +
                 '<p class="sna-risk-row">' + gapText + '</p></div>';
+        }
+        if (gapText) {
+            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">No guests or organization-wide groups have access</h4>' +
+                '<p class="sna-risk-row">Sitenalyzer found no sharing links that anyone can use. ' + gapText + '</p></div>';
         }
         return '<div class="sna-risk-panel sna-risk-clear"><h4 class="sna-risk-title"><span aria-hidden="true">&#10003; </span>' +
             'No guests or organization-wide groups have access</h4>' +
@@ -1479,18 +1491,36 @@ function snaRenderInheritanceReport(listsRead) {
 
 // Finds the site's sharing links. SharePoint creates one hidden group for each link, named
 // SharingLinks.<file ID>.<link type>.<link ID>, so reading the groups finds every link without opening each file.
-// Returns { links, failed, groupsCapped, lookupsCapped }.
+// Returns { links, failed, groupsCapped, groupsPageFailed, lookupsCapped }. failed means no groups could be read;
+// groupsCapped and groupsPageFailed mean only some were, because of SNA_SHARING_GROUPS_MAX or a failed later request.
+// groupsRead is how many site groups were read.
 async function snaFetchSharingLinks(targetUrl) {
-    var result = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
-    var groups;
-    try {
-        var resp = await spFetch(targetUrl + '/_api/web/sitegroups?$select=Id,Title&$top=' + SNA_SHARING_GROUPS_MAX);
-        groups = (resp && resp.value) ? resp.value : [];
-    } catch(e) {
-        result.failed = true;
-        return result;
+    var result = { links: [], failed: false, groupsCapped: false, groupsPageFailed: false, lookupsCapped: false };
+    var groups = [];
+    var seenGroupIds = {};
+    while (true) {
+        var page;
+        try {
+            var resp = await spFetch(targetUrl + '/_api/web/sitegroups?$select=Id,Title&$top=' + SNA_SHARING_GROUPS_BATCH_SIZE +
+                (groups.length > 0 ? '&$skip=' + groups.length : ''));
+            page = (resp && resp.value) ? resp.value : [];
+        } catch(e) {
+            if (groups.length === 0) { result.failed = true; return result; }
+            result.groupsPageFailed = true;
+            break;
+        }
+        // A group added or removed between requests can move another group to the next page, so groups are kept once by ID.
+        var groupsBefore = groups.length;
+        page.forEach(function(g) {
+            if (seenGroupIds[g.Id]) { return; }
+            seenGroupIds[g.Id] = true;
+            groups.push(g);
+        });
+        if (page.length < SNA_SHARING_GROUPS_BATCH_SIZE) { break; }
+        // A full page with no new groups means SharePoint did not skip ahead, so asking again would return the same page.
+        if (groups.length === groupsBefore || groups.length >= SNA_SHARING_GROUPS_MAX) { result.groupsCapped = true; break; }
     }
-    result.groupsCapped = groups.length >= SNA_SHARING_GROUPS_MAX;
+    result.groupsRead = groups.length;
 
     groups.forEach(function(g) {
         var title = String(g.Title || '');
@@ -1531,13 +1561,30 @@ async function snaFetchSharingLinks(targetUrl) {
     return result;
 }
 
+// Returns the sentence that says some sharing links may be missing, or '' when every site group was read.
+function snaSharingGroupsNote(result) {
+    if (result.groupsPageFailed) {
+        return 'Sitenalyzer could not read all of the site\'s groups, so some sharing links may be missing. Select Refresh report to try again.';
+    }
+    if (result.groupsCapped) {
+        return 'Sitenalyzer read the first ' + (result.groupsRead || 0).toLocaleString('en-US') +
+            ' site groups only, so some sharing links may be missing. Sitenalyzer can\'t read more groups than that.';
+    }
+    return '';
+}
+
 // Renders the sharing links section, with links that anyone can use listed first.
 function snaRenderSharingLinks(result) {
     if (result.failed) {
         return '<div class="perm-row">Sitenalyzer could not read the sharing links. You need to be a site owner to see them.</div>';
     }
     var links = result.links;
-    if (links.length === 0) { return '<div class="perm-row">No sharing links found on this site.</div>'; }
+    var groupsNote = snaSharingGroupsNote(result);
+    if (links.length === 0) {
+        return groupsNote
+            ? '<div class="perm-row">Sitenalyzer found no sharing links. ' + groupsNote + '</div>'
+            : '<div class="perm-row">No sharing links found on this site.</div>';
+    }
 
     var kindOrder = ['anyone', 'organization', 'specific', 'other'];
     function countKind(kind) { return links.filter(function(l) { return l.kind === kind; }).length; }
@@ -1563,10 +1610,7 @@ function snaRenderSharingLinks(result) {
     if (result.lookupsCapped) {
         html += '<p class="sna-note">Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.</p>';
     }
-    if (result.groupsCapped) {
-        html += '<p class="sna-note">Sitenalyzer read the first ' + SNA_SHARING_GROUPS_MAX.toLocaleString('en-US') +
-            ' site groups only, so some sharing links may be missing.</p>';
-    }
+    if (groupsNote) { html += '<p class="sna-note">' + groupsNote + '</p>'; }
     return html;
 }
 
@@ -2431,7 +2475,7 @@ async function collectReport(targetUrl, onProgress, token) {
     });
     var sharingPromise = snaFetchSharingLinks(targetUrl).catch(function(e) {
         console.warn('Sitenalyzer: sharing links read failed:', e);
-        return { links: [], failed: true, groupsCapped: false, lookupsCapped: false };
+        return { links: [], failed: true, groupsCapped: false, groupsPageFailed: false, lookupsCapped: false };
     });
     var roleDefinitionsPromise = snaFetchRoleDefinitions(targetUrl);
     var siteAdminsPromise = snaFetchSiteAdmins(targetUrl);
@@ -2730,7 +2774,8 @@ function snaBuildCoverage(report) {
 
     var sharing = perms.sharingLinks;
     var sharingNotes = [];
-    if (sharing.groupsCapped) { sharingNotes.push('Sitenalyzer read the first ' + SNA_SHARING_GROUPS_MAX.toLocaleString('en-US') + ' site groups only, so some sharing links may be missing.'); }
+    var sharingGroupsNote = snaSharingGroupsNote(sharing);
+    if (sharingGroupsNote) { sharingNotes.push(sharingGroupsNote); }
     if (sharing.lookupsCapped) { sharingNotes.push('Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.'); }
     add('Sharing links', sharing.failed ? 'failed' : (sharingNotes.length ? 'partial' : 'read'),
         sharing.failed ? 'Sitenalyzer could not read the sharing links. You need to be a site owner to see them.' : sharingNotes.join(' '));

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: Browser tests for Sitenalyzer. Each test opens the built app from dist/ on a pretend SharePoint
          site (see pretend-sharepoint.js) that blocks inline scripts the way SharePoint Online does.
 Notes: See README file for documentation and full license information.
@@ -954,6 +954,58 @@ test('does not look up sharing link files whose ID is not a GUID', async functio
     await expect(page.locator('.sna-risk-panel').getByRole('link', { name: 'Review sharing links (1)' })).toHaveAttribute('href', '#sna/permissions/sharing');
     expect(apiUrls(record).filter(function(u) { return /GetFileById/i.test(u.pathname); })).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
+});
+
+// Answers the site groups request in pages, as SharePoint does with $top and $skip. Group IDs start at 1000.
+// failAfter makes every request that skips that many groups or more fail.
+function pagedSiteGroups(titles, failAfter) {
+    return function(url) {
+        const top = Number(url.searchParams.get('$top') || 100);
+        const skip = Number(url.searchParams.get('$skip') || 0);
+        if (failAfter !== undefined && skip >= failAfter) { return reply(500, { error: 'Server error' }); }
+        return { value: titles.slice(skip, skip + top).map(function(title, i) { return { Id: 1000 + skip + i, Title: title }; }) };
+    };
+}
+
+// Only the owners have access, and their members can be read, so nothing but sharing links can be flagged.
+const OWNERS_ONLY_ANSWERS = [
+    { pattern: /^\/_api\/web\/roleassignments$/, body: { value: [
+        { Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 }, RoleDefinitionBindings: [{ Id: 1073741829, Name: 'Full Control', Hidden: false, RoleTypeKind: 5 }] }
+    ] } },
+    { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/roleassignments$/, body: { value: [] } }
+];
+
+test('reads every site group in pages to find sharing links', async function({ page }) {
+    const titles = [];
+    for (let i = 0; i < 5001; i++) { titles.push('Test Group ' + i); }
+    titles.push('SharingLinks.not-a-guid.AnonymousView.66666666-0000-4000-8000-000000000002');
+    const record = await openPretendSite(page, {
+        answerOverrides: OWNERS_ONLY_ANSWERS.concat([{ pattern: /^\/_api\/web\/sitegroups$/, answer: pagedSiteGroups(titles) }])
+    });
+    await extractSiteInformation(page);
+
+    const groupRequests = apiUrls(record).filter(function(u) { return u.pathname.endsWith('/_api/web/sitegroups'); });
+    expect(groupRequests.map(function(u) { return u.searchParams.get('$skip'); })).toEqual([null, '5000']);
+    const site = await openPermissionPart(page, 'Site permissions');
+    await expect(site.locator('.sna-risk-panel')).toContainText('1 sharing link lets anyone with the link open a file.');
+    await expect(site.locator('.sna-risk-panel')).not.toContainText('may be missing');
+});
+
+test('says some sharing links may be missing when a later page of site groups fails', async function({ page }) {
+    const titles = [];
+    for (let i = 0; i < 5001; i++) { titles.push('Test Group ' + i); }
+    await openPretendSite(page, {
+        answerOverrides: OWNERS_ONLY_ANSWERS.concat([{ pattern: /^\/_api\/web\/sitegroups$/, answer: pagedSiteGroups(titles, 5000) }])
+    });
+    await extractSiteInformation(page);
+
+    const risks = (await openPermissionPart(page, 'Site permissions')).locator('.sna-risk-panel');
+    await expect(risks.getByRole('heading', { level: 4 })).toHaveText('No guests or organization-wide groups have access');
+    await expect(risks).not.toContainText('Sitenalyzer also found no sharing links');
+    await expect(risks).toContainText('Sitenalyzer could not read all of the site\'s groups, so some sharing links may be missing. Select Refresh report to try again.');
+    await expect(await openPermissionPart(page, 'Sharing links')).toContainText('some sharing links may be missing');
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Sharing links/ })).toContainText('Partly read');
 });
 
 test('says it could not read groups and sharing links instead of saying there are none', async function({ page }) {
