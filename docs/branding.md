@@ -20,7 +20,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 [Back to README](../README.md)
 
-This page describes the Sitenalyzer symbol, how the name is written, the colors, and the image files in the [`/images`](../images) folder. It is for anyone who adds Sitenalyzer to a slide, poster, web page, or document, and for developers who change the app's top bar.
+This page describes the Sitenalyzer symbol, how the name is written, the colors, and the image files in the [`/images`](../images) folder. It is for anyone who adds Sitenalyzer to a slide, poster, web page, or document, and for developers who change the app's start screen or top bar.
 
 ### The symbol
 
@@ -30,7 +30,7 @@ The symbol shows a site with two lists or libraries branching from it, like the 
 - **Branch:** a line that goes down from the site and turns right to each list.
 - **Lists:** two rounded bars, one above the other, at the lower right.
 
-The same drawing is used in the app's top bar, in the image files, and in the browser icon.
+The same drawing is used next to the name on the app's start screen and in its top bar, in the image files, and in the browser icon. The start screen shows the colors for white, and the top bar shows the colors for dark blue.
 
 | Background | Site | Branch | Lists |
 | --- | --- | --- | --- |
@@ -86,12 +86,12 @@ All images are in [`/images`](../images), except `favicon.ico`, which is in the 
 | `Repo-preview-thumb.png` | 360 by 202 | The same preview, made smaller. |
 | `sitenalyzer-preview.png` | 1264 by 1075 | README screenshot of the app reading a pretend site with made-up data. |
 
-The SharePoint page doesn't use `favicon.ico`, because SharePoint shows its own browser icon. The symbol in the app's top bar is written into `src/sitenalyzer.html`, so site owners have no image to upload.
+The SharePoint page doesn't use `favicon.ico`, because SharePoint shows its own browser icon. The symbol on the app's start screen and in its top bar is written into `src/sitenalyzer.html`, so site owners have no image to upload.
 
 ### Text alternatives
 
 - When the symbol or logo stands alone, as a link or a picture, use "Sitenalyzer" as its alternative text.
-- When the name is already written next to the symbol, as in the app's top bar, hide the symbol from screen readers or give it empty alternative text.
+- When the name is already written next to the symbol, as on the app's start screen and in its top bar, hide the symbol from screen readers or give it empty alternative text.
 - For the screenshot and the preview, describe what the picture shows, such as "Screenshot of Sitenalyzer".
 
 ### The U-M and EFDC logos
@@ -100,7 +100,7 @@ Sitenalyzer is a project of the EFDC at U-M. Its symbol is a separate image and 
 
 ### Conclusion
 
-You can now choose the right symbol or logo file for a dark or light background and describe it for screen readers. To change the symbol, change its drawing in `src/sitenalyzer.html` and in the SVG files in `/images` together, and then make the PNG and ICO files again from the SVG files.
+You can now choose the right symbol or logo file for a dark or light background and describe it for screen readers. To change the symbol, change both of its drawings in `src/sitenalyzer.html` and the SVG files in `/images` together, and then make the PNG and ICO files again from the SVG files.
 
 ### Additional resources
 

@@ -112,26 +112,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 /* ### Start Screen ### */
 .sna-entry { padding: 24px; }
-#sp-info-app .sna-entry-title { margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1; }
+#sp-info-app .sna-entry-title { display: flex; align-items: center; gap: 12px; margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1; }
 .sna-wordmark {
     background: linear-gradient(135deg, #00274c 0%, #174992 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
-/* White on green #107c41 is 5.19:1. */
-.sna-sp-badge {
-    font-size: 0.5em;
-    font-weight: 700;
-    color: #ffffff;
-    background-color: #107c41;
-    padding: 2px 8px;
-    border-radius: 10px;
-    letter-spacing: 1px;
-    position: relative;
-    top: -0.6em;
-    margin-left: 2px;
-}
+/* The Sitenalyzer symbol in its colors for white: dark blue 15.06:1 and medium blue 8.73:1 on white. */
+.sna-entry-symbol { width: 1.1em; height: 1.1em; flex: none; }
+.sna-entry-symbol .sna-symbol-site { fill: var(--um-dark-blue); }
+.sna-entry-symbol .sna-symbol-list { fill: var(--um-medium-blue); }
+.sna-entry-symbol .sna-symbol-branch { stroke: var(--um-medium-blue); }
 .sna-tagline { margin: 0 0 20px 0; font-size: 0.95em; color: var(--sna-text-2); font-style: italic; }
 .sna-field-label { display: block; font-weight: 700; margin: 0 0 6px 0; font-size: 15px; }
 .sna-url-row { display: flex; align-items: center; gap: 6px; margin: 0 0 8px 0; }
@@ -897,8 +889,8 @@ details.permissions-section {
     #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
     #sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: Highlight; }
     #sp-info-app .sna-pencil-btn { border-color: ButtonText; }
-    .sna-symbol-site, .sna-symbol-list { fill: CanvasText; }
-    .sna-symbol-branch { stroke: CanvasText; }
+    .sna-symbol .sna-symbol-site, .sna-symbol .sna-symbol-list { fill: CanvasText; }
+    .sna-symbol .sna-symbol-branch { stroke: CanvasText; }
     .sna-mark-site { color: inherit; }
     .sna-site-logo-placeholder { background: Canvas; color: CanvasText; border: 1px solid CanvasText; }
     .sna-utility-bar, .sna-nav-row { border-bottom: 1px solid CanvasText; }

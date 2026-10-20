@@ -1590,8 +1590,12 @@ test('marks every link that opens a new window so SharePoint does not open it in
     await expect(page.locator('a[target="_blank"]:not([data-interception="off"])')).toHaveCount(0);
 });
 
-test('shows the Sitenalyzer symbol in the top bar and reads the name as one word', async function({ page }) {
+test('shows the Sitenalyzer symbol on the start screen and in the top bar, and reads the name as one word', async function({ page }) {
     await openPretendSite(page);
+    const title = page.locator('#sna-entry h1');
+    await expect(title).toHaveAccessibleName('Sitenalyzer');
+    await expect(title.locator('svg.sna-entry-symbol')).toBeVisible();
+    await expect(title.locator('svg.sna-entry-symbol')).toHaveAttribute('aria-hidden', 'true');
     await extractSiteInformation(page);
     const mark = page.locator('.sna-utility-bar .sna-mark');
     await expect(mark.locator('svg.sna-mark-symbol')).toBeVisible();
