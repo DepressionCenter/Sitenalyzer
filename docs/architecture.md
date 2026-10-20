@@ -96,6 +96,7 @@ Sitenalyzer keeps one permission row for each scope, person or group, and permis
 - Every name, title, and address from SharePoint is escaped before it is added to the page, so HTML in a list or group name shows as plain text.
 - The person check doubles single quotes in the email address before it goes into `$filter` and `@u`, and accepts at most 320 characters with no control characters.
 - File IDs from sharing link group names must look like a GUID before Sitenalyzer asks for the file.
+- Sitenalyzer reads the site groups 5,000 at a time (`SNA_SHARING_GROUPS_BATCH_SIZE`) with `$top` and `$skip`, up to 50,000 groups (`SNA_SHARING_GROUPS_MAX`). If it stops early, because it reached that limit or a later request failed, the sharing links section, the guest finding, and Report coverage say that some sharing links may be missing, instead of saying there are none.
 - Sitenalyzer follows the Site Pages next-batch link (`odata.nextLink`) only when it points to the same site's REST API. It stops after 10,000 items (`SNA_SITE_PAGES_MAX`) and doesn't sort on the server, because SharePoint rejects sorted requests on libraries with more than 5,000 items.
 - Links to shared files and to pages are shown only when they are on the same site.
 - The site logo is shown, and the **Open** and **Permissions** buttons open a new window, only for `https://` addresses on the SharePoint tenant being read. Addresses within the site, such as `/sites/example/SiteAssets/logo.png`, are completed with the site's host first.
@@ -108,7 +109,7 @@ The report screen has two halves: collecting the report, and drawing views from 
 1. `collectReport` reads the whole site once, in the same order of requests as earlier versions, and returns one report object. It holds the site's identity, the time it was collected (in UTC), every list and library with its columns, folders, and permissions, the site pages, the term store, every permission, and a coverage list that says which parts could not be read. The report shares its arrays and objects with the globals that `exportToXLSX` and `exportPermissionsToXLSX` read, so the workbook builders did not change.
 2. `renderApp` draws one view at a time inside `<div id="sp-results">`. Each section, such as Contents or Permissions, has a render function that builds its markup from the report, with every SharePoint value escaped.
 3. Tabulator tables are built only for the view on screen, and are destroyed when the view closes. Each filter box's text is kept, so it is still there when the view opens again.
-4. When a description is saved, `snaApplyDescriptionToReport` writes the new text into the report and into the globals, so views drawn later, search, and both workbooks use it.
+4. Every description is drawn by `renderAdminDescWrap`. While someone edits one, its text is kept in `_snaDrafts` under the same key `snaSaveDescription` takes, such as `list:<list ID>`, and every view draws the editor from there. So a draft stays when the person opens another view, turns on technical details, or sorts a table. Descriptions inside Tabulator tables are drawn by the table's formatter, so the table redraws the row when the editor opens or closes. When a description is saved, `snaApplyDescriptionToReport` writes the new text into the report and into the globals, so views drawn later, search, and both workbooks use it. **Refresh report**, **Start over**, and opening another site ask before discarding an unsaved draft, and the browser asks before the page closes. While a save is running, those actions stop and ask the person to try again, because SharePoint may still make a change that was already sent. An open editor also holds the saved description, which only the print style sheet shows, so a printout never includes a draft. The print view draws the header's site description again without the editor.
 5. The search index is built from the report as soon as collection finishes, so search covers sections that haven't been opened.
 
 A collection is tied to a number that changes when another collection starts or the report is cleared. A collection or person check whose number no longer matches stops and drops its results, so an older site can never appear in a newer report.
@@ -123,9 +124,9 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 | `#sna/contents` | Contents, with nothing selected |
 | `#sna/contents/<list ID>` and `#sna/contents/<list ID>/folders`, `/columns`, or `/permissions` | A list or library, with one of its tabs |
 | `#sna/contents/pages` | Site pages |
-| `#sna/permissions`, and `#sna/permissions/site`, `/people`, `/person`, `/own`, `/sharing`, or `/apps` | Permissions, with one part opened |
+| `#sna/permissions`, and `#sna/permissions/site`, `/people`, `/person`, `/own`, `/sharing`, or `/apps` | Permissions, with one part shown; `#sna/permissions` shows `site` |
 | `#sna/taxonomy` and `#sna/review` | Taxonomy and Site review |
-| `#sna/taxonomy/<term set ID>` | Taxonomy, with one term set and its term group opened |
+| `#sna/taxonomy/<term set ID>` | Taxonomy, with one term set shown |
 | `#sna/search?q=<text>` | Search results |
 | `#sna/print` | The full report, for printing |
 
@@ -134,11 +135,11 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 - Only a `?siteUrl=` link chooses the first view, such as `?siteUrl=...#sna/taxonomy`. Without one, Sitenalyzer removes a report address left in the page address, such as after reloading the page, so a new report opens on the Overview. **Refresh report** keeps the view that was open.
 - Moving between views changes the address with `location.hash`, so Back and Forward work, and the `hashchange` listener draws the view. Sitenalyzer never calls `history.pushState`. It uses `history.replaceState` for the first view after collection and to remove the address on **Start over**, so neither adds a history step.
 - `SNA_ROUTE_MODE` at the top of `src/sitenalyzer.js` is `'hash'`. This was checked on a SharePoint page with the Modern Script Editor web part and `?csp=enforce`. If a page rewrites the address right after Sitenalyzer sets it, Sitenalyzer writes a warning in the console and keeps views in memory for the rest of the visit. Back and Forward then don't change views on that page.
-- After every view change, focus moves to the view's heading, the selected tab, or the item that was open, so keyboard and screen reader users keep their place.
+- After every view change, focus moves to the view's heading, the heading of the part or term set in the address, the selected tab or part link, or the item that was open, so keyboard and screen reader users keep their place.
 
 ### Where the app markup comes from
 
-The app markup is kept in `src/sitenalyzer.html` so it is easy to edit. It holds the start screen and the frame of the report screen: the site header, section navigation, search, report actions, technical details switch, and footer. It holds no site data. The build turns each line into a JavaScript string and puts the strings in `sitenalyzer.js`, replacing the line `var SNA_APP_HTML = [];`. This way the site owner uploads one app file, and the page code never changes when the markup does.
+The app markup is kept in `src/sitenalyzer.html` so it is easy to edit. It holds the start screen, the frame of the report screen (the site header, section navigation, search, report actions, technical details switch, and footer), and the **Choose a site** dialog. It holds no site data. The build turns each line into a JavaScript string and puts the strings in `sitenalyzer.js`, replacing the line `var SNA_APP_HTML = [];`. This way the site owner uploads one app file, and the page code never changes when the markup does.
 
 ### Browser storage
 

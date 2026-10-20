@@ -80,20 +80,26 @@ The tests check that:
 - The Overview shows five counts that link to their sections, and counts that could not be read say **Not read**. The Contents summary shows the other totals and a table of every list and library.
 - The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.
 - **Back to results** on a narrow screen returns focus to the item, and nothing scrolls sideways at 320 pixels wide.
-- **Who has access** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. Cleanup suggestions and the coverage table are in Site review.
-- **Check one person's access** works with the Enter key, keeps its result when Permissions reopens, and sends quotes in an email address as data.
+- Each part of **Permissions** opens from its navigation with its own address. **People and groups** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. **Site permissions** shows the guest finding with links, the own permissions finding, the site collection administrators, and the permission levels, and says what it couldn't check instead of saying no guests have access.
+- Sharing links are found in site groups read 5,000 at a time. When a later request fails, Site permissions, Sharing links, and Report coverage say some sharing links may be missing.
+- **Site review** shows one row per list or library per cleanup finding, the largest lists and libraries, and the coverage table.
+- **Check a person's access** works with the Enter key, keeps its result when Permissions reopens, and sends quotes in an email address as data.
 - HTML in site, group, member, permission level, page, file, column, and folder names shows as plain text, including in search results.
 - Sharing link file IDs that aren't GUIDs are never sent to SharePoint, and Site Pages next-batch links to another site are never followed.
 - Failed requests show "could not read" instead of "none found".
-- The edit buttons appear only with the ManageWeb permission, and a saved list description appears in the data dictionary.
+- The edit buttons appear only with the ManageWeb permission. The description editor opens from its button or a double-click, Escape cancels, Shift+Enter and Alt+Enter add lines, and Enter saves. The site, list, column, term group, term set, and term descriptions save to their own addresses, and saved text appears in search and the data dictionary.
+- A failed save keeps the draft and says why, the next save works, an unsaved draft stays while other views open, the printed report leaves it out, and **Refresh report** asks before discarding it.
+- While a save is running, **Refresh report** and **Start over** say to wait instead of offering to discard it. Printing while the site description is open for editing shows the saved description.
 - The **Data dictionary (.xlsx)** and **Permissions workbook (.xlsx)** buttons save workbooks with the expected sheets, columns, and column filters.
 - **Print full report / PDF** shows every section with every part open, then opens the print window once.
 - Each section has its own address, Back and Forward move between sections, a `?siteUrl=...#sna/taxonomy` link opens that section, unknown addresses open the Overview, and other page addresses such as `#top` are ignored.
-- **Refresh report** keeps the section, **Start over** removes the address, **Change site** keeps the typed address, and a report address left after reloading the page is removed.
+- **Refresh report** keeps the section, **Start over** removes the address, and a report address left after reloading the page is removed.
+- **Change site** opens **Choose a site** with focus in **Find a site**. It filters the sites, refuses an address on another host, closes with Escape or **Close** and returns focus to **Change site**, and reads the chosen or typed site.
+- Taxonomy lists its term sets, opens one from its address or a search result, and says when a term set in the address is not in the report.
 - **Show technical details** is off at first, shows internal names and IDs when on, including the site ID under the site's address, returns focus to the switch, and is remembered under `sitenalyzer:technical-details`.
 - Search results are grouped by kind with columns first, quoted phrases and too-short searches work, internal names are found but shown only with technical details on, and a column result opens its Columns tab.
 - A missing script or style sheet shows a message that names the file.
-- axe finds no WCAG 2.2 AA problems on the start screen or in any section of the report screen.
+- axe finds no WCAG 2.2 AA problems on the start screen, in any section or part of the report screen, in an open description editor, or in **Choose a site**.
 
 The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresses, and IDs are made up. `openPretendSite(page, options)` takes these options:
 

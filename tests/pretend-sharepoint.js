@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-sharepoint.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: A pretend SharePoint Online site for the browser tests. Playwright answers every request to
          https://contoso.sharepoint.com itself: the page holds the code from dist/SitePages/sitenalyzer.html.txt,
          files under SiteAssets come from dist/SiteAssets, and REST API calls get the synthetic answers below.
@@ -221,7 +221,8 @@ const searchResults = {
         RelevantResults: {
             Table: {
                 Rows: [
-                    { Cells: [{ Key: 'Title', Value: 'Test Research Site' }, { Key: 'Path', Value: SITE_URL }] }
+                    { Cells: [{ Key: 'Title', Value: 'Test Research Site' }, { Key: 'Path', Value: SITE_URL }] },
+                    { Cells: [{ Key: 'Title', Value: 'Test Archive Site' }, { Key: 'Path', Value: TENANT_ORIGIN + '/sites/testarchive' }] }
                 ]
             }
         }
@@ -230,13 +231,15 @@ const searchResults = {
 
 // Each entry matches the part of the address after the site path. Order matters: first match wins.
 // An entry has a fixed body, or an answer(url, match, request) function for answers that depend on the address,
-// query, or request; an answer function that returns undefined passes the request to the next entry.
+// query, or request; an answer function that returns undefined passes the request to the next entry. An answer
+// function can return a promise, so a test can hold a request until it is ready.
 // method is GET unless the entry says otherwise. reply(204) answers a write with no body, as SharePoint does.
 const API_ANSWERS = [
     { method: 'POST', pattern: /^\/_api\/contextinfo$/, body: { FormDigestValue: 'TEST-DIGEST-0001' } },
     { method: 'PATCH', pattern: /^\/_api\/web$/, body: reply(204, null) },
     { method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)$/, body: reply(204, null) },
     { method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields\(guid'[^']+'\)$/, body: reply(204, null) },
+    { method: 'PATCH', pattern: /^\/_api\/v2\.1\/termStore\/(groups|sets)\/[^/]+(\/terms\/[^/]+)?$/, body: reply(204, null) },
     { pattern: /^\/_api\/web$/, body: siteInfo },
     { pattern: /^\/_api\/web\/currentUser$/, body: currentUser },
     { pattern: /^\/_api\/web\/roleassignments$/, body: siteRoleAssignments },
@@ -289,6 +292,7 @@ function buildPageHtml(extraHeadHtml, omitMountDiv) {
  * @param {object[]} [options.extraLists] More lists for the site to return, in the same shape as the lists above.
  * @param {object[]} [options.answerOverrides] Answers checked before the standard ones, in the same shape as
  *        API_ANSWERS: { pattern, body } or { pattern, answer(url, match, request) }. Use reply(status, body) for errors.
+ *        An answer function can return a promise, to hold the request until the test is ready.
  * @param {string} [options.addressSuffix] Text added to the page address, such as '?siteUrl=...#sna/taxonomy'.
  * @returns {Promise<{consoleErrors: string[], unexpectedRequests: string[], siteAssetsRequests: {url: string, status: number}[],
  *          apiRequests: string[], otherOriginRequests: string[], writeRequests: {method: string, url: string, body: string}[]}>}
@@ -364,7 +368,7 @@ async function openPretendSite(page, options) {
                 if ((entry.method || 'GET') !== method) { continue; }
                 const match = entry.pattern.exec(apiPath);
                 if (match === null) { continue; }
-                body = entry.answer ? entry.answer(url, match, request) : entry.body;
+                body = entry.answer ? await entry.answer(url, match, request) : entry.body;
                 if (body !== undefined) { break; }
             }
             if (body !== undefined) {

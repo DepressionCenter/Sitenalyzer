@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -86,8 +86,10 @@ var SNA_MAX_PARALLEL_REQUESTS = 6;
 // Most files whose names are looked up for the sharing links section.
 var SNA_SHARING_LINK_NAME_LOOKUPS = 60;
 
-// Most site groups read when looking for sharing links. SharePoint creates one group for each sharing link.
-var SNA_SHARING_GROUPS_MAX = 5000;
+// Site groups read in each request when looking for sharing links, and the most read in all.
+// SharePoint creates one group for each sharing link, so a site with many links has many groups.
+var SNA_SHARING_GROUPS_BATCH_SIZE = 5000;
+var SNA_SHARING_GROUPS_MAX = 50000;
 
 // Longest text accepted in the person check. 320 characters is the longest possible email address.
 var SNA_PERSON_CHECK_MAX_LENGTH = 320;
@@ -108,6 +110,9 @@ var SNA_TECHNICAL_DETAILS_KEY = 'sitenalyzer:technical-details';
 
 // Longest text accepted in Search this report.
 var SNA_SEARCH_MAX_LENGTH = 200;
+
+// Most sites the Choose a site dialog lists at once. Typing more of a name finds the others.
+var SNA_SITE_CHOICES_MAX = 20;
 
 /**
  * Data fetching logic adapted from DataLaVista (github.com/DepressionCenter/datalavista)
@@ -184,6 +189,7 @@ function snaGetFieldTypeIcon(spType, calcType) {
 var _snaTablesQueue = [];
 var _snaTabInstances = {};
 var _snaTableFilters = {};
+var _snaTabMeta = {};             // The _snaTablesQueue entry each table was built from, by element id
 
 // Search state. Each entry describes one list, library, column, folder, page, or term in the report.
 var _snaSearchIndex = [];
@@ -198,6 +204,10 @@ var _snaContentsFilter = '';      // Text in the Contents name filter
 var _snaLastInventoryId = '';     // Contents item whose details were open last, so Back to results can return to it
 var _snaTechnicalDetails = false;
 var _snaUserCheckResult = null;   // The finished person check { input, status, html }, shown again when Permissions reopens
+var _snaDrafts = {};              // Descriptions being edited, by edit key; see renderAdminDescWrap
+var _snaEditFocus = {};           // The newest redraw of each description, by edit key; see snaRedrawDescription
+var _snaSiteDialogOpener = null;  // The button that opened Choose a site, which gets focus back when the dialog closes
+var _snaReloadSites = null;       // Reads the accessible sites again; set by startApplication
 var _snaUseAddressRoute = true;   // True until the first report from a ?siteUrl= link opens; other reports start on Overview or the kept view
 
 // Taxonomy and admin edit state.
@@ -221,7 +231,7 @@ var _snaUniqueLists      = [];    // Lists that have their own permissions: { id
 var _snaRoleDefinitions  = null;  // Permission levels from /_api/web/roledefinitions, or null when they could not be read
 var _snaSiteAdmins       = null;  // Site collection administrators, or null when they could not be read
 var _snaSiteRolesRead    = false; // False when the site's permissions could not be read
-var _snaSharingLinks     = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
+var _snaSharingLinks     = { links: [], failed: false, groupsCapped: false, groupsPageFailed: false, lookupsCapped: false };
 var _snaUserCheckRunning = false;
 
 
@@ -249,65 +259,10 @@ function snaTableColumns(type, tbl) {
       { title: 'Data type', field: 'dataType', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
       {
         title: 'Description', field: 'description', sorter: 'string', widthGrow: 3, minWidth: 180,
-        formatter: 'textarea',
-        editor: _snaIsAdmin ? function(cell, onRendered, success, cancel) {
-          var currentVal = cell.getValue() || '';
-          var wrap = document.createElement('div');
-          wrap.style.cssText = 'width:100%;box-sizing:border-box;';
-
-          var ta = document.createElement('textarea');
-          ta.value = currentVal;
-          // Extra bottom padding reserves room for the overlaid buttons
-          ta.style.cssText = 'display:block;width:100%;min-height:54px;resize:vertical;font-size:13px;padding:4px 6px 20px 6px;border:2px solid #0078d4;border-radius:3px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;box-sizing:border-box;line-height:1.5;';
-
-          ta.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-            else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); success(ta.value); }
-            // Shift+Enter / Alt+Enter → native newline in textarea
-          });
-
-          // Pull buttons up into the textarea's bottom-padding area via negative margin
-          var btnWrap = document.createElement('div');
-          btnWrap.style.cssText = 'display:flex;flex-direction:row;gap:2px;position:relative;z-index:2;margin-top:-18px;padding-left:4px;';
-
-          var S = 'width:18px;height:16px;padding:0;border-radius:2px;cursor:pointer;font-size:10px;line-height:16px;text-align:center;';
-
-          var saveBtn = document.createElement('button');
-          saveBtn.innerHTML = '&#10003;';
-          saveBtn.title     = 'Save (Enter)';
-          saveBtn.setAttribute('aria-label', 'Save');
-          saveBtn.style.cssText = S + 'background:#0078d4;color:#fff;border:none;';
-          saveBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
-          saveBtn.addEventListener('click',     function(e) { e.stopPropagation(); success(ta.value); });
-
-          var cancelBtn = document.createElement('button');
-          cancelBtn.innerHTML = '&#10007;';
-          cancelBtn.title     = 'Cancel (Esc)';
-          cancelBtn.setAttribute('aria-label', 'Cancel');
-          cancelBtn.style.cssText = S + 'background:#fff;color:#605e5c;border:1px solid #8a8886;';
-          cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
-          cancelBtn.addEventListener('click',     function(e) { e.stopPropagation(); cancel(); });
-
-          btnWrap.appendChild(saveBtn);
-          btnWrap.appendChild(cancelBtn);
-          wrap.appendChild(ta);
-          wrap.appendChild(btnWrap);
-
-          onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
-          return wrap;
-        } : false,
-        cellEdited: _snaIsAdmin ? function(cell) {
-          var row     = cell.getRow().getData();
-          var editKey = 'column:' + (row.listId || '') + ':' + (row.fieldId || row.internalName || '');
-          var text    = cell.getValue() || '';
-          snaSaveDescription(editKey, text).then(function() {
-            snaApplyDescriptionToReport(editKey, text);
-            snaShowToast('Description saved.');
-          }).catch(function(err) {
-            cell.restoreOldValue();
-            snaShowToast('Save failed: ' + (err.message || String(err)), true);
-          });
-        } : null
+        formatter: function(cell) {
+          var row = cell.getRow().getData();
+          return renderAdminDescWrap(cell.getValue(), snaRowEditKey('fields', tbl, row), row.title || row.internalName);
+        }
       },
       { title: 'Required', field: 'required', sorter: 'boolean', width: 120, formatter: yesFormatter },
       { title: 'Choices', field: 'choices', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
@@ -333,58 +288,10 @@ function snaTableColumns(type, tbl) {
       { title: 'Term ID', field: 'termId', sorter: 'string', widthGrow: 2, visible: technical, formatter: idFormatter },
       {
         title: 'Description', field: 'termDescription', sorter: 'string', widthGrow: 3,
-        formatter: 'textarea',
-        editor: _snaIsAdmin ? function(cell, onRendered, success, cancel) {
-          var currentVal = cell.getValue() || '';
-          var wrap = document.createElement('div');
-          wrap.style.cssText = 'width:100%;box-sizing:border-box;';
-
-          var ta = document.createElement('textarea');
-          ta.value = currentVal;
-          ta.style.cssText = 'display:block;width:100%;min-height:54px;resize:vertical;font-size:13px;padding:4px 6px 20px 6px;border:2px solid #0078d4;border-radius:3px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;box-sizing:border-box;line-height:1.5;';
-          ta.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-            else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); success(ta.value); }
-          });
-
-          var btnWrap = document.createElement('div');
-          btnWrap.style.cssText = 'display:flex;flex-direction:row;gap:2px;position:relative;z-index:2;margin-top:-18px;padding-left:4px;';
-          var S = 'width:18px;height:16px;padding:0;border-radius:2px;cursor:pointer;font-size:10px;line-height:16px;text-align:center;';
-
-          var saveBtn = document.createElement('button');
-          saveBtn.innerHTML = '&#10003;'; saveBtn.title = 'Save (Enter)';
-          saveBtn.setAttribute('aria-label', 'Save');
-          saveBtn.style.cssText = S + 'background:#0078d4;color:#fff;border:none;';
-          saveBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
-          saveBtn.addEventListener('click',     function(e) { e.stopPropagation(); success(ta.value); });
-
-          var cancelBtn = document.createElement('button');
-          cancelBtn.innerHTML = '&#10007;'; cancelBtn.title = 'Cancel (Esc)';
-          cancelBtn.setAttribute('aria-label', 'Cancel');
-          cancelBtn.style.cssText = S + 'background:#fff;color:#605e5c;border:1px solid #8a8886;';
-          cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
-          cancelBtn.addEventListener('click',     function(e) { e.stopPropagation(); cancel(); });
-
-          btnWrap.appendChild(saveBtn);
-          btnWrap.appendChild(cancelBtn);
-          wrap.appendChild(ta);
-          wrap.appendChild(btnWrap);
-
-          onRendered(function() { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; });
-          return wrap;
-        } : false,
-        cellEdited: _snaIsAdmin ? function(cell) {
-          var row     = cell.getRow().getData();
-          var editKey = 'term:' + termSetId + ':' + (row.termId || '');
-          var text    = cell.getValue() || '';
-          snaSaveDescription(editKey, text).then(function() {
-            snaApplyDescriptionToReport(editKey, text);
-            snaShowToast('Description saved.');
-          }).catch(function(err) {
-            cell.restoreOldValue();
-            snaShowToast('Save failed: ' + (err.message || String(err)), true);
-          });
-        } : null
+        formatter: function(cell) {
+          var row = cell.getRow().getData();
+          return renderAdminDescWrap(cell.getValue(), snaRowEditKey('terms', tbl, row), row.termName);
+        }
       }
     ];
   }
@@ -436,6 +343,19 @@ function snaTableColumns(type, tbl) {
       { title: 'List ID', field: 'id', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter }
     ];
   }
+  if (type === 'findings') {
+    return [
+      { title: 'Finding', field: 'finding', sorter: 'string', widthGrow: 2, minWidth: 140 },
+      {
+        title: 'List or library', field: 'title', sorter: 'string', widthGrow: 2, minWidth: 130,
+        formatter: function(cell) {
+          return '<a href="' + snaEscapeHtml(cell.getRow().getData().route) + '" data-nav-focus="detail">' + snaEscapeHtml(cell.getValue()) + '</a>';
+        }
+      },
+      { title: 'Detail', field: 'detail', sorter: 'string', widthGrow: 3, minWidth: 160, formatter: 'textarea' },
+      { title: 'Next step', field: 'nextStep', sorter: 'string', widthGrow: 2, minWidth: 130, formatter: 'textarea' }
+    ];
+  }
   if (type === 'pages') {
     return [
       {
@@ -451,6 +371,13 @@ function snaTableColumns(type, tbl) {
     ];
   }
   return [];
+}
+
+// Returns the description key of a row in a columns or terms table, the same key snaSaveDescription takes, or ''.
+function snaRowEditKey(type, tbl, row) {
+  if (type === 'fields') { return 'column:' + (row.listId || '') + ':' + (row.fieldId || row.internalName || ''); }
+  if (type === 'terms') { return 'term:' + ((tbl && tbl.setId) || '') + ':' + (row.termId || ''); }
+  return '';
 }
 
 // Shows only the rows that contain text in any value, including values in hidden technical columns.
@@ -533,6 +460,7 @@ function initSnaTabulators() {
       placeholder: '<em>No data found.</em>'
     });
     _snaTabInstances[tbl.id] = table;
+    _snaTabMeta[tbl.id] = tbl;
 
     table.on('dataFiltered', function(filters, rows) { snaUpdateTableCount(countEl, rows.length, total, tbl.searchLabel); });
 
@@ -587,6 +515,7 @@ function snaDisposeViewTables(rootEl) {
     if (filterInput) { _snaTableFilters[id] = filterInput.value; }
     try { _snaTabInstances[id].destroy(); } catch(e) { /* The table was already removed with its element. */ }
     delete _snaTabInstances[id];
+    delete _snaTabMeta[id];
   });
 }
 
@@ -930,25 +859,24 @@ function snaLevelText(name, isLimited) {
     return isLimited ? name + ' (only items or folders shared with them)' : name;
 }
 
-// Renders role assignments as HTML rows for the permission sections. Every SharePoint value is escaped.
-function renderPermissionsHtml(roleAssignments) {
+// Returns a table of role assignments: each person or group, its kind, and its permission levels.
+// caption names the table for screen readers, such as "Site permissions". Every SharePoint value is escaped.
+function renderPermissionsHtml(roleAssignments, caption) {
     if (!roleAssignments || roleAssignments.length === 0) {
-        return '<div class="perm-row">No people or groups have permissions here.</div>';
+        return '<p class="perm-row">No people or groups have permissions here.</p>';
     }
 
-    var html = '';
+    var html = '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">' + snaEscapeHtml(caption || 'Permissions') + '</caption>' +
+        '<thead><tr><th scope="col">Person or group</th><th scope="col">Type</th><th scope="col">Permission level</th></tr></thead><tbody>';
     roleAssignments.forEach(function(ra) {
         var member = ra.Member || {};
         var memberName = member.Title || member.LoginName || '';
         var levels = (ra.RoleDefinitionBindings || []).map(function(binding) {
             return snaEscapeHtml(snaLevelText(binding.Name || '', snaIsLimitedAccessRole(binding)));
         }).join(', ');
-
-        html += '<div class="perm-row"><strong>' + snaEscapeHtml(memberName) + '</strong> ' +
-            '<span class="app-tag">' + SNA_PRINCIPAL_KIND_LABELS[snaPrincipalKind(member)] + '</span>' +
-            '<br><span class="sna-muted">Permission level: ' + levels + '</span></div>';
+        html += '<tr><td>' + snaEscapeHtml(memberName) + '</td><td>' + SNA_PRINCIPAL_KIND_LABELS[snaPrincipalKind(member)] + '</td><td>' + levels + '</td></tr>';
     });
-    return html;
+    return html + '</tbody></table>';
 }
 
 // Clears the permission state. Called before a site is read and by Start over.
@@ -960,7 +888,7 @@ function snaResetPermissionState() {
     _snaRoleDefinitions = null;
     _snaSiteAdmins      = null;
     _snaSiteRolesRead   = false;
-    _snaSharingLinks    = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
+    _snaSharingLinks    = { links: [], failed: false, groupsCapped: false, groupsPageFailed: false, lookupsCapped: false };
 }
 
 // Returns, and creates if needed, the access list entry for the person or group in a role assignment.
@@ -1056,6 +984,7 @@ function renderPermissionsByPrincipal() {
     var coversText = inheritedCount === 0 ? '' : ' This also covers ' +
         snaCountText(inheritedCount, 'list or library that uses', 'lists and libraries that use') + ' the site\'s permissions.';
 
+    html += '<div class="sna-principal-grid">';
     entries.forEach(function(p) {
         var isGuest = snaIsGuestLogin(p.loginName, p.title);
         html += '<div class="sna-principal-block">';
@@ -1102,6 +1031,7 @@ function renderPermissionsByPrincipal() {
         }
         html += '</div>';
     });
+    html += '</div>';
 
     if (systemGroupCount > 0) {
         html += '<p class="sna-note">Left out ' + snaCountText(systemGroupCount, 'group', 'groups') +
@@ -1171,10 +1101,9 @@ async function snaResolveUserLogin(text) {
 // A check that finished for this report is shown again, so opening another view and coming back keeps it.
 function snaRenderUserAccessTool() {
     var done = _snaUserCheckResult;
-    return '<details class="permissions-section hide-on-print" id="sna-perm-person"' + (done ? ' open' : '') + '>' +
-        '<summary>Check one person\'s access</summary>' +
-        '<p class="sna-note">Shows what one person can do on the site and in each list and library, including access through groups. ' +
-            'You need to be a site owner to use this.</p>' +
+    return '<div class="sna-person-check hide-on-print" id="sna-perm-person">' +
+        '<p>Shows what one person can do on the site and in each list and library, including access through groups. ' +
+            'You need to be a site owner to use this. The results appear when the check finishes.</p>' +
         '<div class="sna-access-tool">' +
             '<label for="sna-user-access-input">Email address or sign-in name</label>' +
             '<div class="sna-access-row">' +
@@ -1188,7 +1117,7 @@ function snaRenderUserAccessTool() {
         '<div id="sna-user-access-status" class="sna-access-status" role="status">' + (done ? snaEscapeHtml(done.status) : '') + '</div>' +
         // done.html was built by snaCheckUserAccess with every SharePoint value escaped.
         '<div id="sna-user-access-results">' + (done ? done.html : '') + '</div>' +
-    '</details>';
+    '</div>';
 }
 
 // Checks what one person can do on the site and in every list and library, and shows the result.
@@ -1336,21 +1265,52 @@ function snaComputeRiskFlags() {
     return flags;
 }
 
-// Renders the panel at the top of the site card that lists guests, organization-wide groups, and links anyone can use.
+// Joins words into a list that reads as a sentence, such as "a, b, and c".
+function snaJoinWords(words) {
+    if (words.length < 3) { return words.join(' and '); }
+    return words.slice(0, -1).join(', ') + ', and ' + words[words.length - 1];
+}
+
+// Returns the finding about guests, organization-wide groups, and links anyone can use, with links to the records behind it.
+// It says that no one was found only when every permission it depends on was read; otherwise it says what it could not check.
 function snaRenderRiskFlags() {
     var flags = snaComputeRiskFlags();
     var anyoneLinkCount = _snaSharingLinks.links.filter(function(l) { return l.kind === 'anyone'; }).length;
+    var unreadLists = _snaUniqueLists.filter(function(l) { return !l.rolesRead; }).length;
+    var unreadGroups = Object.keys(_snaPermIndex).filter(function(key) { return _snaPermIndex[key].membersStatus === 'failed'; }).length;
+    var gaps = [];
+    if (!_snaSiteRolesRead) { gaps.push('the site\'s permissions'); }
+    if (unreadLists > 0) { gaps.push('the permissions of ' + snaCountText(unreadLists, 'list or library', 'lists and libraries')); }
+    if (unreadGroups > 0) { gaps.push('the members of ' + snaCountText(unreadGroups, 'group', 'groups')); }
+    if (_snaSharingLinks.failed) { gaps.push('the sharing links'); }
+    var gapNotes = [];
+    if (gaps.length > 0) {
+        gapNotes.push('Sitenalyzer could not read ' + snaJoinWords(gaps) +
+            ', so this check may be missing some people or links. You need to be a site owner to see them.');
+    }
+    var sharingGroupsNote = snaSharingGroupsNote(_snaSharingLinks);
+    if (sharingGroupsNote) { gapNotes.push(sharingGroupsNote); }
+    var gapText = gapNotes.join(' ');
 
     if (flags.length === 0 && anyoneLinkCount === 0) {
         if (!_snaSiteRolesRead) {
-            return '<div class="sna-risk-panel sna-risk-unknown"><h3 class="sna-risk-title">Sitenalyzer could not check for guests</h3>' +
+            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">Sitenalyzer could not check for guests</h4>' +
                 '<p class="sna-risk-row">It could not read the site\'s permissions. Ask a site owner to run Sitenalyzer on this site.</p></div>';
         }
-        return '<div class="sna-risk-panel sna-risk-clear"><h3 class="sna-risk-title"><span aria-hidden="true">&#10003; </span>' +
-            'No guests or organization-wide groups have access</h3></div>';
+        if (gaps.length > 0) {
+            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">No guests or organization-wide groups found in the permissions Sitenalyzer could read</h4>' +
+                '<p class="sna-risk-row">' + gapText + '</p></div>';
+        }
+        if (gapText) {
+            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">No guests or organization-wide groups have access</h4>' +
+                '<p class="sna-risk-row">Sitenalyzer found no sharing links that anyone can use. ' + gapText + '</p></div>';
+        }
+        return '<div class="sna-risk-panel sna-risk-clear"><h4 class="sna-risk-title"><span aria-hidden="true">&#10003; </span>' +
+            'No guests or organization-wide groups have access</h4>' +
+            '<p class="sna-risk-row">Sitenalyzer also found no sharing links that anyone can use.</p></div>';
     }
 
-    var html = '<div class="sna-risk-panel"><h3 class="sna-risk-title"><span aria-hidden="true">&#9888; </span>Review who has access</h3>' +
+    var html = '<div class="sna-risk-panel"><h4 class="sna-risk-title"><span aria-hidden="true">&#9888; </span>Review guest and organization-wide access</h4>' +
         '<ul class="sna-risk-list">';
     flags.forEach(function(f) {
         html += '<li class="sna-risk-row"><strong>' + snaEscapeHtml(f.title) + '</strong>: <span class="sna-risk-reason">' +
@@ -1361,7 +1321,44 @@ function snaRenderRiskFlags() {
             snaCountText(anyoneLinkCount, 'sharing link lets', 'sharing links let') + ' anyone with the link open a file.</span> ' +
             'The sharing links section lists them.</li>';
     }
-    return html + '</ul></div>';
+    html += '</ul>';
+    if (gapText) { html += '<p class="sna-risk-row">' + gapText + '</p>'; }
+    html += '<p class="sna-finding-links hide-on-print"><a href="#sna/permissions/people">Review people and groups</a>' +
+        (anyoneLinkCount > 0 ? '<a href="#sna/permissions/sharing">Review sharing links (' + _snaSharingLinks.links.length + ')</a>' : '') + '</p>';
+    return html + '</div>';
+}
+
+// Returns the finding about lists and libraries that have their own permissions, or '' when there are none
+// or the lists could not be read (the own permissions part says so).
+function snaRenderOwnPermissionsFinding(report) {
+    var count = report.listsRead ? report.permissions.uniqueLists.length : 0;
+    if (count === 0) { return ''; }
+    return '<div class="sna-finding"><h4 class="sna-finding-title">' +
+        snaEscapeHtml(snaCountText(count, 'list or library has its', 'lists and libraries have their')) + ' own permissions</h4>' +
+        '<p class="sna-finding-text">Their access may differ from the rest of the site.</p>' +
+        '<p class="sna-finding-links hide-on-print"><a href="#sna/permissions/own">Review lists and libraries with their own permissions</a></p></div>';
+}
+
+// Returns the site collection administrators. admins is null when they could not be read.
+function snaRenderSiteAdmins(admins) {
+    if (admins === null) {
+        return '<p class="sna-note">Sitenalyzer could not read the site collection administrators. You need to be a site owner to see them.</p>';
+    }
+    if (admins.length === 0) { return '<p class="perm-row">Sitenalyzer found no site collection administrators.</p>'; }
+    return '<p>These people have full control of every site in the site collection.</p><ul class="sna-plain-list">' +
+        admins.slice().sort(snaByTitle).map(function(a) {
+            return '<li>' + snaEscapeHtml(a.Title || a.LoginName || '') + (a.Email ? ' <span class="sna-muted">(' + snaEscapeHtml(a.Email) + ')</span>' : '') + '</li>';
+        }).join('') + '</ul>';
+}
+
+// Returns the site's permission levels with SharePoint's description of each, or '' when they could not be read.
+function snaRenderPermissionLevels(levels) {
+    var shown = (levels || []).filter(function(l) { return !l.Hidden; })
+        .sort(function(a, b) { return (Number(a.Order) || 0) - (Number(b.Order) || 0); });
+    if (shown.length === 0) { return ''; }
+    return '<details class="permissions-section"><summary>Permission levels explained</summary><dl class="sna-facts">' +
+        shown.map(function(l) { return '<dt>' + snaEscapeHtml(l.Name || '') + '</dt><dd>' + snaEscapeHtml(l.Description || 'No description.') + '</dd>'; }).join('') +
+        '</dl></details>';
 }
 
 // Renders the lists and libraries that have their own permissions instead of using the site's permissions.
@@ -1392,18 +1389,36 @@ function snaRenderInheritanceReport(listsRead) {
 
 // Finds the site's sharing links. SharePoint creates one hidden group for each link, named
 // SharingLinks.<file ID>.<link type>.<link ID>, so reading the groups finds every link without opening each file.
-// Returns { links, failed, groupsCapped, lookupsCapped }.
+// Returns { links, failed, groupsCapped, groupsPageFailed, lookupsCapped }. failed means no groups could be read;
+// groupsCapped and groupsPageFailed mean only some were, because of SNA_SHARING_GROUPS_MAX or a failed later request.
+// groupsRead is how many site groups were read.
 async function snaFetchSharingLinks(targetUrl) {
-    var result = { links: [], failed: false, groupsCapped: false, lookupsCapped: false };
-    var groups;
-    try {
-        var resp = await spFetch(targetUrl + '/_api/web/sitegroups?$select=Id,Title&$top=' + SNA_SHARING_GROUPS_MAX);
-        groups = (resp && resp.value) ? resp.value : [];
-    } catch(e) {
-        result.failed = true;
-        return result;
+    var result = { links: [], failed: false, groupsCapped: false, groupsPageFailed: false, lookupsCapped: false };
+    var groups = [];
+    var seenGroupIds = {};
+    while (true) {
+        var page;
+        try {
+            var resp = await spFetch(targetUrl + '/_api/web/sitegroups?$select=Id,Title&$top=' + SNA_SHARING_GROUPS_BATCH_SIZE +
+                (groups.length > 0 ? '&$skip=' + groups.length : ''));
+            page = (resp && resp.value) ? resp.value : [];
+        } catch(e) {
+            if (groups.length === 0) { result.failed = true; return result; }
+            result.groupsPageFailed = true;
+            break;
+        }
+        // A group added or removed between requests can move another group to the next page, so groups are kept once by ID.
+        var groupsBefore = groups.length;
+        page.forEach(function(g) {
+            if (seenGroupIds[g.Id]) { return; }
+            seenGroupIds[g.Id] = true;
+            groups.push(g);
+        });
+        if (page.length < SNA_SHARING_GROUPS_BATCH_SIZE) { break; }
+        // A full page with no new groups means SharePoint did not skip ahead, so asking again would return the same page.
+        if (groups.length === groupsBefore || groups.length >= SNA_SHARING_GROUPS_MAX) { result.groupsCapped = true; break; }
     }
-    result.groupsCapped = groups.length >= SNA_SHARING_GROUPS_MAX;
+    result.groupsRead = groups.length;
 
     groups.forEach(function(g) {
         var title = String(g.Title || '');
@@ -1444,13 +1459,30 @@ async function snaFetchSharingLinks(targetUrl) {
     return result;
 }
 
+// Returns the sentence that says some sharing links may be missing, or '' when every site group was read.
+function snaSharingGroupsNote(result) {
+    if (result.groupsPageFailed) {
+        return 'Sitenalyzer could not read all of the site\'s groups, so some sharing links may be missing. Select Refresh report to try again.';
+    }
+    if (result.groupsCapped) {
+        return 'Sitenalyzer read the first ' + (result.groupsRead || 0).toLocaleString('en-US') +
+            ' site groups only, so some sharing links may be missing. Sitenalyzer can\'t read more groups than that.';
+    }
+    return '';
+}
+
 // Renders the sharing links section, with links that anyone can use listed first.
 function snaRenderSharingLinks(result) {
     if (result.failed) {
         return '<div class="perm-row">Sitenalyzer could not read the sharing links. You need to be a site owner to see them.</div>';
     }
     var links = result.links;
-    if (links.length === 0) { return '<div class="perm-row">No sharing links found on this site.</div>'; }
+    var groupsNote = snaSharingGroupsNote(result);
+    if (links.length === 0) {
+        return groupsNote
+            ? '<div class="perm-row">Sitenalyzer found no sharing links. ' + groupsNote + '</div>'
+            : '<div class="perm-row">No sharing links found on this site.</div>';
+    }
 
     var kindOrder = ['anyone', 'organization', 'specific', 'other'];
     function countKind(kind) { return links.filter(function(l) { return l.kind === kind; }).length; }
@@ -1476,51 +1508,62 @@ function snaRenderSharingLinks(result) {
     if (result.lookupsCapped) {
         html += '<p class="sna-note">Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.</p>';
     }
-    if (result.groupsCapped) {
-        html += '<p class="sna-note">Sitenalyzer read the first ' + SNA_SHARING_GROUPS_MAX.toLocaleString('en-US') +
-            ' site groups only, so some sharing links may be missing.</p>';
-    }
+    if (groupsNote) { html += '<p class="sna-note">' + groupsNote + '</p>'; }
     return html;
 }
 
-// Renders cleanup suggestions from the list details already read: lists not changed in a year,
-// libraries with version history turned off, version history with no limit, and the largest lists.
-function snaRenderCleanupSignals() {
-    var lists = _snaAllListsMeta || [];
-    if (lists.length === 0) { return '<div class="perm-row">Sitenalyzer found no lists or libraries to review.</div>'; }
-
+// Returns one row per list or library per cleanup finding, from the list details already read: not changed in the last
+// 12 months, version history turned off (libraries only), version history with no limit, and no description.
+// Rows are { finding, title, route, detail, nextStep }, in that order of findings and then by name.
+function snaReviewFindings(report) {
     var now = new Date();
     var cutoff = new Date(now.getFullYear(), now.getMonth() - 12, now.getDate());
-    var stale = [], noVersioning = [], unlimited = [];
-    lists.forEach(function(l) {
-        var changed = l.LastItemModifiedDate ? new Date(l.LastItemModifiedDate) : null;
-        if (changed && !isNaN(changed.getTime()) && changed < cutoff) { stale.push(l); }
-        if (l.BaseType === 1 && l.EnableVersioning === false) { noVersioning.push(l); }
-        if (l.EnableVersioning === true && l.MajorVersionLimit === 0) { unlimited.push(l); }
+    var rows = [];
+    report.lists.forEach(function(l) {
+        var route = snaRouteHash({ section: 'contents', id: l.routeId });
+        function add(order, finding, detail, nextStep) {
+            rows.push({ order: order, finding: finding, title: l.title, route: route, detail: detail, nextStep: nextStep });
+        }
+        var changed = l.lastModified ? new Date(l.lastModified) : null;
+        if (changed && !isNaN(changed.getTime()) && changed < cutoff) {
+            add(0, 'Not changed in the last 12 months', 'Last changed ' + snaFormatDate(l.lastModified) + '.', 'Review whether it is still needed.');
+        }
+        if (l.isLib && l.versioning.enabled === false) {
+            add(1, 'Version history turned off', 'People can\'t get back an earlier copy of a file.', 'Review the version history settings.');
+        }
+        if (l.versioning.enabled === true && l.versioning.majorLimit === 0) {
+            add(2, 'Version history with no limit', 'Every earlier version is kept, so it keeps growing.', 'Review the version history settings.');
+        }
+        if (!String(l.description || '').trim()) {
+            add(3, 'Description is missing', 'A description helps people understand what it is for.', 'Add a description.');
+        }
     });
-    var largest = lists.filter(function(l) { return (l.ItemCount || 0) > 0; })
-        .sort(function(a, b) { return (b.ItemCount || 0) - (a.ItemCount || 0); }).slice(0, 5);
+    return rows.sort(function(a, b) { return (a.order - b.order) || snaByTitle(a, b); });
+}
 
-    function listLink(l) { return snaLinkHtml(snaListUrl(l, _snaTargetUrl), l.Title || ''); }
-    function group(headClass, title, hint, items, rowText) {
-        var h = '<div class="sna-cleanup-group"><h3 class="sna-cleanup-head ' + headClass + '">' + title + ' (' + items.length + ')</h3>';
-        if (hint) { h += '<p class="sna-note">' + hint + '</p>'; }
-        if (items.length === 0) { return h + '<div class="sna-cleanup-row sna-muted">None found.</div></div>'; }
-        items.forEach(function(l) { h += '<div class="sna-cleanup-row">' + rowText(l) + '</div>'; });
-        return h + '</div>';
-    }
+// Returns the cleanup findings table under a heading of the given level, such as 3 for <h3>. tableId names its table.
+function snaRenderReviewFindings(report, level, tableId) {
+    var rows = snaReviewFindings(report);
+    var html = '<h' + level + ' class="sna-subsection-title">Lists and libraries to review for cleanup (' + rows.length + ')</h' + level + '>' +
+        '<p>Use these findings to decide what to review. Some older content may still need to be kept. Sitenalyzer changes nothing from this page.</p>';
+    if (rows.length === 0) { return html + '<p class="sna-muted">Sitenalyzer found nothing to review in the lists and libraries.</p>'; }
+    _snaTablesQueue.push({ id: tableId, type: 'findings', searchLabel: 'findings', data: rows });
+    return html + '<div id="' + tableId + '"></div>';
+}
 
-    var html = group('sna-cleanup-warning', 'Not changed in the last 12 months', '', stale.sort(snaByTitle), function(l) {
-        return listLink(l) + ' <span class="sna-muted">(last changed ' + snaEscapeHtml(String(l.LastItemModifiedDate).substring(0, 10)) + ')</span>';
+// Returns the five lists and libraries with the most items, under a heading of the given level.
+function snaRenderLargestLists(report, level) {
+    var largest = report.lists.filter(function(l) { return (Number(l.itemCount) || 0) > 0; })
+        .sort(function(a, b) { return (Number(b.itemCount) || 0) - (Number(a.itemCount) || 0); }).slice(0, 5);
+    var html = '<h' + level + ' class="sna-subsection-title">Largest lists and libraries</h' + level + '>';
+    if (largest.length === 0) { return html + '<p class="sna-muted">Every list and library is empty.</p>'; }
+    html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Largest lists and libraries</caption>' +
+        '<thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Items</th></tr></thead><tbody>';
+    largest.forEach(function(l) {
+        html += '<tr><td><a href="' + snaEscapeHtml(snaRouteHash({ section: 'contents', id: l.routeId })) + '" data-nav-focus="detail">' + snaEscapeHtml(l.title) + '</a></td>' +
+            '<td>' + (l.isLib ? 'Library' : 'List') + '</td><td>' + snaEscapeHtml((Number(l.itemCount) || 0).toLocaleString('en-US')) + '</td></tr>';
     });
-    html += group('sna-cleanup-alert', 'Libraries with version history turned off', 'People can\'t get back an earlier copy of a file.',
-        noVersioning.sort(snaByTitle), listLink);
-    html += group('sna-cleanup-warning', 'Version history with no limit', 'Every earlier copy is kept, so these keep growing.',
-        unlimited.sort(snaByTitle), listLink);
-    html += group('', 'Largest lists and libraries', '', largest, function(l) {
-        return listLink(l) + ' <span class="sna-muted">(' + snaCountText(l.ItemCount || 0, 'item', 'items') + ')</span>';
-    });
-    return html;
+    return html + '</tbody></table>';
 }
 
 // Reads the site's permission levels for the permissions workbook. Returns null when they could not be read.
@@ -2130,8 +2173,11 @@ function snaHandleAppClick(e) {
     else if (action === 'export-permissions') { exportPermissionsToXLSX(); }
     else if (action === 'check-user-access') { snaCheckUserAccess(); }
     else if (action === 'print-report') { snaNavigate({ section: 'print' }, { focus: 'heading', print: true }); }
-    else if (action === 'change-site') { startOver(true); }
-    else if (action === 'start-over') { startOver(false); }
+    else if (action === 'change-site') { snaOpenSiteDialog(target); }
+    else if (action === 'close-site-dialog') { snaCloseSiteDialog(); }
+    else if (action === 'choose-site') { snaOpenSite(target.getAttribute('data-url')); }
+    else if (action === 'refresh-sites') { snaRefreshSiteChoices(); }
+    else if (action === 'start-over') { if (snaConfirmDiscardDrafts('Start over')) { startOver(false); } }
     else if (action === 'refresh-report') { snaRefreshReport(); }
     else if (action === 'scroll-top') {
         var el = document.getElementById('sp-info-app');
@@ -2152,7 +2198,7 @@ function snaHandleAppClick(e) {
         snaStartEdit(target.closest('.sna-editable-wrap'));
     }
     else if (action === 'save-edit') {
-        snaSaveEditFromEl(target.closest('.sna-editable-wrap'));
+        snaSaveEdit(target.closest('.sna-editable-wrap'));
     }
     else if (action === 'cancel-edit') {
         snaCancelEdit(target.closest('.sna-editable-wrap'));
@@ -2224,6 +2270,8 @@ function snaClearReport() {
     _snaContentsFilter   = '';
     _snaLastInventoryId  = '';
     _snaUserCheckResult  = null;
+    _snaDrafts           = {};
+    _snaEditFocus        = {};
 }
 
 // Clears the report and returns to the start screen. Change site keeps the last address in the Site URL box so it can be
@@ -2249,7 +2297,7 @@ function startOver(keepAddress) {
 
 // Reads the same site again and reopens the view that was on screen.
 function snaRefreshReport() {
-    if (!_snaReport) { return; }
+    if (!_snaReport || !snaConfirmDiscardDrafts('Refresh report')) { return; }
     var input = document.getElementById('site-url-input');
     if (input) { input.value = _snaReport.siteUrl; }
     gatherSiteInformation({ keepRoute: true });
@@ -2325,7 +2373,7 @@ async function collectReport(targetUrl, onProgress, token) {
     });
     var sharingPromise = snaFetchSharingLinks(targetUrl).catch(function(e) {
         console.warn('Sitenalyzer: sharing links read failed:', e);
-        return { links: [], failed: true, groupsCapped: false, lookupsCapped: false };
+        return { links: [], failed: true, groupsCapped: false, groupsPageFailed: false, lookupsCapped: false };
     });
     var roleDefinitionsPromise = snaFetchRoleDefinitions(targetUrl);
     var siteAdminsPromise = snaFetchSiteAdmins(targetUrl);
@@ -2624,7 +2672,8 @@ function snaBuildCoverage(report) {
 
     var sharing = perms.sharingLinks;
     var sharingNotes = [];
-    if (sharing.groupsCapped) { sharingNotes.push('Sitenalyzer read the first ' + SNA_SHARING_GROUPS_MAX.toLocaleString('en-US') + ' site groups only, so some sharing links may be missing.'); }
+    var sharingGroupsNote = snaSharingGroupsNote(sharing);
+    if (sharingGroupsNote) { sharingNotes.push(sharingGroupsNote); }
     if (sharing.lookupsCapped) { sharingNotes.push('Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.'); }
     add('Sharing links', sharing.failed ? 'failed' : (sharingNotes.length ? 'partial' : 'read'),
         sharing.failed ? 'Sitenalyzer could not read the sharing links. You need to be a site owner to see them.' : sharingNotes.join(' '));
@@ -2655,6 +2704,7 @@ function snaBuildCoverage(report) {
 
 // Reads the site in the Site URL box and shows its report. options.keepRoute reopens the view that was on screen,
 // for Refresh report. Otherwise the report opens the view in the address, such as #sna/taxonomy, or Overview.
+// options.focusProgress moves focus to the progress message while the site is read, as keepRoute does.
 async function gatherSiteInformation(options) {
     var opts = options || {};
     var btn = document.getElementById('sp-btn-gather');
@@ -2678,7 +2728,7 @@ async function gatherSiteInformation(options) {
     if (entry) { entry.hidden = false; }
     btn.disabled = true;
     snaSetProgress('Reading the site...');
-    if (opts.keepRoute) {
+    if (opts.keepRoute || opts.focusProgress) {
         var loader = document.getElementById('sp-loader');
         if (loader) { loader.focus(); }
     }
@@ -3098,20 +3148,55 @@ function snaRenderSitePagesSection(sitePages) {
     return html + '</div>';
 }
 
-// Returns HTML wrapping a description string in an inline-editable span with a pencil button for admin users.
-function renderAdminDescWrap(text, editKey) {
-    var safeText  = snaEscapeHtml(text || '');
-    if (!_snaIsAdmin) { return safeText || '<em class="sna-muted">No description.</em>'; }
-    var isEmpty    = !safeText;
-    var emptyClass = isEmpty ? ' sna-editable-wrap--empty' : '';
-    var displayed  = isEmpty ? '<em class="sna-muted" title="No description. Select the pencil button to add one.">⠀</em>' : safeText;
-    return '<span class="sna-editable-wrap' + emptyClass + '" data-edit-key="' + snaEscapeHtml(editKey) + '">' +
-           '<span class="sna-editable-text" data-sna-orig="' + safeText + '">' + displayed + '</span>' +
-           '<button class="sna-pencil-btn" title="Edit description" aria-label="Edit description" data-action="start-edit">&#9998;</button>' +
-           '</span>';
+// Returns a description, with an Edit description button for people who can manage the site, or the plain text for
+// everyone else. editKey is the key snaSaveDescription takes, such as 'list:<list ID>'; name is the name of what the
+// description belongs to, used in the button and box labels. While a draft exists for editKey (see _snaDrafts), the
+// editor is drawn instead, so a draft stays while the person opens other views. The full report never shows drafts.
+function renderAdminDescWrap(text, editKey, name) {
+    var label = name ? String(name) : 'this item';
+    var shown = text ? snaEscapeHtml(text) : '<em class="sna-muted">No description.</em>';
+    if (!_snaIsAdmin) { return '<span class="sna-desc-text">' + shown + '</span>'; }
+
+    var isPrint = !!(_snaRoute && _snaRoute.section === 'print');
+    var draft = isPrint ? null : _snaDrafts[editKey];
+    var attrs = ' data-edit-key="' + snaEscapeHtml(editKey) + '" data-edit-name="' + snaEscapeHtml(label) + '"' +
+        ' data-sna-orig="' + snaEscapeHtml(draft ? draft.original : (text || '')) + '"';
+    if (!draft) {
+        return '<span class="sna-editable-wrap"' + attrs + '><span class="sna-editable-text">' + shown + '</span>' +
+            '<button type="button" class="sna-pencil-btn hide-on-print" data-action="start-edit" title="Edit description">' +
+                snaIconHtml('pencil') + '<span class="sna-visually-hidden">Edit description of ' + snaEscapeHtml(label) + '</span></button></span>';
+    }
+
+    var id = snaEditorId(editKey);
+    var busy = draft.saving ? ' disabled' : '';
+    var message = draft.saving ? 'Saving...' : draft.error;
+    // A newline right after <textarea> is dropped by the browser, so one is added to keep a draft that starts with one.
+    // A printout shows the saved description instead of the editor, so an unsaved draft is never printed.
+    var saved = draft.original ? snaEscapeHtml(draft.original) : '<em class="sna-muted">No description.</em>';
+    return '<span class="sna-editable-wrap sna-editing"' + attrs + '>' +
+        '<span class="sna-desc-text sna-print-saved">' + saved + '</span>' +
+        '<label class="sna-editor-label" for="' + id + '">Description for ' + snaEscapeHtml(label) + '</label>' +
+        '<textarea id="' + id + '" class="sna-editor-field" rows="3" aria-describedby="' + id + '-hint ' + id + '-msg"' +
+            (draft.saving ? ' readonly' : '') + '>\n' + snaEscapeHtml(draft.text) + '</textarea>' +
+        '<span id="' + id + '-hint" class="sna-hint">Enter saves. Shift+Enter or Alt+Enter adds a line. Escape cancels.</span>' +
+        '<span class="sna-editor-controls">' +
+            '<button type="button" class="sna-btn sna-btn-primary sna-btn-small" data-action="save-edit"' + busy + '>Save' +
+                '<span class="sna-visually-hidden"> description of ' + snaEscapeHtml(label) + '</span></button>' +
+            '<button type="button" class="sna-btn sna-btn-outline sna-btn-small" data-action="cancel-edit"' + busy + '>Cancel' +
+                '<span class="sna-visually-hidden"> editing description of ' + snaEscapeHtml(label) + '</span></button>' +
+        '</span>' +
+        '<span id="' + id + '-msg" class="sna-editor-message' + (draft.error ? ' sna-error-text' : '') + '" role="' + (draft.error ? 'alert' : 'status') + '">' +
+            snaEscapeHtml(message) + '</span>' +
+    '</span>';
 }
 
-// Renders the term groups, term sets, and terms from the fetched taxonomy data. The caller adds the heading.
+// Returns the element id of the editor box for an edit key. Edit keys hold IDs and internal names from SharePoint,
+// so only letters and numbers are kept.
+function snaEditorId(editKey) {
+    return 'sna-ed-' + String(editKey || '').replace(/[^0-9a-z]/gi, '-');
+}
+
+// Renders every term group, term set, and term for the full report, where every part is open. The caller adds the heading.
 // read is false when the term store could not be read, which is shown differently from a term store with no groups.
 // Group and term set IDs are shown only while Show technical details is on.
 function renderTaxonomySection(read) {
@@ -3124,7 +3209,7 @@ function renderTaxonomySection(read) {
 
     var html = read === false ? '<p class="sna-note">Sitenalyzer could not read all of the term store, so some term groups or terms may be missing.</p>' : '';
     _snaTaxonomyData.forEach(function(group) {
-        var groupDescHtml = renderAdminDescWrap(group.groupDescription, 'termgroup:' + group.groupId);
+        var groupDescHtml = renderAdminDescWrap(group.groupDescription, 'termgroup:' + group.groupId, group.groupName);
         html += '<details class="sna-taxonomy-group">';
         html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(group.groupName) +
                 (technical ? ' <span class="list-id-text sna-summary-id">Term group ID ' + snaEscapeHtml(group.groupId) + '</span>' : '') +
@@ -3134,7 +3219,7 @@ function renderTaxonomySection(read) {
         }
 
         group.termSets.forEach(function(set) {
-            var setDescHtml  = renderAdminDescWrap(set.setDescription, 'termset:' + set.setId);
+            var setDescHtml  = renderAdminDescWrap(set.setDescription, 'termset:' + set.setId, set.setName);
             var termCount    = set.terms ? set.terms.length : 0;
             html += '<details class="sna-taxonomy-set" id="sna-termset-' + snaCleanListId(set.setId) + '">';
             html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(set.setName) +
@@ -3338,111 +3423,178 @@ async function snaTaxonomyCsomUpdate(kind, parts, newText) {
     }
 }
 
-// Activates inline editing for a description field, replacing static text with a contenteditable div.
-function snaStartEdit(wrapEl) {
-    if (!wrapEl || wrapEl.dataset.editing) { return; }
-    wrapEl.dataset.editing = '1';
+// ### Description Editor ###
 
-    var textEl    = wrapEl.querySelector('.sna-editable-text');
-    var pencilBtn = wrapEl.querySelector('.sna-pencil-btn');
-    var origText  = textEl ? (textEl.dataset.snaOrig || '') : '';
-
-    var editorWrap = document.createElement('div');
-    editorWrap.className = 'sna-editor-wrap';
-
-    var field = document.createElement('div');
-    field.className      = 'sna-editor-field';
-    field.contentEditable = 'true';
-    field.setAttribute('role', 'textbox');
-    field.setAttribute('aria-multiline', 'true');
-    field.setAttribute('aria-label', 'Edit description');
-    field.textContent = origText;
-
-    var controls  = document.createElement('div');
-    controls.className = 'sna-editor-controls';
-
-    var saveBtn = document.createElement('button');
-    saveBtn.className = 'sna-editor-save-btn';
-    saveBtn.setAttribute('data-action', 'save-edit');
-    saveBtn.textContent = 'Save';
-
-    var cancelBtn = document.createElement('button');
-    cancelBtn.className = 'sna-editor-cancel-btn';
-    cancelBtn.setAttribute('data-action', 'cancel-edit');
-    cancelBtn.textContent = 'Cancel';
-
-    controls.appendChild(saveBtn);
-    controls.appendChild(cancelBtn);
-    editorWrap.appendChild(field);
-    editorWrap.appendChild(controls);
-
-    wrapEl._snaEditorWrap = editorWrap;
-
-    if (textEl)    { textEl.style.display    = 'none'; }
-    if (pencilBtn) { pencilBtn.style.display = 'none'; }
-    wrapEl.appendChild(editorWrap);
-
-    field.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            snaCancelEdit(wrapEl);
-        } else if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
-            e.preventDefault();
-            snaSaveEditFromEl(wrapEl);
-        }
+// Returns the descriptions on screen that belong to an edit key. The key is compared as text, not put in a selector.
+function snaFindEditWraps(editKey) {
+    return Array.prototype.filter.call(document.querySelectorAll('#sp-info-app .sna-editable-wrap'), function(wrap) {
+        return wrap.getAttribute('data-edit-key') === editKey;
     });
-
-    field.focus();
-    var range = document.createRange();
-    range.selectNodeContents(field);
-    range.collapse(false);
-    var sel = window.getSelection();
-    if (sel) { sel.removeAllRanges(); sel.addRange(range); }
 }
 
-// Cancels an in-progress inline description edit and restores the original displayed text.
-function snaCancelEdit(wrapEl) {
-    if (!wrapEl) { return; }
-    var textEl    = wrapEl.querySelector('.sna-editable-text');
-    var pencilBtn = wrapEl.querySelector('.sna-pencil-btn');
-    var editorWrap = wrapEl._snaEditorWrap;
-    if (editorWrap && editorWrap.parentNode) { editorWrap.parentNode.removeChild(editorWrap); }
-    if (textEl)    { textEl.style.display    = ''; }
-    if (pencilBtn) { pencilBtn.style.display = ''; }
-    delete wrapEl.dataset.editing;
-    delete wrapEl._snaEditorWrap;
+// Draws one description again, as text or as its editor, wherever it is on screen. text is the saved text to show,
+// or undefined to keep the text already there. A description inside a table is drawn again through its table, so the
+// row resizes to fit. Focus moves to the editor box ('field') or the Edit description button ('edit') when the
+// description had focus, or always when force is true, so a save that finishes later never pulls focus from elsewhere.
+function snaRedrawDescription(editKey, text, focus, force) {
+    var wraps = snaFindEditWraps(editKey);
+    // A save can finish while the redraw for "Saving..." is still running. Focus then belongs to the newest redraw,
+    // and a description that lost focus only because its row was being drawn again still counts as having it.
+    var pending = _snaEditFocus[editKey];
+    var hadFocus = force || wraps.some(function(w) { return w.contains(document.activeElement); }) ||
+        (!!pending && pending.hadFocus && (!document.activeElement || document.activeElement === document.body));
+    var ticket = { hadFocus: hadFocus };
+    _snaEditFocus[editKey] = ticket;
+    var redraws = wraps.map(function(wrap) {
+        var tableEl = wrap.closest('.tabulator');
+        var table = tableEl ? _snaTabInstances[tableEl.id] : null;
+        var rowEl = wrap.closest('.tabulator-row');
+        var row = (table && rowEl) ? table.getRows().filter(function(r) { return r.getElement() === rowEl; })[0] : null;
+        if (row) {
+            var update = null;
+            if (typeof text === 'string') {
+                update = {};
+                update[_snaTabMeta[tableEl.id].type === 'terms' ? 'termDescription' : 'description'] = text;
+            }
+            // The table keeps the height it had when it was drawn, so it is drawn again to fit the row's new height.
+            return Promise.resolve(update ? row.update(update) : null).then(function() {
+                row.reformat();
+                return new Promise(function(resolve) {
+                    requestAnimationFrame(function() {
+                        row.normalizeHeight();
+                        table.redraw();
+                        requestAnimationFrame(function() { resolve(); });
+                    });
+                });
+            });
+        }
+        var holder = document.createElement('span');
+        holder.innerHTML = renderAdminDescWrap(typeof text === 'string' ? text : (wrap.getAttribute('data-sna-orig') || ''),
+            editKey, wrap.getAttribute('data-edit-name') || '');
+        if (wrap.parentNode) { wrap.parentNode.replaceChild(holder.firstChild, wrap); }
+        return null;
+    });
+    return Promise.all(redraws).then(function() {
+        if (_snaEditFocus[editKey] !== ticket) { return; }
+        delete _snaEditFocus[editKey];
+        if (!hadFocus || !focus) { return; }
+        var target = snaFindEditWraps(editKey)[0];
+        var control = target ? target.querySelector(focus === 'field' ? '.sna-editor-field' : '.sna-pencil-btn') : null;
+        if (!control) { return; }
+        control.focus();
+        if (focus === 'field') { control.selectionStart = control.selectionEnd = control.value.length; }
+    });
 }
 
-// Reads the inline editor content, calls snaSaveDescription, and updates the displayed text on success.
-function snaSaveEditFromEl(wrapEl) {
-    if (!wrapEl) { return; }
-    var editorWrap = wrapEl._snaEditorWrap;
-    var field      = editorWrap ? editorWrap.querySelector('.sna-editor-field') : null;
-    if (!field) { return; }
-    var newText = field.textContent;
+// Opens the editor for a description, starting from its saved text.
+function snaStartEdit(wrapEl) {
+    if (!wrapEl || !_snaIsAdmin) { return; }
     var editKey = wrapEl.getAttribute('data-edit-key') || '';
-    var saveBtn = editorWrap.querySelector('.sna-editor-save-btn');
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    if (!editKey || _snaDrafts[editKey]) { return; }
+    var original = wrapEl.getAttribute('data-sna-orig') || '';
+    _snaDrafts[editKey] = { text: original, original: original, saving: false, error: '' };
+    snaRedrawDescription(editKey, undefined, 'field', true);
+}
 
-    snaSaveDescription(editKey, newText).then(function() {
-        snaApplyDescriptionToReport(editKey, newText);
-        var textEl = wrapEl.querySelector('.sna-editable-text');
-        if (textEl) {
-            textEl.textContent    = newText || '';
-            textEl.dataset.snaOrig = newText || '';
-        }
-        if (newText) {
-            wrapEl.classList.remove('sna-editable-wrap--empty');
-        } else {
-            wrapEl.classList.add('sna-editable-wrap--empty');
-            if (textEl) { textEl.innerHTML = '<em class="sna-muted">Select ✎ to add a description</em>'; }
-        }
-        snaCancelEdit(wrapEl);
+// Closes the editor and keeps the saved description. Does nothing while a save is running.
+function snaCancelEdit(wrapEl) {
+    var editKey = wrapEl ? wrapEl.getAttribute('data-edit-key') || '' : '';
+    var draft = _snaDrafts[editKey];
+    if (!draft || draft.saving) { return; }
+    delete _snaDrafts[editKey];
+    snaRedrawDescription(editKey, draft.original, 'edit');
+}
+
+// Saves the text in the editor through snaSaveDescription. While it saves, the editor can't be changed or saved again.
+// On success the report, search, and workbooks get the new text. On failure the draft stays with a message, for retrying.
+function snaSaveEdit(wrapEl) {
+    var editKey = wrapEl ? wrapEl.getAttribute('data-edit-key') || '' : '';
+    var draft = _snaDrafts[editKey];
+    if (!draft || draft.saving) { return; }
+    var field = wrapEl.querySelector('.sna-editor-field');
+    if (field) { draft.text = field.value; }
+    var text = draft.text;
+    // A save that finishes after the report was replaced or cleared changes nothing on screen.
+    var token = _snaCollectionToken;
+    draft.saving = true;
+    draft.error = '';
+    snaRedrawDescription(editKey, undefined, 'field');
+
+    snaSaveDescription(editKey, text).then(function() {
+        if (token !== _snaCollectionToken) { return; }
+        snaApplyDescriptionToReport(editKey, text);
+        delete _snaDrafts[editKey];
+        snaRedrawDescription(editKey, text, 'edit');
         snaShowToast('Description saved.');
     }).catch(function(err) {
-        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
-        snaShowToast('Save failed: ' + (err.message || String(err)), true);
+        if (token !== _snaCollectionToken) { return; }
+        draft.saving = false;
+        draft.error = snaSaveErrorText(err);
+        snaRedrawDescription(editKey, undefined, 'field');
     });
+}
+
+// Returns what to tell the person when a description could not be saved. Their draft stays in the editor.
+function snaSaveErrorText(err) {
+    var message = String((err && err.message) || '');
+    var reason;
+    if (/^HTTP 40[13]\b/.test(message)) { reason = 'SharePoint did not allow the change. You need to be a site owner to edit descriptions.'; }
+    else if (/^HTTP \d+/.test(message) || !message) { reason = 'SharePoint could not save it right now.'; }
+    else if (/failed to fetch|networkerror/i.test(message)) { reason = 'Sitenalyzer could not reach SharePoint.'; }
+    else { reason = message; }
+    return 'Sitenalyzer could not save the description. ' + reason + ' Select Save to try again, or Cancel to keep the saved description.';
+}
+
+// Handles the editor keys: Enter saves, Shift+Enter or Alt+Enter adds a line, and Escape cancels.
+// Other keys stop at the editor, so a table around it does not act on keys such as Home and End while the person types.
+function snaHandleEditorKeydown(e) {
+    var field = e.target;
+    if (!field || !field.classList || !field.classList.contains('sna-editor-field')) { return; }
+    e.stopPropagation();
+    if (e.isComposing) { return; }
+    var wrap = field.closest('.sna-editable-wrap');
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        snaCancelEdit(wrap);
+    } else if (e.key === 'Enter' && e.altKey) {
+        // Browsers don't add a line for Alt+Enter by themselves.
+        e.preventDefault();
+        field.setRangeText('\n', field.selectionStart, field.selectionEnd, 'end');
+        snaKeepDraftText(field);
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        snaSaveEdit(wrap);
+    }
+}
+
+// Copies what the person typed into the draft, so it is kept when the view is drawn again.
+function snaKeepDraftText(field) {
+    var wrap = field.closest('.sna-editable-wrap');
+    var draft = wrap ? _snaDrafts[wrap.getAttribute('data-edit-key') || ''] : null;
+    if (draft && !draft.saving) { draft.text = field.value; }
+}
+
+// Returns how many descriptions have changes that are not saved yet, including ones still being saved.
+function snaUnsavedDraftCount() {
+    return Object.keys(_snaDrafts).filter(function(key) {
+        var draft = _snaDrafts[key];
+        return draft.saving || draft.text !== draft.original;
+    }).length;
+}
+
+// Asks before an action that would throw away unsaved descriptions, such as "Refresh report". Returns true when
+// there are none, or when the person agrees to discard them. A save already sent to SharePoint can't be stopped,
+// so while one is running the action waits: the person is told to try again, and false is returned.
+function snaConfirmDiscardDrafts(actionName) {
+    var saving = Object.keys(_snaDrafts).some(function(key) { return _snaDrafts[key].saving; });
+    if (saving) {
+        window.alert('Sitenalyzer is still saving a description. Wait until it says the description is saved, then try again.');
+        return false;
+    }
+    var count = snaUnsavedDraftCount();
+    if (count === 0) { return true; }
+    return window.confirm(actionName + ' discards ' + (count === 1 ? 'your unsaved description' : 'your ' + count + ' unsaved descriptions') +
+        '. Discard ' + (count === 1 ? 'it' : 'them') + '?');
 }
 
 // ### Keep the Report Up to Date After Edits ###
@@ -3528,12 +3680,10 @@ function snaSetTechnicalDetails(isOn) {
 
 // ### Report Addresses ###
 
-// Tabs in a list or library's details, and the parts of Permissions that an address can open.
+// Tabs in a list or library's details, and the parts of Permissions, in the order of the Permissions navigation.
+// #sna/permissions/<part> opens one part; #sna/permissions opens the first.
 var SNA_DETAIL_TABS = ['overview', 'folders', 'columns', 'permissions'];
-var SNA_PERMISSION_ANCHORS = {
-    site: 'sna-perm-site', people: 'sna-perm-people', person: 'sna-perm-person',
-    own: 'sna-perm-own', sharing: 'sna-perm-sharing', apps: 'sna-perm-apps'
-};
+var SNA_PERMISSION_PARTS = ['site', 'people', 'person', 'own', 'sharing', 'apps'];
 
 // The views of the report screen. inNav views have a link in the section navigation.
 var SNA_SECTIONS = {
@@ -3606,7 +3756,7 @@ function snaParseRoute(hash) {
     } else if (section === 'permissions') {
         if (parts.length > 2) { return fallback; }
         if (parts[1]) {
-            if (!Object.prototype.hasOwnProperty.call(SNA_PERMISSION_ANCHORS, parts[1])) { return fallback; }
+            if (SNA_PERMISSION_PARTS.indexOf(parts[1]) === -1) { return fallback; }
             route.anchor = parts[1];
         }
     } else if (section === 'taxonomy') {
@@ -3646,7 +3796,7 @@ function snaRemoveRouteFromAddress() {
 }
 
 // Opens a view. options: { replace, focus, print, scroll }. replace changes the address without a history step.
-// focus is where keyboard focus goes: 'heading' (the default), 'tab', 'detail', 'inventory', 'switch', or 'none'.
+// focus is where keyboard focus goes: 'heading' (the default), 'tab', 'detail', 'inventory', 'subnav', 'switch', or 'none'.
 // In hash mode the address changes and the hashchange listener draws the view, so Back and Forward work too.
 function snaNavigate(route, options) {
     var opts = options || {};
@@ -3712,14 +3862,13 @@ function renderApp(route, options) {
         snaDisposeViewTables(main);
         main.innerHTML = SNA_SECTIONS[route.section].render(route, _snaReport);
     }
-    if (!previous || (previous.section === 'print') !== (route.section === 'print')) { snaRenderSiteTech(); }
+    if (!previous || (previous.section === 'print') !== (route.section === 'print')) {
+        snaRenderSiteTech();
+        snaRenderSiteDescription();
+    }
 
     if (route.section === 'print') {
         main.querySelectorAll('details').forEach(function(d) { d.open = true; });
-    }
-    // Opens the part of Permissions or the term set in the address, and the term group around a term set.
-    for (var opened = snaAnchorElement(route); opened; opened = opened.parentElement ? opened.parentElement.closest('details') : null) {
-        opened.open = true;
     }
     var built = initSnaTabulators();
     if (route.section === 'contents') { snaApplyInventoryFilter(); }
@@ -3729,14 +3878,6 @@ function renderApp(route, options) {
     snaUpdateNav(route);
     snaFocusAfterRender(route, previous, opts);
     if (route.section === 'print' && opts.print) { snaPrintWhenReady(built); }
-}
-
-// Returns the <details> element that the address opens, such as a part of Permissions or a term set, or null.
-function snaAnchorElement(route) {
-    if (!route.anchor) { return null; }
-    if (route.section === 'permissions') { return document.getElementById(SNA_PERMISSION_ANCHORS[route.anchor]); }
-    if (route.section === 'taxonomy') { return document.getElementById('sna-termset-' + route.anchor); }
-    return null;
 }
 
 // Marks the open section in the section navigation.
@@ -3758,9 +3899,10 @@ function snaFocusAfterRender(route, previous, opts) {
     else if (focus === 'tab') { target = document.querySelector('#sna-contents-detail .sna-detail-tabs a[aria-current="page"]'); }
     else if (focus === 'detail') { target = document.getElementById('sna-detail-title'); }
     else if (focus === 'inventory') { target = document.getElementById('sna-inv-' + _snaLastInventoryId); }
+    else if (focus === 'subnav') { target = document.querySelector('#sp-results .sna-subnav a[aria-current="page"]'); }
+    // An address that names a part of Permissions or a term set puts focus on that part's heading.
     if (!target && route.anchor) {
-        var opened = snaAnchorElement(route);
-        target = opened ? opened.querySelector('summary') : null;
+        target = document.getElementById('sna-part-title');
         isAnchor = !!target;
     }
     if (!target) { target = document.getElementById('sna-section-title'); }
@@ -3812,6 +3954,34 @@ function snaExpandCollapseHtml() {
     '</div>';
 }
 
+// Returns the heading of a part of a section, such as Sharing links in Permissions or a term set in Taxonomy.
+// Focus moves to it when an address names the part.
+function snaPartTitleHtml(title, lead) {
+    return '<h3 id="sna-part-title" class="sna-part-title" tabindex="-1">' + snaEscapeHtml(title) + '</h3>' +
+        (lead ? '<p class="sna-lead">' + snaEscapeHtml(lead) + '</p>' : '');
+}
+
+// Returns the navigation beside the parts of a section, such as the parts of Permissions or the term sets in Taxonomy.
+// groups is [{ title, items: [{ href, text, meta, current }] }]; meta is optional small text, such as "3 terms".
+function snaSubnavHtml(label, groups) {
+    return '<nav class="sna-subnav hide-on-print" aria-label="' + snaEscapeHtml(label) + '">' + groups.map(function(g) {
+        return (g.title ? '<p class="sna-subnav-heading">' + snaEscapeHtml(g.title) + '</p>' : '') +
+            '<ul class="sna-subnav-list">' + g.items.map(function(item) {
+                return '<li><a href="' + snaEscapeHtml(item.href) + '" data-nav-focus="subnav"' + (item.current ? ' aria-current="page"' : '') + '>' +
+                    '<span class="sna-subnav-text">' + snaEscapeHtml(item.text) + '</span>' +
+                    (item.meta ? '<span class="sna-subnav-meta">' + snaEscapeHtml(item.meta) + '</span>' : '') + '</a></li>';
+            }).join('') + '</ul>';
+    }).join('') + '</nav>';
+}
+
+// Returns a line with an ID and a button that copies it, such as "Term set ID <ID> Copy", for technical details.
+function snaIdLineHtml(label, id) {
+    var spoken = label.charAt(0).toLowerCase() + label.substring(1);
+    return '<p class="sna-site-id">' + snaEscapeHtml(label) + ' <span class="sna-code">' + snaEscapeHtml(id) + '</span> ' +
+        '<button type="button" class="sna-link-btn sna-copy-btn hide-on-print" data-action="copy-show-id" data-id="' + snaEscapeHtml(id) + '" data-label="' + snaEscapeHtml(label) + '">' +
+            snaIconHtml('copy') + 'Copy<span class="sna-visually-hidden"> ' + snaEscapeHtml(spoken) + '</span></button></p>';
+}
+
 // Returns the heading every view starts with. Focus moves to it when the view opens, so it has tabindex="-1".
 function snaSectionTitleHtml(title, lead) {
     return '<h2 id="sna-section-title" class="sna-section-title" tabindex="-1">' + snaEscapeHtml(title) + '</h2>' +
@@ -3854,7 +4024,8 @@ var SNA_ICONS = {
     swap:     '<path d="M4 8h14l-3-3"/><path d="M20 16H6l3 3"/>',
     settings: '<path d="M4 6h9"/><path d="M17 6h3"/><path d="M4 12h3"/><path d="M11 12h9"/><path d="M4 18h11"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
     search:   '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
-    copy:     '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>'
+    copy:     '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
+    pencil:   '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>'
 };
 
 // Returns the markup for one icon from SNA_ICONS, or '' for a name it doesn't have.
@@ -3884,7 +4055,7 @@ function renderFrame(report) {
     header.innerHTML = logoHtml +
         '<div class="sna-site-text">' +
             '<h1 class="sna-site-title">' + snaEscapeHtml(site.title || 'Untitled site') + '</h1>' +
-            '<p class="sna-site-desc">' + renderAdminDescWrap(site.description, 'site') + '</p>' +
+            '<p class="sna-site-desc">' + renderAdminDescWrap(site.description, 'site', site.title || 'this site') + '</p>' +
             '<p class="sna-site-address">' + snaLinkHtml(site.url, site.url) + '</p>' +
             '<div id="sna-site-tech"></div>' +
         '</div>' +
@@ -3903,16 +4074,21 @@ function renderFrame(report) {
     snaSyncTechnicalSwitch();
 }
 
+// Draws the site's description in the header again. The print view shows the saved description there, and other views
+// show the editor again if the person was editing it.
+function snaRenderSiteDescription() {
+    var desc = document.querySelector('#sna-site-header .sna-site-desc');
+    if (!desc || !_snaReport) { return; }
+    desc.innerHTML = renderAdminDescWrap(_snaReport.site.description, 'site', _snaReport.site.title || 'this site');
+}
+
 // Shows the site ID, with a button that copies it, under the site's address while technical details are on.
 // Only this line is redrawn when the switch changes, so a description being edited in the header is kept.
 function snaRenderSiteTech() {
     var line = document.getElementById('sna-site-tech');
     if (!line) { return; }
     if (!_snaReport || !snaTechnicalDetailsOn()) { line.innerHTML = ''; return; }
-    var siteId = _snaReport.site.id;
-    line.innerHTML = '<p class="sna-site-id">Site ID <span class="sna-code">' + snaEscapeHtml(siteId) + '</span> ' +
-        '<button type="button" class="sna-link-btn sna-copy-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(siteId) + '" data-label="Site ID">' +
-            snaIconHtml('copy') + 'Copy<span class="sna-visually-hidden"> site ID</span></button></p>';
+    line.innerHTML = snaIdLineHtml('Site ID', _snaReport.site.id);
 }
 
 // Returns the list or library with this address ID, or null.
@@ -4153,11 +4329,11 @@ function snaRenderListTab(list, tab) {
     if (tab === 'permissions') {
         if (list.permissions.inherits) { return '<div class="perm-row">Uses the site\'s permissions.</div>'; }
         if (!list.permissions.rolesRead) { return '<div class="perm-row">Sitenalyzer could not read these permissions. You need to be a site owner to see them.</div>'; }
-        return renderPermissionsHtml(list.permissions.roleAssignments);
+        return renderPermissionsHtml(list.permissions.roleAssignments, list.title + ' permissions');
     }
     var changed = snaFormatDate(list.lastModified);
     return '<dl class="sna-facts">' +
-        '<dt>Description</dt><dd>' + renderAdminDescWrap(list.description, 'list:' + list.id) + '</dd>' +
+        '<dt>Description</dt><dd>' + renderAdminDescWrap(list.description, 'list:' + list.id, list.title) + '</dd>' +
         '<dt>Items</dt><dd>' + snaEscapeHtml(snaCountText(Number(list.itemCount) || 0, 'item', 'items')) + '</dd>' +
         '<dt>Last changed</dt><dd>' + snaEscapeHtml(changed || 'Not reported.') + '</dd>' +
         '<dt>Version history</dt><dd>' + snaEscapeHtml(snaVersioningText(list.versioning)) + '</dd>' +
@@ -4257,51 +4433,160 @@ function snaRenderContentsDetail(route, report) {
 
 // ### Permissions, Taxonomy, and Site Review ###
 
-// Draws Permissions: guests and organization-wide access first, then each permission report in its own section.
+// Draws Permissions: a navigation of its parts beside the part in the address. The site part comes first, with the
+// findings about guests, organization-wide access, and lists that have their own permissions.
 function snaRenderPermissions(route, report) {
     var perms = report.permissions;
-    var html = snaSectionTitleHtml('Permissions', 'Who can open what on this site.') + snaExpandCollapseHtml();
-    // Guests, organization-wide groups, and links anyone can use.
-    html += snaRenderRiskFlags();
-    html += '<details class="permissions-section" id="sna-perm-site"><summary>View site permissions</summary>' +
-        (perms.siteRolesRead
-            ? renderPermissionsHtml(perms.siteRoleAssignments)
-            : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') +
-        '</details>';
-    html += '<details class="permissions-section" id="sna-perm-people"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>';
-    html += snaRenderUserAccessTool();
-    html += '<details class="permissions-section" id="sna-perm-own"><summary>Lists and libraries with their own permissions (' + snaOwnPermissionsCount(report) + ')</summary>' +
-        snaRenderInheritanceReport(report.listsRead) + '</details>';
-    html += '<details class="permissions-section" id="sna-perm-sharing"><summary>Sharing links (' +
-        (perms.sharingLinks.failed ? 'could not read' : perms.sharingLinks.links.length) + ')</summary>' + snaRenderSharingLinks(perms.sharingLinks) + '</details>';
-    html += '<details class="permissions-section" id="sna-perm-apps"><summary>Apps with access to this site</summary>' + snaRenderAppsHtml(report) + '</details>';
-    return html;
+    var part = route.anchor || 'site';
+    function withCount(text, count) { return typeof count === 'number' ? text + ' (' + count + ')' : text; }
+    var parts = [
+        ['site', 'Site permissions'],
+        ['people', withCount('People and groups', perms.siteRolesRead ? snaAccessPrincipals(report).length : null)],
+        ['person', 'Check a person\'s access'],
+        ['own', withCount('Own permissions', report.listsRead ? perms.uniqueLists.length : null)],
+        ['sharing', withCount('Sharing links', perms.sharingLinks.failed ? null : perms.sharingLinks.links.length)],
+        ['apps', withCount('Apps with access', perms.siteRolesRead ? perms.appAssignments.length : null)]
+    ];
+    var nav = snaSubnavHtml('Permissions', [{ title: 'Explore access', items: parts.map(function(item) {
+        return { href: snaRouteHash({ section: 'permissions', anchor: item[0] }), text: item[1], current: item[0] === part };
+    }) }]);
+    return snaSectionTitleHtml('Permissions', 'Who can open what on this site, its lists, and its libraries.') +
+        '<div class="sna-split">' + nav + '<div class="sna-split-body">' + snaRenderPermissionPart(part, report) + '</div></div>';
+}
+
+// Returns one part of Permissions, such as 'site' or 'sharing'.
+function snaRenderPermissionPart(part, report) {
+    var perms = report.permissions;
+    if (part === 'people') {
+        var groupsWithMembers = snaAccessPrincipals(report).filter(function(p) { return p.members && p.members.length > 0; }).length;
+        return snaPartTitleHtml('People and groups', 'Who has access, where it applies, and the members of each SharePoint group.') +
+            (groupsWithMembers > 1 ? snaExpandCollapseHtml() : '') +
+            '<div class="sna-callout"><p>Sitenalyzer lists the members of SharePoint groups. It can\'t list the members of Microsoft 365 groups ' +
+                'and security groups, because Microsoft Entra ID manages them.</p></div>' +
+            renderPermissionsByPrincipal();
+    }
+    if (part === 'person') { return snaPartTitleHtml('Check a person\'s access', '') + snaRenderUserAccessTool(); }
+    if (part === 'own') {
+        return snaPartTitleHtml('Lists and libraries with their own permissions', '') + snaRenderInheritanceReport(report.listsRead);
+    }
+    if (part === 'sharing') { return snaPartTitleHtml('Sharing links', '') + snaRenderSharingLinks(perms.sharingLinks); }
+    if (part === 'apps') { return snaPartTitleHtml('Apps with access to this site', '') + snaRenderAppsHtml(report); }
+
+    var html = snaPartTitleHtml('Site permissions', '') + snaRenderRiskFlags() + snaRenderOwnPermissionsFinding(report);
+    if (perms.siteRolesRead) {
+        // Groups that SharePoint creates by itself are left out here, as in People and groups.
+        var shownAssignments = perms.siteRoleAssignments.filter(function(ra) {
+            var member = ra.Member || {};
+            return !(member.PrincipalType === 8 && snaIsSharePointSystemGroup(member.Title));
+        });
+        var leftOut = perms.siteRoleAssignments.length - shownAssignments.length;
+        html += '<p>These permission levels apply to the site and to every list and library that uses the site\'s permissions.</p>' +
+            renderPermissionsHtml(shownAssignments, 'Site permissions') +
+            (leftOut > 0 ? '<p class="sna-note">Left out ' + snaCountText(leftOut, 'group', 'groups') +
+                ' that SharePoint creates by itself for sharing links and Limited Access. The permissions workbook lists them.</p>' : '');
+        var hasLimited = perms.siteRoleAssignments.some(function(ra) { return (ra.RoleDefinitionBindings || []).some(snaIsLimitedAccessRole); });
+        if (hasLimited) {
+            html += '<div class="sna-callout"><h4 class="sna-callout-title">Limited Access is not access to the whole site</h4>' +
+                '<p>SharePoint adds Limited Access when someone is given access to one item, file, or folder. It lets them open only what was shared with them.</p></div>';
+        }
+    } else {
+        html += '<p class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</p>';
+    }
+    return html + '<h4 class="sna-subsection-title">Site collection administrators</h4>' + snaRenderSiteAdmins(perms.siteAdmins) +
+        snaRenderPermissionLevels(perms.roleDefinitions);
 }
 
 // Returns the apps that have their own permissions on the site.
 function snaRenderAppsHtml(report) {
     var perms = report.permissions;
     var inner = perms.appAssignments.length > 0
-        ? renderPermissionsHtml(perms.appAssignments)
+        ? renderPermissionsHtml(perms.appAssignments, 'Apps with access to this site')
         : '<div class="perm-row">' + (perms.siteRolesRead ? 'No apps have their own permissions on this site.' : 'Sitenalyzer could not read the site\'s permissions.') + '</div>';
     return '<p class="sna-note">Apps given access in Microsoft Entra ID, such as through Sites.Selected, don\'t appear here. Ask your Microsoft 365 admin for that list.</p>' + inner;
 }
 
-// Draws Taxonomy: the term groups, term sets, and terms this site collection can use.
+// Draws Taxonomy: the term groups and term sets beside the term set in the address, such as #sna/taxonomy/<term set ID>,
+// or beside a summary of the term groups. A term store with no term groups and one that could not be read say different things.
 function snaRenderTaxonomy(route, report) {
+    var taxonomy = report.taxonomy;
     var html = snaSectionTitleHtml('Taxonomy and term store', 'The term groups, term sets, and terms this site collection can use to tag content.');
-    if (report.taxonomy.groups.length > 0) { html += snaExpandCollapseHtml(); }
-    if (snaTechnicalDetailsOn() && report.taxonomy.termStoreId) {
-        html += '<dl class="sna-tech-strip"><dt>Term store ID</dt><dd>' + snaEscapeHtml(report.taxonomy.termStoreId) + '</dd></dl>';
+    if (taxonomy.groups.length === 0) {
+        return html + (taxonomy.read === false
+            ? '<p class="sna-note">Sitenalyzer could not read the term store. Refresh the report to try again. If that does not work, ask your site owner whether you can open the term store.</p>'
+            : '<p class="sna-muted">This site collection has no term groups of its own.</p>');
     }
-    return html + '<div id="sna-taxonomy-section">' + renderTaxonomySection(report.taxonomy.read) + '</div>';
+
+    var selected = null;
+    var selectedGroup = null;
+    var navGroups = [{ title: '', items: [{ href: '#sna/taxonomy', text: 'All term groups', current: !route.anchor }] }];
+    taxonomy.groups.forEach(function(group) {
+        navGroups.push({ title: group.groupName, items: (group.termSets || []).map(function(set) {
+            var setId = snaCleanListId(set.setId);
+            var isCurrent = !!route.anchor && setId === route.anchor;
+            if (isCurrent) { selected = set; selectedGroup = group; }
+            return { href: snaRouteHash({ section: 'taxonomy', anchor: setId }), text: set.setName,
+                meta: snaCountText((set.terms || []).length, 'term', 'terms'), current: isCurrent };
+        }) });
+    });
+
+    var body = taxonomy.read === false ? '<p class="sna-note">Sitenalyzer could not read all of the term store, so some term groups or terms may be missing.</p>' : '';
+    if (selected) {
+        body += snaRenderTermSet(selectedGroup, selected);
+    } else if (route.anchor) {
+        body += snaPartTitleHtml('Term set not found', '') +
+            '<p class="sna-note">Sitenalyzer did not find this term set in the report. The address may be from another site or an older report. Choose a term set from the list.</p>';
+    } else {
+        body += snaRenderTermGroups(report);
+    }
+    return html + '<div class="sna-split">' + snaSubnavHtml('Term sets', navGroups) + '<div class="sna-split-body" id="sna-taxonomy-section">' + body + '</div></div>';
 }
 
-// Draws Site review: cleanup suggestions, then what this report could and could not read.
+// Returns every term group with its description and links to its term sets.
+function snaRenderTermGroups(report) {
+    var technical = snaTechnicalDetailsOn();
+    var html = snaPartTitleHtml('Term groups', 'Select a term set to see its terms.');
+    if (technical && report.taxonomy.termStoreId) { html += snaIdLineHtml('Term store ID', report.taxonomy.termStoreId); }
+    report.taxonomy.groups.forEach(function(group) {
+        var sets = group.termSets || [];
+        html += '<div class="sna-term-group"><h4 class="sna-term-group-title">' + snaEscapeHtml(group.groupName) + '</h4>' +
+            (technical ? snaIdLineHtml('Term group ID', group.groupId) : '') +
+            '<p class="sna-taxonomy-desc">' + renderAdminDescWrap(group.groupDescription, 'termgroup:' + group.groupId, group.groupName) + '</p>';
+        if (sets.length === 0) {
+            html += '<p class="sna-muted">This term group has no term sets.</p>';
+        } else {
+            html += '<ul class="sna-plain-list">' + sets.map(function(set) {
+                return '<li><a href="' + snaEscapeHtml(snaRouteHash({ section: 'taxonomy', anchor: snaCleanListId(set.setId) })) + '">' + snaEscapeHtml(set.setName) + '</a> ' +
+                    '<span class="sna-muted">(' + snaEscapeHtml(snaCountText((set.terms || []).length, 'term', 'terms')) + ')</span></li>';
+            }).join('') + '</ul>';
+        }
+        html += '</div>';
+    });
+    return html;
+}
+
+// Returns one term set: its term group, description, IDs while technical details are on, and a table of its terms.
+function snaRenderTermSet(group, set) {
+    var terms = set.terms || [];
+    var html = '<p class="sna-breadcrumb">' + snaEscapeHtml(group.groupName) + ' / Term set</p>' + snaPartTitleHtml(set.setName, '') +
+        '<p class="sna-taxonomy-desc">' + renderAdminDescWrap(set.setDescription, 'termset:' + set.setId, set.setName) + '</p>';
+    if (snaTechnicalDetailsOn()) { html += snaIdLineHtml('Term set ID', set.setId) + snaIdLineHtml('Term group ID', group.groupId); }
+    html += '<h4 class="sna-subsection-title">Terms (' + terms.length + ')</h4>';
+    if (terms.length === 0) { return html + '<p class="sna-muted">This term set has no terms.</p>'; }
+    var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
+    _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', setId: set.setId });
+    return html + '<div id="' + tblId + '"></div>';
+}
+
+// Draws Site review: one table of cleanup findings, the largest lists and libraries, and what this report could read.
 function snaRenderReview(route, report) {
-    return snaSectionTitleHtml('Site review', 'Lists and libraries that may need cleanup, and which parts of the site Sitenalyzer could read.') +
-        '<div class="sna-review">' + snaRenderCleanupSignals() + '</div>' +
-        '<h3 class="sna-subsection-title">Report coverage</h3>' + snaRenderCoverageTable(report.coverage);
+    var html = snaSectionTitleHtml('Site review', 'Older content, version history settings, the largest lists and libraries, and what this report could read.');
+    if (!report.listsRead) {
+        html += '<h3 class="sna-subsection-title">Lists and libraries to review for cleanup</h3>' +
+            '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so it could not look for cleanup findings. Refresh the report to try again.</p>';
+    } else {
+        html += snaRenderReviewFindings(report, 3, 'sna-tbl-review') + snaRenderLargestLists(report, 3);
+    }
+    return html + '<h3 class="sna-subsection-title">Report coverage</h3>' + snaRenderCoverageTable(report.coverage);
 }
 
 // Returns the coverage table: one row per part of the report, saying whether Sitenalyzer could read it.
@@ -4389,8 +4674,9 @@ function snaRenderPrint(route, report) {
     var check = _snaUserCheckResult;
     html += '<div class="print-section"><h3 class="sna-subsection-title">Permissions</h3>' + snaRenderRiskFlags() +
         '<details class="permissions-section"><summary>Site permissions</summary>' +
-            (report.permissions.siteRolesRead ? renderPermissionsHtml(report.permissions.siteRoleAssignments)
-                : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') + '</details>' +
+            (report.permissions.siteRolesRead ? renderPermissionsHtml(report.permissions.siteRoleAssignments, 'Site permissions')
+                : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') +
+            '<h4>Site collection administrators</h4>' + snaRenderSiteAdmins(report.permissions.siteAdmins) + '</details>' +
         '<details class="permissions-section"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>' +
         '<details class="permissions-section"><summary>Lists and libraries with their own permissions (' + snaOwnPermissionsCount(report) + ')</summary>' + snaRenderInheritanceReport(report.listsRead) + '</details>' +
         '<details class="permissions-section"><summary>Sharing links</summary>' + snaRenderSharingLinks(report.permissions.sharingLinks) + '</details>' +
@@ -4399,9 +4685,113 @@ function snaRenderPrint(route, report) {
         (check ? '<p>' + snaEscapeHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
     '</div>';
     html += '<div class="print-section"><h3 class="sna-subsection-title">Taxonomy and term store</h3>' + renderTaxonomySection(report.taxonomy.read) + '</div>';
-    html += '<div class="print-section"><h3 class="sna-subsection-title">Site review</h3>' + snaRenderCleanupSignals() +
+    html += '<div class="print-section"><h3 class="sna-subsection-title">Site review</h3>' +
+        (report.listsRead ? snaRenderReviewFindings(report, 4, 'sna-tbl-review-print') + snaRenderLargestLists(report, 4)
+            : '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so it could not look for cleanup findings.</p>') +
         '<h4>Report coverage</h4>' + snaRenderCoverageTable(report.coverage) + '</div>';
     return html;
+}
+
+// ### Choose a Site Dialog ###
+
+// Opens Choose a site, which finds one of the sites the person can open or takes a site address.
+// Browsers without dialog support return to the start screen instead, as Start over does, keeping the address.
+function snaOpenSiteDialog(opener) {
+    var dialog = document.getElementById('sna-site-dialog');
+    if (!dialog || typeof dialog.showModal !== 'function') {
+        if (snaConfirmDiscardDrafts('Changing the site')) { startOver(true); }
+        return;
+    }
+    _snaSiteDialogOpener = opener || null;
+    var find = document.getElementById('sna-site-find');
+    var address = document.getElementById('sna-site-address');
+    if (find) { find.value = ''; }
+    if (address) { address.value = ''; }
+    snaShowSiteAddressMessage('');
+    snaRenderSiteChoices();
+    dialog.showModal();
+    if (find) { find.focus(); }
+}
+
+// Closes Choose a site. Focus returns to the button that opened it, through the dialog's close listener.
+function snaCloseSiteDialog() {
+    var dialog = document.getElementById('sna-site-dialog');
+    if (dialog && dialog.open) { dialog.close(); }
+}
+
+// Returns focus to the button that opened Choose a site, unless a site is being opened.
+function snaHandleSiteDialogClose() {
+    var opener = _snaSiteDialogOpener;
+    _snaSiteDialogOpener = null;
+    if (opener && document.contains(opener) && opener.offsetParent !== null) { opener.focus(); }
+}
+
+// Shows a problem with the typed site address under the address box, or clears it when message is ''.
+function snaShowSiteAddressMessage(message) {
+    var box = document.getElementById('sna-site-address-message');
+    if (!box) { return; }
+    box.textContent = message;
+    box.hidden = !message;
+}
+
+// Lists the sites whose name or address contains the text in Find a site, with the site being read first.
+// At most SNA_SITE_CHOICES_MAX are listed; the status line says how many matched.
+function snaRenderSiteChoices() {
+    var list = document.getElementById('sna-site-choices');
+    var status = document.getElementById('sna-site-find-status');
+    var find = document.getElementById('sna-site-find');
+    if (!list || !status) { return; }
+    var query = find ? find.value.trim().toLowerCase() : '';
+    var current = _snaReport ? xlsxStripSlash(_snaReport.siteUrl).toLowerCase() : '';
+    function isCurrent(site) { return xlsxStripSlash(String(site.url || '')).toLowerCase() === current; }
+    var matches = (globalAccessibleSites || []).filter(function(site) {
+        return !query || String(site.title || '').toLowerCase().indexOf(query) > -1 || String(site.url || '').toLowerCase().indexOf(query) > -1;
+    });
+    matches = matches.filter(isCurrent).concat(matches.filter(function(site) { return !isCurrent(site); }));
+    var shown = matches.slice(0, SNA_SITE_CHOICES_MAX);
+
+    list.innerHTML = shown.map(function(site) {
+        return '<li><button type="button" class="sna-site-choice" data-action="choose-site" data-url="' + snaEscapeHtml(site.url) + '">' +
+            '<span class="sna-site-choice-title">' + snaEscapeHtml(site.title || site.url) + '</span>' +
+            '<span class="sna-site-choice-url">' + snaEscapeHtml(site.url) + '</span>' +
+            (isCurrent(site) ? '<span class="sna-site-choice-note">Current site</span>' : '') + '</button></li>';
+    }).join('');
+
+    if ((globalAccessibleSites || []).length === 0) {
+        status.textContent = 'Sitenalyzer has not found your sites yet. Select Refresh sites list, or enter the site address below.';
+    } else if (matches.length === 0) {
+        status.textContent = 'No sites match. Try part of the site name, or enter the site address below.';
+    } else if (shown.length < matches.length) {
+        status.textContent = 'Showing ' + shown.length + ' of ' + matches.length + ' sites. Type more of the name to find the others.';
+    } else {
+        status.textContent = 'Showing ' + snaCountText(matches.length, 'site', 'sites') + '.';
+    }
+}
+
+// Reads the list of sites again, then lists them in the open dialog.
+function snaRefreshSiteChoices() {
+    var status = document.getElementById('sna-site-find-status');
+    if (status) { status.textContent = 'Reading your sites...'; }
+    Promise.resolve(_snaReloadSites ? _snaReloadSites() : null).then(snaRenderSiteChoices, snaRenderSiteChoices);
+}
+
+// Opens the report of another site after checking its address and asking about unsaved descriptions.
+// Only https addresses on this SharePoint tenant are accepted, such as https://contoso.sharepoint.com/sites/research.
+function snaOpenSite(address) {
+    var text = String(address || '').trim();
+    var origin = snaOrigin(getBaseUrl()) || window.location.origin;
+    if (!snaSafeTenantUrl(text, getBaseUrl()) || !/^https:\/\//i.test(text)) {
+        snaShowSiteAddressMessage('Enter the full address of a SharePoint site, such as ' + origin + '/sites/your-site.');
+        var box = document.getElementById('sna-site-address');
+        if (box) { box.focus(); }
+        return;
+    }
+    if (!snaConfirmDiscardDrafts('Opening another site')) { return; }
+    _snaSiteDialogOpener = null;
+    snaCloseSiteDialog();
+    var input = document.getElementById('site-url-input');
+    if (input) { input.value = text; }
+    gatherSiteInformation({ focusProgress: true });
 }
 
 // ### Start the App ###
@@ -4424,17 +4814,50 @@ function startApplication() {
                 snaCheckUserAccess();
             }
         });
+        // The editor keys are handled before the event reaches any table around the editor.
+        app.addEventListener('keydown', snaHandleEditorKeydown, true);
         app.addEventListener('input', function(e) {
             if (e.target && e.target.id === 'sna-inventory-filter') {
                 _snaContentsFilter = e.target.value;
                 snaApplyInventoryFilter();
+            } else if (e.target && e.target.id === 'sna-site-find') {
+                snaRenderSiteChoices();
+            } else if (e.target && e.target.classList && e.target.classList.contains('sna-editor-field')) {
+                snaKeepDraftText(e.target);
             }
         });
-        // The Modern Script Editor can run this file again; the address listener is added once for each app.
+        // Double-clicking a description is a shortcut for its Edit description button.
+        app.addEventListener('dblclick', function(e) {
+            var text = e.target.closest ? e.target.closest('.sna-editable-text') : null;
+            var wrap = text ? text.closest('.sna-editable-wrap') : null;
+            if (wrap && !wrap.classList.contains('sna-editing')) { snaStartEdit(wrap); }
+        });
+        // The Modern Script Editor can run this file again; the window listeners are added once for each app.
         if (!app.hasAttribute('data-sna-routing')) {
             app.setAttribute('data-sna-routing', 'true');
             window.addEventListener('hashchange', snaHandleHashChange);
+            // Leaving or reloading the page with an unsaved description makes the browser ask first.
+            window.addEventListener('beforeunload', function(e) {
+                if (snaUnsavedDraftCount() > 0) { e.preventDefault(); e.returnValue = ''; }
+            });
         }
+    }
+
+    var siteDialog = document.getElementById('sna-site-dialog');
+    if (siteDialog) {
+        siteDialog.addEventListener('close', snaHandleSiteDialogClose);
+        // Escape in a search box only clears the box, so Escape is handled here to close the dialog from anywhere in it.
+        siteDialog.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); snaCloseSiteDialog(); }
+        });
+    }
+    var siteAddressForm = document.getElementById('sna-site-address-form');
+    if (siteAddressForm) {
+        siteAddressForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var box = document.getElementById('sna-site-address');
+            snaOpenSite(box ? box.value : '');
+        });
     }
 
     var searchForm = document.getElementById('sna-search-form');
@@ -4604,16 +5027,19 @@ function startApplication() {
         }
     }
 
-    fetchAccessibleSites();
+    // Reads the sites list from SharePoint again, for the refresh buttons on the start screen and in Choose a site.
+    _snaReloadSites = function() {
+        try { localStorage.removeItem(SITES_CACHE_KEY); } catch(e) {}
+        globalAccessibleSites = [];
+        return fetchAccessibleSites();
+    };
+    fetchAccessibleSites().then(function() {
+        var dialog = document.getElementById('sna-site-dialog');
+        if (dialog && dialog.open) { snaRenderSiteChoices(); }
+    });
 
     var sitesRefreshBtn = document.getElementById('sna-sites-refresh-btn');
-    if (sitesRefreshBtn) {
-        sitesRefreshBtn.addEventListener('click', function() {
-            try { localStorage.removeItem(SITES_CACHE_KEY); } catch(e) {}
-            globalAccessibleSites = [];
-            fetchAccessibleSites();
-        });
-    }
+    if (sitesRefreshBtn) { sitesRefreshBtn.addEventListener('click', function() { _snaReloadSites(); }); }
 
     if (siteUrlInput) {
         // Extracts the searchable segment from a site URL input value (the text after the last slash).

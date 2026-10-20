@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.css
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: Styles for the Sitenalyzer app. The build copies this file to dist/SiteAssets/styles/,
          and sitenalyzer.js adds it to the page from the site's Site Assets library.
          Every rule starts with the app's own elements, so the rest of the SharePoint page is unchanged.
@@ -595,12 +595,48 @@ details.permissions-section {
 .sna-risk-row { font-size: 14px; padding: 3px 0; color: #323130; margin: 0; overflow-wrap: anywhere; }
 .sna-risk-reason { font-weight: 600; color: #a4262c; }
 
-/* Cleanup suggestions. #6b5400 keeps a 6.49:1 contrast ratio on the gray section background. */
-.sna-cleanup-group { margin: 8px 0; }
-#sp-info-app .sna-cleanup-head { font-weight: 600; font-size: 15px; padding: 4px 0; margin: 0; color: #323130; }
-#sp-info-app .sna-cleanup-alert { color: #a4262c; }
-#sp-info-app .sna-cleanup-warning { color: #6b5400; }
-.sna-cleanup-row { font-size: 14px; padding: 2px 0 2px 12px; color: #323130; }
+/* Findings and notes that stand out from the text around them. */
+.sna-finding { margin: 14px 0; padding: 12px 14px; border-radius: 6px; border-left: 5px solid var(--um-dark-blue); background: var(--sna-panel); }
+#sp-info-app .sna-finding-title { font-size: 1em; margin: 0 0 4px 0; }
+.sna-finding-text { margin: 0 0 6px 0; font-size: 14px; }
+.sna-finding-links { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 8px 0 0 0; font-size: 14px; }
+.sna-callout { margin: 12px 0; padding: 10px 14px; border-left: 4px solid #4a7fb0; background: #eef5fb; font-size: 14px; }
+.sna-callout p { margin: 0; }
+#sp-info-app .sna-callout-title { font-size: 1em; margin: 0 0 4px 0; }
+.sna-plain-list { margin: 4px 0 12px 0; padding-left: 20px; }
+.sna-plain-list li { margin: 2px 0; }
+
+/* People and groups, one card each. */
+.sna-principal-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 12px 0; }
+@media (min-width: 60rem) {
+    .sna-principal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+#sp-info-app .sna-principal-grid .sna-principal-block { border: 1px solid var(--sna-rule); border-radius: 4px; padding: 12px 14px; min-width: 0; }
+
+/* A section with its own navigation beside its parts, such as Permissions and Taxonomy. */
+.sna-split { display: grid; grid-template-columns: 1fr; gap: 20px; }
+@media (min-width: 48rem) {
+    .sna-split { grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr); }
+}
+.sna-split-body { min-width: 0; }
+.sna-subnav { align-self: start; border: 1px solid var(--sna-rule); border-radius: 4px; padding: 10px; background: var(--sna-panel); }
+.sna-subnav-heading { margin: 10px 0 4px 6px; font-size: 14px; font-weight: 700; color: var(--sna-text-2); overflow-wrap: anywhere; }
+.sna-subnav-heading:first-child { margin-top: 2px; }
+.sna-subnav-list { list-style: none; margin: 0; padding: 0; }
+#sp-info-app .sna-subnav-list a {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    min-height: 40px; padding: 8px 10px; border-left: 4px solid transparent; border-radius: 2px;
+    color: var(--sna-link); overflow-wrap: anywhere; text-decoration: none;
+}
+#sp-info-app .sna-subnav-list a:hover { background: #dceaf5; }
+.sna-subnav-text { text-decoration: underline; }
+#sp-info-app .sna-subnav-list a[aria-current="page"] .sna-subnav-text { text-decoration: none; }
+#sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: var(--um-dark-blue); background: #dceaf5; font-weight: 700; color: var(--um-dark-blue); }
+.sna-subnav-meta { flex-shrink: 0; font-size: 13px; color: var(--sna-text-2); font-weight: 400; }
+#sp-info-app .sna-part-title { margin: 0 0 8px 0; font-size: 1.3em; }
+.sna-breadcrumb { margin: 0 0 4px 0; font-size: 14px; color: var(--sna-text-2); }
+.sna-term-group { margin: 0 0 16px 0; padding: 0 0 8px 0; border-bottom: 1px solid var(--sna-rule); }
+#sp-info-app .sna-term-group-title { margin: 12px 0 4px 0; font-size: 1.1em; }
 
 /* ### Tables ###
    Tabulator theme that matches the Sitenalyzer palette. */
@@ -777,53 +813,50 @@ details.permissions-section {
 #sp-info-app .sna-taxonomy-set > summary { font-weight: 600; color: var(--um-dark-blue); }
 .sna-taxonomy-desc { font-size: 14px; color: #555; margin: 8px 0 6px 0; }
 
-/* Admin inline edit */
-.sna-editable-wrap { position: relative; display: inline; }
+/* Description editor. The Edit description button is always visible, so touch and keyboard users can find it. */
+.sna-editable-text, .sna-desc-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 #sp-info-app .sna-pencil-btn {
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 15px;
-    padding: 0 4px;
-    margin: 0 0 0 4px;
-    min-width: 24px;
-    min-height: 24px;
-    opacity: 0.6;
-    transition: opacity 0.15s;
-    vertical-align: middle;
-    color: var(--um-dark-blue);
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 28px; min-height: 28px; padding: 2px; margin: 0 0 0 6px; vertical-align: middle;
+    background: #ffffff; border: 1px solid #8fa3b5; border-radius: 4px; color: var(--um-dark-blue); cursor: pointer;
 }
-#sp-info-app .sna-editable-wrap:hover .sna-pencil-btn,
-#sp-info-app .sna-editable-wrap:focus-within .sna-pencil-btn,
-#sp-info-app .sna-pencil-btn:focus { opacity: 1; border-color: var(--um-dark-blue); }
-.sna-editor-wrap { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
-.sna-editor-field {
-    min-height: 60px;
-    padding: 6px 8px;
-    font-size: 14px;
-    font-family: inherit;
-    border: 2px solid var(--um-dark-blue);
-    border-radius: 4px;
-    background: #fff;
-    white-space: pre-wrap;
-    word-break: break-word;
-    line-height: 1.5;
+#sp-info-app .sna-pencil-btn:hover { border-color: var(--um-dark-blue); background: var(--sna-panel); }
+#sp-info-app .sna-pencil-btn .sna-icon { width: 16px; height: 16px; margin: 0; }
+.sna-editable-wrap.sna-editing { display: block; margin: 4px 0; }
+.sna-editor-label { display: block; font-weight: 700; font-size: 14px; margin: 0 0 4px 0; white-space: normal; }
+#sp-info-app .sna-editor-field {
+    display: block; width: 100%; min-height: 4.5em; padding: 6px 8px; resize: vertical;
+    font: inherit; font-size: 15px; line-height: 1.5; color: var(--sna-text);
+    border: 2px solid var(--um-dark-blue); border-radius: 4px; background: #ffffff;
 }
-.sna-editor-controls { display: flex; gap: 6px; margin-top: 2px; }
-#sp-info-app .sna-editor-save-btn,
-#sp-info-app .sna-editor-cancel-btn {
-    padding: 4px 12px;
-    font-size: 13px;
-    border-radius: 4px;
-    cursor: pointer;
-    margin: 0;
-    min-height: 28px;
+#sp-info-app .sna-editor-field[readonly] { background: #f3f2f1; }
+.sna-editing .sna-hint { display: block; white-space: normal; }
+.sna-editor-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0 0; }
+.sna-editor-message { display: block; font-size: 14px; margin: 6px 0 0 0; white-space: normal; }
+.sna-editor-message:empty { display: none; }
+.sna-print-saved { display: none; }
+
+/* Choose a site dialog. */
+#sp-info-app .sna-dialog {
+    width: min(40rem, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+    padding: 20px 24px; border: 1px solid var(--sna-rule); border-radius: 6px; color: var(--sna-text); background: #ffffff;
 }
-#sp-info-app .sna-editor-save-btn { background: var(--um-dark-blue); color: #fff; border: 1px solid var(--um-dark-blue); }
-#sp-info-app .sna-editor-save-btn:hover { background: var(--um-medium-blue); }
-#sp-info-app .sna-editor-cancel-btn { background: #fff; color: #323130; border: 1px solid #8a8886; }
-#sp-info-app .sna-editor-cancel-btn:hover { background: #f3f2f1; }
+#sp-info-app .sna-dialog::backdrop { background: rgba(0, 39, 76, 0.55); }
+.sna-dialog-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 8px 0; padding: 0 0 8px 0; border-bottom: 1px solid var(--sna-rule); }
+#sp-info-app .sna-dialog-title { margin: 0; font-size: 1.4em; }
+.sna-dialog-refresh { margin: 6px 0 0 0; }
+.sna-site-choices { list-style: none; margin: 8px 0 16px 0; padding: 0; max-height: 18rem; overflow: auto; }
+.sna-site-choices li { margin: 0 0 6px 0; }
+#sp-info-app .sna-site-choice {
+    display: block; width: 100%; text-align: left; padding: 10px 12px; min-height: 44px;
+    border: 1px solid var(--sna-rule); border-radius: 4px; background: #ffffff; color: var(--sna-text); font: inherit; cursor: pointer;
+}
+#sp-info-app .sna-site-choice:hover { background: var(--sna-panel); border-color: var(--um-dark-blue); }
+.sna-site-choice-title { display: block; font-weight: 700; color: var(--um-dark-blue); }
+.sna-site-choice-url, .sna-site-choice-note { display: block; font-size: 13px; color: var(--sna-text-2); overflow-wrap: anywhere; }
+.sna-site-address-form { border-top: 1px solid var(--sna-rule); padding-top: 12px; }
+#sp-info-app #sna-site-address { flex: 1 1 14rem; min-width: 0; padding: 8px 10px; font: inherit; border: 1px solid #767676; border-radius: 4px; }
+.sna-site-address-form .sna-url-row { flex-wrap: wrap; }
 
 /* ### Narrow Screens ###
    At 320 CSS pixels the frame keeps a 16 pixel gutter and nothing scrolls sideways except wide tables. */
@@ -846,6 +879,8 @@ details.permissions-section {
     #sp-info-app #sna-technical-switch:checked::before { background: HighlightText; }
     #sp-info-app .sna-nav a[aria-current="page"],
     #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
+    #sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: Highlight; }
+    #sp-info-app .sna-pencil-btn { border-color: ButtonText; }
     .sna-mark-dot { background: CanvasText; }
     .sna-utility-bar, .sna-nav-row { border-bottom: 1px solid CanvasText; }
 }
@@ -868,6 +903,8 @@ details.permissions-section {
     #sp-info-app .tabulator-tableholder { height: auto !important; overflow: visible !important; }
     .sna-table-scroll { max-height: none !important; overflow: visible !important; }
     #sp-info-app .tabulator .tabulator-header { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    #sp-info-app .sna-pencil-btn, .sna-editor-controls { display: none !important; }
+    #sp-info-app .sna-pencil-btn, .sna-editor-controls, .sna-subnav, .sna-dialog { display: none !important; }
+    #sp-info-app .sna-editing > :not(.sna-print-saved) { display: none !important; }
+    #sp-info-app .sna-editing > .sna-print-saved { display: inline !important; }
     .app-footer { padding: 12px 0 0 0; }
 }
