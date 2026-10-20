@@ -27,7 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 ## Description
 Sitenalyzer is an open-source inventory and data dictionary tool for SharePoint Online. It runs on a page in your site and reports the site's lists, document libraries, columns, and permissions. It can also save that report as an Excel data dictionary. It is designed for data stewards, research teams, SharePoint administrators, developers, security analysts, and data analysts.
 
-![Screenshot of Sitenalyzer](sitenalyzer-preview.png)
+![Screenshot of Sitenalyzer](images/sitenalyzer-preview.png)
 
 With Sitenalyzer, you can:
 + Review every list and library, with its columns, descriptions, and item counts, and every site page.

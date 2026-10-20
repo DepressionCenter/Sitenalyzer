@@ -238,7 +238,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     border-radius: 7px 7px 0 0;
 }
 .sna-mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05em; }
-.sna-mark-dot { width: 14px; height: 22px; background: var(--um-maize); border-radius: 1px 7px 1px 1px; }
+/* Sitenalyzer symbol: the site (maize) with two lists and libraries (white) branching from it. On dark blue,
+   maize is 9.89:1, white 15.06:1, and the #a7bfd6 branch line 7.94:1. The same drawing is in images/. */
+.sna-mark-symbol { width: 24px; height: 24px; flex: none; }
+.sna-symbol-site { fill: var(--um-maize); }
+.sna-symbol-list { fill: #ffffff; }
+.sna-symbol-branch { fill: none; stroke: #a7bfd6; stroke-width: 2.6; stroke-linejoin: round; }
+.sna-mark-site { color: var(--um-maize); }
 .sna-utility-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
 #sp-info-app .sna-utility-bar .sna-link-btn { color: #ffffff; }
 /* #a7bfd6 borders keep a 7.8:1 contrast ratio against dark blue. */
@@ -891,7 +897,9 @@ details.permissions-section {
     #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
     #sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: Highlight; }
     #sp-info-app .sna-pencil-btn { border-color: ButtonText; }
-    .sna-mark-dot { background: CanvasText; }
+    .sna-symbol-site, .sna-symbol-list { fill: CanvasText; }
+    .sna-symbol-branch { stroke: CanvasText; }
+    .sna-mark-site { color: inherit; }
     .sna-site-logo-placeholder { background: Canvas; color: CanvasText; border: 1px solid CanvasText; }
     .sna-utility-bar, .sna-nav-row { border-bottom: 1px solid CanvasText; }
 }

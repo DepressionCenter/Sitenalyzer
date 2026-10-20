@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.html
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: Markup for the Sitenalyzer app: the start screen, and the frame of the report screen (site header,
          section navigation, search, report actions, and footer), and the Choose a site dialog. The build puts this markup inside sitenalyzer.js,
          which places it in the page's <div id="sitenalyzer-app"></div> at startup. It holds no site data;
@@ -46,7 +46,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 		<div id="sp-loader" class="sna-progress" role="status" tabindex="-1"></div>
 		<div id="sna-report" class="sna-report" hidden>
 			<div class="sna-utility-bar hide-on-print">
-				<span class="sna-mark"><span class="sna-mark-dot" aria-hidden="true"></span>Sitenalyzer</span>
+				<span class="sna-mark"><svg class="sna-mark-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="sna-symbol-site" x="3.5" y="3.5" width="11" height="9" rx="2"/><path class="sna-symbol-branch" d="M9 12.5V25.5H15M9 17.5H15"/><rect class="sna-symbol-list" x="15.5" y="14.1" width="13" height="6.8" rx="2"/><rect class="sna-symbol-list" x="15.5" y="22.1" width="13" height="6.8" rx="2"/></svg><span class="sna-visually-hidden">Sitenalyzer</span><span aria-hidden="true"><span class="sna-mark-site">Site</span>nalyzer</span></span>
 				<div class="sna-utility-actions">
 					<button type="button" class="sna-link-btn" data-action="refresh-report"><span data-icon="refresh"></span>Refresh report</button>
 					<button type="button" class="sna-link-btn" data-action="start-over"><span data-icon="undo"></span>Start over</button>

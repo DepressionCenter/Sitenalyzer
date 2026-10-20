@@ -1590,6 +1590,16 @@ test('marks every link that opens a new window so SharePoint does not open it in
     await expect(page.locator('a[target="_blank"]:not([data-interception="off"])')).toHaveCount(0);
 });
 
+test('shows the Sitenalyzer symbol in the top bar and reads the name as one word', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const mark = page.locator('.sna-utility-bar .sna-mark');
+    await expect(mark.locator('svg.sna-mark-symbol')).toBeVisible();
+    await expect(mark.locator('svg.sna-mark-symbol')).toHaveAttribute('aria-hidden', 'true');
+    // "Site" has its own color, so screen readers get the name from a hidden copy instead of two pieces of text.
+    await expect(mark).toMatchAriaSnapshot('- text: Sitenalyzer');
+});
+
 // ### Navigation and Addresses ###
 
 test('keeps the open section in the address so Back and Forward work', async function({ page }) {
