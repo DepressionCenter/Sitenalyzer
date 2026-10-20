@@ -100,7 +100,6 @@ You now know what the report screen is meant to do and why each part works the w
 - [Branding](branding.md)
 - [Building and testing Sitenalyzer](development.md)
 - [Issue #14: Show parent terms and where each term set is used in Taxonomy](https://github.com/DepressionCenter/Sitenalyzer/issues/14)
-- [Issue #9: UI redesign](https://github.com/DepressionCenter/Sitenalyzer/issues/9)
 - [WCAG 2.2](https://www.w3.org/TR/WCAG22/)
 - [GNU Free Documentation License](https://www.gnu.org/licenses/fdl-1.3.html)
 
