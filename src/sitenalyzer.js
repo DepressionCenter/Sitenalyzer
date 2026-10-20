@@ -361,8 +361,9 @@ function snaTableColumns(type, tbl) {
       {
         title: 'Page', field: 'name', sorter: 'string', widthGrow: 3,
         formatter: function(cell) {
+          var href = snaRouteHash({ section: 'contents', id: 'pages', page: cell.getRow().getData().key });
           return '<span class="sna-type-icon" aria-hidden="true">📄</span>' +
-            snaLinkHtml(cell.getRow().getData().url, cell.getValue(), 'sna-folder-link');
+            '<a href="' + snaEscapeHtml(href) + '" class="sna-folder-link" data-nav-focus="detail">' + snaEscapeHtml(cell.getValue()) + '</a>';
         }
       },
       { title: 'File name', field: 'fileName', sorter: 'string', widthGrow: 2 },
@@ -403,22 +404,18 @@ function snaUpdateTableCount(countEl, shown, total, label) {
 }
 
 // Builds every table in _snaTablesQueue whose element is on the page, then empties the queue.
-// Returns one promise per table that resolves once the table has been drawn, so printing can wait for them.
 function initSnaTabulators() {
-  var built = [];
-  if (!Tabulator) { _snaTablesQueue = []; return built; }
+  if (!Tabulator) { _snaTablesQueue = []; return; }
 
   _snaTablesQueue.forEach(function(tbl) {
     var el = document.getElementById(tbl.id);
     if (!el) { return; }
 
     // Tables longer than SNA_TABLE_FILTER_MIN_ROWS get a filter box with a row count under it.
-    // The full report for printing always shows every row, so it has no filter boxes.
     var filterInput = null;
     var countEl = null;
     var total = tbl.data.length;
-    var isPrintView = !!(_snaRoute && _snaRoute.section === 'print');
-    if (total > SNA_TABLE_FILTER_MIN_ROWS && !isPrintView) {
+    if (total > SNA_TABLE_FILTER_MIN_ROWS) {
       var filterWrap = document.createElement('div');
       filterWrap.className = 'sna-table-filter hide-on-print';
       var filterLabel = document.createElement('label');
@@ -464,24 +461,22 @@ function initSnaTabulators() {
 
     table.on('dataFiltered', function(filters, rows) { snaUpdateTableCount(countEl, rows.length, total, tbl.searchLabel); });
 
-    built.push(new Promise(function(resolve) {
-      table.on('tableBuilt', function() {
-        // Tabulator makes its inner scroll area focusable, which puts a focus stop with no role inside the grid.
-        // The table does not scroll by itself here, so that focus stop is removed.
-        var holder = el.querySelector('.tabulator-tableholder');
-        if (holder) { holder.removeAttribute('tabindex'); }
-        if (filterInput) {
-          var saved = _snaTableFilters[tbl.id] || '';
-          filterInput.value = saved;
-          if (saved) { snaApplyTableFilter(table, saved); } else { snaUpdateTableCount(countEl, total, total, tbl.searchLabel); }
-        }
-        // A table in a column the browser has only just laid out can measure its width too early, so it redraws once.
-        requestAnimationFrame(function() {
-          if (_snaTabInstances[tbl.id] === table) { table.redraw(true); }
-          resolve();
-        });
+    table.on('tableBuilt', function() {
+      // Tabulator makes its inner scroll area focusable, which puts a focus stop with no role inside the grid.
+      // The table does not scroll by itself here, so that focus stop is removed.
+      var holder = el.querySelector('.tabulator-tableholder');
+      if (holder) { holder.removeAttribute('tabindex'); }
+      snaMakeHeadingsSortableByKeyboard(table);
+      if (filterInput) {
+        var saved = _snaTableFilters[tbl.id] || '';
+        filterInput.value = saved;
+        if (saved) { snaApplyTableFilter(table, saved); } else { snaUpdateTableCount(countEl, total, total, tbl.searchLabel); }
+      }
+      // A table in a column the browser has only just laid out can measure its width too early, so it redraws once.
+      requestAnimationFrame(function() {
+        if (_snaTabInstances[tbl.id] === table) { table.redraw(true); }
       });
-    }));
+    });
 
     if (filterInput) {
       filterInput.addEventListener('input', function() {
@@ -502,7 +497,24 @@ function initSnaTabulators() {
   });
 
   _snaTablesQueue = [];
-  return built;
+}
+
+// Tabulator sorts a table when a column heading is clicked, but its headings can't be reached with the keyboard.
+// This puts each sortable heading in the Tab order, and Enter or Space sorts by that column, as a click does:
+// A to Z first, then Z to A. Tabulator shows the order on the heading with aria-sort.
+function snaMakeHeadingsSortableByKeyboard(table) {
+  table.getColumns().forEach(function(column) {
+    var definition = column.getDefinition();
+    var heading = column.getElement();
+    if (!definition.sorter || !definition.field || !heading) { return; }
+    heading.setAttribute('tabindex', '0');
+    heading.addEventListener('keydown', function(e) {
+      if (e.target !== heading || (e.key !== 'Enter' && e.key !== ' ')) { return; }
+      e.preventDefault();
+      var current = table.getSorters().filter(function(sorter) { return sorter.field === definition.field; })[0];
+      table.setSort(definition.field, current && current.dir === 'asc' ? 'desc' : 'asc');
+    });
+  });
 }
 
 // Removes the Tabulator tables inside rootEl before its markup is replaced, keeping each filter box's text.
@@ -649,10 +661,11 @@ function snaSafeTenantUrl(address, siteUrl) {
 }
 
 // Returns an escaped link that opens in a new tab, or the escaped text alone when there is no usable https address.
+// data-interception="off" stops SharePoint's page router, which otherwise opens SharePoint addresses in the same tab.
 function snaLinkHtml(address, text, className) {
     var label = snaEscapeHtml(text);
     if (!address || !/^https:\/\//i.test(String(address))) { return label; }
-    return '<a href="' + snaEscapeHtml(address) + '" target="_blank" rel="noopener noreferrer"' +
+    return '<a href="' + snaEscapeHtml(address) + '" target="_blank" rel="noopener noreferrer" data-interception="off"' +
         (className ? ' class="' + className + '"' : '') + '>' + label + '</a>';
 }
 
@@ -840,6 +853,7 @@ function getOutputTypeName(outputType) {
 
 // File IDs in sharing link group names must look like this before Sitenalyzer asks SharePoint about them.
 var SNA_GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var SNA_PAGE_KEY_PATTERN = /^\d{1,10}(-\d{1,3})?$/;
 
 // Names SharePoint shows for each kind of sharing link.
 var SNA_SHARING_LINK_LABELS = {
@@ -2172,7 +2186,7 @@ function snaHandleAppClick(e) {
     else if (action === 'export-xlsx') { exportToXLSX(); }
     else if (action === 'export-permissions') { exportPermissionsToXLSX(); }
     else if (action === 'check-user-access') { snaCheckUserAccess(); }
-    else if (action === 'print-report') { snaNavigate({ section: 'print' }, { focus: 'heading', print: true }); }
+    else if (action === 'print-report') { snaPrintReport(); }
     else if (action === 'change-site') { snaOpenSiteDialog(target); }
     else if (action === 'close-site-dialog') { snaCloseSiteDialog(); }
     else if (action === 'choose-site') { snaOpenSite(target.getAttribute('data-url')); }
@@ -2241,6 +2255,8 @@ function snaOpenUrl(url) {
 function snaClearReport() {
     _snaCollectionToken++;
     snaDisposeViewTables(null);
+    snaRemovePrintDocument();
+    snaRemovePrintFrame();
     var results = document.getElementById('sp-results');
     if (results) { results.innerHTML = ''; }
     var header = document.getElementById('sna-site-header');
@@ -2848,7 +2864,7 @@ function buildSearchIndex() {
             label:         page.name,
             sublabel:      page.fileName,
             breadcrumb:    'Site pages',
-            route:         snaRouteHash({ section: 'contents', id: 'pages' }),
+            route:         snaRouteHash({ section: 'contents', id: 'pages', page: page.key }),
             listTitle:     '',
             listId:        '',
             columnName:    '',
@@ -3069,7 +3085,8 @@ async function fetchTaxonomy(targetUrl) {
 // Reads the pages in the site's Site Pages library (template 119), whatever the library is called.
 // Items are read in batches by following SharePoint's next-batch link, which is used only when it points
 // to this site's REST API. Folders and files that are not .aspx pages are skipped.
-// Returns { pages, truncated, failed, stoppedAtOtherSite }, with pages sorted by name.
+// Returns { pages, truncated, failed, stoppedAtOtherSite }, with pages sorted by name. Each page is { name, fileName, url,
+// modified, id, libraryId, key }: id is the page's item ID in its library, and key names the page in report addresses.
 async function snaFetchSitePages(targetUrl) {
     var result = { pages: [], truncated: false, failed: false, stoppedAtOtherSite: false };
     var libraries;
@@ -3084,6 +3101,9 @@ async function snaFetchSitePages(targetUrl) {
     var origin = snaOrigin(targetUrl);
     for (var i = 0; i < libraries.length; i++) {
         var itemsRead = 0;
+        var libraryId = libraries[i].Id;
+        // Item IDs repeat across libraries, so pages in a second Site Pages library get the library's place in their key.
+        var keySuffix = i === 0 ? '' : '-' + (i + 1);
         var nextUrl = targetUrl + "/_api/web/lists(guid'" + libraries[i].Id + "')/items" +
             '?$select=Id,Title,FileLeafRef,FileRef,FSObjType,Modified&$top=' + SNA_SITE_PAGES_BATCH_SIZE;
         try {
@@ -3097,11 +3117,15 @@ async function snaFetchSitePages(targetUrl) {
                     var isFolder = item.FSObjType === 1 || item.FSObjType === '1';
                     if (isFolder || !fileRef || !/\.aspx$/i.test(fileName)) { return; }
                     var pageUrl = origin + encodeURI(fileRef);
+                    var itemId = /^\d+$/.test(String(item.Id)) ? String(item.Id) : '';
                     result.pages.push({
-                        name:     (item.Title && String(item.Title).trim()) ? String(item.Title).trim() : fileName,
-                        fileName: fileName,
-                        url:      snaIsSameSiteUrl(pageUrl, targetUrl) ? pageUrl : '',
-                        modified: item.Modified ? String(item.Modified).substring(0, 10) : ''
+                        name:      (item.Title && String(item.Title).trim()) ? String(item.Title).trim() : fileName,
+                        fileName:  fileName,
+                        url:       snaIsSameSiteUrl(pageUrl, targetUrl) ? pageUrl : '',
+                        modified:  item.Modified ? String(item.Modified).substring(0, 10) : '',
+                        id:        itemId,
+                        libraryId: libraryId,
+                        key:       itemId ? itemId + keySuffix : ''
                     });
                 });
 
@@ -3151,14 +3175,13 @@ function snaRenderSitePagesSection(sitePages) {
 // Returns a description, with an Edit description button for people who can manage the site, or the plain text for
 // everyone else. editKey is the key snaSaveDescription takes, such as 'list:<list ID>'; name is the name of what the
 // description belongs to, used in the button and box labels. While a draft exists for editKey (see _snaDrafts), the
-// editor is drawn instead, so a draft stays while the person opens other views. The full report never shows drafts.
+// editor is drawn instead, so a draft stays while the person opens other views. The print document never shows drafts.
 function renderAdminDescWrap(text, editKey, name) {
     var label = name ? String(name) : 'this item';
     var shown = text ? snaEscapeHtml(text) : '<em class="sna-muted">No description.</em>';
     if (!_snaIsAdmin) { return '<span class="sna-desc-text">' + shown + '</span>'; }
 
-    var isPrint = !!(_snaRoute && _snaRoute.section === 'print');
-    var draft = isPrint ? null : _snaDrafts[editKey];
+    var draft = _snaDrafts[editKey];
     var attrs = ' data-edit-key="' + snaEscapeHtml(editKey) + '" data-edit-name="' + snaEscapeHtml(label) + '"' +
         ' data-sna-orig="' + snaEscapeHtml(draft ? draft.original : (text || '')) + '"';
     if (!draft) {
@@ -3171,10 +3194,7 @@ function renderAdminDescWrap(text, editKey, name) {
     var busy = draft.saving ? ' disabled' : '';
     var message = draft.saving ? 'Saving...' : draft.error;
     // A newline right after <textarea> is dropped by the browser, so one is added to keep a draft that starts with one.
-    // A printout shows the saved description instead of the editor, so an unsaved draft is never printed.
-    var saved = draft.original ? snaEscapeHtml(draft.original) : '<em class="sna-muted">No description.</em>';
     return '<span class="sna-editable-wrap sna-editing"' + attrs + '>' +
-        '<span class="sna-desc-text sna-print-saved">' + saved + '</span>' +
         '<label class="sna-editor-label" for="' + id + '">Description for ' + snaEscapeHtml(label) + '</label>' +
         '<textarea id="' + id + '" class="sna-editor-field" rows="3" aria-describedby="' + id + '-hint ' + id + '-msg"' +
             (draft.saving ? ' readonly' : '') + '>\n' + snaEscapeHtml(draft.text) + '</textarea>' +
@@ -3194,54 +3214,6 @@ function renderAdminDescWrap(text, editKey, name) {
 // so only letters and numbers are kept.
 function snaEditorId(editKey) {
     return 'sna-ed-' + String(editKey || '').replace(/[^0-9a-z]/gi, '-');
-}
-
-// Renders every term group, term set, and term for the full report, where every part is open. The caller adds the heading.
-// read is false when the term store could not be read, which is shown differently from a term store with no groups.
-// Group and term set IDs are shown only while Show technical details is on.
-function renderTaxonomySection(read) {
-    var technical = snaTechnicalDetailsOn();
-    if (!_snaTaxonomyData || _snaTaxonomyData.length === 0) {
-        return read === false
-            ? '<p class="sna-note">Sitenalyzer could not read the term store. Refresh the report to try again. If that does not work, ask your site owner whether you can open the term store.</p>'
-            : '<p class="sna-muted">No term groups found for this site collection.</p>';
-    }
-
-    var html = read === false ? '<p class="sna-note">Sitenalyzer could not read all of the term store, so some term groups or terms may be missing.</p>' : '';
-    _snaTaxonomyData.forEach(function(group) {
-        var groupDescHtml = renderAdminDescWrap(group.groupDescription, 'termgroup:' + group.groupId, group.groupName);
-        html += '<details class="sna-taxonomy-group">';
-        html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(group.groupName) +
-                (technical ? ' <span class="list-id-text sna-summary-id">Term group ID ' + snaEscapeHtml(group.groupId) + '</span>' : '') +
-                '</summary>';
-        if (group.groupDescription || _snaIsAdmin) {
-            html += '<p class="sna-taxonomy-desc">' + groupDescHtml + '</p>';
-        }
-
-        group.termSets.forEach(function(set) {
-            var setDescHtml  = renderAdminDescWrap(set.setDescription, 'termset:' + set.setId, set.setName);
-            var termCount    = set.terms ? set.terms.length : 0;
-            html += '<details class="sna-taxonomy-set" id="sna-termset-' + snaCleanListId(set.setId) + '">';
-            html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(set.setName) +
-                    ' <span class="item-count-badge">' + termCount + '<sup>' + (termCount === 1 ? 'term' : 'terms') + '</sup></span>' +
-                    (technical ? ' <span class="list-id-text sna-summary-id">Term set ID ' + snaEscapeHtml(set.setId) + '</span>' : '') +
-                    '</summary>';
-            if (set.setDescription || _snaIsAdmin) {
-                html += '<p class="sna-taxonomy-desc">' + setDescHtml + '</p>';
-            }
-            if (termCount > 0) {
-                var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
-                html += '<div id="' + tblId + '"></div>';
-                _snaTablesQueue.push({ id: tblId, type: 'terms', data: set.terms, searchLabel: set.setName + ' terms', setId: set.setId });
-            } else {
-                html += '<p class="sna-muted sna-taxonomy-desc">No terms found.</p>';
-            }
-            html += '</details>';
-        });
-
-        html += '</details>';
-    });
-    return html;
 }
 
 // Saves an updated description via REST PATCH (site/list/column) or taxonomy v2.1/CSOM endpoints.
@@ -3643,10 +3615,9 @@ function snaApplyDescriptionToReport(editKey, text) {
 
 // ### Technical Details Switch ###
 
-// True while Show technical details is on, and always in the full report for printing.
-// Technical values are always in search and the workbooks too.
+// True while Show technical details is on. Technical values are always in search, the workbooks, and the print document.
 function snaTechnicalDetailsOn() {
-    return _snaTechnicalDetails || !!(_snaRoute && _snaRoute.section === 'print');
+    return _snaTechnicalDetails;
 }
 
 // Reads the switch setting saved in this browser. Browser storage can be turned off, so a failed read leaves it off.
@@ -3692,8 +3663,7 @@ var SNA_SECTIONS = {
     permissions: { title: 'Permissions', inNav: true,  render: snaRenderPermissions },
     taxonomy:    { title: 'Taxonomy',    inNav: true,  render: snaRenderTaxonomy },
     review:      { title: 'Site review', inNav: true,  render: snaRenderReview },
-    search:      { title: 'Search results', inNav: false, render: snaRenderSearch },
-    print:       { title: 'Full report', inNav: false, render: snaRenderPrint }
+    search:      { title: 'Search results', inNav: false, render: snaRenderSearch }
 };
 
 // Returns a list ID in the form used in addresses and element ids: lowercase, with only the characters a GUID has.
@@ -3704,7 +3674,7 @@ function snaCleanListId(id) {
 
 // Returns an empty view description for a section.
 function snaMakeRoute(section) {
-    return { section: section, id: '', tab: '', anchor: '', q: '' };
+    return { section: section, id: '', tab: '', anchor: '', page: '', q: '' };
 }
 
 // Returns the decoded value of name in a query string such as 'q=study%20visits', or '' when it is missing or malformed.
@@ -3720,7 +3690,7 @@ function snaReadQueryValue(query, name) {
     return '';
 }
 
-// Reads a report address such as #sna/contents/<list ID>/columns or #sna/search?q=visit.
+// Reads a report address such as #sna/contents/<list ID>/columns, #sna/contents/pages/<page key>, or #sna/search?q=visit.
 // Returns null for addresses that are not Sitenalyzer's, such as #top, so the host page keeps those.
 // Addresses that start with #sna/ but don't match a view open the Overview. Only known sections, tabs, and parts
 // of Permissions are accepted, and list and term set IDs must look like a GUID.
@@ -3747,7 +3717,11 @@ function snaParseRoute(hash) {
             if (id !== 'pages' && !SNA_GUID_PATTERN.test(id)) { return fallback; }
             route.id = id;
             if (id === 'pages') {
-                if (parts[2]) { return fallback; }
+                // A page key is the page's item ID, with its library's place after a hyphen when there is more than one.
+                if (parts[2]) {
+                    if (!SNA_PAGE_KEY_PATTERN.test(parts[2])) { return fallback; }
+                    route.page = parts[2];
+                }
             } else {
                 route.tab = parts[2] || 'overview';
                 if (SNA_DETAIL_TABS.indexOf(route.tab) === -1) { return fallback; }
@@ -3781,6 +3755,7 @@ function snaRouteHash(route) {
     var hash = SNA_ROUTE_PREFIX + section;
     if (section === 'contents' && r.id) {
         hash += '/' + r.id;
+        if (r.id === 'pages' && r.page) { hash += '/' + r.page; }
         if (r.id !== 'pages' && r.tab && r.tab !== 'overview') { hash += '/' + r.tab; }
     }
     if ((section === 'permissions' || section === 'taxonomy') && r.anchor) { hash += '/' + r.anchor; }
@@ -3795,7 +3770,7 @@ function snaRemoveRouteFromAddress() {
     catch(e) { /* The address keeps the old view, which opens nothing until a report is shown. */ }
 }
 
-// Opens a view. options: { replace, focus, print, scroll }. replace changes the address without a history step.
+// Opens a view. options: { replace, focus, scroll }. replace changes the address without a history step.
 // focus is where keyboard focus goes: 'heading' (the default), 'tab', 'detail', 'inventory', 'subnav', 'switch', or 'none'.
 // In hash mode the address changes and the hashchange listener draws the view, so Back and Forward work too.
 function snaNavigate(route, options) {
@@ -3844,14 +3819,13 @@ function snaHandleHashChange() {
 // ### Draw the Report Screen ###
 
 // Draws a view in #sp-results. Staying in Contents replaces only the details, so the list and its filter stay in place.
-// options.full redraws the whole view; options.focus and options.print are described at snaNavigate.
+// options.full redraws the whole view; options.focus is described at snaNavigate.
 function renderApp(route, options) {
     var opts = options || {};
     var main = document.getElementById('sp-results');
     if (!main || !_snaReport) { return; }
     var previous = _snaRoute;
     var detail = document.getElementById('sna-contents-detail');
-    // Set before drawing, because the full report reads it to include technical details.
     _snaRoute = route;
 
     if (!opts.full && previous && previous.section === 'contents' && route.section === 'contents' && detail) {
@@ -3862,22 +3836,17 @@ function renderApp(route, options) {
         snaDisposeViewTables(main);
         main.innerHTML = SNA_SECTIONS[route.section].render(route, _snaReport);
     }
-    if (!previous || (previous.section === 'print') !== (route.section === 'print')) {
-        snaRenderSiteTech();
-        snaRenderSiteDescription();
-    }
-
-    if (route.section === 'print') {
-        main.querySelectorAll('details').forEach(function(d) { d.open = true; });
-    }
-    var built = initSnaTabulators();
+    initSnaTabulators();
     if (route.section === 'contents') { snaApplyInventoryFilter(); }
+    if (route.section === 'contents' && route.id === 'pages' && route.page) {
+        var page = snaFindPage(_snaReport, route.page);
+        if (page) { snaLoadPageImage(page); }
+    }
     var search = document.getElementById('sna-report-search');
     if (search && route.section === 'search') { search.value = route.q; }
 
     snaUpdateNav(route);
     snaFocusAfterRender(route, previous, opts);
-    if (route.section === 'print' && opts.print) { snaPrintWhenReady(built); }
 }
 
 // Marks the open section in the section navigation.
@@ -3923,14 +3892,6 @@ function snaFocusAfterRender(route, previous, opts) {
     } else {
         target.scrollIntoView({ block: 'nearest' });
     }
-}
-
-// Opens the print dialog once every table in the full report has been drawn, or after 5 seconds at most.
-function snaPrintWhenReady(built) {
-    var timeout = new Promise(function(resolve) { setTimeout(resolve, 5000); });
-    Promise.race([Promise.all(built), timeout]).then(function() {
-        requestAnimationFrame(function() { window.print(); });
-    });
 }
 
 // Opens every collapsible section in the view and redraws its tables, which can't measure themselves while closed.
@@ -4072,14 +4033,6 @@ function renderFrame(report) {
     }
     snaRenderSiteTech();
     snaSyncTechnicalSwitch();
-}
-
-// Draws the site's description in the header again. The print view shows the saved description there, and other views
-// show the editor again if the person was editing it.
-function snaRenderSiteDescription() {
-    var desc = document.querySelector('#sna-site-header .sna-site-desc');
-    if (!desc || !_snaReport) { return; }
-    desc.innerHTML = renderAdminDescWrap(_snaReport.site.description, 'site', _snaReport.site.title || 'this site');
 }
 
 // Shows the site ID, with a button that copies it, under the site's address while technical details are on.
@@ -4392,6 +4345,14 @@ function snaRenderContentsDetail(route, report) {
     if (!route.id) { return snaRenderContentsSummary(report); }
     var back = '<p class="sna-back"><a class="sna-back-link" href="#sna/contents" data-nav-focus="inventory">Back to results</a></p>';
 
+    if (route.id === 'pages' && route.page) {
+        _snaLastInventoryId = 'pages';
+        var page = snaFindPage(report, route.page);
+        var pagesBack = '<p class="sna-back sna-back-always"><a class="sna-back-link" href="#sna/contents/pages" data-nav-focus="detail">Back to Site pages</a></p>';
+        return pagesBack + (page ? snaRenderPageDetail(page)
+            : '<h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1">Page not found</h3>' +
+              '<p class="sna-note">Sitenalyzer did not find this page in the report. The address may be from another site or an older report. Choose a page from Site pages.</p>');
+    }
     if (route.id === 'pages') {
         _snaLastInventoryId = 'pages';
         var pageCount = report.pages.pages.length;
@@ -4429,6 +4390,101 @@ function snaRenderContentsDetail(route, report) {
                 (t[0] === tab ? ' aria-current="page"' : '') + '>' + t[1] + '</a></li>';
         }).join('') + '</ul></nav>';
     return html + '<div class="sna-detail-body">' + snaRenderListTab(list, tab) + '</div>';
+}
+
+// ### Site Page Details ###
+
+// The image SharePoint gives a new page until someone chooses one. Sitenalyzer treats it as no image.
+var SNA_DEFAULT_PAGE_IMAGE_PATTERN = /\/_layouts\/15\/images\/sitepagethumbnail\.png$/i;
+
+// Returns the page with this address key from the report, or null.
+function snaFindPage(report, key) {
+    return (report.pages.pages || []).filter(function(p) { return p.key === key; })[0] || null;
+}
+
+// Looks up the image at the top of a page, from the page's BannerImageUrl column, with the person's own access.
+// Returns { status: 'image', url } for an image on this SharePoint tenant, { status: 'none' } when the page has no image
+// of its own, { status: 'elsewhere' } for an image on another host, and { status: 'failed' } when the lookup failed.
+async function snaFetchPageImage(targetUrl, page) {
+    var listId = snaCleanListId(page.libraryId);
+    if (!SNA_GUID_PATTERN.test(listId) || !/^\d+$/.test(String(page.id))) { return { status: 'failed' }; }
+    try {
+        var json = await spFetch(targetUrl + "/_api/web/lists(guid'" + listId + "')/items(" + page.id + ')?$select=BannerImageUrl');
+        // SharePoint answers with { Url, Description }, or with the address and description as text separated by ", ".
+        var value = json ? json.BannerImageUrl : null;
+        var address = String((value && typeof value === 'object') ? (value.Url || '') : (value ? String(value).split(', ')[0] : '')).trim();
+        if (!address || SNA_DEFAULT_PAGE_IMAGE_PATTERN.test(address.split('?')[0])) { return { status: 'none' }; }
+        var safeUrl = snaSafeTenantUrl(address, targetUrl);
+        return safeUrl ? { status: 'image', url: safeUrl } : { status: 'elsewhere' };
+    } catch(e) {
+        console.warn('Sitenalyzer: could not look up a page image:', e && e.message ? e.message : e);
+        return { status: 'failed' };
+    }
+}
+
+// Returns the page image part of a page's details for the page's current image state.
+function snaPageImageHtml(page) {
+    var image = page.image || { status: 'loading' };
+    if (image.status === 'image') {
+        // The image repeats what the page's title already says, so it has no alternative text of its own.
+        return '<figure class="sna-page-figure"><img class="sna-page-image" src="' + snaEscapeHtml(image.url) + '" alt="">' +
+            '<figcaption>The image chosen for this page.</figcaption></figure>';
+    }
+    var messages = {
+        loading:   'Looking for the image chosen for this page.',
+        none:      'This page has no image chosen for it.',
+        elsewhere: 'The image chosen for this page is stored outside your organization\'s SharePoint, so Sitenalyzer does not show it. Open the page to see it.',
+        failed:    'Sitenalyzer could not look up the image chosen for this page. Open the page to see it, or select Refresh report to try again.',
+        broken:    'Sitenalyzer found the image chosen for this page but could not show it. Open the page to see it.'
+    };
+    return '<p class="sna-muted">' + messages[image.status] + '</p>';
+}
+
+// Draws the page image part again, and tells screen readers about the change. A failed image download changes the
+// page's image state to 'broken'.
+function snaShowPageImage(page) {
+    var area = document.getElementById('sna-page-image-area');
+    if (!area || area.getAttribute('data-page-key') !== page.key) { return; }
+    area.innerHTML = snaPageImageHtml(page);
+    var img = area.querySelector('img');
+    if (img) {
+        img.addEventListener('error', function() {
+            page.image = { status: 'broken' };
+            snaShowPageImage(page);
+        });
+    }
+}
+
+// Looks up a page's image the first time its details open, then shows it. The answer is kept with the report and is
+// dropped when another site's report replaces it.
+function snaLoadPageImage(page) {
+    if (page.image) { snaShowPageImage(page); return; }
+    page.image = { status: 'loading' };
+    var report = _snaReport;
+    snaFetchPageImage(report.siteUrl, page).then(function(result) {
+        if (_snaReport !== report) { return; }
+        page.image = result;
+        snaShowPageImage(page);
+    });
+}
+
+// Returns the details of one site page: its name, an Open page link, its file name, last change, and address,
+// and the image chosen for it.
+function snaRenderPageDetail(page) {
+    var openLink = page.url
+        ? '<div class="sna-card-actions"><a class="sna-btn sna-btn-outline sna-btn-small" href="' + snaEscapeHtml(page.url) + '" target="_blank" rel="noopener noreferrer" data-interception="off">' +
+            'Open page<span class="sna-visually-hidden"> (opens in a new window)</span></a></div>'
+        : '';
+    return '<div class="sna-detail-head"><h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1"><span aria-hidden="true">📄 </span>' +
+            snaEscapeHtml(page.name) + '</h3>' + openLink + '</div>' +
+        '<dl class="sna-facts">' +
+            '<dt>File name</dt><dd>' + snaEscapeHtml(page.fileName) + '</dd>' +
+            '<dt>Last changed</dt><dd>' + snaEscapeHtml(page.modified || 'Not reported.') + '</dd>' +
+            '<dt>Address</dt><dd class="sna-break-anywhere">' + snaEscapeHtml(page.url || 'Not available.') + '</dd>' +
+        '</dl>' +
+        '<h4 class="sna-subsection-title">Page image</h4>' +
+        '<div id="sna-page-image-area" class="sna-page-image-area" role="status" data-page-key="' + snaEscapeHtml(page.key) + '">' +
+            snaPageImageHtml(page) + '</div>';
 }
 
 // ### Permissions, Taxonomy, and Site Review ###
@@ -4472,7 +4528,14 @@ function snaRenderPermissionPart(part, report) {
     if (part === 'sharing') { return snaPartTitleHtml('Sharing links', '') + snaRenderSharingLinks(perms.sharingLinks); }
     if (part === 'apps') { return snaPartTitleHtml('Apps with access to this site', '') + snaRenderAppsHtml(report); }
 
-    var html = snaPartTitleHtml('Site permissions', '') + snaRenderRiskFlags() + snaRenderOwnPermissionsFinding(report);
+    return snaPartTitleHtml('Site permissions', '') + snaRenderRiskFlags() + snaRenderOwnPermissionsFinding(report) +
+        snaRenderSitePermissionsHtml(report);
+}
+
+// Returns the site's permission table, the site collection administrators, and the permission levels.
+function snaRenderSitePermissionsHtml(report) {
+    var perms = report.permissions;
+    var html = '';
     if (perms.siteRolesRead) {
         // Groups that SharePoint creates by itself are left out here, as in People and groups.
         var shownAssignments = perms.siteRoleAssignments.filter(function(ra) {
@@ -4640,56 +4703,287 @@ function snaRenderSearch(route, report) {
     return html;
 }
 
-// ### Full Report for Printing ###
+// ### Print Document ###
 
-// Draws every part of the report on one page, with every section open, for Print full report / PDF.
-function snaRenderPrint(route, report) {
-    var html = snaSectionTitleHtml('Full report', '') +
-        '<p class="sna-note hide-on-print">This view shows the whole report so you can print it or save it as a PDF. ' +
-        '<a href="#sna/overview">Back to the overview</a></p>';
+// Returns a table for the print document, with a caption that names it. headers are the column names, and each row is
+// an array of plain text, which is escaped here. The first cell of each row names the row. emptyText is shown instead of
+// a table with no rows.
+function snaPrintTableHtml(caption, headers, rows, emptyText) {
+    if (rows.length === 0) { return '<p>' + snaEscapeHtml(emptyText) + '</p>'; }
+    return '<table class="sna-print-table"><caption>' + snaEscapeHtml(caption) + '</caption><thead><tr>' +
+        headers.map(function(h) { return '<th scope="col">' + snaEscapeHtml(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+        rows.map(function(row) {
+            return '<tr>' + row.map(function(cell, i) {
+                var text = snaEscapeHtml(cell === null || cell === undefined ? '' : cell);
+                return i === 0 ? '<th scope="row">' + text + '</th>' : '<td>' + text + '</td>';
+            }).join('') + '</tr>';
+        }).join('') + '</tbody></table>';
+}
 
-    html += '<div class="print-section"><h3 class="sna-subsection-title">About this site</h3><dl class="sna-facts">' +
-        '<dt>Site address</dt><dd>' + snaEscapeHtml(report.site.url) + '</dd>' +
-        '<dt>Site ID</dt><dd>' + snaEscapeHtml(report.site.id) + '</dd>' +
-        '<dt>Collected</dt><dd>' + snaEscapeHtml(snaFormatDateTime(report.collectedAt)) + '</dd>' +
-    '</dl></div>';
+// Returns a list of names and values for the print document. pairs is an array of [name, plain text value].
+function snaPrintFactsHtml(pairs) {
+    return '<dl class="sna-print-facts">' + pairs.map(function(pair) {
+        var value = pair[1] === null || pair[1] === undefined || pair[1] === '' ? 'None.' : pair[1];
+        return '<dt>' + snaEscapeHtml(pair[0]) + '</dt><dd>' + snaEscapeHtml(value) + '</dd>';
+    }).join('') + '</dl>';
+}
 
-    function listBlock(list) {
-        var block = '<div class="sna-print-item"><h4>' + snaEscapeHtml(list.title) + '</h4>' +
-            '<p class="sna-muted">' + (list.isLib ? 'Library ID ' : 'List ID ') + snaEscapeHtml(list.id) +
-            ' · Internal name ' + snaEscapeHtml(list.internalName) + ' · ' + snaEscapeHtml(list.url) + '</p>' +
-            snaRenderListTab(list, 'overview');
-        if (list.isLib) { block += '<h5>Top-level folders</h5>' + snaRenderListTab(list, 'folders'); }
-        return block + '<h5>Columns</h5>' + snaRenderListTab(list, 'columns') +
-            '<h5>Permissions</h5>' + snaRenderListTab(list, 'permissions') + '</div>';
+// Returns the part of the print document for one list or library: its details, top-level folders, columns, and permissions.
+function snaPrintListHtml(list) {
+    var html = '<section class="sna-print-item"><h3>' + snaEscapeHtml(list.title) + '</h3>' + snaPrintFactsHtml([
+        ['Type', list.isLib ? 'Document library' : 'List'],
+        ['Description', list.description || 'No description.'],
+        ['Items', snaCountText(Number(list.itemCount) || 0, 'item', 'items')],
+        ['Last changed', snaFormatDate(list.lastModified) || 'Not reported.'],
+        ['Version history', snaVersioningText(list.versioning)],
+        ['Permissions', list.permissions.inherits ? 'Uses the site\'s permissions.' : 'Has its own permissions.'],
+        ['Address', list.url],
+        [list.isLib ? 'Library ID' : 'List ID', list.id],
+        ['Internal name', list.internalName]
+    ]);
+
+    if (list.isLib) {
+        html += '<h4>Top-level folders</h4>' + (list.foldersStatus === 'failed'
+            ? '<p>Sitenalyzer could not read the folders.</p>'
+            : snaPrintTableHtml('Top-level folders in ' + list.title, ['Folder name', 'Items', 'Folder ID'],
+                list.folders.map(function(f) { return [f.name, f.items === null ? '' : String(f.items), f.folderId]; }),
+                'No top-level folders found.'));
     }
+
+    html += '<h4>Columns</h4>';
+    if (list.columnsStatus === 'failed') {
+        html += '<p>Sitenalyzer could not read the columns.</p>';
+    } else if (list.columns.length === 0) {
+        html += '<p>No visible columns found.</p>';
+    } else {
+        // The columns are in two tables so that each one fits the width of a page.
+        html += snaPrintTableHtml('Columns of ' + list.title, ['Title', 'Data type', 'Required', 'Description', 'Choices', 'Lookup list'],
+            list.columns.map(function(c) {
+                return [c.title, c.dataType, c.required ? 'Yes' : 'No', c.description || 'No description.', c.choices, c.lookupList];
+            }), '') +
+            snaPrintTableHtml('Technical details of the columns of ' + list.title,
+                ['Title', 'Internal name', 'Column ID', 'Lookup target', 'Default value', 'Max length', 'Indexed', 'Formula'],
+                list.columns.map(function(c) {
+                    var maxLength = (c.maxLength === null || c.maxLength === undefined) ? '' : String(c.maxLength);
+                    return [c.title, c.internalName, c.fieldId, c.lookupTarget, c.defaultValue, maxLength, c.indexed ? 'Yes' : 'No', c.formula];
+                }), '');
+    }
+
+    html += '<h4>Permissions</h4>';
+    if (list.permissions.inherits) { html += '<p>Uses the site\'s permissions.</p>'; }
+    else if (!list.permissions.rolesRead) { html += '<p>Sitenalyzer could not read these permissions. You need to be a site owner to see them.</p>'; }
+    else { html += renderPermissionsHtml(list.permissions.roleAssignments, list.title + ' permissions'); }
+    return html + '</section>';
+}
+
+// Returns the print document: every part of the report as headings, text, and plain tables. It is built from the report
+// data rather than from the screen, so closed sections, filters, and table scrolling leave nothing out. Descriptions are
+// the saved ones, never a draft, and technical details are always included.
+function snaBuildPrintDocument(report) {
+    var site = report.site;
+    var perms = report.permissions;
+    var user = report.currentUser;
+    var html = '<h1>' + snaEscapeHtml(site.title || 'Untitled site') + '</h1>' +
+        '<p>Sitenalyzer site report. It includes everything Sitenalyzer read for this report, even parts that were closed or filtered on screen.</p>' +
+        snaPrintFactsHtml([
+            ['Site address', site.url],
+            ['Description', site.description || 'No description.'],
+            ['Site ID', site.id],
+            ['Collected', snaFormatDateTime(report.collectedAt)],
+            ['Collected by', (user && (user.name || user.email || user.loginName)) || 'Not reported.'],
+            ['Their access', report.isAdmin ? 'Can manage this site' : 'Can view this site']
+        ]);
+
+    // Contents: a table of every list and library, then each one in full.
     var libraries = report.lists.filter(function(l) { return l.isLib; }).sort(snaByTitle);
     var plainLists = report.lists.filter(function(l) { return !l.isLib; }).sort(snaByTitle);
-    html += '<div class="print-section"><h3 class="sna-subsection-title">Document libraries</h3>' +
-        (libraries.length ? libraries.map(listBlock).join('') : '<p>No document libraries found.</p>') + '</div>';
-    html += '<div class="print-section"><h3 class="sna-subsection-title">Lists</h3>' +
-        (plainLists.length ? plainLists.map(listBlock).join('') : '<p>No lists found.</p>') + '</div>';
-    html += '<div class="print-section" id="sna-site-pages-section"><h3 class="sna-subsection-title">Site pages</h3>' + snaRenderSitePagesSection(report.pages) + '</div>';
+    html += '<section class="sna-print-section"><h2>Contents</h2>' + (report.listsRead
+        ? snaPrintTableHtml('Lists and libraries', ['Name', 'Type', 'Items', 'Columns', 'Last changed', 'Permissions'],
+            libraries.concat(plainLists).map(function(l) {
+                return [l.title, l.isLib ? 'Library' : 'List', String(Number(l.itemCount) || 0), String(l.columns.length),
+                    snaFormatDate(l.lastModified), l.permissions.inherits ? 'Site\'s permissions' : 'Own permissions'];
+            }), 'Sitenalyzer found no lists or libraries on this site.')
+        : '<p>Sitenalyzer could not read the lists and libraries.</p>') + '</section>';
+    html += '<section class="sna-print-section"><h2>Document libraries</h2>' +
+        (libraries.length ? libraries.map(snaPrintListHtml).join('') : '<p>No document libraries found.</p>') + '</section>';
+    html += '<section class="sna-print-section"><h2>Lists</h2>' +
+        (plainLists.length ? plainLists.map(snaPrintListHtml).join('') : '<p>No lists found.</p>') + '</section>';
 
+    var pages = report.pages;
+    var pageNotes = [];
+    if (pages.failed) { pageNotes.push('Sitenalyzer could not read all of the Site Pages library, so this list may be incomplete.'); }
+    if (pages.truncated) { pageNotes.push('Sitenalyzer read the first ' + SNA_SITE_PAGES_MAX.toLocaleString('en-US') + ' items of Site Pages only.'); }
+    if (pages.stoppedAtOtherSite) { pageNotes.push('Sitenalyzer stopped reading Site Pages because SharePoint sent a link to a different site, so this list may be incomplete.'); }
+    html += '<section class="sna-print-section"><h2>Site pages</h2>' +
+        pageNotes.map(function(n) { return '<p>' + snaEscapeHtml(n) + '</p>'; }).join('') +
+        snaPrintTableHtml('Site pages', ['Page', 'File name', 'Last changed', 'Address'],
+            pages.pages.map(function(p) { return [p.name, p.fileName, p.modified, p.url]; }), 'No site pages found.') + '</section>';
+
+    // Permissions use the same text and tables as the Permissions section.
     var check = _snaUserCheckResult;
-    html += '<div class="print-section"><h3 class="sna-subsection-title">Permissions</h3>' + snaRenderRiskFlags() +
-        '<details class="permissions-section"><summary>Site permissions</summary>' +
-            (report.permissions.siteRolesRead ? renderPermissionsHtml(report.permissions.siteRoleAssignments, 'Site permissions')
-                : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') +
-            '<h4>Site collection administrators</h4>' + snaRenderSiteAdmins(report.permissions.siteAdmins) + '</details>' +
-        '<details class="permissions-section"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>' +
-        '<details class="permissions-section"><summary>Lists and libraries with their own permissions (' + snaOwnPermissionsCount(report) + ')</summary>' + snaRenderInheritanceReport(report.listsRead) + '</details>' +
-        '<details class="permissions-section"><summary>Sharing links</summary>' + snaRenderSharingLinks(report.permissions.sharingLinks) + '</details>' +
-        '<details class="permissions-section"><summary>Apps with access to this site</summary>' + snaRenderAppsHtml(report) + '</details>' +
-        '<h4>Check one person\'s access</h4>' +
-        (check ? '<p>' + snaEscapeHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
-    '</div>';
-    html += '<div class="print-section"><h3 class="sna-subsection-title">Taxonomy and term store</h3>' + renderTaxonomySection(report.taxonomy.read) + '</div>';
-    html += '<div class="print-section"><h3 class="sna-subsection-title">Site review</h3>' +
-        (report.listsRead ? snaRenderReviewFindings(report, 4, 'sna-tbl-review-print') + snaRenderLargestLists(report, 4)
-            : '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so it could not look for cleanup findings.</p>') +
-        '<h4>Report coverage</h4>' + snaRenderCoverageTable(report.coverage) + '</div>';
-    return html;
+    html += '<section class="sna-print-section"><h2>Permissions</h2>' +
+        '<h3>Access findings</h3>' + snaRenderRiskFlags() + snaRenderOwnPermissionsFinding(report) +
+        '<h3>Site permissions</h3>' + snaRenderSitePermissionsHtml(report) +
+        '<h3>People and groups</h3>' + renderPermissionsByPrincipal() +
+        '<h3>Check a person\'s access</h3>' +
+            // check.html was built by snaCheckUserAccess with every SharePoint value escaped.
+            (check ? '<p>' + snaEscapeHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
+        '<h3>Lists and libraries with their own permissions</h3>' + snaRenderInheritanceReport(report.listsRead) +
+        '<h3>Sharing links</h3>' + snaRenderSharingLinks(perms.sharingLinks) +
+        '<h3>Apps with access to this site</h3>' + snaRenderAppsHtml(report) + '</section>';
+
+    var taxonomy = report.taxonomy;
+    html += '<section class="sna-print-section"><h2>Taxonomy and term store</h2>';
+    if (taxonomy.groups.length === 0) {
+        html += taxonomy.read === false ? '<p>Sitenalyzer could not read the term store.</p>' : '<p>This site collection has no term groups of its own.</p>';
+    } else {
+        if (taxonomy.read === false) { html += '<p>Sitenalyzer could not read all of the term store, so some term groups or terms may be missing.</p>'; }
+        if (taxonomy.termStoreId) { html += snaPrintFactsHtml([['Term store ID', taxonomy.termStoreId]]); }
+        taxonomy.groups.forEach(function(group) {
+            var sets = group.termSets || [];
+            html += '<section class="sna-print-item"><h3>' + snaEscapeHtml(group.groupName) + '</h3>' +
+                snaPrintFactsHtml([['Description', group.groupDescription || 'No description.'], ['Term group ID', group.groupId]]) +
+                (sets.length === 0 ? '<p>This term group has no term sets.</p>' : '');
+            sets.forEach(function(set) {
+                html += '<h4>' + snaEscapeHtml(set.setName) + '</h4>' +
+                    snaPrintFactsHtml([['Description', set.setDescription || 'No description.'], ['Term set ID', set.setId]]) +
+                    snaPrintTableHtml('Terms in ' + set.setName, ['Term name', 'Description', 'Term ID'],
+                        (set.terms || []).map(function(t) { return [t.termName, t.termDescription || 'No description.', t.termId]; }),
+                        'This term set has no terms.');
+            });
+            html += '</section>';
+        });
+    }
+    html += '</section>';
+
+    html += '<section class="sna-print-section"><h2>Site review</h2>';
+    if (report.listsRead) {
+        var findings = snaReviewFindings(report);
+        html += '<h3>Lists and libraries to review for cleanup (' + findings.length + ')</h3>' +
+            snaPrintTableHtml('Lists and libraries to review for cleanup', ['Finding', 'List or library', 'Detail', 'Next step'],
+                findings.map(function(f) { return [f.finding, f.title, f.detail, f.nextStep]; }),
+                'Sitenalyzer found nothing to review in the lists and libraries.') +
+            snaRenderLargestLists(report, 3);
+    } else {
+        html += '<p>Sitenalyzer could not read the lists and libraries, so it could not look for cleanup findings.</p>';
+    }
+    html += '<h3>Report coverage</h3>' + snaRenderCoverageTable(report.coverage) + '</section>';
+
+    return html + '<p class="sna-print-footer">Copyright &copy; 2026 The Regents of the University of Michigan | ' +
+        'Eisenberg Family Depression Center (https://depressioncenter.org)</p>';
+}
+
+// Adds the print document to the end of the page and marks the page, so that a printout shows only the document.
+// The document is outside the app, so the print styles can leave out the SharePoint page around the app.
+function snaPreparePrintDocument() {
+    if (!_snaReport) { return; }
+    var root = document.getElementById('sna-print-root');
+    if (!root) {
+        root = document.createElement('div');
+        root.id = 'sna-print-root';
+        root.className = 'sna-print-doc';
+        document.body.appendChild(root);
+    }
+    root.innerHTML = snaBuildPrintDocument(_snaReport);
+    // Group members are in closed sections, and a printout shows only what is open.
+    root.querySelectorAll('details').forEach(function(d) { d.open = true; });
+    document.documentElement.classList.add('sna-printing');
+}
+
+// Removes the print document after printing from the print menu.
+function snaRemovePrintDocument() {
+    var root = document.getElementById('sna-print-root');
+    if (root && root.parentNode) { root.parentNode.removeChild(root); }
+    document.documentElement.classList.remove('sna-printing');
+}
+
+// Fills the empty document of the hidden frame with the print document and Sitenalyzer's style sheet. onReady runs
+// once, after the style sheet loads or fails, or after 3 seconds, whichever comes first.
+function snaWritePrintDocument(doc, onReady) {
+    doc.title = 'Sitenalyzer report - ' + (_snaReport.site.title || 'Untitled site');
+    doc.documentElement.lang = document.documentElement.lang || 'en';
+    doc.documentElement.className = 'sna-printing';
+    var root = doc.createElement('div');
+    root.id = 'sna-print-root';
+    root.className = 'sna-print-doc';
+    root.innerHTML = snaBuildPrintDocument(_snaReport);
+    // Group members are in closed sections, and a printout shows only what is open.
+    root.querySelectorAll('details').forEach(function(d) { d.open = true; });
+    doc.body.appendChild(root);
+
+    var ready = false;
+    function runOnce() {
+        if (ready) { return; }
+        ready = true;
+        onReady();
+    }
+    var styleLink = Array.prototype.filter.call(document.querySelectorAll('link[rel="stylesheet"]'), function(link) {
+        return /\/sitenalyzer\.css(\?|$)/i.test(link.href);
+    })[0];
+    if (!styleLink) { runOnce(); return; }
+    var link = doc.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = styleLink.href;
+    // The style sheet is already in the browser's cache, so it normally loads at once. A failed load still prints.
+    link.addEventListener('load', runOnce);
+    link.addEventListener('error', runOnce);
+    doc.head.appendChild(link);
+    setTimeout(runOnce, 3000);
+}
+
+// Print full report / PDF, and Ctrl+P while a report is on screen. The print document goes into a hidden frame on this
+// page, and only that frame is printed, so the SharePoint page around the app is left alone. The frame stays until the
+// next printout or a new report, because some browsers print after print() returns.
+function snaPrintReport() {
+    if (!_snaReport) { return; }
+    snaRemovePrintFrame();
+    var frame = document.createElement('iframe');
+    frame.id = 'sna-print-frame';
+    frame.className = 'sna-print-frame';
+    frame.title = 'Printable copy of the report';
+    frame.setAttribute('aria-hidden', 'true');
+    frame.setAttribute('tabindex', '-1');
+    document.body.appendChild(frame);
+
+    var frameWindow = frame.contentWindow;
+    var doc = frameWindow ? frameWindow.document : null;
+    if (!doc || !doc.body) {
+        // The frame could not be used, so the page itself is printed with the same document.
+        snaRemovePrintFrame();
+        window.print();
+        return;
+    }
+    // Focus goes back to where it was, such as the Print full report / PDF button, so it never stays in the hidden frame.
+    var returnFocusTo = document.activeElement;
+    snaWritePrintDocument(doc, function() {
+        if (frame.parentNode === null) { return; }
+        frameWindow.focus();
+        frameWindow.print();
+        window.focus();
+        if (returnFocusTo && returnFocusTo.focus && document.contains(returnFocusTo)) { returnFocusTo.focus(); }
+    });
+}
+
+// Removes the frame that Print full report / PDF printed.
+function snaRemovePrintFrame() {
+    var frame = document.getElementById('sna-print-frame');
+    if (frame && frame.parentNode) { frame.parentNode.removeChild(frame); }
+}
+
+// Builds the print document when the person uses the browser's print menu while a report is on screen.
+function snaHandleBeforePrint() {
+    var reportEl = document.getElementById('sna-report');
+    if (!_snaReport || !reportEl || reportEl.hidden) { return; }
+    snaPreparePrintDocument();
+}
+
+// Ctrl+P, or Command+P on a Mac, prints the report the same way as Print full report / PDF while a report is on screen.
+function snaHandlePrintShortcut(e) {
+    var reportEl = document.getElementById('sna-report');
+    if (!_snaReport || !reportEl || reportEl.hidden) { return; }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || String(e.key).toLowerCase() !== 'p') { return; }
+    e.preventDefault();
+    snaPrintReport();
 }
 
 // ### Choose a Site Dialog ###
@@ -4836,6 +5130,10 @@ function startApplication() {
         if (!app.hasAttribute('data-sna-routing')) {
             app.setAttribute('data-sna-routing', 'true');
             window.addEventListener('hashchange', snaHandleHashChange);
+            // The browser's own print command prints the same document as Print full report / PDF.
+            window.addEventListener('beforeprint', snaHandleBeforePrint);
+            window.addEventListener('afterprint', snaRemovePrintDocument);
+            document.addEventListener('keydown', snaHandlePrintShortcut, true);
             // Leaving or reloading the page with an unsaved description makes the browser ask first.
             window.addEventListener('beforeunload', function(e) {
                 if (snaUnsavedDraftCount() > 0) { e.preventDefault(); e.returnValue = ''; }

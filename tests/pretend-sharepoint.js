@@ -180,6 +180,14 @@ function sitePagesItems(url) {
     return { value: SITE_PAGES_BATCHES[0], 'odata.nextLink': nextLink };
 }
 
+// The image at the top of each page, from its BannerImageUrl column. About the Study has the image SharePoint gives
+// every new page, which Sitenalyzer treats as no image. PAGE_IMAGE_PNG is the image the pretend site serves.
+const PAGE_IMAGES = {
+    1: { Description: 'Welcome image', Url: SITE_URL + '/SiteAssets/images/welcome.png' },
+    4: { Description: '', Url: TENANT_ORIGIN + '/_layouts/15/images/sitepagethumbnail.png' }
+};
+const PAGE_IMAGE_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkaPhfDwAEyQH+ZQ6KNQAAAABJRU5ErkJggg==', 'base64');
+
 // Answers siteusers by its $filter: site collection administrators, or one user by email address.
 function siteUsersAnswer(url) {
     const filter = url.searchParams.get('$filter') || '';
@@ -256,6 +264,9 @@ const API_ANSWERS = [
         return /BaseTemplate eq 119/.test(url.searchParams.get('$filter') || '') ? sitePagesLibrary : lists;
     } },
     { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: sitePagesItems },
+    { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\((\\d+)\\)$"), answer: function(url, match) {
+        return PAGE_IMAGES[match[1]] ? { BannerImageUrl: PAGE_IMAGES[match[1]] } : reply(404, { error: 'Item not found' });
+    } },
     { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/getUserEffectivePermissions\(@u\)$/, answer: function(url, match) {
         return EFFECTIVE_PERMISSIONS[match[1]] || { High: '0', Low: '0' };
     } },
@@ -275,11 +286,12 @@ const API_ANSWERS = [
 // Builds the SharePoint page: the code a site owner pastes into the Modern Script Editor web part,
 // inside a minimal page. extraHeadHtml lets a test add markup, such as an inline script that CSP must block.
 // omitMountDiv leaves out the app's <div>, so a test can add it later or check what happens without it.
+// #pretend-host-bar stands for SharePoint's own page header, which a printed report leaves out.
 function buildPageHtml(extraHeadHtml, omitMountDiv) {
     let pageCode = fs.readFileSync(path.join(DIST_DIR, 'SitePages', 'sitenalyzer.html.txt'), 'utf8');
     if (omitMountDiv) { pageCode = pageCode.replace('<div id="sitenalyzer-app"></div>', ''); }
     return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>sitenalyzer</title>\n' +
-        (extraHeadHtml || '') + '</head>\n<body>\n<main>\n' + pageCode + '</main>\n</body>\n</html>\n';
+        (extraHeadHtml || '') + '</head>\n<body>\n<div id="pretend-host-bar">Pretend SharePoint page header</div>\n<main>\n' + pageCode + '</main>\n</body>\n</html>\n';
 }
 
 /**
@@ -335,6 +347,12 @@ async function openPretendSite(page, options) {
                 headers: { 'Content-Security-Policy': CONTENT_SECURITY_POLICY },
                 body: buildPageHtml(settings.extraHeadHtml, settings.omitMountDiv)
             });
+            return;
+        }
+
+        if (pathname === SITE_PATH + '/SiteAssets/images/welcome.png') {
+            record.siteAssetsRequests.push({ url: url.href, status: 200 });
+            await route.fulfill({ status: 200, contentType: 'image/png', body: PAGE_IMAGE_PNG });
             return;
         }
 

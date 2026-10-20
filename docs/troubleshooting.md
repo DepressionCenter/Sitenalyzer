@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/troubleshooting.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: Problems people can run into when installing or using Sitenalyzer, with causes and fixes.
 Notes: See README file for documentation and full license information.
 
@@ -108,6 +108,14 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 **Cause:** The browser kept a saved copy of the old files. Versions from before October 2026 load their style sheets without a version in the address, so the browser can pair a new `sitenalyzer.js` with an old `sitenalyzer.css`.
 
 **Fix:** Press Ctrl+F5 to reload the page and get the new files. Newer versions add a version to each style sheet address, so this happens only once after updating from an older version.
+
+### The print window says "Print preview failed" or never finishes loading
+
+**What you see:** After you select **Print full report / PDF**, the print window in Chrome says "Print preview failed". In Microsoft Edge, the preview keeps loading.
+
+**Cause:** Something outside Sitenalyzer stops the browser from drawing the preview, such as a browser extension that manages printing or the selected printer. To check, print another SharePoint page. If that page fails too, Sitenalyzer isn't the cause.
+
+**Fix:** In the print window, set **Destination** to **Save as PDF** and wait a few seconds. If the preview still fails, print from another browser, such as Firefox. If your organization installs a printing extension in your browser, ask your IT help desk about the problem, because you may not be able to turn the extension off yourself.
 
 ### Conclusion
 

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/usage.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: How to install, update, and use Sitenalyzer on a SharePoint Online site.
 Notes: See README file for documentation and full license information.
 
@@ -71,7 +71,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 6. To see internal names, IDs, and other values that developers need, turn on **Show technical details** at the right end of the section links. See [Technical details](#technical-details).
 7. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
 8. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
-9. To print the whole report or save it as a PDF, select **Print full report / PDF**. Sitenalyzer shows every section on one page and then opens your browser's print window.
+9. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
 10. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
 11. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. To close the box without changing the site, press Escape or select **Close**.
 12. To go back to the first screen, select **Start over**. It puts back the address of the site the page is on.
@@ -86,7 +86,7 @@ You must be an owner of a site to see all of its permissions. If you can manage 
 2. Change the text in the box.
 3. Press Enter or select **Save**. To add a line, press Shift+Enter or Alt+Enter. To stop without saving, press Escape or select **Cancel**.
 
-If SharePoint doesn't save the description, Sitenalyzer says why and keeps your text in the box so you can try again. Text you haven't saved stays in its box while you look at other sections. Before **Refresh report**, **Start over**, or opening another site would throw it away, Sitenalyzer asks first. While a description is still saving, those actions don't run; Sitenalyzer asks you to wait until the description is saved and try again. The printed report shows only saved descriptions, even if you print while a description is open for editing.
+If SharePoint doesn't save the description, Sitenalyzer says why and keeps your text in the box so you can try again. Text you haven't saved stays in its box while you look at other sections. Before **Refresh report**, **Start over**, or opening another site would throw it away, Sitenalyzer asks first. While a description is still saving, those actions don't run; Sitenalyzer asks you to wait until the description is saved and try again. The printed report shows only saved descriptions, even if you print while a description is open for editing. The box and the text you haven't saved stay on screen.
 
 ### Report sections
 
@@ -113,7 +113,7 @@ The details of a list or library have these tabs:
 
 Above the tabs are the **ID**, **Open**, and **Permissions** buttons. **ID** copies the list or library ID. **Permissions** opens SharePoint's own permissions page for it. On a narrow screen, the details replace the list; select **Back to results** to return to it.
 
-To sort a table, select a column heading. Tables with more than 10 rows have a filter box above them that shows only the rows containing what you type, with a row count under it.
+To sort a table, select a column heading, or move to it with the Tab key and press Enter or Space. Select it again to sort the other way. The headings stay at the top of the table on every screen size; on a narrow screen, the table scrolls sideways. Tables with more than 10 rows have a filter box above them that shows only the rows containing what you type, with a row count under it.
 
 #### Addresses for each section
 
@@ -185,9 +185,34 @@ At the bottom, **Report coverage** lists each part of the report, such as **Shar
 
 ### Site pages
 
-**Site pages** in **Contents** lists the pages in the site's Site Pages library, sorted by name, with a link to each one. Folders and files that aren't pages are left out.
+**Site pages** in **Contents** lists the pages in the site's Site Pages library, sorted by name, with each page's file name, last change, and address. Folders and files that aren't pages are left out.
+
+Select a page's name to open its details: its file name, last change, and address, and an **Open page** button that opens it in a new window. The details also show the image chosen for the page, the image at the top of a modern page. Sitenalyzer looks the image up with your own access when you open the details, and shows it only when it is stored on your organization's SharePoint. Otherwise the details say why there is no image:
+
+- "This page has no image chosen for it." The page has no image, or it has the image SharePoint gives every new page.
+- "The image chosen for this page is stored outside your organization's SharePoint." Open the page to see it.
+- "Sitenalyzer could not look up the image chosen for this page." Open the page, or select **Refresh report** to try again.
+- "Sitenalyzer found the image chosen for this page but could not show it." Open the page to see it.
+
+**Back to Site pages** returns to the list of pages.
 
 Sitenalyzer reads Site Pages 2,000 items at a time, up to 10,000 items. If the library has more, the section says "Site Pages has more than 10,000 items. Sitenalyzer shows pages from the first 10,000 only."
+
+### Print the report
+
+**Print full report / PDF** opens your browser's print window with a printable copy of the whole report. To save it as a PDF, choose **Save as PDF** or **Microsoft Print to PDF** as the printer. Ctrl+P, or Command+P on a Mac, and your browser's print menu print the same copy while a report is open.
+
+The printed report is built from everything Sitenalyzer read, not from what is on screen, so closed sections, filters, and tables you haven't scrolled through leave nothing out. It has these parts, each starting on a new page:
+
+1. The site's name, address, description, ID, when the report was collected, and who collected it.
+2. **Contents**: a table of every list and library.
+3. **Document libraries** and **Lists**: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, and descriptions, and one with internal names, IDs, and other technical details.
+4. **Site pages**.
+5. **Permissions**: the access findings, site permissions, people and groups with their members, the result of **Check a person's access** if you ran one, lists and libraries with their own permissions, sharing links, and apps.
+6. **Taxonomy and term store**: every term group, term set, and term, with their IDs.
+7. **Site review**: the cleanup findings, the largest lists and libraries, and **Report coverage**.
+
+Technical details are always printed, even when **Show technical details** is off. The printout leaves out buttons, search boxes, the section links, and the SharePoint page around Sitenalyzer. Table headings repeat at the top of each page. Page images aren't printed.
 
 ### The permissions workbook
 

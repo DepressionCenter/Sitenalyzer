@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 ui-redesign.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-16
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: Agreed UI direction, implementation requirements, and handoff for the Site brief redesign.
 Notes: See README for documentation and full license information.
 Copyright © 2026 The Regents of the University of Michigan
@@ -396,9 +396,9 @@ Phase 1 differs from this design in these ways. The owner chose the first four a
 
 - Tables do not get a separate **Sort by** control on narrow screens. Tabulator keeps its column headings visible
   at every width, and the tables scroll sideways inside their own area, so the headings stay available for sorting.
-  Phase 3 checks this again with real Tabulator behavior.
+  Phase 3 checked this with real Tabulator tables at 320 pixels, and keeps this decision.
 - The report area is a `<div>`, not a `<main>` element, because the SharePoint page already has its own main landmark.
-- Printing uses a full-report view that draws every section with every part open. Phase 3 replaces it with a print
+- Printing uses a full-report view that draws every section with every part open. Phase 3 replaced it with a print
   document built from the report data.
 
 **Phase 2 (Permissions, Taxonomy, Site review, inline editors, and the Change site dialog)** is implemented.
@@ -417,7 +417,24 @@ Phase 2 differs from this design in these ways:
 - An unsaved description is kept when the person opens another view, rather than prompting on every view change. Only
   **Refresh report**, **Start over**, opening another site, and closing the page ask before discarding it.
 
-**Phase 3 (print document, page details, polish, and release)** is planned.
+**Phase 3 (print document, page details, polish, and release)** is implemented. **Print full report / PDF** and the
+browser's own print command print a document built from the report data, with plain tables and no controls, and the
+`#sna/print` view is gone. Site pages have a details view with **Open page** and the image chosen for the page.
+Column headings sort tables from the keyboard, the site initials keep their contrast with forced colors, and nothing
+animates when reduced motion is on.
+
+Phase 3 differs from this design in these ways:
+
+- The page image comes from the page's `BannerImageUrl` column, read through SharePoint's REST API with the person's
+  own access, not from Microsoft Graph's `thumbnailWebUrl`. Sitenalyzer reads it only when a page's details open, and
+  shows it only when it is on the SharePoint tenant. The image SharePoint gives every new page counts as no image.
+  The image has empty alternative text and the caption "The image chosen for this page", because the page's name is
+  already in the heading. Retrieval on the real test site still needs checking.
+- The print document shows no page images, and it starts each main part on a new page.
+- **Print full report / PDF** and Ctrl+P print the document from a hidden frame, so the SharePoint page and its scripts
+  are left alone. Only the browser's print menu hides the SharePoint page to print the same document.
+- Tabulator 6.6 column headings can't be reached with the keyboard. Sitenalyzer adds each sortable heading to the Tab
+  order, with Enter and Space to sort, rather than adding separate sort controls.
 
 ### Planned implementation sequence
 
@@ -446,12 +463,12 @@ Names describe the current source and can be refactored while preserving their b
 | --- | --- |
 | Collection and report rendering | `gatherSiteInformation`, `spFetch`, `snaMapWithLimit` |
 | Tables and fields | `initSnaTabulators`, `snaFetchFields` |
-| Search | `buildSearchIndex`, `snaParseQuery`, `snaSearchQuery`, `snaSearchSelect` |
+| Search | `buildSearchIndex`, `snaParseQuery`, `snaSearchQuery`, `snaGroupSearchResults` |
 | Permissions | `renderPermissionsByPrincipal`, `snaCheckUserAccess`, `snaRenderRiskFlags`, `snaRenderInheritanceReport` |
-| Sharing and cleanup | `snaFetchSharingLinks`, `snaRenderSharingLinks`, `snaRenderCleanupSignals` |
-| Taxonomy and pages | `fetchTaxonomy`, `renderTaxonomySection`, `snaFetchSitePages`, `snaRenderSitePagesSection` |
+| Sharing and cleanup | `snaFetchSharingLinks`, `snaRenderSharingLinks`, `snaReviewFindings` |
+| Taxonomy and pages | `fetchTaxonomy`, `snaRenderTaxonomy`, `snaFetchSitePages`, `snaRenderSitePagesSection`, `snaRenderPageDetail` |
 | Editing | `snaSaveDescription`, `snaTaxonomyV21Update`, `snaTaxonomyCsomUpdate` |
-| Workbooks and print | `exportToXLSX`, `exportPermissionsToXLSX`, `expandAndPrint` |
+| Workbooks and print | `exportToXLSX`, `exportPermissionsToXLSX`, `snaBuildPrintDocument` |
 
 ### Release checklist
 

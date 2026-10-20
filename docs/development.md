@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -88,10 +88,13 @@ The tests check that:
 - Sharing link file IDs that aren't GUIDs are never sent to SharePoint, and Site Pages next-batch links to another site are never followed.
 - Failed requests show "could not read" instead of "none found".
 - The edit buttons appear only with the ManageWeb permission. The description editor opens from its button or a double-click, Escape cancels, Shift+Enter and Alt+Enter add lines, and Enter saves. The site, list, column, term group, term set, and term descriptions save to their own addresses, and saved text appears in search and the data dictionary.
-- A failed save keeps the draft and says why, the next save works, an unsaved draft stays while other views open, the printed report leaves it out, and **Refresh report** asks before discarding it.
-- While a save is running, **Refresh report** and **Start over** say to wait instead of offering to discard it. Printing while the site description is open for editing shows the saved description.
+- A failed save keeps the draft and says why, the next save works, an unsaved draft stays while other views open, the print document leaves it out, and **Refresh report** asks before discarding it.
+- While a save is running, **Refresh report** and **Start over** say to wait instead of offering to discard it. Printing while the site description is open for editing, with the button or the browser's own print command, prints the saved description and keeps the editor on screen.
 - The **Data dictionary (.xlsx)** and **Permissions workbook (.xlsx)** buttons save workbooks with the expected sheets, columns, and column filters.
-- **Print full report / PDF** shows every section with every part open, then opens the print window once.
+- **Print full report / PDF** prints a frame of its own once, with a print document that has every section, every column and folder row, the person check result, and technical details, but no controls. The frame has Sitenalyzer's style sheet and a title with the site's name, focus returns to the button, Ctrl+P prints the same way, the page itself doesn't change, and **Start over** removes the frame. From the browser's print menu, a printout shows only the same document, without the app or the pretend SharePoint header. The old `#sna/print` address opens the Overview. The print document passes axe.
+- Every link that opens a new window has `data-interception="off"`, so SharePoint's page router doesn't open it in the same tab.
+- A site page's details show its file name, address, **Open page**, and its image; the image is looked up once. The image messages for no image, an image on another host or a `javascript:` address, a failed lookup, and an image that doesn't download are each checked.
+- Column headings sort a table with Enter and Space at 320 pixels wide. With the wider text spacing of WCAG success criterion 1.4.12, no button or link cuts off its words and nothing scrolls sideways. With forced colors and reduced motion, the Overview and a columns table pass axe, and nothing animates.
 - Each section has its own address, Back and Forward move between sections, a `?siteUrl=...#sna/taxonomy` link opens that section, unknown addresses open the Overview, and other page addresses such as `#top` are ignored.
 - **Refresh report** keeps the section, **Start over** removes the address, and a report address left after reloading the page is removed.
 - **Change site** opens **Choose a site** with focus in **Find a site**. It filters the sites, refuses an address on another host, closes with Escape or **Close** and returns focus to **Change site**, and reads the chosen or typed site.
