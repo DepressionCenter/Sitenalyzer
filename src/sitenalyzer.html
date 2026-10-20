@@ -48,46 +48,45 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 			<div class="sna-utility-bar hide-on-print">
 				<span class="sna-mark"><span class="sna-mark-dot" aria-hidden="true"></span>Sitenalyzer</span>
 				<div class="sna-utility-actions">
-					<button type="button" class="sna-btn sna-btn-outline" data-action="change-site">Change site</button>
-					<a id="sna-site-settings-link" class="sna-btn sna-btn-outline" href="#" target="_blank" rel="noopener noreferrer">Site settings<span class="sna-visually-hidden"> (opens in a new window)</span></a>
+					<button type="button" class="sna-link-btn" data-action="refresh-report"><span data-icon="refresh"></span>Refresh report</button>
+					<button type="button" class="sna-link-btn" data-action="start-over"><span data-icon="undo"></span>Start over</button>
+					<button type="button" class="sna-btn sna-btn-outline sna-btn-small" data-action="change-site"><span data-icon="swap"></span>Change site</button>
+					<a id="sna-site-settings-link" class="sna-btn sna-btn-outline sna-btn-small" href="#" target="_blank" rel="noopener noreferrer"><span data-icon="settings"></span>Site settings<span class="sna-visually-hidden"> (opens in a new window)</span></a>
 				</div>
 			</div>
 			<div id="sna-site-header" class="sna-site-header"></div>
-			<nav class="sna-nav hide-on-print" aria-label="Report sections">
-				<ul>
-					<li><a href="#sna/overview" data-section="overview">Overview</a></li>
-					<li><a href="#sna/contents" data-section="contents">Contents</a></li>
-					<li><a href="#sna/permissions" data-section="permissions">Permissions</a></li>
-					<li><a href="#sna/taxonomy" data-section="taxonomy">Taxonomy</a></li>
-					<li><a href="#sna/review" data-section="review">Site review</a></li>
-				</ul>
-			</nav>
-			<div class="sna-toolbar hide-on-print">
-				<form id="sna-search-form" class="sna-search-form" role="search" aria-label="Search this report">
-					<label for="sna-report-search" class="sna-field-label">Search this report</label>
-					<div class="sna-search-row">
-						<input type="search" id="sna-report-search" maxlength="200" placeholder="Find a list, library, column, folder, or term" autocomplete="off" spellcheck="false">
-						<button type="submit" class="sna-btn sna-btn-outline">Search</button>
-					</div>
-				</form>
-				<div class="sna-report-actions">
-					<p id="sna-report-actions-label" class="sna-field-label">Download or print the full site report</p>
-					<div class="sna-report-buttons" role="group" aria-labelledby="sna-report-actions-label" aria-describedby="sna-report-actions-hint">
-						<button type="button" class="sna-btn sna-btn-primary" data-action="export-xlsx">Data dictionary (.xlsx)</button>
-						<button type="button" class="sna-btn sna-btn-outline" data-action="export-permissions">Permissions workbook (.xlsx)</button>
-						<button type="button" class="sna-btn sna-btn-outline" data-action="print-report">Print full report / PDF</button>
-					</div>
-					<p id="sna-report-actions-hint" class="sna-hint">Includes the full report, whatever section is open or filter is set.</p>
-				</div>
-			</div>
-			<div class="sna-utility-row hide-on-print">
-				<button type="button" class="sna-link-btn" data-action="refresh-report">Refresh report</button>
-				<button type="button" class="sna-link-btn" data-action="start-over">Start over</button>
-				<button type="button" class="sna-link-btn" data-action="scroll-top">Back to top</button>
+			<div class="sna-nav-row hide-on-print">
+				<nav class="sna-nav" aria-label="Report sections">
+					<ul>
+						<li><a href="#sna/overview" data-section="overview"><span data-icon="home"></span>Overview</a></li>
+						<li><a href="#sna/contents" data-section="contents"><span data-icon="folder"></span>Contents</a></li>
+						<li><a href="#sna/permissions" data-section="permissions"><span data-icon="shield"></span>Permissions</a></li>
+						<li><a href="#sna/taxonomy" data-section="taxonomy"><span data-icon="tag"></span>Taxonomy</a></li>
+						<li><a href="#sna/review" data-section="review"><span data-icon="check"></span>Site review</a></li>
+					</ul>
+				</nav>
 				<span class="sna-switch">
 					<input type="checkbox" role="switch" id="sna-technical-switch">
 					<label for="sna-technical-switch">Show technical details</label>
 				</span>
+			</div>
+			<div class="sna-toolbar hide-on-print">
+				<form id="sna-search-form" class="sna-search-form" role="search" aria-label="Search this report">
+					<label for="sna-report-search" class="sna-search-label">Search this report</label>
+					<div class="sna-search-row">
+						<input type="search" id="sna-report-search" maxlength="200" placeholder="Find a list, library, column, folder, or term" autocomplete="off" spellcheck="false">
+						<button type="submit" class="sna-btn sna-btn-outline"><span data-icon="search"></span>Search</button>
+					</div>
+				</form>
+				<div class="sna-report-actions">
+					<p id="sna-report-actions-label" class="sna-visually-hidden">Download or print the full site report</p>
+					<div class="sna-report-buttons" role="group" aria-labelledby="sna-report-actions-label" aria-describedby="sna-report-actions-hint">
+						<button type="button" class="sna-btn sna-btn-primary" data-action="export-xlsx"><span data-icon="download"></span>Data dictionary (.xlsx)</button>
+						<button type="button" class="sna-btn sna-btn-outline" data-action="export-permissions"><span data-icon="download"></span>Permissions workbook (.xlsx)</button>
+						<button type="button" class="sna-btn sna-btn-outline" data-action="print-report"><span data-icon="print"></span>Print full report / PDF</button>
+					</div>
+					<p id="sna-report-actions-hint" class="sna-hint">Downloads and the printed report always include everything, even when a filter is set.</p>
+				</div>
 			</div>
 			<div id="sp-results" class="sna-view"></div>
 			<p class="sna-back-to-top hide-on-print"><button type="button" class="sna-link-btn" data-action="scroll-top">Back to top</button></p>

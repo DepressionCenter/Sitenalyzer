@@ -64,6 +64,11 @@ var Tabulator = null;
 // App markup from src/sitenalyzer.html. The build replaces the next line, so keep it exactly as written.
 var SNA_APP_HTML = [];
 
+// Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
+// checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
+// as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
+var SNA_ASSET_VERSION = '';
+
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
 var SNA_SCRIPTS_FOLDER = snaFindScriptsFolder();
@@ -193,7 +198,7 @@ var _snaContentsFilter = '';      // Text in the Contents name filter
 var _snaLastInventoryId = '';     // Contents item whose details were open last, so Back to results can return to it
 var _snaTechnicalDetails = false;
 var _snaUserCheckResult = null;   // The finished person check { input, status, html }, shown again when Permissions reopens
-var _snaUseAddressRoute = true;   // True until the first report opens; later reports start on Overview or the kept view
+var _snaUseAddressRoute = true;   // True until the first report from a ?siteUrl= link opens; other reports start on Overview or the kept view
 
 // Taxonomy and admin edit state.
 var _snaTaxonomyData        = [];
@@ -401,6 +406,34 @@ function snaTableColumns(type, tbl) {
         }
       },
       { title: 'Folder ID', field: 'folderId', sorter: 'string', widthGrow: 2, visible: technical, formatter: idFormatter }
+    ];
+  }
+  if (type === 'lists') {
+    return [
+      {
+        title: 'Name', field: 'title', sorter: 'string', widthGrow: 2, minWidth: 120,
+        formatter: function(cell) {
+          var rowData = cell.getRow().getData();
+          return '<a href="' + snaEscapeHtml(rowData.route) + '" data-nav-focus="detail">' + snaEscapeHtml(cell.getValue()) + '</a>';
+        }
+      },
+      { title: 'Description', field: 'description', sorter: 'string', widthGrow: 3, minWidth: 120, formatter: 'textarea' },
+      { title: 'Items', field: 'items', sorter: 'number', width: 90, hozAlign: 'right' },
+      { title: 'Columns', field: 'columns', sorter: 'number', width: 125, hozAlign: 'right' },
+      {
+        title: 'Last changed', field: 'lastChanged', sorter: 'string', width: 135,
+        formatter: function(cell) { return snaEscapeHtml(snaFormatDate(cell.getValue())); }
+      },
+      {
+        title: 'Permissions', field: 'ownPermissions', sorter: 'boolean', width: 185,
+        formatter: function(cell) {
+          return cell.getValue()
+            ? '<span class="sna-badge sna-badge-own">Own permissions</span>'
+            : '<span class="sna-badge">Site\'s permissions</span>';
+        }
+      },
+      { title: 'Internal name', field: 'internalName', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical },
+      { title: 'List ID', field: 'id', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter }
     ];
   }
   if (type === 'pages') {
@@ -3441,7 +3474,8 @@ function snaSetTechnicalDetails(isOn) {
         else { window.localStorage.removeItem(SNA_TECHNICAL_DETAILS_KEY); }
     } catch(e) { /* The setting lasts until the page is closed. */ }
     snaSyncTechnicalSwitch();
-    var showsTechnical = ['overview', 'contents', 'taxonomy', 'search', 'print'];
+    snaRenderSiteTech();
+    var showsTechnical = ['contents', 'taxonomy', 'search', 'print'];
     if (_snaReport && _snaRoute && showsTechnical.indexOf(_snaRoute.section) > -1) {
         renderApp(_snaRoute, { focus: 'switch', full: true });
     }
@@ -3742,6 +3776,39 @@ function snaFormatDate(value) {
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+// Shapes of the small line icons beside buttons, section links, and Overview card titles. They are decorative:
+// every one sits next to text that says the same thing, so screen readers skip them.
+var SNA_ICONS = {
+    home:     '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+    folder:   '<path d="M3 6h6l2 2h10v11H3z"/>',
+    shield:   '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+    tag:      '<path d="M3 12V3h9l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+    check:    '<path d="M4 12l5 5L20 6"/>',
+    download: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/>',
+    print:    '<path d="M6 9V3h12v6"/><path d="M6 17H3V9h18v8h-3"/><path d="M6 14h12v7H6z"/>',
+    refresh:  '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',
+    undo:     '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+    swap:     '<path d="M4 8h14l-3-3"/><path d="M20 16H6l3 3"/>',
+    settings: '<path d="M4 6h9"/><path d="M17 6h3"/><path d="M4 12h3"/><path d="M11 12h9"/><path d="M4 18h11"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+    search:   '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+    copy:     '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>'
+};
+
+// Returns the markup for one icon from SNA_ICONS, or '' for a name it doesn't have.
+function snaIconHtml(name) {
+    if (!Object.prototype.hasOwnProperty.call(SNA_ICONS, name)) { return ''; }
+    return '<svg class="sna-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' + SNA_ICONS[name] + '</svg>';
+}
+
+// Puts an icon in every element under root that names one with data-icon, such as the buttons in the app markup.
+function snaInsertIcons(root) {
+    (root || document).querySelectorAll('[data-icon]').forEach(function(el) {
+        if (el.firstChild) { return; }
+        el.innerHTML = snaIconHtml(el.getAttribute('data-icon'));
+        el.removeAttribute('data-icon');
+    });
+}
+
 // Fills in the site's name, logo, description, address, and collection time above the section navigation,
 // and points Site settings at the site that was read.
 function renderFrame(report) {
@@ -3756,6 +3823,7 @@ function renderFrame(report) {
             '<h1 class="sna-site-title">' + snaEscapeHtml(site.title || 'Untitled site') + '</h1>' +
             '<p class="sna-site-desc">' + renderAdminDescWrap(site.description, 'site') + '</p>' +
             '<p class="sna-site-address">' + snaLinkHtml(site.url, site.url) + '</p>' +
+            '<div id="sna-site-tech"></div>' +
         '</div>' +
         '<div class="sna-site-meta">' +
             '<span class="sna-tag">' + (report.isAdmin ? 'You can manage this site' : 'You can view this site') + '</span>' +
@@ -3768,7 +3836,20 @@ function renderFrame(report) {
         settingsLink.hidden = !settingsUrl;
         settingsLink.setAttribute('href', settingsUrl || '#');
     }
+    snaRenderSiteTech();
     snaSyncTechnicalSwitch();
+}
+
+// Shows the site ID, with a button that copies it, under the site's address while technical details are on.
+// Only this line is redrawn when the switch changes, so a description being edited in the header is kept.
+function snaRenderSiteTech() {
+    var line = document.getElementById('sna-site-tech');
+    if (!line) { return; }
+    if (!_snaReport || !snaTechnicalDetailsOn()) { line.innerHTML = ''; return; }
+    var siteId = _snaReport.site.id;
+    line.innerHTML = '<p class="sna-site-id">Site ID <span class="sna-code">' + snaEscapeHtml(siteId) + '</span> ' +
+        '<button type="button" class="sna-link-btn sna-copy-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(siteId) + '" data-label="Site ID">' +
+            snaIconHtml('copy') + 'Copy<span class="sna-visually-hidden"> site ID</span></button></p>';
 }
 
 // Returns the list or library with this address ID, or null.
@@ -3789,7 +3870,22 @@ function snaSitePrincipals(report) {
 
 // ### Overview ###
 
-// Draws the Overview: a grid of counts that link to their sections, and one short card per section.
+// Returns a row of counts. Each item is { value, singular, plural, href }; value is a number or text such as Not read,
+// and href is optional. The label comes first in the markup, so screen readers say "Sharing links, Not read";
+// the styles show the value on top.
+function snaStatsHtml(items) {
+    return '<ul class="sna-stats">' + items.map(function(item) {
+        var isNumber = typeof item.value === 'number';
+        var label = (isNumber && item.value === 1) ? item.singular : item.plural;
+        var inner = '<span class="sna-stat-label">' + snaEscapeHtml(label) + '</span>' +
+            '<span class="sna-stat-value">' + snaEscapeHtml(isNumber ? item.value.toLocaleString('en-US') : item.value) + '</span>';
+        return '<li class="sna-stat">' + (item.href
+            ? '<a class="sna-stat-link" href="' + snaEscapeHtml(item.href) + '">' + inner + '</a>'
+            : '<div class="sna-stat-link">' + inner + '</div>') + '</li>';
+    }).join('') + '</ul>';
+}
+
+// Draws the Overview: a few counts that link to their sections, and one short card per section.
 // A count that could not be read says Not read instead of 0.
 function snaRenderOverview(route, report) {
     var perms = report.permissions;
@@ -3798,83 +3894,59 @@ function snaRenderOverview(route, report) {
     var pagesNotRead = report.pages.failed && report.pages.pages.length === 0;
     var termSets = 0;
     report.taxonomy.groups.forEach(function(g) { termSets += (g.termSets || []).length; });
-    var items = 0, columns = 0, folders = 0, newest = '';
-    report.lists.forEach(function(l) {
-        items += Number(l.itemCount) || 0;
-        columns += l.columns.length;
-        folders += l.folders.length;
-        if (l.lastModified && (!newest || new Date(l.lastModified) > new Date(newest))) { newest = l.lastModified; }
-    });
     var NOT_READ = 'Not read';
-    var listsValue = function(value) { return report.listsRead ? value : NOT_READ; };
 
-    // The label comes first in the markup, so screen readers say "Sharing links, Not read"; the styles show the value on top.
-    function count(value, singular, plural, href) {
-        var isNumber = typeof value === 'number';
-        var label = (isNumber && value === 1) ? singular : plural;
-        var inner = '<span class="sna-count-label">' + snaEscapeHtml(label) + '</span>' +
-            '<span class="sna-count-value">' + snaEscapeHtml(isNumber ? value.toLocaleString('en-US') : value) + '</span>';
-        return '<li class="sna-count">' + (href ? '<a class="sna-count-link" href="' + snaEscapeHtml(href) + '">' + inner + '</a>' : '<div class="sna-count-link">' + inner + '</div>') + '</li>';
-    }
+    var html = snaSectionTitleHtml('Overview', 'A summary of what this site holds and who can open it.');
+    html += snaStatsHtml([
+        { value: report.listsRead ? libraries.length : NOT_READ, singular: 'Document library', plural: 'Document libraries', href: '#sna/contents' },
+        { value: report.listsRead ? plainLists.length : NOT_READ, singular: 'List', plural: 'Lists', href: '#sna/contents' },
+        { value: pagesNotRead ? NOT_READ : report.pages.pages.length, singular: 'Site page', plural: 'Site pages', href: '#sna/contents/pages' },
+        { value: (report.taxonomy.read || termSets > 0) ? termSets : NOT_READ, singular: 'Term set', plural: 'Term sets', href: '#sna/taxonomy' },
+        { value: perms.sharingLinks.failed ? NOT_READ : perms.sharingLinks.links.length, singular: 'Sharing link', plural: 'Sharing links', href: '#sna/permissions/sharing' }
+    ]);
 
-    var html = snaSectionTitleHtml('Overview', 'What this site contains and where to look next.');
-    html += '<ul class="sna-counts">' +
-        count(listsValue(libraries.length), 'Document library', 'Document libraries', '#sna/contents') +
-        count(listsValue(plainLists.length), 'List', 'Lists', '#sna/contents') +
-        count(pagesNotRead ? NOT_READ : report.pages.pages.length, 'Site page', 'Site pages', '#sna/contents/pages') +
-        count(listsValue(items), 'Item in lists and libraries', 'Items in lists and libraries', '') +
-        count(listsValue(columns), 'Column', 'Columns', '') +
-        count(listsValue(folders), 'Top-level folder', 'Top-level folders', '') +
-        count((report.taxonomy.read || termSets > 0) ? termSets : NOT_READ, 'Term set', 'Term sets', '#sna/taxonomy') +
-        count(perms.siteRolesRead ? snaSitePrincipals(report).length : NOT_READ, 'Person or group with site access', 'People and groups with site access', '#sna/permissions/people') +
-        count(listsValue(perms.uniqueLists.length), 'List or library with its own permissions', 'Lists and libraries with their own permissions', '#sna/permissions/own') +
-        count(perms.sharingLinks.failed ? NOT_READ : perms.sharingLinks.links.length, 'Sharing link', 'Sharing links', '#sna/permissions/sharing') +
-        count(perms.siteRolesRead ? perms.appAssignments.length : NOT_READ, 'App with access', 'Apps with access', '#sna/permissions/apps') +
-        count(report.listsRead ? (snaFormatDate(newest) || 'None found') : NOT_READ, 'Most recent change', 'Most recent change', '') +
-    '</ul>';
-
-    function card(title, text, links) {
-        return '<div class="sna-card"><h3 class="sna-card-title">' + snaEscapeHtml(title) + '</h3>' +
+    function card(icon, title, text, links, wide) {
+        return '<div class="sna-card' + (wide ? ' sna-card-wide' : '') + '">' +
+            '<h3 class="sna-card-title"><span class="sna-card-icon">' + snaIconHtml(icon) + '</span>' + snaEscapeHtml(title) + '</h3>' +
             (text ? '<p class="sna-card-text">' + text + '</p>' : '') +
-            (links.length ? '<ul class="sna-card-links">' + links.map(function(l) {
+            '<ul class="sna-card-links">' + links.map(function(l) {
                 return '<li><a href="' + snaEscapeHtml(l[1]) + '">' + snaEscapeHtml(l[0]) + '</a></li>';
-            }).join('') + '</ul>' : '') + '</div>';
+            }).join('') + '</ul></div>';
     }
 
-    var largest = report.lists.slice().sort(function(a, b) { return (Number(b.itemCount) || 0) - (Number(a.itemCount) || 0); })[0];
-    var contentsText = !report.listsRead ? 'Sitenalyzer could not read the lists and libraries.'
-        : (!largest ? 'This site has no lists or libraries.'
-        : 'The largest is ' + snaEscapeHtml(largest.title) + ', with ' + snaCountText(Number(largest.itemCount) || 0, 'item', 'items') + '.');
+    var largest = null;
+    report.lists.forEach(function(l) {
+        if (!largest || (Number(l.itemCount) || 0) > (Number(largest.itemCount) || 0)) { largest = l; }
+    });
+    var contentsText;
+    if (!report.listsRead) {
+        contentsText = 'Sitenalyzer could not read the lists and libraries.';
+    } else if (!largest) {
+        contentsText = 'This site has no lists or libraries.';
+    } else {
+        contentsText = 'The largest is ' + snaEscapeHtml(largest.title) + ', with ' + snaCountText(Number(largest.itemCount) || 0, 'item', 'items') + '.';
+    }
     var sharingCount = perms.sharingLinks.failed ? 'could not read' : perms.sharingLinks.links.length;
     var appsCount = perms.siteRolesRead ? perms.appAssignments.length : 'could not read';
+    var peopleCount = perms.siteRolesRead ? snaSitePrincipals(report).length : 'could not read';
     var groupCount = report.taxonomy.groups.length;
     var taxonomyText = (!report.taxonomy.read && groupCount === 0) ? 'Sitenalyzer could not read the term store.'
         : (groupCount === 0 ? 'This site collection has no term groups.'
         : snaCountText(groupCount, 'term group', 'term groups') + ' and ' + snaCountText(termSets, 'term set', 'term sets') + ' describe this site\'s content.');
 
-    var aboutHtml = '<div class="sna-card"><h3 class="sna-card-title">About this site</h3><dl class="sna-facts">' +
-        '<dt>Site address</dt><dd>' + snaLinkHtml(report.site.url, report.site.url) + '</dd>' +
-        '<dt>Collected</dt><dd>' + snaEscapeHtml(snaFormatDateTime(report.collectedAt)) + '</dd>' +
-        (snaTechnicalDetailsOn()
-            ? '<dt>Site ID</dt><dd><span class="list-id-text">' + snaEscapeHtml(report.site.id) + '</span> ' +
-                '<button type="button" class="sna-action-btn" data-action="copy-show-id" data-id="' + snaEscapeHtml(report.site.id) + '" data-label="Site ID">Copy site ID</button></dd>'
-            : '') +
-        '</dl>' + (snaTechnicalDetailsOn() ? '' : '<p class="sna-card-text">Turn on Show technical details to see the site ID.</p>') + '</div>';
-
     html += '<div class="sna-cards">' +
-        card('Contents', contentsText, [['Browse lists and libraries', '#sna/contents'], ['Browse site pages', '#sna/contents/pages']]) +
-        card('Permissions', 'Who can open what on this site.', [
+        card('folder', 'Contents', contentsText, [['Contents summary', '#sna/contents'], ['Browse site pages', '#sna/contents/pages']]) +
+        card('shield', 'Permissions', 'Who can open what on this site.', [
             ['View site permissions', '#sna/permissions/site'],
-            ['Who has access, by person or group', '#sna/permissions/people'],
+            ['Who has access, by person or group (' + peopleCount + ')', '#sna/permissions/people'],
             ['Check one person\'s access', '#sna/permissions/person'],
             ['Lists and libraries with their own permissions (' + perms.uniqueLists.length + ')', '#sna/permissions/own'],
             ['Sharing links (' + sharingCount + ')', '#sna/permissions/sharing'],
             ['Apps with access to this site (' + appsCount + ')', '#sna/permissions/apps']
-        ]) +
-        card('Taxonomy', taxonomyText, [['Browse term groups and sets', '#sna/taxonomy']]) +
-        card('Site review', 'Older content, version history settings, the largest lists and libraries, and what this report could read.',
+        ], true) +
+        card('tag', 'Taxonomy', taxonomyText, [['Browse term groups and sets', '#sna/taxonomy']]) +
+        card('check', 'Site review', 'Older content, version history settings, the largest lists and libraries, and report coverage.',
             [['Lists and libraries to review for cleanup', '#sna/review']]) +
-        aboutHtml +
     '</div>';
     return html;
 }
@@ -3884,7 +3956,7 @@ function snaRenderOverview(route, report) {
 // Draws Contents: the list of document libraries, lists, and Site pages beside the details of the selected one.
 // On narrow screens the two stack, and the details offer Back to results.
 function snaRenderContents(route, report) {
-    return snaSectionTitleHtml('Site contents', 'Browse the site\'s libraries, lists, and pages. Select a name to see its details.') +
+    return snaSectionTitleHtml('Site contents', 'The site\'s document libraries, lists, and pages. Select a name to see its details.') +
         '<div id="sna-contents" class="sna-contents' + (route.id ? ' sna-contents-detail-open' : '') + '">' +
             '<div id="sna-contents-inventory" class="sna-inventory">' + snaRenderInventory(route, report) + '</div>' +
             '<div id="sna-contents-detail" class="sna-detail">' + snaRenderContentsDetail(route, report) + '</div>' +
@@ -3913,7 +3985,11 @@ function snaRenderInventory(route, report) {
         return html + '</ul><p class="sna-muted sna-inventory-none" hidden>No names match the filter.</p></div>';
     }
 
-    var html = '<div class="sna-inventory-filter">' +
+    var html = '<p class="sna-inventory-summary"><a id="sna-inv-summary" class="sna-inventory-link" href="#sna/contents" data-nav-focus="detail"' +
+            (route.id ? '' : ' aria-current="page"') + '>' +
+            '<span class="sna-inventory-name"><span class="sna-inventory-icon" aria-hidden="true">' + snaIconHtml('home') + '</span>Contents summary</span>' +
+            '<span class="sna-inventory-meta">Totals and a table of every list and library</span></a></p>' +
+        '<div class="sna-inventory-filter">' +
         '<label for="sna-inventory-filter">Filter by name</label>' +
         '<input type="search" id="sna-inventory-filter" class="sna-table-search" autocomplete="off" value="' + snaEscapeHtml(_snaContentsFilter) + '">' +
         '<p id="sna-inventory-count" class="sna-table-count" role="status"></p>' +
@@ -3959,8 +4035,9 @@ function snaApplyInventoryFilter() {
 
 // Marks the selected entry in the Contents list after only the details were redrawn.
 function snaUpdateInventorySelection(route) {
+    var currentId = route.id ? 'sna-inv-' + route.id : 'sna-inv-summary';
     document.querySelectorAll('#sna-contents-inventory .sna-inventory-link').forEach(function(link) {
-        if (link.id === 'sna-inv-' + route.id) { link.setAttribute('aria-current', 'page'); }
+        if (link.id === currentId) { link.setAttribute('aria-current', 'page'); }
         else { link.removeAttribute('aria-current'); }
     });
     var contents = document.getElementById('sna-contents');
@@ -4020,9 +4097,52 @@ function snaRenderListTab(list, tab) {
     '</dl>';
 }
 
-// Returns the details of the selected Contents entry, or a hint when nothing is selected.
+// Returns the counts and the table of every list and library that Contents shows before anything is selected.
+// LastItemModifiedDate changes when an item, file, or page is added, changed, or deleted in that list or library.
+function snaRenderContentsSummary(report) {
+    var items = 0, columns = 0, folders = 0, newest = null;
+    report.lists.forEach(function(l) {
+        items += Number(l.itemCount) || 0;
+        columns += l.columns.length;
+        folders += l.folders.length;
+        var changed = new Date(l.lastModified);
+        if (l.lastModified && !isNaN(changed.getTime()) && (!newest || changed > new Date(newest.lastModified))) { newest = l; }
+    });
+    var NOT_READ = 'Not read';
+    var read = report.listsRead;
+    var html = '<h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1">Contents summary</h3>' +
+        snaStatsHtml([
+            { value: read ? items : NOT_READ, singular: 'Item in lists and libraries', plural: 'Items in lists and libraries' },
+            { value: read ? columns : NOT_READ, singular: 'Column', plural: 'Columns' },
+            { value: read ? folders : NOT_READ, singular: 'Top-level folder', plural: 'Top-level folders' },
+            { value: read ? report.permissions.uniqueLists.length : NOT_READ, singular: 'List or library with its own permissions',
+                plural: 'Lists and libraries with their own permissions', href: '#sna/permissions/own' }
+        ]);
+    if (newest) {
+        html += '<p class="sna-summary-note">The most recent change was in ' + snaEscapeHtml(newest.title) + ', on ' +
+            snaEscapeHtml(snaFormatDateTime(newest.lastModified)) + '. That is the last time an item, file, or page was added, changed, or deleted in any list or library.</p>';
+    }
+
+    function table(title, lists, tableId, label) {
+        var block = '<h4 class="sna-summary-heading">' + snaEscapeHtml(title) + ' (' + lists.length + ')</h4>';
+        if (lists.length === 0) { return block + '<p class="sna-muted">None found.</p>'; }
+        _snaTablesQueue.push({ id: tableId, type: 'lists', searchLabel: label, data: lists.slice().sort(snaByTitle).map(function(l) {
+            return {
+                title: l.title, route: snaRouteHash({ section: 'contents', id: l.routeId }), description: l.description,
+                items: Number(l.itemCount) || 0, columns: l.columns.length, lastChanged: l.lastModified,
+                ownPermissions: !l.permissions.inherits, internalName: l.internalName, id: l.id
+            };
+        }) });
+        return block + '<div id="' + tableId + '"></div>';
+    }
+    html += table('Document libraries', report.lists.filter(function(l) { return l.isLib; }), 'sna-tbl-libs', 'document libraries');
+    html += table('Lists', report.lists.filter(function(l) { return !l.isLib; }), 'sna-tbl-lists', 'lists');
+    return html;
+}
+
+// Returns the details of the selected Contents entry, or the Contents summary when nothing is selected.
 function snaRenderContentsDetail(route, report) {
-    if (!route.id) { return '<p class="sna-detail-empty">Select a document library, list, or Site pages to see its details.</p>'; }
+    if (!route.id) { return snaRenderContentsSummary(report); }
     var back = '<p class="sna-back"><a class="sna-back-link" href="#sna/contents" data-nav-focus="inventory">Back to results</a></p>';
 
     if (route.id === 'pages') {
@@ -4036,7 +4156,7 @@ function snaRenderContentsDetail(route, report) {
 
     var list = snaFindList(report, route.id);
     if (!list) {
-        return back + '<h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1">Not in this report</h3>' +
+        return back + '<h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1">List or library not found</h3>' +
             '<p class="sna-note">Sitenalyzer did not find this list or library in the report. The address may be from another site or an older report. Choose a name from the list.</p>';
     }
     _snaLastInventoryId = list.routeId;
@@ -4098,7 +4218,7 @@ function snaRenderAppsHtml(report) {
 
 // Draws Taxonomy: the term groups, term sets, and terms this site collection can use.
 function snaRenderTaxonomy(route, report) {
-    var html = snaSectionTitleHtml('Taxonomy and term store', 'Term groups, term sets, and terms that this site collection uses to describe content.');
+    var html = snaSectionTitleHtml('Taxonomy and term store', 'The term groups, term sets, and terms this site collection can use to tag content.');
     if (report.taxonomy.groups.length > 0) { html += snaExpandCollapseHtml(); }
     if (snaTechnicalDetailsOn() && report.taxonomy.termStoreId) {
         html += '<dl class="sna-tech-strip"><dt>Term store ID</dt><dd>' + snaEscapeHtml(report.taxonomy.termStoreId) + '</dd></dl>';
@@ -4108,16 +4228,16 @@ function snaRenderTaxonomy(route, report) {
 
 // Draws Site review: cleanup suggestions, then what this report could and could not read.
 function snaRenderReview(route, report) {
-    return snaSectionTitleHtml('Site review', 'Lists and libraries that may need cleanup, and what this report could read. Sitenalyzer does not change or delete anything.') +
+    return snaSectionTitleHtml('Site review', 'Lists and libraries that may need cleanup, and which parts of the site Sitenalyzer could read.') +
         '<div class="sna-review">' + snaRenderCleanupSignals() + '</div>' +
-        '<h3 class="sna-subsection-title">What this report could read</h3>' + snaRenderCoverageTable(report.coverage);
+        '<h3 class="sna-subsection-title">Report coverage</h3>' + snaRenderCoverageTable(report.coverage);
 }
 
 // Returns the coverage table: one row per part of the report, saying whether Sitenalyzer could read it.
 function snaRenderCoverageTable(coverage) {
     var labels = { read: 'Read', partial: 'Partly read', failed: 'Not read' };
-    var html = '<table class="sna-perm-list-table sna-coverage-table"><caption class="sna-visually-hidden">What this report could read</caption>' +
-        '<thead><tr><th scope="col">Part of the report</th><th scope="col">Status</th><th scope="col">What this means</th></tr></thead><tbody>';
+    var html = '<table class="sna-perm-list-table sna-coverage-table"><caption class="sna-visually-hidden">Report coverage</caption>' +
+        '<thead><tr><th scope="col">Part of the report</th><th scope="col">Status</th><th scope="col">Notes</th></tr></thead><tbody>';
     coverage.forEach(function(row) {
         html += '<tr><th scope="row">' + snaEscapeHtml(row.area) + '</th>' +
             '<td>' + snaEscapeHtml(labels[row.status] || row.status) + '</td>' +
@@ -4209,7 +4329,7 @@ function snaRenderPrint(route, report) {
     '</div>';
     html += '<div class="print-section"><h3 class="sna-subsection-title">Taxonomy and term store</h3>' + renderTaxonomySection(report.taxonomy.read) + '</div>';
     html += '<div class="print-section"><h3 class="sna-subsection-title">Site review</h3>' + snaRenderCleanupSignals() +
-        '<h4>What this report could read</h4>' + snaRenderCoverageTable(report.coverage) + '</div>';
+        '<h4>Report coverage</h4>' + snaRenderCoverageTable(report.coverage) + '</div>';
     return html;
 }
 
@@ -4258,6 +4378,8 @@ function startApplication() {
         });
     }
 
+    snaInsertIcons(app);
+
     var technicalSwitch = document.getElementById('sna-technical-switch');
     if (technicalSwitch) {
         technicalSwitch.addEventListener('change', function() { snaSetTechnicalDetails(technicalSwitch.checked); });
@@ -4271,11 +4393,16 @@ function startApplication() {
 
     // Deep-link support: pre-fill and auto-run if a siteUrl query parameter is present.
     // A report address after it, such as ?siteUrl=...#sna/taxonomy, opens that view once the site is read.
+    // Without one, a report address left from an earlier visit, such as after reloading the page, is removed,
+    // so the next report opens on the Overview.
     var _urlParams = new URLSearchParams(window.location.search);
     var _siteUrlParam = _urlParams.get('siteUrl');
     if (_siteUrlParam && siteUrlInput) {
         siteUrlInput.value = _siteUrlParam;
         gatherSiteInformation();
+    } else {
+        _snaUseAddressRoute = false;
+        snaRemoveRouteFromAddress();
     }
 
     // Sites list caching helpers.
@@ -4516,10 +4643,17 @@ function snaMissingFileMessage(fileName, folderName) {
         'then refresh this page.';
 }
 
+// Returns the address of a style sheet or library in folderUrl, with ?v= and the build's version when it has one.
+function snaAssetUrl(fileName, folderUrl) {
+    var url = new URL(fileName, folderUrl);
+    if (SNA_ASSET_VERSION) { url.searchParams.set('v', SNA_ASSET_VERSION); }
+    return url.href;
+}
+
 // Adds a style sheet to the page head unless the page already has it.
 // Resolves when the style sheet loads; rejects when it cannot be loaded.
 function snaLoadStyle(fileName, folderUrl) {
-    var url = new URL(fileName, folderUrl).href;
+    var url = snaAssetUrl(fileName, folderUrl);
     var existing = document.querySelectorAll('link[rel="stylesheet"]');
     for (var i = 0; i < existing.length; i++) {
         if (existing[i].href === url) { return Promise.resolve(); }
@@ -4612,7 +4746,7 @@ function snaLoadLibrary(library, folderUrl) {
         library.use(window[library.globalName]);
         return Promise.resolve();
     }
-    var url = new URL(library.file, folderUrl).href;
+    var url = snaAssetUrl(library.file, folderUrl);
     return new Promise(function(resolve, reject) {
         var restoreModuleLoaders = snaHideModuleLoaders();
 

@@ -170,6 +170,12 @@ test('loads the libraries and styles from Site Assets', async function({ page })
     const loadedFiles = record.siteAssetsRequests.map(function(request) {
         return new URL(request.url).pathname + ' ' + request.status;
     }).sort();
+    // Every file sitenalyzer.js loads has ?v= and the build's version, so the browser never uses an older saved copy.
+    const versions = record.siteAssetsRequests.filter(function(request) { return !/sitenalyzer\.js$/.test(new URL(request.url).pathname); })
+        .map(function(request) { return new URL(request.url).searchParams.get('v'); });
+    expect(versions.length).toBe(4);
+    versions.forEach(function(version) { expect(version).toMatch(/^[0-9a-f]{12}$/); });
+    expect(new Set(versions).size).toBe(1);
     expect(loadedFiles).toEqual([
         '/sites/testsite/SiteAssets/scripts/sitenalyzer.js 200',
         '/sites/testsite/SiteAssets/scripts/tabulator.min.js 200',
@@ -596,14 +602,17 @@ test('shows counts that link to their sections on the Overview', async function(
     await openPretendSite(page);
     await extractSiteInformation(page);
 
-    const counts = page.locator('.sna-counts');
+    const counts = page.locator('#sp-results .sna-stats');
+    await expect(counts.locator('.sna-stat')).toHaveCount(5);
     await expect(counts.getByRole('link', { name: 'Document library 1' })).toHaveAttribute('href', '#sna/contents');
     await expect(counts.getByRole('link', { name: 'List 1' })).toBeVisible();
     await expect(counts.getByRole('link', { name: 'Site pages 2' })).toHaveAttribute('href', '#sna/contents/pages');
-    await expect(counts).toContainText('Items in lists and libraries15');
-    await expect(counts.getByRole('link', { name: 'People and groups with site access 6' })).toBeVisible();
+    await expect(counts.getByRole('link', { name: 'Term set 1' })).toHaveAttribute('href', '#sna/taxonomy');
     await expect(counts.getByRole('link', { name: 'Sharing link 1' })).toBeVisible();
-    await expect(counts.getByRole('link', { name: 'App with access 1' })).toBeVisible();
+    // The Permissions card shortcuts carry the people and apps counts.
+    const cards = page.locator('.sna-cards');
+    await expect(cards.getByRole('link', { name: 'Who has access, by person or group (6)' })).toHaveAttribute('href', '#sna/permissions/people');
+    await expect(cards.getByRole('link', { name: 'Apps with access to this site (1)' })).toBeVisible();
     // Findings belong in Permissions and Site review, so the Overview has none.
     await expect(page.locator('#sp-results .sna-risk-panel')).toHaveCount(0);
 
@@ -625,12 +634,13 @@ test('says Not read on the Overview for counts it could not read', async functio
     });
     await extractSiteInformation(page);
 
-    const counts = page.locator('.sna-counts');
+    const counts = page.locator('#sp-results .sna-stats');
     await expect(counts.getByRole('link', { name: 'Sharing links Not read' })).toBeVisible();
-    await expect(counts.getByRole('link', { name: 'People and groups with site access Not read' })).toBeVisible();
-    await expect(counts.getByRole('link', { name: 'Apps with access Not read' })).toBeVisible();
     await expect(counts.getByRole('link', { name: 'Site pages Not read' })).toBeVisible();
     await expect(counts.getByRole('link', { name: 'List 1' })).toBeVisible();
+    const cards = page.locator('.sna-cards');
+    await expect(cards.getByRole('link', { name: 'Who has access, by person or group (could not read)' })).toBeVisible();
+    await expect(cards.getByRole('link', { name: 'Apps with access to this site (could not read)' })).toBeVisible();
 
     await gotoSection(page, 'Site review');
     const coverage = page.locator('.sna-coverage-table');
@@ -638,6 +648,38 @@ test('says Not read on the Overview for counts it could not read', async functio
     await expect(coverage.getByRole('row', { name: /^Site permissions/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /Site pages/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /Columns/ })).toContainText('Read');
+});
+
+test('shows a Contents summary until a list or library is selected', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    await gotoSection(page, 'Contents');
+
+    const detail = page.locator('#sna-contents-detail');
+    await expect(detail.getByRole('heading', { level: 3, name: 'Contents summary' })).toBeVisible();
+    await expect(page.locator('#sna-inv-summary')).toHaveAttribute('aria-current', 'page');
+    const counts = detail.locator('.sna-stats');
+    await expect(counts).toContainText('Items in lists and libraries15');
+    await expect(counts).toContainText('Columns21');
+    await expect(counts).toContainText('Top-level folder1');
+    await expect(counts.getByRole('link', { name: 'List or library with its own permissions 1' })).toHaveAttribute('href', '#sna/permissions/own');
+    // The most recent change names the list it happened in.
+    await expect(detail.locator('.sna-summary-note')).toContainText('The most recent change was in Documents, on ');
+
+    const lists = detail.locator('#sna-tbl-lists');
+    await expect(lists.locator('.tabulator-row')).toHaveCount(1);
+    await expect(lists.locator('.tabulator-row')).toContainText('Own permissions');
+    await expect(detail.locator('#sna-tbl-libs .tabulator-row')).toContainText('Site\'s permissions');
+
+    // A name in the table opens that list, and the summary entry brings the summary back.
+    await lists.getByRole('link', { name: 'Study Visits' }).click();
+    await expect(page.locator('#sna-detail-title')).toBeFocused();
+    await expect(page.locator('#sna-detail-title')).toContainText('Study Visits');
+    expect(hashOf(page)).toBe('#sna/contents/' + LIST_ID);
+    await page.locator('#sna-inv-summary').click();
+    await expect(page.locator('#sna-detail-title')).toHaveText('Contents summary');
+    await expect(page.locator('#sna-inv-summary')).toHaveAttribute('aria-current', 'page');
+    expect(hashOf(page)).toBe('#sna/contents');
 });
 
 // ### Permissions and Site Review ###
@@ -1030,6 +1072,14 @@ test('opens a new report on the Overview even when Back returns to an older addr
     expect(hashOf(page)).toBe('#sna/overview');
 });
 
+test('removes a report address left over after reloading the page', async function({ page }) {
+    await openPretendSite(page, { addressSuffix: '#sna/taxonomy' });
+    await expect(page.locator('#sna-entry h1')).toBeVisible();
+    expect(hashOf(page)).toBe('');
+    await extractSiteInformation(page);
+    await expect(page.locator('#sna-section-title')).toHaveText('Overview');
+});
+
 test('Change site keeps the address of the last site for correcting', async function({ page }) {
     await openPretendSite(page);
     // Spaces around the address are ignored when reading the site, and show that the box kept what was typed.
@@ -1056,8 +1106,11 @@ test('shows technical details only while the switch is on, and remembers the cho
     await expect(detail.locator('.tabulator-col', { hasText: 'Internal name' })).toBeHidden();
     await expect(detail.locator('.sna-tech-strip')).toHaveCount(0);
 
+    await expect(page.locator('#sna-site-tech')).toBeEmpty();
     await technicalSwitch.check();
     await expect(technicalSwitch).toBeFocused();
+    await expect(page.locator('#sna-site-tech')).toContainText('Site ID 11111111-0000-4000-8000-000000000000');
+    await expect(page.locator('#sna-site-tech').getByRole('button', { name: 'Copy site ID' })).toBeVisible();
     await expect(detail.locator('.tabulator').getByText('VisitDate', { exact: true })).toBeVisible();
     await expect(detail.locator('.tabulator-col', { hasText: 'Column ID' })).toBeVisible();
     await expect(detail.locator('.sna-tech-strip')).toContainText(LIST_ID);

@@ -208,92 +208,103 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     100% { transform: rotate(360deg); }
 }
 
-/* ### Report Frame ### */
+/* ### Icons ###
+   Line icons drawn with the text color. They are decorative and always sit next to text that says the same thing. */
+.sna-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vertical-align: -3px;
+}
+#sp-info-app .sna-link-btn .sna-icon { margin-right: 6px; }
+
+/* ### Report Frame ###
+   Dark blue bars hold the Sitenalyzer name and site actions at the top, and the section links under the site's name.
+   On dark blue, text and borders are white or light blue, and the focus outline is maize (9.89:1). */
 .sna-utility-bar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 8px 16px;
     padding: 8px 24px;
-    border-bottom: 1px solid var(--sna-rule);
+    background: var(--um-dark-blue);
+    color: #ffffff;
+    border-radius: 7px 7px 0 0;
 }
-.sna-mark { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; color: var(--um-dark-blue); }
-.sna-mark-dot { width: 10px; height: 20px; background: var(--um-maize); border-radius: 3px; }
-.sna-utility-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sna-mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05em; }
+.sna-mark-dot { width: 14px; height: 22px; background: var(--um-maize); border-radius: 1px 7px 1px 1px; }
+.sna-utility-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+#sp-info-app .sna-utility-bar .sna-link-btn { color: #ffffff; }
+/* #a7bfd6 borders keep a 7.8:1 contrast ratio against dark blue. */
+#sp-info-app .sna-utility-bar .sna-btn-outline { background: transparent; color: #ffffff; border-color: #a7bfd6; }
+#sp-info-app .sna-utility-bar .sna-btn-outline:hover { background: #244968; }
+#sp-info-app .sna-btn-small { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+#sp-info-app .sna-utility-bar :focus-visible,
+#sp-info-app .sna-nav-row :focus-visible { outline-color: var(--um-maize); }
 
 .sna-site-header {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 16px 24px;
-    padding: 24px;
-    border-bottom: 1px solid var(--sna-rule);
+    align-items: center;
+    gap: 12px 20px;
+    padding: 18px 24px;
 }
-.sna-site-logo { width: 80px; height: 80px; object-fit: contain; flex-shrink: 0; border-radius: 50%; }
+.sna-site-logo { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; border-radius: 50%; }
 .sna-site-logo-placeholder {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: var(--sna-panel);
-    border: 1px solid var(--sna-rule);
-    color: var(--um-dark-blue);
-    font-size: 28px;
+    background: var(--um-dark-blue);
+    color: var(--um-maize);
+    font-size: 24px;
     font-weight: 700;
 }
 .sna-site-text { flex: 1 1 20rem; min-width: 0; }
-#sp-info-app .sna-site-title { margin: 0 0 6px 0; font-size: 2em; }
-.sna-site-desc, .sna-site-address { margin: 0 0 6px 0; }
+#sp-info-app .sna-site-title { margin: 0 0 4px 0; font-size: 1.8em; }
+.sna-site-desc, .sna-site-address { margin: 0 0 4px 0; }
+.sna-site-address { font-size: 14px; overflow-wrap: anywhere; }
+.sna-site-id { margin: 4px 0 0 0; font-size: 14px; color: var(--sna-text-2); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.sna-code { font-family: Consolas, 'Courier New', monospace; color: var(--sna-text); overflow-wrap: anywhere; }
+#sp-info-app .sna-copy-btn { font-size: 14px; min-height: 28px; padding: 2px 4px; }
+#sp-info-app .sna-copy-btn .sna-icon { width: 16px; height: 16px; margin-right: 4px; }
 .sna-site-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 14px; color: var(--sna-text-2); text-align: right; }
 .sna-tag { border: 1px solid var(--sna-rule); border-radius: 4px; padding: 2px 8px; color: var(--sna-text); }
 
-.sna-nav { border-bottom: 1px solid var(--sna-rule); padding: 0 16px; }
-.sna-nav ul { display: flex; flex-wrap: wrap; gap: 0 4px; list-style: none; margin: 0; padding: 0; }
-#sp-info-app .sna-nav a {
-    display: inline-block;
-    padding: 12px 14px 8px;
-    color: var(--um-dark-blue);
-    text-decoration: none;
-    border-bottom: 4px solid transparent;
-}
-#sp-info-app .sna-nav a:hover { text-decoration: underline; }
-/* The selected section has bold text and a maize underline; aria-current tells screen readers which one it is. */
-#sp-info-app .sna-nav a[aria-current="page"] { font-weight: 700; border-bottom-color: var(--um-maize); }
-
-.sna-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px 32px;
-    align-items: flex-start;
-    justify-content: space-between;
-    padding: 20px 24px;
-    background: var(--sna-panel);
-    border-bottom: 1px solid var(--sna-rule);
-}
-.sna-search-form { flex: 1 1 22rem; min-width: 0; }
-.sna-search-row { display: flex; gap: 8px; }
-#sna-report-search {
-    flex: 1;
-    min-width: 0;
-    padding: 9px 12px;
-    font-size: 15px;
-    border: 1px solid #767676;
-    border-radius: 4px;
-}
-.sna-report-actions { flex: 0 1 auto; }
-.sna-report-actions .sna-field-label { margin-bottom: 6px; }
-.sna-report-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
-.sna-hint { margin: 6px 0 0 0; font-size: 13px; color: var(--sna-text-2); }
-
-.sna-utility-row {
+.sna-nav-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 20px;
-    padding: 10px 24px;
-    border-bottom: 1px solid var(--sna-rule);
+    justify-content: space-between;
+    gap: 0 16px;
+    padding: 0 16px 0 24px;
+    background: var(--um-dark-blue);
 }
-.sna-switch { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.sna-nav ul { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+#sp-info-app .sna-nav a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 50px;
+    padding: 12px 16px 8px;
+    color: #ffffff;
+    text-decoration: none;
+    border-bottom: 4px solid transparent;
+}
+#sp-info-app .sna-nav a:hover { background: #234a6d; }
+/* The open section is dark blue on maize (9.89:1) and bold; aria-current tells screen readers which one it is. */
+#sp-info-app .sna-nav a[aria-current="page"] {
+    background: var(--um-maize);
+    color: var(--um-dark-blue);
+    font-weight: 700;
+    border-bottom-color: #936f00;
+}
+.sna-switch { display: inline-flex; align-items: center; gap: 8px; padding: 8px 0; color: #ffffff; font-weight: 600; font-size: 15px; }
 /* A switch drawn from the checkbox itself, so it keeps the checkbox's keyboard behavior and screen reader role. */
 #sp-info-app #sna-technical-switch {
     appearance: none;
@@ -301,9 +312,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     width: 44px;
     height: 24px;
     margin: 0;
-    border: 2px solid var(--um-dark-blue);
+    border: 2px solid #ffffff;
     border-radius: 12px;
-    background: #ffffff;
+    background: transparent;
     position: relative;
     cursor: pointer;
     flex-shrink: 0;
@@ -316,15 +327,41 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: var(--um-dark-blue);
+    background: #ffffff;
     transition: transform 0.15s;
 }
-#sp-info-app #sna-technical-switch:checked { background: var(--um-dark-blue); }
-#sp-info-app #sna-technical-switch:checked::before { background: #ffffff; transform: translateX(20px); }
+#sp-info-app #sna-technical-switch:checked { background: var(--um-maize); border-color: var(--um-maize); }
+#sp-info-app #sna-technical-switch:checked::before { background: var(--um-dark-blue); transform: translateX(20px); }
 .sna-switch label { cursor: pointer; }
 
-.sna-view { padding: 24px; }
-.sna-back-to-top { text-align: right; padding: 0 24px 16px; margin: 0; }
+.sna-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 32px;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 14px 24px 12px;
+    background: var(--sna-panel);
+    border-bottom: 1px solid var(--sna-rule);
+}
+.sna-search-form { flex: 1 1 26rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.sna-search-label { font-weight: 700; font-size: 15px; color: var(--um-dark-blue); }
+.sna-search-row { flex: 1 1 18rem; display: flex; gap: 8px; min-width: 0; }
+#sna-report-search {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 12px;
+    font-size: 15px;
+    border: 1px solid #767676;
+    border-radius: 4px;
+}
+.sna-report-actions { flex: 0 1 auto; }
+.sna-report-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+#sp-info-app .sna-report-buttons .sna-btn { font-size: 14px; padding: 8px 12px; }
+.sna-hint { margin: 6px 0 0 0; font-size: 13px; color: var(--sna-text-2); }
+
+.sna-view { padding: 20px 24px 24px; }
+.sna-back-to-top { text-align: right; padding: 0 24px 12px; margin: 0; }
 
 /* ### Footer ###
    Copyright on the left and the code and apps links on the right. They wrap in reading order on narrow screens. */
@@ -334,7 +371,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     justify-content: space-between;
     align-items: center;
     gap: 8px 16px;
-    padding: 16px 24px;
+    padding: 14px 24px;
     border-top: 1px solid var(--sna-rule);
     font-size: 13px;
     color: var(--sna-text-2);
@@ -343,9 +380,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 #sp-info-app .sna-footer-link { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; }
 
 /* ### Views ### */
-#sp-info-app .sna-section-title { margin: 0 0 4px 0; font-size: 1.75em; }
-.sna-lead { margin: 0 0 20px 0; color: var(--sna-text-2); }
-#sp-info-app .sna-subsection-title { margin: 28px 0 8px 0; font-size: 1.2em; }
+#sp-info-app .sna-section-title { margin: 0 0 2px 0; font-size: 1.6em; }
+.sna-lead { margin: 0 0 16px 0; color: var(--sna-text-2); }
+#sp-info-app .sna-subsection-title { margin: 24px 0 8px 0; font-size: 1.2em; }
 .sna-view-actions { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px 0; }
 .sna-error-text { color: var(--sna-error); }
 
@@ -367,50 +404,71 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .sna-tech-strip dt { font-weight: 700; }
 .sna-tech-strip dd { margin: 0; word-break: break-all; font-family: Consolas, 'Courier New', monospace; }
 
-/* Overview counts: a grid of boxes with a dark blue top rule. */
-.sna-counts {
+/* Counts: tiles on the light blue panel with a dark blue bar on top. */
+.sna-stats {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 10px;
     list-style: none;
-    margin: 0 0 28px 0;
+    margin: 0 0 20px 0;
     padding: 0;
 }
-.sna-count-link {
+.sna-stat-link {
     display: flex;
     flex-direction: column-reverse;
     justify-content: flex-end;
     height: 100%;
-    padding: 12px 14px;
-    border: 1px solid var(--sna-rule);
+    padding: 10px 14px 12px;
+    background: var(--sna-panel);
     border-top: 4px solid var(--um-dark-blue);
-    border-radius: 4px;
+    border-radius: 0 0 4px 4px;
 }
-#sp-info-app a.sna-count-link { text-decoration: none; }
-#sp-info-app a.sna-count-link .sna-count-label { text-decoration: underline; color: var(--sna-link); }
-#sp-info-app a.sna-count-link:hover { background: var(--sna-panel); }
-.sna-count-value { font-size: 1.6em; font-weight: 700; color: var(--um-dark-blue); line-height: 1.2; }
-.sna-count-label { font-size: 14px; color: var(--sna-text-2); }
+#sp-info-app a.sna-stat-link { text-decoration: none; }
+#sp-info-app a.sna-stat-link .sna-stat-label { text-decoration: underline; color: var(--sna-link); }
+#sp-info-app a.sna-stat-link:hover { background: #dceaf5; }
+.sna-stat-value { font-size: 1.6em; font-weight: 700; color: var(--um-dark-blue); line-height: 1.2; }
+.sna-stat-label { font-size: 14px; color: var(--sna-text-2); }
 
-.sna-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 16px; }
-.sna-card { border: 1px solid var(--sna-rule); border-radius: 4px; padding: 16px 20px; background: #fbfcfd; }
-#sp-info-app .sna-card-title { margin: 0 0 6px 0; font-size: 1.15em; }
-.sna-card-text { margin: 0 0 10px 0; color: var(--sna-text-2); font-size: 15px; }
+/* Overview cards: Contents, Taxonomy, and Site review stack on the left; Permissions fills the right. */
+.sna-cards { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 48rem) {
+    .sna-cards { grid-template-columns: 1fr 1fr; }
+    .sna-card-wide { grid-column: 2; grid-row: 1 / span 3; }
+}
+.sna-card { border-radius: 4px; padding: 14px 18px; background: var(--sna-panel); border-left: 4px solid var(--um-dark-blue); }
+#sp-info-app .sna-card-title { display: flex; align-items: center; gap: 10px; margin: 0 0 6px 0; font-size: 1.15em; }
+/* Dark blue icon on maize is 9.89:1. */
+.sna-card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--um-maize);
+    color: var(--um-dark-blue);
+    flex-shrink: 0;
+}
+.sna-card-text { margin: 0 0 8px 0; color: var(--sna-text-2); font-size: 15px; }
 .sna-card-links { list-style: none; margin: 0; padding: 0; }
-.sna-card-links li { margin: 0 0 8px 0; }
-.sna-card .sna-facts { grid-template-columns: 1fr; gap: 0; font-size: 15px; }
-.sna-card .sna-facts dd { margin-bottom: 8px; }
+.sna-card-links li { margin: 0 0 6px 0; }
+
+/* Contents summary */
+.sna-summary-note { margin: -8px 0 16px 0; font-size: 14px; color: var(--sna-text-2); }
+#sp-info-app .sna-summary-heading { margin: 16px 0 6px 0; font-size: 1.05em; }
+/* Permission badges. Dark blue text on light maize is 12.4:1; the words carry the meaning. */
+.sna-badge { display: inline-block; white-space: nowrap; padding: 1px 8px; border: 1px solid #8fa3b5; border-radius: 4px; font-size: 13px; color: var(--sna-text); background: #ffffff; }
+.sna-badge-own { border-color: #936f00; background: #fff4c2; color: var(--um-dark-blue); }
 
 /* Contents: the list beside the details on wide screens, stacked on narrow ones. */
 .sna-contents { display: grid; grid-template-columns: 1fr; gap: 20px; }
 @media (min-width: 48rem) {
-    .sna-contents { grid-template-columns: minmax(16rem, 1fr) 2fr; }
+    .sna-contents { grid-template-columns: minmax(15rem, 1fr) 3fr; }
     #sp-info-app .sna-back { display: none; }
 }
 @media (max-width: 47.99rem) {
-    /* With details open, the list is hidden; Back to results shows it again. */
+    /* With details open, the list is hidden; Back to results shows it again with the summary under it. */
     .sna-contents-detail-open .sna-inventory { display: none; }
-    .sna-contents:not(.sna-contents-detail-open) .sna-detail { display: none; }
 }
 .sna-inventory { border: 1px solid var(--sna-rule); border-radius: 4px; padding: 12px; align-self: start; min-width: 0; }
 .sna-inventory-filter label { display: block; font-weight: 700; font-size: 14px; margin-bottom: 4px; }
@@ -432,7 +490,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .sna-inventory-icon { display: inline-block; margin-right: 6px; }
 .sna-inventory-meta { display: block; font-size: 13px; color: var(--sna-text-2); }
 .sna-detail { min-width: 0; }
-.sna-detail-empty { padding: 16px; background: var(--sna-panel); border-radius: 4px; color: var(--sna-text-2); }
+.sna-inventory-summary { margin: 0 0 10px 0; }
 .sna-back { margin: 0 0 8px 0; }
 .sna-detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 8px 16px; }
 #sp-info-app .sna-detail-title { margin: 0 0 8px 0; font-size: 1.4em; min-width: 0; }
@@ -568,7 +626,8 @@ details.permissions-section {
     padding: 8px 10px;
 }
 #sp-info-app .tabulator .tabulator-header .tabulator-col:last-child { border-right: none; }
-#sp-info-app .tabulator .tabulator-header .tabulator-col .tabulator-col-title { white-space: normal; }
+/* Headings wrap between words only, so a narrow column never shows half a word on each line. */
+#sp-info-app .tabulator .tabulator-header .tabulator-col .tabulator-col-title { white-space: normal; overflow-wrap: normal; word-break: normal; }
 #sp-info-app .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover { background: rgba(0,120,212,0.08); cursor: pointer; }
 /* Column tables are not row-clickable, so rows keep the default pointer. */
 .sna-fields-table .tabulator-row,
@@ -770,10 +829,11 @@ details.permissions-section {
    At 320 CSS pixels the frame keeps a 16 pixel gutter and nothing scrolls sideways except wide tables. */
 @media (max-width: 40rem) {
     .sna-entry, .sna-site-header, .sna-toolbar, .sna-view { padding: 16px; }
-    .sna-utility-bar, .sna-utility-row, .app-footer, .sna-back-to-top { padding-left: 16px; padding-right: 16px; }
+    .sna-utility-bar, .sna-nav-row, .app-footer, .sna-back-to-top { padding-left: 16px; padding-right: 16px; }
     .sna-site-meta { align-items: flex-start; text-align: left; }
-    .sna-switch { margin-left: 0; }
-    .sna-nav { padding: 0 8px; }
+    .sna-site-logo { width: 48px; height: 48px; font-size: 18px; }
+    #sp-info-app .sna-nav a { padding: 10px 10px 6px; min-height: 44px; }
+    .sna-nav .sna-icon { display: none; }
     .sna-facts { grid-template-columns: 1fr; gap: 0; }
     .sna-facts dd { margin-bottom: 8px; }
 }
@@ -782,11 +842,12 @@ details.permissions-section {
 @media (forced-colors: active) {
     #sp-info-app #sna-technical-switch { border-color: ButtonText; }
     #sp-info-app #sna-technical-switch::before { background: ButtonText; }
-    #sp-info-app #sna-technical-switch:checked { background: Highlight; }
+    #sp-info-app #sna-technical-switch:checked { background: Highlight; border-color: Highlight; }
     #sp-info-app #sna-technical-switch:checked::before { background: HighlightText; }
     #sp-info-app .sna-nav a[aria-current="page"],
     #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
     .sna-mark-dot { background: CanvasText; }
+    .sna-utility-bar, .sna-nav-row { border-bottom: 1px solid CanvasText; }
 }
 @media (prefers-reduced-motion: reduce) {
     #sp-info-app *, #sp-info-app *::before, #sp-info-app *::after { transition: none !important; animation: none !important; }
