@@ -591,7 +591,14 @@ test('sorts a table from its column headings with the keyboard on a 320 pixel wi
     await extractSiteInformation(page);
     const detail = await openListDetail(page, 'Study Visits', 'Columns');
     const heading = detail.getByRole('columnheader', { name: 'Data type' });
-    const firstTitle = detail.locator('.tabulator-row').first().locator('.tabulator-cell').first();
+    // Returns the data types in the order the table shows them. Tabulator can mark the heading as sorted before it
+    // redraws the rows, so the tests wait for the order rather than reading it once.
+    const field = await heading.getAttribute('tabulator-field');
+    function shownTypes() {
+        return detail.locator('.tabulator-row .tabulator-cell[tabulator-field="' + field + '"]').allInnerTexts();
+    }
+    const ascending = (await shownTypes()).sort(function(a, b) { return a.localeCompare(b); });
+    expect(new Set(ascending).size).toBeGreaterThan(1);
 
     // The headings stay visible at this width, so there is no separate Sort by control.
     await expect(heading).toBeVisible();
@@ -599,11 +606,11 @@ test('sorts a table from its column headings with the keyboard on a 320 pixel wi
     await expect(heading).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(heading).toHaveAttribute('aria-sort', 'ascending');
-    const ascending = await firstTitle.innerText();
+    await expect.poll(shownTypes).toEqual(ascending);
     await page.keyboard.press(' ');
     await expect(heading).toHaveAttribute('aria-sort', 'descending');
     await expect(heading).toBeFocused();
-    expect(await firstTitle.innerText()).not.toBe(ascending);
+    await expect.poll(shownTypes).toEqual(ascending.slice().reverse());
 });
 
 test('keeps every word visible with wider text spacing on a 320 pixel wide screen', async function({ page }) {
