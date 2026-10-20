@@ -73,6 +73,14 @@ async function openSitePages(page) {
     return page.locator('#sna-site-pages-section');
 }
 
+// Opens a part of Permissions, such as Sharing links, from the Permissions navigation and returns the part.
+async function openPermissionPart(page, name) {
+    await gotoSection(page, 'Permissions');
+    await page.locator('#sp-results .sna-subnav').getByRole('link', { name: new RegExp('^' + escapeRegExp(name)) }).click();
+    await expect(page.locator('#sp-results .sna-subnav a[aria-current="page"]')).toBeFocused();
+    return page.locator('#sp-results .sna-split-body');
+}
+
 // Returns the collapsible section whose title contains summaryText.
 function section(page, summaryText) {
     return page.locator('details', { has: page.locator(':scope > summary', { hasText: summaryText }) });
@@ -338,7 +346,7 @@ test('extracts site information from the pretend site', async function({ page })
     // Column tables are drawn by Tabulator only when their tab opens.
     const detail = await openListDetail(page, 'Study Visits', 'Columns');
     await expect(detail.locator('.tabulator')).toBeVisible();
-    await expect(detail.locator('.tabulator').getByText('Visit Date')).toBeVisible();
+    await expect(detail.locator('.tabulator').getByRole('gridcell', { name: 'Visit Date', exact: true })).toBeVisible();
     expect(hashOf(page)).toBe('#sna/contents/' + LIST_ID + '/columns');
 
     expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
@@ -396,10 +404,11 @@ test('shows HTML in SharePoint names as plain text in every section', async func
     await expect(columns.locator('.tabulator')).toContainText('Unsafe & "Name"');
     await expect(page.locator('[id^="injected-"]')).toHaveCount(0);
 
-    await gotoSection(page, 'Permissions');
-    await page.getByRole('button', { name: 'Expand all details' }).click();
-    await expect(section(page, 'Who has access, by person or group')).toContainText('Unsafe & "Name"');
-    await expect(section(page, 'Sharing links')).toContainText('Unsafe & "Name"');
+    await expect(await openPermissionPart(page, 'Site permissions')).toContainText('Unsafe & "Name"');
+    const people = await openPermissionPart(page, 'People and groups');
+    await people.locator('summary', { hasText: 'Members' }).first().click();
+    await expect(people).toContainText('Unsafe & "Name"');
+    await expect(await openPermissionPart(page, 'Sharing links')).toContainText('Unsafe & "Name"');
     await searchReport(page, 'Unsafe');
     await expect(page.locator('#sp-results')).toContainText('Unsafe & "Name"');
     await expect(page.locator('[id^="injected-"]')).toHaveCount(0);
@@ -620,8 +629,9 @@ test('shows counts that link to their sections on the Overview', async function(
     await expect(page.locator('#sp-results .sna-risk-panel')).toHaveCount(0);
 
     await counts.getByRole('link', { name: 'Sharing link 1' }).click();
-    await expect(page.locator('#sna-perm-sharing')).toHaveAttribute('open', '');
-    await expect(page.locator('#sna-perm-sharing > summary')).toBeFocused();
+    await expect(page.locator('#sna-part-title')).toHaveText('Sharing links');
+    await expect(page.locator('#sna-part-title')).toBeFocused();
+    await expect(page.locator('.sna-subnav a[aria-current="page"]')).toHaveText('Sharing links (1)');
     expect(hashOf(page)).toBe('#sna/permissions/sharing');
 });
 
@@ -710,8 +720,8 @@ test('reports columns, folders, and list permissions as not read when the lists 
     // Permissions says it could not check which lists have their own permissions, not that none do.
     await gotoSection(page, 'Overview');
     await expect(page.locator('.sna-cards').getByRole('link', { name: 'Lists and libraries with their own permissions (could not read)' })).toBeVisible();
-    await gotoSection(page, 'Permissions');
-    const own = await openSection(page, 'Lists and libraries with their own permissions (could not read)');
+    const own = await openPermissionPart(page, 'Own permissions');
+    await expect(page.locator('.sna-subnav a[aria-current="page"]')).toHaveText('Own permissions');
     await expect(own).toContainText('so it could not check which have their own permissions');
     await expect(own).not.toContainText('Sitenalyzer found no lists or libraries');
     await gotoSection(page, 'Contents');
@@ -726,6 +736,7 @@ test('reports columns, folders, and list permissions as not read when the lists 
     await expect(coverage.getByRole('row', { name: /^Permissions of lists and libraries/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /^Columns/ })).toHaveCount(1);
     await expect(coverage.getByRole('row', { name: /^SharePoint group members/ })).toContainText('Not read');
+    await expect(page.locator('#sp-results')).toContainText('so it could not look for cleanup findings');
 });
 
 test('reports the term store as partly read when it stops answering after some term groups', async function({ page }) {
@@ -757,15 +768,16 @@ test('reports the term store as partly read when it stops answering after some t
 test('lists who has access by person or group', async function({ page }) {
     const record = await openPretendSite(page);
     await extractSiteInformation(page);
-    await gotoSection(page, 'Permissions');
 
-    const access = await openSection(page, 'Who has access, by person or group');
+    const access = await openPermissionPart(page, 'People and groups (7)');
+    expect(hashOf(page)).toBe('#sna/permissions/people');
     // The same 7 people and groups that the Overview counts.
     await expect(access.locator('.sna-principal-block')).toHaveCount(7);
     const visitors = access.locator('.sna-principal-block', { hasText: 'Test Site Visitors' });
     await expect(visitors).toContainText('Whole site: Read. This also covers 1 list or library that uses the site\'s permissions.');
     await expect(access.locator('.sna-principal-block', { hasText: 'Study Staff Security Group' })).toContainText('Security or Microsoft 365 group');
     await expect(access.locator('.sna-principal-block', { hasText: 'Example Reporting App' }).locator('.app-tag')).toHaveText('App');
+    await expect(access).toContainText('It can\'t list the members of Microsoft 365 groups and security groups');
 
     // Limited Access never claims access to the lists that use the site's permissions.
     const guest = access.locator('.sna-principal-block', { hasText: 'Guest Reviewer' });
@@ -780,24 +792,42 @@ test('lists who has access by person or group', async function({ page }) {
     await visitors.locator('summary', { hasText: 'Members (2)' }).click();
     await expect(visitors).toContainText('Visiting Guest');
 
-    // Guests, including guests inside groups, and organization-wide groups are flagged at the top of Permissions.
-    const risks = page.locator('.sna-risk-panel');
+    // Guests, including guests inside groups, and organization-wide groups are the first finding in Site permissions.
+    const site = await openPermissionPart(page, 'Site permissions');
+    const risks = site.locator('.sna-risk-panel');
+    await expect(risks.getByRole('heading', { level: 4 })).toHaveText(/Review guest and organization-wide access/);
     await expect(risks).toContainText('Visiting Guest');
     await expect(risks).toContainText('member of Test Site Visitors');
     await expect(risks).toContainText('Everyone except external users: Everyone in your organization');
+    await expect(risks.getByRole('link', { name: 'Review people and groups' })).toHaveAttribute('href', '#sna/permissions/people');
+    const ownFinding = site.locator('.sna-finding');
+    await expect(ownFinding.getByRole('heading', { level: 4 })).toHaveText('1 list or library has its own permissions');
+    await expect(ownFinding.getByRole('link')).toHaveAttribute('href', '#sna/permissions/own');
+    await expect(site.getByRole('table', { name: 'Site permissions' }).getByRole('row', { name: /Test Site Visitors/ })).toContainText('Read');
+    await expect(site.locator('.sna-callout')).toContainText('Limited Access is not access to the whole site');
+    await expect(site).toContainText('Test Admin');
+    await site.locator('summary', { hasText: 'Permission levels explained' }).click();
+    await expect(site).toContainText('Custom level made for the tests.');
 
     // Lists with their own permissions link to that list's Permissions tab.
-    const own = await openSection(page, 'Lists and libraries with their own permissions (1)');
+    const own = await openPermissionPart(page, 'Own permissions (1)');
     await expect(own.getByRole('link', { name: 'See its permissions for Study Visits' }))
         .toHaveAttribute('href', '#sna/contents/' + LIST_ID + '/permissions');
-    const sharing = await openSection(page, 'Sharing links (1)');
+    const sharing = await openPermissionPart(page, 'Sharing links (1)');
     await expect(sharing.getByRole('link', { name: 'Visit Schedule.docx' })).toHaveAttribute('href', SITE_URL + '/Shared%20Documents/Visit%20Schedule.docx');
     await expect(sharing).toContainText('People in your organization');
-    const apps = await openSection(page, 'Apps with access to this site');
+    const apps = await openPermissionPart(page, 'Apps with access (1)');
     await expect(apps).toContainText('Example Reporting App');
     await expect(apps).not.toContainText('Study Staff Security Group');
-    // Cleanup suggestions are in Site review, not Permissions.
-    await expect(page.locator('#sp-results .sna-cleanup-group')).toHaveCount(0);
+    // Cleanup findings are in Site review, not Permissions.
+    await expect(page.locator('#sp-results #sna-tbl-review')).toHaveCount(0);
+
+    // Back steps through the parts that were open before.
+    await page.goBack();
+    await expect(page.locator('#sna-part-title')).toHaveText('Site permissions');
+    await page.goBack();
+    await expect(page.locator('#sna-part-title')).toHaveText('Sharing links');
+    expect(hashOf(page)).toBe('#sna/permissions/sharing');
 
     expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
     expect(record.consoleErrors).toEqual([]);
@@ -805,25 +835,62 @@ test('lists who has access by person or group', async function({ page }) {
     expect(record.otherOriginRequests).toEqual([]);
 });
 
-test('shows cleanup suggestions and what the report could read in Site review', async function({ page }) {
+test('says what it could not check instead of saying no guests have access', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [
+            // Only owners and visitors have access, so nothing is flagged, but the visitors' members can't be read.
+            { pattern: /^\/_api\/web\/roleassignments$/, body: { value: [
+                { Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 }, RoleDefinitionBindings: [{ Id: 1073741829, Name: 'Full Control', Hidden: false, RoleTypeKind: 5 }] },
+                { Member: { Id: 4, Title: 'Test Site Visitors', LoginName: 'Test Site Visitors', PrincipalType: 8 }, RoleDefinitionBindings: [{ Id: 1073741826, Name: 'Read', Hidden: false, RoleTypeKind: 2 }] }
+            ] } },
+            { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/roleassignments$/, body: { value: [] } },
+            { pattern: /^\/_api\/web\/sitegroups\(\d+\)\/users$/, body: reply(403, { error: 'Access denied' }) },
+            { pattern: /^\/_api\/web\/sitegroups$/, body: { value: [] } }
+        ]
+    });
+    await extractSiteInformation(page);
+    const site = await openPermissionPart(page, 'Site permissions');
+    const risks = site.locator('.sna-risk-panel');
+    await expect(risks).not.toContainText('No guests or organization-wide groups have access');
+    await expect(risks.getByRole('heading', { level: 4 })).toHaveText('No guests or organization-wide groups found in the permissions Sitenalyzer could read');
+    await expect(risks).toContainText('Sitenalyzer could not read the members of 2 groups, so this check may be missing some people or links.');
+});
+
+test('shows cleanup findings, the largest lists, and what the report could read in Site review', async function({ page }) {
     await openPretendSite(page);
     await extractSiteInformation(page);
     await gotoSection(page, 'Site review');
 
     const results = page.locator('#sp-results');
-    await expect(results.locator('.sna-cleanup-group', { hasText: 'Not changed in the last 12 months (1)' })).toContainText('Study Visits');
-    await expect(results.locator('.sna-cleanup-group', { hasText: 'Version history with no limit (1)' })).toContainText('Study Visits');
+    // Study Visits was last changed in 2024 and keeps every version; Documents has no description.
+    await expect(results.getByRole('heading', { level: 3, name: 'Lists and libraries to review for cleanup (3)' })).toBeVisible();
+    const rows = results.locator('#sna-tbl-review .tabulator-row');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText('Not changed in the last 12 months');
+    await expect(rows.nth(0)).toContainText('Study Visits');
+    await expect(rows.nth(0)).toContainText('Last changed January 15, 2024.');
+    await expect(rows.nth(1)).toContainText('Version history with no limit');
+    await expect(rows.nth(2)).toContainText('Description is missing');
+    await expect(rows.nth(2)).toContainText('Documents');
+    await expect(rows.nth(2)).toContainText('Add a description.');
+    const largest = results.getByRole('table', { name: 'Largest lists and libraries' });
+    await expect(largest.getByRole('row')).toHaveText([/Name/, /Study Visits.*12/, /Documents.*3/]);
     const coverage = results.locator('.sna-coverage-table');
     await expect(coverage.getByRole('row', { name: /Term store/ })).toContainText('Read');
     await expect(coverage.getByRole('row', { name: /Sharing links/ })).toContainText('Read');
+
+    // A finding opens its list or library in Contents.
+    await rows.nth(2).getByRole('link', { name: 'Documents' }).click();
+    await expect(page.locator('#sna-detail-title')).toBeFocused();
+    expect(hashOf(page)).toBe('#sna/contents/' + LIBRARY_ID);
 });
 
 test('checks one person\'s access when Enter is pressed, and keeps the result', async function({ page }) {
     const record = await openPretendSite(page);
     await extractSiteInformation(page);
-    await gotoSection(page, 'Permissions');
 
-    const tool = await openSection(page, 'Check one person\'s access');
+    const tool = await openPermissionPart(page, 'Check a person\'s access');
+    await expect(tool).toContainText('including access through groups. You need to be a site owner to use this.');
     const input = page.getByLabel('Email address or sign-in name');
     await input.fill('test.coordinator@example.org');
     await input.press('Enter');
@@ -838,7 +905,7 @@ test('checks one person\'s access when Enter is pressed, and keeps the result', 
 
     // The result is still there after opening another section and coming back.
     await gotoSection(page, 'Overview');
-    await gotoSection(page, 'Permissions');
+    await openPermissionPart(page, 'Check a person\'s access');
     await expect(page.getByRole('table', { name: 'Access for Test Coordinator' })).toBeVisible();
     await expect(page.getByLabel('Email address or sign-in name')).toHaveValue('test.coordinator@example.org');
     expect(record.consoleErrors).toEqual([]);
@@ -848,8 +915,7 @@ test('checks one person\'s access when Enter is pressed, and keeps the result', 
 test('sends quotes in a person check as data, not as part of the query', async function({ page }) {
     const record = await openPretendSite(page);
     await extractSiteInformation(page);
-    await gotoSection(page, 'Permissions');
-    await openSection(page, 'Check one person\'s access');
+    await openPermissionPart(page, 'Check a person\'s access');
 
     // An empty entry asks the person for an address and sends nothing.
     await page.getByRole('button', { name: 'Check access' }).click();
@@ -879,12 +945,13 @@ test('does not look up sharing link files whose ID is not a GUID', async functio
         ] } }]
     });
     await extractSiteInformation(page);
-    await gotoSection(page, 'Permissions');
 
-    const sharing = await openSection(page, 'Sharing links (1)');
+    const sharing = await openPermissionPart(page, 'Sharing links (1)');
     await expect(sharing).toContainText('Anyone with the link');
     await expect(sharing).toContainText('File name not available');
+    await openPermissionPart(page, 'Site permissions');
     await expect(page.locator('.sna-risk-panel')).toContainText('1 sharing link lets anyone with the link open a file.');
+    await expect(page.locator('.sna-risk-panel').getByRole('link', { name: 'Review sharing links (1)' })).toHaveAttribute('href', '#sna/permissions/sharing');
     expect(apiUrls(record).filter(function(u) { return /GetFileById/i.test(u.pathname); })).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
 });
@@ -897,14 +964,16 @@ test('says it could not read groups and sharing links instead of saying there ar
         ]
     });
     await extractSiteInformation(page);
-    await gotoSection(page, 'Permissions');
 
-    const access = await openSection(page, 'Who has access, by person or group');
+    const access = await openPermissionPart(page, 'People and groups');
     await expect(access.locator('.sna-principal-block', { hasText: 'Test Site Visitors' }))
         .toContainText('Sitenalyzer could not read this group\'s members.');
-    const sharing = await openSection(page, 'Sharing links (could not read)');
+    const sharing = await openPermissionPart(page, 'Sharing links');
+    await expect(page.locator('.sna-subnav a[aria-current="page"]')).toHaveText('Sharing links');
     await expect(sharing).toContainText('Sitenalyzer could not read the sharing links.');
     await expect(sharing).not.toContainText('No sharing links found');
+    await openPermissionPart(page, 'Site permissions');
+    await expect(page.locator('.sna-risk-panel')).toContainText('Sitenalyzer could not read the members of 3 groups and the sharing links');
 });
 
 // ### Workbooks, Editing, and Printing ###
@@ -982,11 +1051,14 @@ test('puts a saved list description in the data dictionary', async function({ pa
     await extractSiteInformation(page);
     const detail = await openListDetail(page, 'Study Visits');
 
-    await detail.getByRole('button', { name: 'Edit description' }).click();
-    const editor = detail.getByRole('textbox', { name: 'Edit description' });
+    await detail.getByRole('button', { name: 'Edit description of Study Visits' }).click();
+    const editor = detail.getByRole('textbox', { name: 'Description for Study Visits' });
+    await expect(editor).toBeFocused();
+    await expect(editor).toHaveValue('Synthetic visit schedule.');
     await editor.fill('Updated synthetic visit schedule.');
-    await detail.getByRole('button', { name: 'Save' }).click();
+    await detail.getByRole('button', { name: 'Save description of Study Visits' }).click();
     await expect(page.locator('#sna-copy-toast')).toHaveText('Description saved.');
+    await expect(detail.getByRole('button', { name: 'Edit description of Study Visits' })).toBeFocused();
 
     const patch = record.writeRequests.find(function(r) { return r.method === 'PATCH'; });
     expect(new URL(patch.url).pathname).toBe(SITE_PATH + "/_api/web/lists(guid'" + LIST_ID + "')");
@@ -999,6 +1071,143 @@ test('puts a saved list description in the data dictionary', async function({ pa
     const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
     const assets = sheetRows(workbook, 'Assets');
     expect(assets.find(function(row) { return row[3] === 'Study Visits'; })[8]).toBe('Updated synthetic visit schedule.');
+});
+
+test('edits a column description in its table with the editor keys', async function({ page }, testInfo) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+
+    // Escape closes the editor and keeps the saved text.
+    await detail.getByRole('button', { name: 'Edit description of Visit Date' }).click();
+    let editor = detail.getByRole('textbox', { name: 'Description for Visit Date' });
+    await expect(editor).toBeFocused();
+    await expect(page.getByText('Enter saves. Shift+Enter or Alt+Enter adds a line. Escape cancels.')).toBeVisible();
+    await editor.fill('Something else');
+    await editor.press('Escape');
+    await expect(editor).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: 'Edit description of Visit Date' })).toBeFocused();
+    await expect(detail.locator('.tabulator-row', { hasText: 'Visit Date' })).toContainText('Planned date of the visit.');
+    expect(record.writeRequests).toEqual([]);
+
+    // Double-clicking the text opens the editor too. Shift+Enter and Alt+Enter add lines, and Enter saves.
+    await detail.locator('.tabulator-row', { hasText: 'Visit Date' }).locator('.sna-editable-text').dblclick();
+    editor = detail.getByRole('textbox', { name: 'Description for Visit Date' });
+    await expect(editor).toBeFocused();
+    await editor.press('End');
+    await editor.press('Shift+Enter');
+    await page.keyboard.type('Line two.');
+    await editor.press('Alt+Enter');
+    await page.keyboard.type('Line three.');
+    await editor.press('Enter');
+    await expect(page.locator('#sna-copy-toast')).toHaveText('Description saved.');
+    const patch = record.writeRequests.find(function(r) { return r.method === 'PATCH'; });
+    expect(new URL(patch.url).pathname).toBe(SITE_PATH + "/_api/web/lists(guid'" + LIST_ID + "')/fields(guid'bbbbbbbb-0000-4000-8000-000000000002')");
+    expect(JSON.parse(patch.body)).toEqual({ Description: 'Planned date of the visit.\nLine two.\nLine three.' });
+    await expect(detail.getByRole('button', { name: 'Edit description of Visit Date' })).toBeFocused();
+
+    // Search and the data dictionary have the new text.
+    const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+    expect(JSON.stringify(sheetRows(workbook, 'Fields'))).toContain('Line three.');
+    await searchReport(page, 'Visit Date');
+    await expect(page.locator('#sp-results .sna-search-item', { hasText: 'Study Visits' }).first()).toContainText('Line three.');
+});
+
+test('keeps a draft when saving fails, and saves it on the next try', async function({ page }) {
+    let failures = 1;
+    const record = await openPretendSite(page, {
+        answerOverrides: [{ method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)$/, answer: function() {
+            if (failures > 0) { failures--; return reply(403, { error: 'Access denied' }); }
+            return undefined;
+        } }]
+    });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits');
+    await detail.getByRole('button', { name: 'Edit description of Study Visits' }).click();
+    const editor = detail.getByRole('textbox', { name: 'Description for Study Visits' });
+    await editor.fill('Draft that is denied at first.');
+    await detail.getByRole('button', { name: 'Save description of Study Visits' }).click();
+
+    await expect(detail.getByRole('alert')).toHaveText('Sitenalyzer could not save the description. SharePoint did not allow the change. ' +
+        'You need to be a site owner to edit descriptions. Select Save to try again, or Cancel to keep the saved description.');
+    await expect(editor).toHaveValue('Draft that is denied at first.');
+    await expect(editor).toBeFocused();
+
+    await detail.getByRole('button', { name: 'Save description of Study Visits' }).click();
+    await expect(page.locator('#sna-copy-toast')).toHaveText('Description saved.');
+    await expect(detail.locator('.sna-facts')).toContainText('Draft that is denied at first.');
+    expect(record.writeRequests.filter(function(r) { return r.method === 'PATCH'; }).length).toBe(2);
+});
+
+test('keeps an unsaved draft across views and asks before Refresh report discards it', async function({ page }) {
+    await page.addInitScript(function() {
+        window.__printCalls = 0;
+        window.print = function() { window.__printCalls++; };
+    });
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    let detail = await openListDetail(page, 'Study Visits');
+    await detail.getByRole('button', { name: 'Edit description of Study Visits' }).click();
+    await detail.getByRole('textbox', { name: 'Description for Study Visits' }).fill('Unsaved draft text.');
+
+    // The draft is still there after opening another view and coming back, and the printed report leaves it out.
+    await gotoSection(page, 'Overview');
+    detail = await openListDetail(page, 'Study Visits');
+    await expect(detail.getByRole('textbox', { name: 'Description for Study Visits' })).toHaveValue('Unsaved draft text.');
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return page.evaluate(function() { return window.__printCalls; }); }).toBe(1);
+    await expect(page.locator('#sp-results')).not.toContainText('Unsaved draft text.');
+    await expect(page.locator('#sp-results textarea')).toHaveCount(0);
+
+    // Refresh report asks first. Saying no keeps the report and the draft.
+    function siteReads() { return apiUrls(record).filter(function(u) { return u.pathname === SITE_PATH + '/_api/web'; }).length; }
+    const messages = [];
+    page.once('dialog', function(dialog) { messages.push(dialog.message()); dialog.dismiss(); });
+    await page.getByRole('button', { name: 'Refresh report' }).click();
+    await expect.poll(function() { return messages.length; }).toBe(1);
+    expect(messages[0]).toBe('Refresh report discards your unsaved description. Discard it?');
+    expect(siteReads()).toBe(1);
+    detail = await openListDetail(page, 'Study Visits');
+    await expect(detail.getByRole('textbox', { name: 'Description for Study Visits' })).toHaveValue('Unsaved draft text.');
+
+    // Saying yes reads the site again, and the draft is gone.
+    page.once('dialog', function(dialog) { dialog.accept(); });
+    await page.getByRole('button', { name: 'Refresh report' }).click();
+    await expect.poll(siteReads).toBe(2);
+    await expect(page.locator('#sna-detail-title')).toContainText('Study Visits');
+    await expect(page.locator('#sp-results textarea')).toHaveCount(0);
+    expect(record.writeRequests).toEqual([]);
+});
+
+test('saves term group, term set, term, and site descriptions through their own addresses', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    function lastWrite() { return record.writeRequests.filter(function(r) { return r.method === 'PATCH'; }).pop(); }
+    async function editAndSave(scope, name, text) {
+        await scope.getByRole('button', { name: 'Edit description of ' + name }).click();
+        const editor = scope.getByRole('textbox', { name: 'Description for ' + name });
+        await editor.fill(text);
+        await editor.press('Enter');
+        await expect(scope.getByRole('button', { name: 'Edit description of ' + name })).toBeFocused();
+    }
+
+    await editAndSave(page.locator('#sna-site-header'), 'Test Research Site', 'New site description.');
+    expect(new URL(lastWrite().url).pathname).toBe(SITE_PATH + '/_api/web');
+    expect(JSON.parse(lastWrite().body)).toEqual({ Description: 'New site description.' });
+    await expect(page.locator('#sna-site-header')).toContainText('New site description.');
+
+    await gotoSection(page, 'Taxonomy');
+    const taxonomy = page.locator('#sna-taxonomy-section');
+    await editAndSave(taxonomy, 'Test Term Group', 'New group description.');
+    expect(new URL(lastWrite().url).pathname).toBe(SITE_PATH + '/_api/v2.1/termStore/groups/dddddddd-0000-4000-8000-000000000001');
+    await page.locator('.sna-subnav').getByRole('link', { name: /^Study Arms/ }).click();
+    await editAndSave(taxonomy, 'Study Arms', 'New set description.');
+    expect(new URL(lastWrite().url).pathname).toBe(SITE_PATH + '/_api/v2.1/termStore/sets/' + TERM_SET_ID);
+    await editAndSave(taxonomy, 'Control', 'New term description.');
+    expect(new URL(lastWrite().url).pathname).toBe(SITE_PATH + '/_api/v2.1/termStore/sets/' + TERM_SET_ID + '/terms/ffffffff-0000-4000-8000-000000000001');
+    expect(JSON.parse(lastWrite().body)).toEqual({ descriptions: [{ description: 'New term description.', languageTag: 'en-US' }] });
+    await expect(taxonomy.locator('.tabulator-row', { hasText: 'Control' })).toContainText('New term description.');
+    expect(record.consoleErrors).toEqual([]);
 });
 
 test('prints a full report with every section', async function({ page }) {
@@ -1161,15 +1370,60 @@ test('removes a report address left over after reloading the page', async functi
     await expect(page.locator('#sna-section-title')).toHaveText('Overview');
 });
 
-test('Change site keeps the address of the last site for correcting', async function({ page }) {
+test('Change site opens a dialog that finds a site, and returns focus when it closes', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    await gotoSection(page, 'Taxonomy');
+    const changeSite = page.getByRole('button', { name: 'Change site' });
+    await changeSite.click();
+
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('searchbox', { name: 'Find a site' })).toBeFocused();
+    await expect(dialog.locator('.sna-site-choice').first()).toContainText('Current site');
+    await expect(dialog.locator('#sna-site-find-status')).toHaveText('Showing 2 sites.');
+    await dialog.getByRole('searchbox', { name: 'Find a site' }).fill('archive');
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(1);
+    await expect(dialog.locator('.sna-site-choice')).toContainText('Test Archive Site');
+    await dialog.getByRole('searchbox', { name: 'Find a site' }).fill('nothing like this');
+    await expect(dialog.locator('#sna-site-find-status')).toContainText('No sites match.');
+
+    // Escape closes it, focus goes back to Change site, and the report is still there.
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(changeSite).toBeFocused();
+    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
+
+    // An address on another host is refused with an example; the Close button closes the dialog too.
+    await changeSite.click();
+    await dialog.getByLabel('Or enter a site address').fill('https://example.com/sites/other');
+    await dialog.getByRole('button', { name: 'Open site report' }).click();
+    await expect(dialog.getByRole('alert')).toHaveText('Enter the full address of a SharePoint site, such as https://contoso.sharepoint.com/sites/your-site.');
+    await expect(dialog.getByLabel('Or enter a site address')).toBeFocused();
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    await expect(changeSite).toBeFocused();
+    expect(apiUrls(record).filter(function(u) { return u.origin !== 'https://contoso.sharepoint.com'; })).toEqual([]);
+
+    // Choosing a site reads it and opens its Overview.
+    function siteReads() { return apiUrls(record).filter(function(u) { return u.pathname === SITE_PATH + '/_api/web'; }).length; }
+    await changeSite.click();
+    await dialog.locator('.sna-site-choice', { hasText: 'Test Research Site' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#sna-section-title')).toHaveText('Overview');
+    await expect(page.locator('#sna-section-title')).toBeFocused();
+    expect(siteReads()).toBe(2);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('Change site with a typed address reads that site', async function({ page }) {
     await openPretendSite(page);
-    // Spaces around the address are ignored when reading the site, and show that the box kept what was typed.
-    await page.getByLabel('Site URL:').fill('  ' + SITE_URL + '  ');
     await extractSiteInformation(page);
     await page.getByRole('button', { name: 'Change site' }).click();
-    await expect(page.getByLabel('Site URL:')).toBeFocused();
-    await expect(page.getByLabel('Site URL:')).toHaveValue('  ' + SITE_URL + '  ');
-    await expect(page.locator('#sna-report')).toBeHidden();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    await dialog.getByLabel('Or enter a site address').fill('  ' + SITE_URL + '  ');
+    await dialog.getByLabel('Or enter a site address').press('Enter');
+    await expect(page.locator('#sna-section-title')).toHaveText('Overview');
+    await expect(page.getByLabel('Site URL:', { exact: true })).toHaveValue(SITE_URL);
 });
 
 // ### Technical Details ###
@@ -1200,8 +1454,11 @@ test('shows technical details only while the switch is on, and remembers the cho
     detail = await openListDetail(page, 'Documents', 'Folders');
     await expect(detail.locator('.tabulator-col', { hasText: 'Folder ID' })).toBeVisible();
     await gotoSection(page, 'Taxonomy');
-    await page.getByRole('button', { name: 'Expand all details' }).click();
+    await expect(page.locator('#sna-taxonomy-section')).toContainText('Term store ID 33333333-0000-4000-8000-000000000000');
+    await expect(page.locator('#sna-taxonomy-section').getByRole('button', { name: 'Copy term group ID' })).toBeVisible();
+    await page.locator('.sna-subnav').getByRole('link', { name: /^Study Arms/ }).click();
     await expect(page.locator('#sna-taxonomy-section .tabulator-col', { hasText: 'Term ID' })).toBeVisible();
+    await expect(page.locator('#sna-taxonomy-section').getByRole('button', { name: 'Copy term set ID' })).toBeVisible();
 
     // The choice is remembered in this browser after the page reloads.
     await page.reload();
@@ -1244,20 +1501,21 @@ test('opens the term set of a term search result', async function({ page }) {
     await searchReport(page, 'Control');
     await page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Control' }).click();
 
-    const termSet = page.locator('#sna-termset-' + TERM_SET_ID);
+    const termSet = page.locator('#sna-taxonomy-section');
     expect(hashOf(page)).toBe('#sna/taxonomy/' + TERM_SET_ID);
-    await expect(termSet).toHaveAttribute('open', '');
-    await expect(page.locator('#sna-taxonomy-section > details.sna-taxonomy-group')).toHaveAttribute('open', '');
-    await expect(termSet.locator('> summary')).toBeFocused();
+    await expect(page.locator('#sna-part-title')).toHaveText('Study Arms');
+    await expect(page.locator('#sna-part-title')).toBeFocused();
+    await expect(page.locator('.sna-subnav a[aria-current="page"]')).toContainText('Study Arms');
+    await expect(termSet.locator('.sna-breadcrumb')).toHaveText('Test Term Group / Term set');
     await expect(termSet.locator('.tabulator-row', { hasText: 'Control' })).toBeVisible();
 
-    // Back returns to the search results, and an address with an unknown term set opens Taxonomy with nothing open.
+    // Back returns to the search results, and an address with an unknown term set says it was not found.
     await page.goBack();
     await expect(page.getByRole('heading', { level: 2, name: 'Search results' })).toBeVisible();
     await page.evaluate(function() { window.location.hash = '#sna/taxonomy/00000000-0000-4000-8000-000000000000'; });
-    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
-    await expect(page.locator('#sna-section-title')).toBeFocused();
-    await expect(termSet).not.toHaveAttribute('open', '');
+    await expect(page.locator('#sna-part-title')).toHaveText('Term set not found');
+    await expect(page.locator('#sna-part-title')).toBeFocused();
+    await expect(page.locator('.sna-subnav a[aria-current="page"]')).toHaveCount(0);
 });
 
 test('filters a long terms table to the term from a search result', async function({ page }) {
@@ -1272,7 +1530,7 @@ test('filters a long terms table to the term from a search result', async functi
     await searchReport(page, '"Arm G"');
     await page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Arm G' }).click();
 
-    const termSet = page.locator('#sna-termset-' + TERM_SET_ID);
+    const termSet = page.locator('#sna-taxonomy-section');
     await expect(termSet.getByRole('searchbox')).toHaveValue('Arm G');
     await expect(termSet.locator('.tabulator-row')).toHaveCount(1);
     await expect(termSet.locator('.tabulator-row')).toContainText('Arm G');
@@ -1301,7 +1559,7 @@ test('opens a column result on its list\'s Columns tab', async function({ page }
     const detail = page.locator('#sna-contents-detail');
     // Documents has more than 10 columns, so its filter box is filled in with the column name.
     await expect(detail.getByRole('searchbox', { name: 'Filter columns' })).toHaveValue('Visit Count');
-    await expect(detail.locator('.tabulator').getByText('Visit Count')).toBeVisible();
+    await expect(detail.locator('.tabulator').getByRole('gridcell', { name: 'Visit Count', exact: true })).toBeVisible();
     await expect(detail.locator('.sna-table-count')).toHaveText('Showing 1 of 12 columns.');
 });
 
@@ -1319,16 +1577,41 @@ test('has no automatically detectable accessibility problems on the start screen
         const detail = await openListDetail(page, 'Documents', 'Columns');
         await expect(detail.locator('.tabulator')).toBeVisible();
     } },
-    { name: 'Permissions', open: async function(page) {
-        await gotoSection(page, 'Permissions');
+    { name: 'Site permissions', open: async function(page) {
+        await openPermissionPart(page, 'Site permissions');
+        await page.locator('summary', { hasText: 'Permission levels explained' }).click();
+    } },
+    { name: 'People and groups', open: async function(page) {
+        await openPermissionPart(page, 'People and groups');
         await page.getByRole('button', { name: 'Expand all details' }).click();
+    } },
+    { name: 'Check a person\'s access', open: async function(page) {
+        await openPermissionPart(page, 'Check a person\'s access');
         await page.getByLabel('Email address or sign-in name').fill('test.coordinator@example.org');
         await page.getByRole('button', { name: 'Check access' }).click();
         await expect(page.locator('#sna-user-access-status')).toContainText('Finished checking access');
     } },
+    { name: 'Own permissions, sharing links, and apps', open: async function(page) {
+        await openPermissionPart(page, 'Own permissions');
+        await expectNoAxeViolations(page);
+        await openPermissionPart(page, 'Sharing links');
+        await expectNoAxeViolations(page);
+        await openPermissionPart(page, 'Apps with access');
+    } },
     { name: 'Taxonomy', open: async function(page) {
         await gotoSection(page, 'Taxonomy');
-        await page.getByRole('button', { name: 'Expand all details' }).click();
+        await expectNoAxeViolations(page);
+        await page.locator('.sna-subnav').getByRole('link', { name: /^Study Arms/ }).click();
+        await expect(page.locator('#sna-taxonomy-section .tabulator-row').first()).toBeVisible();
+    } },
+    { name: 'a description editor', open: async function(page) {
+        const detail = await openListDetail(page, 'Study Visits', 'Columns');
+        await detail.getByRole('button', { name: 'Edit description of Visit Date' }).click();
+        await expect(detail.getByRole('textbox', { name: 'Description for Visit Date' })).toBeFocused();
+    } },
+    { name: 'Choose a site', open: async function(page) {
+        await page.getByRole('button', { name: 'Change site' }).click();
+        await expect(page.getByRole('dialog', { name: 'Choose a site' })).toBeVisible();
     } },
     { name: 'Site review', open: async function(page) { await gotoSection(page, 'Site review'); } },
     { name: 'Search results', open: async function(page) { await searchReport(page, 'Visit'); } },

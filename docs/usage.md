@@ -73,11 +73,20 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 8. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
 9. To print the whole report or save it as a PDF, select **Print full report / PDF**. Sitenalyzer shows every section on one page and then opens your browser's print window.
 10. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
-11. To look at another site, select **Change site** or **Start over**, next to **Refresh report**. **Change site** keeps the last address in the **Site URL** box so you can correct it. **Start over** puts back the address of the site the page is on.
+11. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. To close the box without changing the site, press Escape or select **Close**.
+12. To go back to the first screen, select **Start over**. It puts back the address of the site the page is on.
 
 Both workbooks and the printed report always include the whole report, whatever section is open or filter is set.
 
-You must be an owner of a site to see all of its permissions. If you can manage the site, Sitenalyzer also lets you edit the descriptions of the site, its lists, libraries, and columns, and its term groups, term sets, and terms. Select the pencil button next to a description to edit it.
+You must be an owner of a site to see all of its permissions. If you can manage the site, you can also edit the descriptions of the site, its lists, libraries, and columns, and its term groups, term sets, and terms. See [Edit a description](#edit-a-description).
+
+#### Edit a description
+
+1. Select the pencil button next to the description, or double-click the description.
+2. Change the text in the box.
+3. Press Enter or select **Save**. To add a line, press Shift+Enter or Alt+Enter. To stop without saving, press Escape or select **Cancel**.
+
+If SharePoint doesn't save the description, Sitenalyzer says why and keeps your text in the box so you can try again. Text you haven't saved stays in its box while you look at other sections. Before **Refresh report**, **Start over**, or opening another site would throw it away, Sitenalyzer asks first. The printed report shows only saved descriptions.
 
 ### Report sections
 
@@ -86,8 +95,8 @@ You must be an owner of a site to see all of its permissions. If you can manage 
 | **Overview** | Counts of document libraries, lists, site pages, term sets, and sharing links, each linked to the section that lists them. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
 | **Contents** | Document libraries, lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
 | **Permissions** | Who can open what on the site. See [Who can open what](#who-can-open-what). |
-| **Taxonomy** | The term groups, term sets, and terms in the site collection's term store. |
-| **Site review** | Cleanup suggestions, and a table of what Sitenalyzer could and could not read. See [Site review](#site-review). |
+| **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. |
+| **Site review** | Lists and libraries to review for cleanup, the largest ones, and what Sitenalyzer could and could not read. See [Site review](#site-review). |
 
 #### Contents summary
 
@@ -126,19 +135,20 @@ Sitenalyzer remembers the setting in this browser. See [How Sitenalyzer works](a
 
 ### Who can open what
 
-The **Permissions** section has these parts:
+The **Permissions** section lists its parts on the left. Select one to open it.
 
-| Section | What it shows |
+| Part | What it shows |
 | --- | --- |
-| The panel at the top | Guests from outside your organization, groups that include everyone in your organization, and sharing links that anyone can use. Guests inside SharePoint groups are listed too. |
-| **View site permissions** | Each person or group with permissions on the whole site, what kind of person or group it is, and its permission level. |
-| **Who has access, by person or group** | For each person or group: what they can do on the whole site, and the lists and libraries that have their own permissions. Open **Members** under a SharePoint group to see who is in it. |
-| **Check one person's access** | What one person can do on the site and in each list and library. See below. |
-| **Lists and libraries with their own permissions** | The lists and libraries that don't use the site's permissions. |
+| **Site permissions** | First, guests from outside your organization, groups that include everyone in your organization, and sharing links that anyone can use, including guests inside SharePoint groups. Then how many lists and libraries have their own permissions. Then each person or group with permissions on the whole site, the site collection administrators, and **Permission levels explained**. |
+| **People and groups** | For each person or group: what they can do on the whole site, and the lists and libraries that have their own permissions. Open **Members** under a SharePoint group to see who is in it. |
+| **Check a person's access** | What one person can do on the site and in each list and library. See below. |
+| **Own permissions** | The lists and libraries that don't use the site's permissions. |
 | **Sharing links** | Each sharing link, the file it opens, and who can use it: **Anyone with the link**, **People in your organization**, or **Specific people**. |
-| **Apps with access to this site** | Apps that were given permissions in SharePoint. Apps given access in Microsoft Entra ID, such as through Sites.Selected, aren't listed. |
+| **Apps with access** | Apps that were given permissions in SharePoint. Apps given access in Microsoft Entra ID, such as through Sites.Selected, aren't listed. |
 
-A permission level is a named set of permissions, such as Read or Contribute. **Expand all details** and **Collapse all details** open and close every part at once. The Overview links straight to each part.
+A permission level is a named set of permissions, such as Read or Contribute. In **People and groups**, **Expand all details** and **Collapse all details** open and close every group's member list at once. The Overview links straight to each part.
+
+Sitenalyzer says no guests or organization-wide groups have access only when it could read every permission it needs. When it couldn't read some of them, such as a group's members, it says what it couldn't check.
 
 #### Limited Access
 
@@ -150,7 +160,7 @@ When Sitenalyzer can't read something, such as a group's members, it says so. It
 
 #### Check one person's access
 
-1. In **Permissions**, open **Check one person's access**.
+1. In **Permissions**, select **Check a person's access**.
 2. Type the person's email address, such as `user@med.umich.edu`, in **Email address or sign-in name**.
 3. Press Enter or select **Check access**.
 
@@ -158,13 +168,20 @@ Sitenalyzer asks SharePoint what the person can do on the whole site and in each
 
 If the email address isn't among the site's users, Sitenalyzer checks the usual Microsoft 365 sign-in name for it, such as `i:0#.f|membership|user@med.umich.edu`. If the results say **No access**, check the spelling.
 
-The result stays in **Permissions** while you look at other sections, until you read another site or select **Refresh report**.
+The result appears when the check finishes. It stays in **Permissions** while you look at other sections, until you read another site or select **Refresh report**.
 
 ### Site review
 
-**Site review** suggests lists and libraries to look at for cleanup: lists not changed in 12 months, libraries with version history turned off, version history with no limit, and the largest lists and libraries.
+**Site review** has a table of lists and libraries to review for cleanup. It has one row for each list or library and each finding:
 
-Under the suggestions, **Report coverage** lists each part of the report, such as **Sharing links** or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
+- **Not changed in the last 12 months**
+- **Version history turned off**, for document libraries
+- **Version history with no limit**
+- **Description is missing**
+
+Each row says what was found and what to do next. Select a name to open its details in **Contents**. Sitenalyzer changes nothing from this page; some older content may still need to be kept. Under the table are the five lists and libraries with the most items.
+
+At the bottom, **Report coverage** lists each part of the report, such as **Sharing links** or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
 
 ### Site pages
 

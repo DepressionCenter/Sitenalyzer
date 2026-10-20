@@ -398,12 +398,26 @@ Phase 1 differs from this design in these ways. The owner chose the first four a
   at every width, and the tables scroll sideways inside their own area, so the headings stay available for sorting.
   Phase 3 checks this again with real Tabulator behavior.
 - The report area is a `<div>`, not a `<main>` element, because the SharePoint page already has its own main landmark.
-- **Change site** returns to the start screen. The site dialog is planned for phase 2.
 - Printing uses a full-report view that draws every section with every part open. Phase 3 replaces it with a print
   document built from the report data.
 
-**Phase 2 (Permissions, Taxonomy, Site review, inline editors, and the Change site dialog)** and
-**phase 3 (print document, page details, polish, and release)** are planned.
+**Phase 2 (Permissions, Taxonomy, Site review, inline editors, and the Change site dialog)** is implemented.
+Permissions lists its parts beside the part in the address: Site permissions, People and groups, Check a person's access,
+Own permissions, Sharing links, and Apps with access. Taxonomy lists its term groups and term sets beside one term set and
+its terms, or beside a summary of every term group. Site review has one findings table, the five largest lists and libraries,
+and the coverage table. One description editor serves all six kinds of description, and **Change site** opens **Choose a site**.
+
+Phase 2 differs from this design in these ways:
+
+- The first part of Permissions is named **Site permissions**, as in the preview, rather than Overview. It holds the access
+  findings, the site's permission table, the site collection administrators, and **Permission levels explained**.
+- Taxonomy has no parent term column and no "Where this term set is used" table. Sitenalyzer reads the terms of each term
+  set without their parent terms, and does not read which term set a managed metadata column uses. Showing either needs new
+  requests, which are left for separate work.
+- An unsaved description is kept when the person opens another view, rather than prompting on every view change. Only
+  **Refresh report**, **Start over**, opening another site, and closing the page ask before discarding it.
+
+**Phase 3 (print document, page details, polish, and release)** is planned.
 
 ### Planned implementation sequence
 

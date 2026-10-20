@@ -5,7 +5,7 @@ Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
 Last Modified: 2026-10-19
 Summary: Markup for the Sitenalyzer app: the start screen, and the frame of the report screen (site header,
-         section navigation, search, report actions, and footer). The build puts this markup inside sitenalyzer.js,
+         section navigation, search, report actions, and footer), and the Choose a site dialog. The build puts this markup inside sitenalyzer.js,
          which places it in the page's <div id="sitenalyzer-app"></div> at startup. It holds no site data;
          sitenalyzer.js draws each view inside <div id="sp-results">.
          Keep code out of this file: no script tags and no inline event handlers such as onclick.
@@ -91,6 +91,26 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 			<div id="sp-results" class="sna-view"></div>
 			<p class="sna-back-to-top hide-on-print"><button type="button" class="sna-link-btn" data-action="scroll-top">Back to top</button></p>
 		</div>
+		<dialog id="sna-site-dialog" class="sna-dialog" aria-labelledby="sna-site-dialog-title">
+			<div class="sna-dialog-head">
+				<h2 id="sna-site-dialog-title" class="sna-dialog-title">Choose a site</h2>
+				<button type="button" class="sna-btn sna-btn-outline sna-btn-small" data-action="close-site-dialog">Close</button>
+			</div>
+			<p>Open the report of another site. Sitenalyzer reads it with your own access.</p>
+			<label for="sna-site-find" class="sna-field-label">Find a site</label>
+			<input type="search" id="sna-site-find" class="sna-table-search" autocomplete="off" spellcheck="false" aria-describedby="sna-site-find-status">
+			<p class="sna-dialog-refresh"><button type="button" class="sna-link-btn" data-action="refresh-sites">Refresh sites list</button></p>
+			<p id="sna-site-find-status" class="sna-table-count" role="status"></p>
+			<ul id="sna-site-choices" class="sna-site-choices"></ul>
+			<form id="sna-site-address-form" class="sna-site-address-form">
+				<label for="sna-site-address" class="sna-field-label">Or enter a site address</label>
+				<div class="sna-url-row">
+					<input type="text" id="sna-site-address" autocomplete="off" spellcheck="false" placeholder="https://your-tenant.sharepoint.com/sites/your-site" aria-describedby="sna-site-address-message">
+					<button type="submit" class="sna-btn sna-btn-primary">Open site report</button>
+				</div>
+				<p id="sna-site-address-message" class="sna-error-text" role="alert" hidden></p>
+			</form>
+		</dialog>
 		<div class="app-footer">
 			<div class="copyright-info">
 				Copyright &copy; 2026 The Regents of the University of Michigan |

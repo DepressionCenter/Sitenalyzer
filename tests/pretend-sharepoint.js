@@ -221,7 +221,8 @@ const searchResults = {
         RelevantResults: {
             Table: {
                 Rows: [
-                    { Cells: [{ Key: 'Title', Value: 'Test Research Site' }, { Key: 'Path', Value: SITE_URL }] }
+                    { Cells: [{ Key: 'Title', Value: 'Test Research Site' }, { Key: 'Path', Value: SITE_URL }] },
+                    { Cells: [{ Key: 'Title', Value: 'Test Archive Site' }, { Key: 'Path', Value: TENANT_ORIGIN + '/sites/testarchive' }] }
                 ]
             }
         }
@@ -237,6 +238,7 @@ const API_ANSWERS = [
     { method: 'PATCH', pattern: /^\/_api\/web$/, body: reply(204, null) },
     { method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)$/, body: reply(204, null) },
     { method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields\(guid'[^']+'\)$/, body: reply(204, null) },
+    { method: 'PATCH', pattern: /^\/_api\/v2\.1\/termStore\/(groups|sets)\/[^/]+(\/terms\/[^/]+)?$/, body: reply(204, null) },
     { pattern: /^\/_api\/web$/, body: siteInfo },
     { pattern: /^\/_api\/web\/currentUser$/, body: currentUser },
     { pattern: /^\/_api\/web\/roleassignments$/, body: siteRoleAssignments },

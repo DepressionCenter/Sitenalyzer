@@ -81,11 +81,19 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 **Fix:** Nothing is broken. Use the section links in Sitenalyzer to move around. To get Back and Forward working, remove other web parts that change the page address from the `sitenalyzer` page.
 
-### Check one person's access says "Could not check" or "No access" everywhere
+### Check a person's access says "Could not check" or "No access" everywhere
 
 **Cause:** "Could not check" means SharePoint refused the request; you need to be a site owner. "No access" everywhere usually means the email address isn't one of the site's users. Sitenalyzer then checks the usual sign-in name, such as `i:0#.f|membership|user@med.umich.edu`, which may not match the person's account.
 
 **Fix:** Check the spelling of the email address. If the person signs in with a different name, type their full sign-in name, which contains a `|` character.
+
+### A description won't save
+
+**What you see:** "Sitenalyzer could not save the description" under the description box, with your text still in the box.
+
+**Cause:** SharePoint refused the change. You need to be a site owner to edit descriptions. Some tenants also block term store changes from pages; then the message says to use the Term Store Management page.
+
+**Fix:** Ask a site owner to make the change, or to make you a site owner, then select **Save** again. To keep the saved description instead, select **Cancel**. For term groups, term sets, and terms that can't be edited here, use Term Store Management in the SharePoint admin center.
 
 ### Site pages says it shows pages from the first 10,000 only
 
