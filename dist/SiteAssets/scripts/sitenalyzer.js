@@ -2681,11 +2681,25 @@ function snaBuildCoverage(report) {
             'Sitenalyzer could not read the permissions of ' + snaCountText(own.failed, 'list or library', 'lists and libraries') + '. You need to be a site owner to see them.');
     }
 
+    // SharePoint groups are found in the permissions of the site and of lists with their own, so groups can be
+    // missing when any of those permissions were not read.
     var groups = Object.keys(perms.index).map(function(key) { return perms.index[key]; })
         .filter(function(p) { return p.membersStatus === 'read' || p.membersStatus === 'failed'; });
     var members = countStatus(groups, function(p) { return p.membersStatus === 'failed'; });
-    add('SharePoint group members', members.status, members.failed === 0 ? '' :
-        'Sitenalyzer could not read the members of ' + snaCountText(members.failed, 'group', 'groups') + '. You need to be a site owner to see them.');
+    var groupsMayBeMissing = !perms.siteRolesRead || !report.listsRead || own.failed > 0;
+    var memberNotes = [];
+    if (members.failed > 0) {
+        memberNotes.push('Sitenalyzer could not read the members of ' + snaCountText(members.failed, 'group', 'groups') + '. You need to be a site owner to see them.');
+    }
+    var membersStatus = members.status;
+    if (groupsMayBeMissing && groups.length === 0) {
+        membersStatus = 'failed';
+        memberNotes = ['Sitenalyzer could not read the permissions that name SharePoint groups, so it could not look up any members. The rows above say what to do.'];
+    } else if (groupsMayBeMissing) {
+        if (membersStatus === 'read') { membersStatus = 'partial'; }
+        memberNotes.push('Some groups may be missing, because Sitenalyzer could not read all of the permissions. The rows above say what to do.');
+    }
+    add('SharePoint group members', membersStatus, memberNotes.join(' '));
 
     var sharing = perms.sharingLinks;
     var sharingNotes = [];
@@ -2873,8 +2887,13 @@ function buildSearchIndex() {
         });
     });
 
+    // A term result opens its term set, with the terms table filtered to the term when the table has a filter box.
     _snaTaxonomyData.forEach(function(group) {
         (group.termSets || []).forEach(function(set) {
+            var setId = snaCleanListId(set.setId);
+            var setRoute = SNA_GUID_PATTERN.test(setId) ? { section: 'taxonomy', anchor: setId } : { section: 'taxonomy' };
+            var termsTableId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
+            var hasTermFilter = (set.terms || []).length > SNA_TABLE_FILTER_MIN_ROWS;
             (set.terms || []).forEach(function(term) {
                 _snaSearchIndex.push({
                     kind:          'term',
@@ -2883,13 +2902,15 @@ function buildSearchIndex() {
                     label:         term.termName || '',
                     sublabel:      term.termId || '',
                     breadcrumb:    group.groupName + ' › ' + set.setName,
-                    route:         snaRouteHash({ section: 'taxonomy' }),
+                    route:         snaRouteHash(setRoute),
                     listTitle:     '',
                     listId:        '',
                     columnName:    term.termName || '',
                     dataType:      'Term',
                     summary:       group.groupName + ' / ' + set.setName + (term.termDescription ? ' / ' + term.termDescription : ''),
-                    technicalText: term.termId || ''
+                    technicalText: term.termId || '',
+                    filterTable:   hasTermFilter ? termsTableId : '',
+                    filterText:    hasTermFilter ? (term.termName || '') : ''
                 });
             });
         });
@@ -3194,7 +3215,7 @@ function renderTaxonomySection(read) {
         group.termSets.forEach(function(set) {
             var setDescHtml  = renderAdminDescWrap(set.setDescription, 'termset:' + set.setId);
             var termCount    = set.terms ? set.terms.length : 0;
-            html += '<details class="sna-taxonomy-set">';
+            html += '<details class="sna-taxonomy-set" id="sna-termset-' + snaCleanListId(set.setId) + '">';
             html += '<summary><span aria-hidden="true">&#128193; </span>' + snaEscapeHtml(set.setName) +
                     ' <span class="item-count-badge">' + termCount + '<sup>' + (termCount === 1 ? 'term' : 'terms') + '</sup></span>' +
                     (technical ? ' <span class="list-id-text sna-summary-id">Term set ID ' + snaEscapeHtml(set.setId) + '</span>' : '') +
@@ -3631,7 +3652,7 @@ function snaReadQueryValue(query, name) {
 // Reads a report address such as #sna/contents/<list ID>/columns or #sna/search?q=visit.
 // Returns null for addresses that are not Sitenalyzer's, such as #top, so the host page keeps those.
 // Addresses that start with #sna/ but don't match a view open the Overview. Only known sections, tabs, and parts
-// of Permissions are accepted, and list IDs must look like a GUID.
+// of Permissions are accepted, and list and term set IDs must look like a GUID.
 function snaParseRoute(hash) {
     var text = String(hash || '');
     if (text.indexOf(SNA_ROUTE_PREFIX) !== 0) { return null; }
@@ -3667,6 +3688,14 @@ function snaParseRoute(hash) {
             if (!Object.prototype.hasOwnProperty.call(SNA_PERMISSION_ANCHORS, parts[1])) { return fallback; }
             route.anchor = parts[1];
         }
+    } else if (section === 'taxonomy') {
+        // #sna/taxonomy/<term set ID> opens that term set.
+        if (parts.length > 2) { return fallback; }
+        if (parts[1]) {
+            var setId = parts[1].toLowerCase();
+            if (!SNA_GUID_PATTERN.test(setId)) { return fallback; }
+            route.anchor = setId;
+        }
     } else {
         if (parts.length > 1 && parts[1] !== '') { return fallback; }
         if (section === 'search') { route.q = snaReadQueryValue(query, 'q').substring(0, SNA_SEARCH_MAX_LENGTH); }
@@ -3683,7 +3712,7 @@ function snaRouteHash(route) {
         hash += '/' + r.id;
         if (r.id !== 'pages' && r.tab && r.tab !== 'overview') { hash += '/' + r.tab; }
     }
-    if (section === 'permissions' && r.anchor) { hash += '/' + r.anchor; }
+    if ((section === 'permissions' || section === 'taxonomy') && r.anchor) { hash += '/' + r.anchor; }
     if (section === 'search') { hash += '?q=' + encodeURIComponent(r.q || ''); }
     return hash;
 }
@@ -3767,9 +3796,9 @@ function renderApp(route, options) {
     if (route.section === 'print') {
         main.querySelectorAll('details').forEach(function(d) { d.open = true; });
     }
-    if (route.section === 'permissions' && route.anchor) {
-        var opened = document.getElementById(SNA_PERMISSION_ANCHORS[route.anchor]);
-        if (opened) { opened.open = true; }
+    // Opens the part of Permissions or the term set in the address, and the term group around a term set.
+    for (var opened = snaAnchorElement(route); opened; opened = opened.parentElement ? opened.parentElement.closest('details') : null) {
+        opened.open = true;
     }
     var built = initSnaTabulators();
     if (route.section === 'contents') { snaApplyInventoryFilter(); }
@@ -3779,6 +3808,14 @@ function renderApp(route, options) {
     snaUpdateNav(route);
     snaFocusAfterRender(route, previous, opts);
     if (route.section === 'print' && opts.print) { snaPrintWhenReady(built); }
+}
+
+// Returns the <details> element that the address opens, such as a part of Permissions or a term set, or null.
+function snaAnchorElement(route) {
+    if (!route.anchor) { return null; }
+    if (route.section === 'permissions') { return document.getElementById(SNA_PERMISSION_ANCHORS[route.anchor]); }
+    if (route.section === 'taxonomy') { return document.getElementById('sna-termset-' + route.anchor); }
+    return null;
 }
 
 // Marks the open section in the section navigation.
@@ -3800,8 +3837,8 @@ function snaFocusAfterRender(route, previous, opts) {
     else if (focus === 'tab') { target = document.querySelector('#sna-contents-detail .sna-detail-tabs a[aria-current="page"]'); }
     else if (focus === 'detail') { target = document.getElementById('sna-detail-title'); }
     else if (focus === 'inventory') { target = document.getElementById('sna-inv-' + _snaLastInventoryId); }
-    if (!target && route.section === 'permissions' && route.anchor) {
-        var opened = document.getElementById(SNA_PERMISSION_ANCHORS[route.anchor]);
+    if (!target && route.anchor) {
+        var opened = snaAnchorElement(route);
         target = opened ? opened.querySelector('summary') : null;
         isAnchor = !!target;
     }
@@ -4099,11 +4136,13 @@ function snaRenderInventory(route, report) {
         '<input type="search" id="sna-inventory-filter" class="sna-table-search" autocomplete="off" value="' + snaEscapeHtml(_snaContentsFilter) + '">' +
         '<p id="sna-inventory-count" class="sna-table-count" role="status"></p>' +
     '</div>';
+    // When the lists could not be read, the site is not known to be empty, so no "None found" groups are shown.
     if (!report.listsRead) {
         html += '<p class="sna-note">Sitenalyzer could not read the lists and libraries. Refresh the report to try again.</p>';
+    } else {
+        html += group('Document libraries', report.lists.filter(function(l) { return l.isLib; }), 'No document libraries found.');
+        html += group('Lists', report.lists.filter(function(l) { return !l.isLib; }), 'No lists found.');
     }
-    html += group('Document libraries', report.lists.filter(function(l) { return l.isLib; }), 'No document libraries found.');
-    html += group('Lists', report.lists.filter(function(l) { return !l.isLib; }), 'No lists found.');
     var pageCount = report.pages.pages.length;
     html += '<div class="sna-inventory-group"><h3 class="sna-inventory-heading">Site pages</h3><ul class="sna-inventory-list">' +
         item('pages', '#sna/contents/pages', '📄', 'Site pages', report.pages.failed && pageCount === 0 ? 'Not read' : snaCountText(pageCount, 'page', 'pages')) +
@@ -4239,6 +4278,9 @@ function snaRenderContentsSummary(report) {
             };
         }) });
         return block + '<div id="' + tableId + '"></div>';
+    }
+    if (!read) {
+        return html + '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so this summary has no tables. Refresh the report to try again.</p>';
     }
     html += table('Document libraries', report.lists.filter(function(l) { return l.isLib; }), 'sna-tbl-libs', 'document libraries');
     html += table('Lists', report.lists.filter(function(l) { return !l.isLib; }), 'sna-tbl-lists', 'lists');

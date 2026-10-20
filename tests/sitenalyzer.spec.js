@@ -28,6 +28,8 @@ const path = require('path');
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
 const { openPretendSite, reply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID } = require('./pretend-sharepoint');
+// The pretend site's one term set, Study Arms.
+const TERM_SET_ID = 'eeeeeeee-0000-4000-8000-000000000001';
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 // The same SheetJS copy that site owners upload, used to read the downloaded workbooks.
@@ -648,6 +650,9 @@ test('says Not read on the Overview for counts it could not read', async functio
     await expect(coverage.getByRole('row', { name: /^Site permissions/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /Site pages/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /Columns/ })).toContainText('Read');
+    const membersRow = coverage.getByRole('row', { name: /^SharePoint group members/ });
+    await expect(membersRow).toContainText('Partly read');
+    await expect(membersRow).toContainText('Some groups may be missing');
 });
 
 test('shows a Contents summary until a list or library is selected', async function({ page }) {
@@ -687,10 +692,22 @@ test('reports columns, folders, and list permissions as not read when the lists 
         answerOverrides: [
             { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
                 return /Hidden eq false/.test(url.searchParams.get('$filter') || '') ? reply(403, { error: 'Access denied' }) : undefined;
-            } }
+            } },
+            { pattern: /^\/_api\/web\/roleassignments$/, body: reply(403, { error: 'Access denied' }) }
         ]
     });
     await extractSiteInformation(page);
+
+    // Contents says the lists could not be read, not that the site has none.
+    await gotoSection(page, 'Contents');
+    const contents = page.locator('#sp-results');
+    await expect(contents.locator('#sna-contents-inventory')).toContainText('Sitenalyzer could not read the lists and libraries.');
+    await expect(contents).not.toContainText('No document libraries found.');
+    await expect(contents).not.toContainText('No lists found.');
+    await expect(contents).not.toContainText('None found.');
+    await expect(page.locator('#sna-contents-detail')).toContainText('so this summary has no tables');
+    await expect(page.locator('#sna-contents-detail .sna-stats')).toContainText('ColumnsNot read');
+
     await gotoSection(page, 'Site review');
     const coverage = page.locator('.sna-coverage-table');
     await expect(coverage.getByRole('row', { name: /^Lists and libraries/ })).toContainText('Not read');
@@ -698,6 +715,7 @@ test('reports columns, folders, and list permissions as not read when the lists 
     await expect(coverage.getByRole('row', { name: /^Top-level folders/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /^Permissions of lists and libraries/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /^Columns/ })).toHaveCount(1);
+    await expect(coverage.getByRole('row', { name: /^SharePoint group members/ })).toContainText('Not read');
 });
 
 test('reports the term store as partly read when it stops answering after some term groups', async function({ page }) {
@@ -1206,6 +1224,46 @@ test('groups search results by kind, with columns first', async function({ page 
     await expect(page.locator('#sp-results')).toContainText('Enter at least 2 letters or numbers');
     await searchReport(page, 'nothing like this');
     await expect(page.locator('#sp-results')).toContainText('Search covers only what Sitenalyzer read from this site');
+});
+
+test('opens the term set of a term search result', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    await searchReport(page, 'Control');
+    await page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Control' }).click();
+
+    const termSet = page.locator('#sna-termset-' + TERM_SET_ID);
+    expect(hashOf(page)).toBe('#sna/taxonomy/' + TERM_SET_ID);
+    await expect(termSet).toHaveAttribute('open', '');
+    await expect(page.locator('#sna-taxonomy-section > details.sna-taxonomy-group')).toHaveAttribute('open', '');
+    await expect(termSet.locator('> summary')).toBeFocused();
+    await expect(termSet.locator('.tabulator-row', { hasText: 'Control' })).toBeVisible();
+
+    // Back returns to the search results, and an address with an unknown term set opens Taxonomy with nothing open.
+    await page.goBack();
+    await expect(page.getByRole('heading', { level: 2, name: 'Search results' })).toBeVisible();
+    await page.evaluate(function() { window.location.hash = '#sna/taxonomy/00000000-0000-4000-8000-000000000000'; });
+    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
+    await expect(page.locator('#sna-section-title')).toBeFocused();
+    await expect(termSet).not.toHaveAttribute('open', '');
+});
+
+test('filters a long terms table to the term from a search result', async function({ page }) {
+    const manyTerms = { value: [] };
+    for (let i = 1; i <= 12; i++) {
+        manyTerms.value.push({ id: 'ffffffff-0000-4000-8000-0000000001' + String(i).padStart(2, '0'), labels: [{ name: 'Arm ' + String.fromCharCode(64 + i), isDefault: true }], descriptions: [] });
+    }
+    await openPretendSite(page, {
+        answerOverrides: [{ pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms$/, body: manyTerms }]
+    });
+    await extractSiteInformation(page);
+    await searchReport(page, '"Arm G"');
+    await page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Arm G' }).click();
+
+    const termSet = page.locator('#sna-termset-' + TERM_SET_ID);
+    await expect(termSet.getByRole('searchbox')).toHaveValue('Arm G');
+    await expect(termSet.locator('.tabulator-row')).toHaveCount(1);
+    await expect(termSet.locator('.tabulator-row')).toContainText('Arm G');
 });
 
 test('finds internal names but shows them only with technical details on', async function({ page }) {

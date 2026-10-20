@@ -116,7 +116,7 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 - Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, and **Terms**. Columns whose names match come first.
 - Use `*` between words, such as `visit*date`, or put a phrase in quotes, such as `"Visit Date"`, to find it exactly.
-- Select a result to open it. A column opens on its list's **Columns** tab, with the table filtered to that column when the table has a filter box.
+- Select a result to open it. A column opens on its list's **Columns** tab, with the table filtered to that column when the table has a filter box. A term opens its term set in **Taxonomy** in the same way.
 
 ### Technical details
 

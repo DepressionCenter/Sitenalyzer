@@ -125,10 +125,11 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 | `#sna/contents/pages` | Site pages |
 | `#sna/permissions`, and `#sna/permissions/site`, `/people`, `/person`, `/own`, `/sharing`, or `/apps` | Permissions, with one part opened |
 | `#sna/taxonomy` and `#sna/review` | Taxonomy and Site review |
+| `#sna/taxonomy/<term set ID>` | Taxonomy, with one term set and its term group opened |
 | `#sna/search?q=<text>` | Search results |
 | `#sna/print` | The full report, for printing |
 
-- Sections, tabs, and parts are checked against fixed lists, and list IDs must look like a GUID. An address that starts with `#sna/` but doesn't match opens the Overview.
+- Sections, tabs, and parts are checked against fixed lists, and list and term set IDs must look like a GUID. An address that starts with `#sna/` but doesn't match opens the Overview.
 - Addresses that don't start with `#sna/`, such as `#top`, belong to the host page and are ignored.
 - Only a `?siteUrl=` link chooses the first view, such as `?siteUrl=...#sna/taxonomy`. Without one, Sitenalyzer removes a report address left in the page address, such as after reloading the page, so a new report opens on the Overview. **Refresh report** keeps the view that was open.
 - Moving between views changes the address with `location.hash`, so Back and Forward work, and the `hashchange` listener draws the view. Sitenalyzer never calls `history.pushState`. It uses `history.replaceState` for the first view after collection and to remove the address on **Start over**, so neither adds a history step.
