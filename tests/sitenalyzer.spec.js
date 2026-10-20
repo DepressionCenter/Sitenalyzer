@@ -27,7 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID } = require('./pretend-sharepoint');
+const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields } = require('./pretend-sharepoint');
 // The pretend site's one term set, Study Arms.
 const TERM_SET_ID = 'eeeeeeee-0000-4000-8000-000000000001';
 
@@ -2033,6 +2033,292 @@ test('filters a long terms table to the term from a search result', async functi
     await expect(termSet.getByRole('searchbox')).toHaveValue('Arm G');
     await expect(termSet.locator('.tabulator-row')).toHaveCount(1);
     await expect(termSet.locator('.tabulator-row')).toContainText('Arm G');
+});
+
+// Opens the Study Arms term set from the Taxonomy navigation.
+async function openStudyArms(page) {
+    await gotoSection(page, 'Taxonomy');
+    await page.locator('#sp-results .sna-subnav').getByRole('link', { name: /^Study Arms/ }).click();
+    await expect(page.locator('#sna-part-title')).toHaveText('Study Arms');
+}
+
+// A term set with three levels, as the term store API returns it: Arm sits at the top with Treatment A under it,
+// Dose 1 sits under Treatment A, and Shared Visit is pinned under both Arm and Other.
+const TERM = {
+    arm: 'ffffffff-0000-4000-8000-000000000011',
+    treatmentA: 'ffffffff-0000-4000-8000-000000000012',
+    dose1: 'ffffffff-0000-4000-8000-000000000013',
+    other: 'ffffffff-0000-4000-8000-000000000014',
+    sharedVisit: 'ffffffff-0000-4000-8000-000000000015'
+};
+function graphTerm(id, name) { return { id: id, labels: [{ name: name, isDefault: true }], descriptions: [] }; }
+const TREE_TERMS = [
+    graphTerm(TERM.other, 'Other'), graphTerm(TERM.dose1, 'Dose 1'), graphTerm(TERM.arm, 'Arm'),
+    graphTerm(TERM.treatmentA, 'Treatment A'), graphTerm(TERM.sharedVisit, 'Shared Visit')
+];
+const TREE_CHILDREN = {
+    [TERM.arm]: [TERM.treatmentA, TERM.sharedVisit],
+    [TERM.treatmentA]: [TERM.dose1],
+    [TERM.other]: [TERM.sharedVisit]
+};
+function treeChildren(id) {
+    return (TREE_CHILDREN[id] || []).map(function(childId) { return TREE_TERMS.filter(function(t) { return t.id === childId; })[0]; });
+}
+const TERMS_PATTERN = /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms$/;
+const TERM_CHILDREN_PATTERN = /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms\/([^/]+)\/children$/;
+
+// Returns the rows of the terms table on screen as [term name, parent term], in order.
+async function termRows(termSet) {
+    const rows = termSet.locator('.tabulator-row');
+    const result = [];
+    for (let i = 0; i < await rows.count(); i++) {
+        result.push([
+            (await rows.nth(i).locator('[tabulator-field="termName"]').innerText()).replace(/^[^\p{L}\p{N}]+/u, '').trim(),
+            (await rows.nth(i).locator('[tabulator-field="parentNames"]').innerText()).trim()
+        ]);
+    }
+    return result;
+}
+
+test('shows the parent of each term, with a pinned term under both of its parents', async function({ page }) {
+    const record = await openPretendSite(page, {
+        answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
+            const withChildren = /children/.test(url.searchParams.get('$expand') || '');
+            return { value: TREE_TERMS.map(function(t) { return withChildren ? Object.assign({ children: treeChildren(t.id) }, t) : t; }) };
+        } }]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Terms (5)' })).toBeVisible();
+    // Each term follows the term it sits under, and terms at the top come in the order SharePoint gave them.
+    expect(await termRows(termSet)).toEqual([
+        ['Other', 'Top level'], ['Shared Visit', 'Arm; Other'], ['Arm', 'Top level'], ['Treatment A', 'Arm'], ['Dose 1', 'Treatment A']
+    ]);
+    // One request with $expand=children answered every parent, so no term's children were asked for one at a time.
+    expect(apiUrls(record).filter(function(u) { return TERM_CHILDREN_PATTERN.test(u.pathname.substring(SITE_PATH.length)); })).toEqual([]);
+    await expect(termSet.getByText('No column on this site uses this term set.')).toBeVisible();
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ })).toContainText('Read');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('finds parent terms one term at a time when the term set does not return children', async function({ page }) {
+    // This term store lists only top-level terms and rejects $expand, as some term stores may.
+    const record = await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: TERMS_PATTERN, answer: function(url) {
+                if (url.searchParams.get('$expand')) { return reply(400, { error: 'Expand is not supported' }); }
+                return { value: [graphTerm(TERM.arm, 'Arm'), graphTerm(TERM.other, 'Other')] };
+            } },
+            { pattern: TERM_CHILDREN_PATTERN, answer: function(url, match) { return { value: treeChildren(match[1]) }; } }
+        ]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Terms (5)' })).toBeVisible();
+    expect(await termRows(termSet)).toEqual([
+        ['Arm', 'Top level'], ['Treatment A', 'Arm'], ['Dose 1', 'Treatment A'], ['Shared Visit', 'Arm; Other'], ['Other', 'Top level']
+    ]);
+    // Every term's children were asked for once, including the terms found only as children.
+    const childRequests = apiUrls(record).filter(function(u) { return TERM_CHILDREN_PATTERN.test(u.pathname.substring(SITE_PATH.length)); });
+    expect(childRequests.length).toBe(5);
+
+    // Search finds a term found only as a child, and the print document has the parent column.
+    await searchReport(page, '"Dose 1"');
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Dose 1' })).toBeVisible();
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('says when it could not read parent terms, and leaves out the parent column', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: TERMS_PATTERN, answer: function(url) {
+                return url.searchParams.get('$expand') ? reply(400, { error: 'Expand is not supported' }) : undefined;
+            } },
+            { pattern: TERM_CHILDREN_PATTERN, body: reply(500, { error: 'Server error' }) }
+        ]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.locator('.tabulator-row')).toHaveCount(2);
+    await expect(termSet).toContainText('Sitenalyzer could not read which term each term sits under, so the table has no Parent term column.');
+    await expect(termSet.getByRole('columnheader', { name: 'Parent term' })).toHaveCount(0);
+    await gotoSection(page, 'Site review');
+    const parentsRow = page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ });
+    await expect(parentsRow).toContainText('Not read');
+    await expect(parentsRow).toContainText('Sitenalyzer could not read which term each term sits under in 1 term set');
+});
+
+test('reads every page of a term set, and stops at a next-batch link to another site', async function({ page }) {
+    const record = await openPretendSite(page, {
+        answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
+            if (url.searchParams.get('$expand')) { return undefined; }
+            if (url.searchParams.get('$skiptoken') === '2') {
+                return { value: [graphTerm(TERM.other, 'Other')], '@odata.nextLink': 'https://contoso.sharepoint.com/sites/othersite/_api/v2.1/terms?$skiptoken=3' };
+            }
+            return { value: [graphTerm(TERM.arm, 'Arm')], '@odata.nextLink': SITE_URL + '/_api/v2.1/sites/x/termStore/sets/' + TERM_SET_ID + '/terms?$skiptoken=2' };
+        } }]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Terms (2)' })).toBeVisible();
+    await expect(termSet).toContainText('Sitenalyzer stopped reading the terms of this term set because SharePoint sent a link to a different site');
+    expect(apiUrls(record).filter(function(u) { return u.pathname.indexOf('/sites/othersite/') > -1; })).toEqual([]);
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Term store/ })).toContainText('Partly read');
+});
+
+// Two managed metadata columns in Study Visits that use Study Arms: one offers the whole set, and one allows several
+// values and starts at the Treatment term. A third site column uses the set but isn't in any list.
+const ARM_TAG_ID = 'bbbbbbbb-0000-4000-8000-000000000011';
+const ARM_DETAIL_ID = 'bbbbbbbb-0000-4000-8000-000000000012';
+const UNUSED_ARM_COLUMN_ID = 'bbbbbbbb-0000-4000-8000-000000000013';
+function taxonomySchemaXml(termSetId, anchorId) {
+    return '<Field Type="TaxonomyFieldType" Name="X"><Customization><ArrayOfProperty>' +
+        '<Property><Name>SspId</Name><Value xmlns:q1="http://www.w3.org/2001/XMLSchema" p4:type="q1:string" xmlns:p4="http://www.w3.org/2001/XMLSchema-instance">33333333-0000-4000-8000-000000000000</Value></Property>' +
+        '<Property><Name>TermSetId</Name><Value xmlns:q2="http://www.w3.org/2001/XMLSchema" p4:type="q2:string" xmlns:p4="http://www.w3.org/2001/XMLSchema-instance">' + termSetId + '</Value></Property>' +
+        '<Property><Name>AnchorId</Name><Value xmlns:q3="http://www.w3.org/2001/XMLSchema" p4:type="q3:string" xmlns:p4="http://www.w3.org/2001/XMLSchema-instance">' + anchorId + '</Value></Property>' +
+        '</ArrayOfProperty></Customization></Field>';
+}
+const NO_ANCHOR = '00000000-0000-0000-0000-000000000000';
+const TREATMENT_TERM_ID = 'ffffffff-0000-4000-8000-000000000002';
+const ARM_COLUMNS = [
+    { Id: ARM_TAG_ID, InternalName: 'ArmTag', Title: 'Arm Tag', TypeAsString: 'TaxonomyFieldType', Description: 'Study arm of the visit.',
+      SchemaXml: taxonomySchemaXml(TERM_SET_ID.toUpperCase(), NO_ANCHOR) },
+    { Id: ARM_DETAIL_ID, InternalName: 'ArmDetail', Title: 'Arm Detail', TypeAsString: 'TaxonomyFieldTypeMulti', Description: '',
+      SchemaXml: taxonomySchemaXml(TERM_SET_ID, TREATMENT_TERM_ID) }
+];
+const LIST_FIELDS_PATTERN = new RegExp("^/_api/web/lists\\(guid'" + LIST_ID + "'\\)/fields$");
+function taxonomyColumnAnswers(options) {
+    const settings = options || {};
+    return [
+        { pattern: LIST_FIELDS_PATTERN, answer: function(url) {
+            if (/TaxonomyFieldType/.test(url.searchParams.get('$filter') || '')) {
+                return settings.listSchemaFails ? reply(500, { error: 'Server error' }) : { value: ARM_COLUMNS };
+            }
+            return { value: fields.value.concat(ARM_COLUMNS.map(function(c) { return { Id: c.Id, InternalName: c.InternalName, Title: c.Title, TypeAsString: c.TypeAsString, Description: c.Description }; })) };
+        } },
+        { pattern: /^\/_api\/web\/fields$/, body: settings.siteColumnsFail ? reply(500, { error: 'Server error' }) : { value: [
+            ARM_COLUMNS[0],
+            { Id: UNUSED_ARM_COLUMN_ID, InternalName: 'UnusedArm', Title: 'Unused Arm Column', TypeAsString: 'TaxonomyFieldType', SchemaXml: taxonomySchemaXml(TERM_SET_ID, NO_ANCHOR) },
+            { Id: 'bbbbbbbb-0000-4000-8000-000000000014', InternalName: 'OtherSet', Title: 'Other Set Column', TypeAsString: 'TaxonomyFieldType',
+              SchemaXml: taxonomySchemaXml('eeeeeeee-0000-4000-8000-000000000099', NO_ANCHOR) }
+        ] } }
+    ];
+}
+
+test('lists the columns that use a term set and links to their Columns tab', async function({ page }, testInfo) {
+    const record = await openPretendSite(page, {
+        answerOverrides: taxonomyColumnAnswers()
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Where this term set is used (3)' })).toBeVisible();
+    const usage = termSet.locator('.sna-term-usage-table');
+    await expect(usage.getByRole('columnheader')).toHaveText(['List or library', 'Column', 'Starts at term', 'Allows several values']);
+    await expect(usage.locator('tbody tr').nth(0).locator('td')).toHaveText(['Study Visits (Arm Detail column)', 'Arm Detail', 'Treatment', 'Yes']);
+    await expect(usage.locator('tbody tr').nth(1).locator('td')).toHaveText(['Study Visits (Arm Tag column)', 'Arm Tag', 'Whole term set', 'No']);
+    // The site column that is also in Study Visits is listed once, and the site column of another term set isn't listed.
+    await expect(usage.locator('tbody tr').nth(2).locator('td')).toHaveText(['Site column (not in a list or library)', 'Unused Arm Column', 'Whole term set', 'No']);
+    await expect(usage).not.toContainText('Other Set Column');
+    expect(await new AxeBuilder({ page }).include('#sp-results').withTags(WCAG_TAGS).analyze().then(function(r) { return r.violations; })).toEqual([]);
+
+    // The link opens the list's Columns tab, with the table filtered to the column, because it has more than 10 columns.
+    await usage.getByRole('link', { name: 'Study Visits (Arm Tag column)' }).click();
+    const detail = page.locator('#sna-contents-detail');
+    expect(hashOf(page)).toBe('#sna/contents/' + LIST_ID + '/columns');
+    await expect(detail.getByRole('searchbox')).toHaveValue('Arm Tag');
+    await expect(detail.locator('.tabulator-row')).toHaveCount(1);
+    await expect(detail.locator('.tabulator-row')).toContainText('Arm Tag');
+
+    // Technical details add each column's internal name; the print document has both tables.
+    await page.goBack();
+    await expect(page.locator('#sna-part-title')).toHaveText('Study Arms');
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    await expect(page.locator('.sna-term-usage-table').getByRole('columnheader', { name: 'Internal name' })).toBeVisible();
+    await expect(page.locator('.sna-term-usage-table')).toContainText('ArmDetail');
+
+    // In the data dictionary, both columns name the term set's value set.
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    const fieldRows = sheetRows(workbook, 'Fields');
+    const header = fieldRows[0];
+    const valueSetColumn = header.indexOf('value_set_id');
+    const armTagRow = fieldRows.filter(function(r) { return r[header.indexOf('internal_name')] === 'ArmTag'; })[0];
+    const armDetailRow = fieldRows.filter(function(r) { return r[header.indexOf('internal_name')] === 'ArmDetail'; })[0];
+    const valueSets = sheetRows(workbook, 'Value_Sets');
+    const studyArmsSet = valueSets.filter(function(r) { return r[1] === 'Study Arms'; });
+    expect(studyArmsSet.length).toBe(2);
+    expect(armTagRow[valueSetColumn]).toBe(studyArmsSet[0][0]);
+    expect(armDetailRow[valueSetColumn]).toBe(studyArmsSet[0][0]);
+
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Where term sets are used/ })).toContainText('Read');
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('prints the parent terms and the columns that use each term set', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: taxonomyColumnAnswers() });
+    await extractSiteInformation(page);
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+
+    const doc = printFrameDocument(page);
+    const terms = doc.locator('table').filter({ hasText: 'Terms in Study Arms' });
+    await expect(terms.locator('thead th')).toHaveText(['Term name', 'Parent term', 'Description', 'Term ID']);
+    await expect(terms.locator('tbody tr').first()).toContainText('Top level');
+    const usage = doc.locator('table').filter({ hasText: 'Where Study Arms is used' });
+    await expect(usage.locator('tbody tr')).toHaveCount(3);
+    await expect(usage.locator('tbody tr').nth(0)).toContainText('Study Visits');
+    await expect(usage.locator('tbody tr').nth(0)).toContainText('Treatment');
+});
+
+test('says which columns it could not read instead of showing an empty table', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: taxonomyColumnAnswers({ listSchemaFails: true, siteColumnsFail: true })
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Where this term set is used (0)' })).toBeVisible();
+    await expect(termSet).toContainText('Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns.');
+    await expect(termSet).not.toContainText('No column on this site uses this term set.');
+    await gotoSection(page, 'Site review');
+    const usageRow = page.locator('.sna-coverage-table').getByRole('row', { name: /^Where term sets are used/ });
+    await expect(usageRow).toContainText('Partly read');
+    await expect(usageRow).toContainText('Sitenalyzer could not read the managed metadata columns of 1 list or library.');
+    await expect(usageRow).toContainText('Sitenalyzer could not read the site\'s own managed metadata columns.');
+});
+
+test('says it could not read where a term set is used when neither the lists nor the site columns can be read', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+                return /BaseTemplate eq 119/.test(url.searchParams.get('$filter') || '') ? undefined : reply(500, { error: 'Server error' });
+            } },
+            { pattern: /^\/_api\/web\/fields$/, body: reply(500, { error: 'Server error' }) }
+        ]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet).toContainText('Sitenalyzer could not read which columns use this term set.');
+    await expect(termSet.locator('.sna-term-usage-table')).toHaveCount(0);
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Where term sets are used/ })).toContainText('Not read');
 });
 
 test('finds internal names but shows them only with technical details on', async function({ page }) {

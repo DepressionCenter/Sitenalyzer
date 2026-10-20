@@ -81,6 +81,8 @@ Every request is a read made with the signed-in person's own permissions. The on
 | `/_api/web/lists(guid'...')/items(<ID>)?$select=BannerImageUrl` | The image chosen for one site page, read only when its details open. |
 | `/_api/web/siteusers?$filter=Email eq '…'` and `getUserEffectivePermissions(@u)` | Only when someone uses **Check one person's access**. |
 | Fields, root folders, and the term store (`/_api/v2.1/sites/…/termStore`) | Columns, top-level folders, and terms for the data dictionary. |
+| `…/termStore/sets/<ID>/terms?$expand=children`, and `…/terms/<ID>/children` when needed | Which term each term sits under. See [How parent terms are read](#how-parent-terms-are-read). |
+| `/_api/web/lists(guid'…')/fields` and `/_api/web/fields`, each filtered to managed metadata columns, with `SchemaXml` | Which columns use each term set. A list sends this request only when it has a managed metadata column. |
 
 Group member lookups and person checks run at most 6 at a time (`SNA_MAX_PARALLEL_REQUESTS`), so large sites aren't slowed down by SharePoint's request limits.
 
@@ -94,6 +96,18 @@ SharePoint names each sharing link group `SharingLinks.<item ID>.<link type>.<li
 4. Items that still aren't found, such as list items and deleted files, are shown with "No name found" and their ID.
 
 Because SharePoint answers the batch itself with 200 OK, the browser console shows no failed request for items that aren't files. The answer is read by `snaParseBatchResponse`, which accepts CRLF and LF line endings. If the digest or a batch fails, the links that haven't been named yet are shown without names. A batch holds only GET requests to the site's own REST API, and `snaBatchGet` refuses any other address.
+
+### How parent terms are read
+
+The terms request for a term set doesn't say which term is the parent of which, so Sitenalyzer reads parents after every term set has been read. For each term set, it does these steps:
+
+1. It reads the terms again with `$expand=children`. If every term comes back with a list of its children, that is enough to know each term's parents.
+2. If SharePoint rejects that request or leaves out the children, it asks for each term's children with `…/terms/<ID>/children`, at most 6 at a time and at most 1,000 times in each report (`SNA_TERM_CHILD_LOOKUPS`). Children are added in the order the terms were asked for, so the result is the same every time.
+3. A term found only as a child is added to the term set, and its children are read too. This covers a term store whose terms request lists only top-level terms.
+
+A term can sit under more than one term, such as a term pinned in two places, so each term keeps a list of parent IDs. The terms are then put in tree order. Every term request follows SharePoint's next-batch link (`@odata.nextLink`) only when it points to the same site's REST API, and stops at 10,000 terms in a term set (`SNA_TERMS_PER_SET_MAX`). If parents can't be read for a term set, Taxonomy leaves out its **Parent term** column and says why.
+
+The term set of a managed metadata column isn't returned by the columns request. So a list with a managed metadata column sends one more request for those columns, with `SchemaXml`, the column's definition in XML. Sitenalyzer reads `TermSetId` and `AnchorId` (the term a column starts at) from it with `DOMParser`, and keeps them only when they look like a GUID. The site's own columns are read the same way from `/_api/web/fields`. A site column added to a list has the same column ID in the list, so it is shown once, as the list's column. In the data dictionary, a managed metadata column's `value_set_id` names its term set's value set.
 
 ### How permissions are counted
 

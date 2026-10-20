@@ -232,6 +232,15 @@ const terms = {
     ]
 };
 
+// Answers a term set's terms. With $expand=children, as Sitenalyzer asks to find parent terms, each term also has
+// its children; the pretend site's terms are all top-level terms with no children.
+function termsAnswer(url) {
+    if (/children/.test(url.searchParams.get('$expand') || '')) {
+        return { value: terms.value.map(function(t) { return Object.assign({ children: [] }, t); }) };
+    }
+    return terms;
+}
+
 const searchResults = {
     PrimaryQueryResult: {
         RelevantResults: {
@@ -288,7 +297,10 @@ const API_ANSWERS = [
     { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore$/, body: termStore },
     { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/groups$/, body: termGroups },
     { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/groups\/[^/]+\/sets$/, body: termSets },
-    { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms$/, body: terms },
+    { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms$/, answer: termsAnswer },
+    { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms\/[^/]+\/children$/, body: { value: [] } },
+    // The site's own managed metadata columns. The pretend site has none.
+    { pattern: /^\/_api\/web\/fields$/, body: { value: [] } },
     { pattern: /^\/_api\/search\/query$/, body: searchResults }
 ];
 
@@ -481,4 +493,4 @@ async function openPretendSite(page, options) {
     return record;
 }
 
-module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID };
+module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields };

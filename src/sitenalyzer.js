@@ -80,6 +80,11 @@ var SNA_SCRIPTS_FOLDER = snaFindScriptsFolder();
 var SNA_SITE_PAGES_MAX = 10000;
 var SNA_SITE_PAGES_BATCH_SIZE = 2000;
 
+// Most terms read from each term set, and the most requests for one term's child terms in each report. Child terms
+// are read one term at a time only when SharePoint doesn't return each term's children with the term set's terms.
+var SNA_TERMS_PER_SET_MAX = 10000;
+var SNA_TERM_CHILD_LOOKUPS = 1000;
+
 // Most requests that run at the same time, such as group member lookups. Keeps large sites from being throttled.
 var SNA_MAX_PARALLEL_REQUESTS = 6;
 
@@ -286,6 +291,10 @@ function snaTableColumns(type, tbl) {
         formatter: function(cell) {
           return '<span class="sna-type-icon" aria-hidden="true">&#127991;</span>' + snaEscapeHtml(cell.getValue());
         }
+      },
+      {
+        title: 'Parent term', field: 'parentNames', sorter: 'string', widthGrow: 2, visible: !tbl.parentsHidden,
+        formatter: function(cell) { return cell.getValue() ? snaEscapeHtml(cell.getValue()) : '<span class="sna-muted">Top level</span>'; }
       },
       { title: 'Term ID', field: 'termId', sorter: 'string', widthGrow: 2, visible: technical, formatter: idFormatter },
       {
@@ -952,7 +961,9 @@ function getOutputTypeName(outputType) {
 
 // ### Permissions ###
 
-// File IDs in sharing link group names must look like this before Sitenalyzer asks SharePoint about them.
+// The column types of managed metadata columns, which take their values from a term set.
+var SNA_TAXONOMY_FIELD_TYPES = ['TaxonomyFieldType', 'TaxonomyFieldTypeMulti'];
+// IDs from SharePoint, such as item IDs in sharing link group names, must look like this before Sitenalyzer uses them.
 var SNA_GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var SNA_PAGE_KEY_PATTERN = /^\d{1,10}(-\d{1,3})?$/;
 
@@ -1977,6 +1988,20 @@ function exportToXLSX() {
     var valueSetsRows     = [];
     var relationshipsRows = [];
 
+    // Each term set in the report is one value set. A managed metadata column names its term set's value set,
+    // so its ID is given out the first time either the column or the term set needs it.
+    var termSetVsIds = {};
+    var reportTermSetIds = {};
+    (_snaTaxonomyData || []).forEach(function(g) {
+        (g.termSets || []).forEach(function(set) { reportTermSetIds[String(set.setId).toLowerCase()] = true; });
+    });
+    function termSetVsId(setId) {
+        var key = String(setId || '').toLowerCase();
+        if (!reportTermSetIds[key]) { return ''; }
+        if (!termSetVsIds[key]) { termSetVsIds[key] = xlsxNid(ec, 'VS_', 'vs'); }
+        return termSetVsIds[key];
+    }
+
     var listGuidToIdFieldGuid = {};
     for (i = 0; i < globalExportedData.length; i++) {
         if (globalExportedData[i].InternalName === 'ID' && globalExportedData[i].FieldId) {
@@ -1996,9 +2021,9 @@ function exportToXLSX() {
             nativeType = 'Calculated (' + f.ReturnType + ')';
         }
 
-        vsId    = '';
+        vsId    = f.TermSetId ? termSetVsId(f.TermSetId) : '';
         choices = Array.isArray(f.Choices) ? f.Choices : [];
-        if (choices.length > 0) {
+        if (!vsId && choices.length > 0) {
             vsId = xlsxNid(ec, 'VS_', 'vs');
             for (ci = 0; ci < choices.length; ci++) {
                 choice = choices[ci];
@@ -2060,7 +2085,7 @@ function exportToXLSX() {
             termSets = group.termSets || [];
             for (j = 0; j < termSets.length; j++) {
                 termSet = termSets[j];
-                vsId    = xlsxNid(ec, 'VS_', 'vs');
+                vsId    = termSetVsId(termSet.setId) || xlsxNid(ec, 'VS_', 'vs');
                 terms   = termSet.terms || [];
                 for (ti = 0; ti < terms.length; ti++) {
                     term = terms[ti];
@@ -2478,7 +2503,7 @@ function snaCancelledError() {
 //
 // Report shape: { collectedAt (ISO 8601, UTC), siteUrl, site { title, url, id, description, logoUrl }, currentUser, isAdmin,
 // listsRead, lists [snaCollectList entries], pages (snaFetchSitePages result), taxonomy { groups, read, termStoreId,
-// siteCollectionId }, permissions { siteRolesRead, siteRoleAssignments, appAssignments, index, rows, inheritedLists,
+// siteCollectionId, usage (snaBuildTermSetUsage result) }, permissions { siteRolesRead, siteRoleAssignments, appAssignments, index, rows, inheritedLists,
 // uniqueLists, roleDefinitions, siteAdmins, sharingLinks }, coverage [{ area, status: 'read'|'partial'|'failed', note }] }.
 async function collectReport(targetUrl, onProgress, token) {
     var progress = typeof onProgress === 'function' ? onProgress : function() {};
@@ -2519,6 +2544,7 @@ async function collectReport(targetUrl, onProgress, token) {
     });
     var roleDefinitionsPromise = snaFetchRoleDefinitions(targetUrl);
     var siteAdminsPromise = snaFetchSiteAdmins(targetUrl);
+    var siteTaxonomyColumnsPromise = snaFetchSiteTaxonomyColumns(targetUrl);
 
     var allLists = null;
     try {
@@ -2553,6 +2579,7 @@ async function collectReport(targetUrl, onProgress, token) {
     var sharingLinks = await sharingPromise;
     var roleDefinitions = await roleDefinitionsPromise;
     var siteAdmins = await siteAdminsPromise;
+    var siteTaxonomyColumns = await siteTaxonomyColumnsPromise;
     stillWanted();
     _snaSharingLinks    = sharingLinks;
     _snaRoleDefinitions = roleDefinitions;
@@ -2594,6 +2621,7 @@ async function collectReport(targetUrl, onProgress, token) {
         },
         coverage: []
     };
+    report.taxonomy.usage = snaBuildTermSetUsage(report, siteTaxonomyColumns);
     report.coverage = snaBuildCoverage(report);
     return report;
 }
@@ -2602,7 +2630,9 @@ async function collectReport(targetUrl, onProgress, token) {
 // top-level folders. Adds its columns to globalExportedData and its permissions to the access list.
 // Returns { id, routeId, title, internalName, description, itemCount, isLib, baseTemplate, url, lastModified,
 // versioning { enabled, minor, majorLimit }, raw, permissions { inherits, rolesRead, roleAssignments },
-// columns [], columnsStatus 'read'|'empty'|'failed', folders [], foldersStatus 'read'|'empty'|'failed'|'' (lists) }.
+// columns [], columnsStatus 'read'|'empty'|'failed', termSetsStatus 'read'|'failed'|'' (no managed metadata column),
+// folders [], foldersStatus 'read'|'empty'|'failed'|'' (lists) }. A managed metadata column also has termSetId and
+// anchorTermId, lowercase GUIDs or '', and allowsSeveral.
 async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
     var isDocLib = list.BaseTemplate === 101;
     var listTypeLabel = isDocLib ? "Document Library" : "List";
@@ -2623,6 +2653,7 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
         permissions:   { inherits: list.HasUniqueRoleAssignments === false, rolesRead: true, roleAssignments: [] },
         columns:       [],
         columnsStatus: '',
+        termSetsStatus: '',
         folders:       [],
         foldersStatus: ''
     };
@@ -2685,7 +2716,11 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 maxLength:    maxLength,
                 indexed:      f.Indexed ? true : false,
                 formula:      f.Formula ? String(f.Formula) : '',
-                lookupTarget: f.LookupList ? String(f.LookupList) : ''
+                lookupTarget: f.LookupList ? String(f.LookupList) : '',
+                isTaxonomy:   SNA_TAXONOMY_FIELD_TYPES.indexOf(f.TypeAsString) > -1,
+                allowsSeveral: f.TypeAsString === 'TaxonomyFieldTypeMulti',
+                termSetId:    '',
+                anchorTermId: ''
             });
             globalExportedData.push({
                 ListTitle:    list.Title,
@@ -2706,12 +2741,38 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 MaxLength:    maxLength,
                 Choices:      choices,
                 LookupField:  f.LookupField ? f.LookupField : '',
-                Indexed:      f.Indexed ? true : false
+                Indexed:      f.Indexed ? true : false,
+                TermSetId:    ''
             });
         });
     } catch(e) {
         if (e && e.snaCancelled) { throw e; }
         entry.columnsStatus = 'failed';
+    }
+
+    // 2b. The term set each managed metadata column uses. The columns request can't return it, so lists with such
+    // a column send one more request, for those columns' definitions.
+    var taxonomyColumns = entry.columns.filter(function(c) { return c.isTaxonomy; });
+    if (taxonomyColumns.length > 0) {
+        try {
+            var schemas = await snaFetchTaxonomyColumns(targetUrl + "/_api/web/lists(guid'" + list.Id + "')/fields");
+            stillWanted();
+            var byFieldId = {};
+            schemas.forEach(function(schema) { byFieldId[schema.fieldId] = schema; });
+            taxonomyColumns.forEach(function(c) {
+                var schema = byFieldId[String(c.fieldId).toLowerCase()];
+                if (!schema) { return; }
+                c.termSetId = schema.termSetId;
+                c.anchorTermId = schema.anchorTermId;
+                globalExportedData.forEach(function(row) {
+                    if (row.ListGuid === list.Id && row.FieldId === c.fieldId) { row.TermSetId = schema.termSetId; }
+                });
+            });
+            entry.termSetsStatus = 'read';
+        } catch(e) {
+            if (e && e.snaCancelled) { throw e; }
+            entry.termSetsStatus = 'failed';
+        }
     }
 
     // 3. Top-level folders of document libraries. The Forms folder holds SharePoint's own forms, so it is left out.
@@ -2834,12 +2895,40 @@ function snaBuildCoverage(report) {
 
     // The term store can stop answering partway, after some term groups were read; Taxonomy shows those groups.
     var taxonomy = report.taxonomy;
+    var termSets = [];
+    taxonomy.groups.forEach(function(group) { termSets = termSets.concat(group.termSets || []); });
+    var shortSets = termSets.filter(function(set) { return set.termsTruncated || set.termsStoppedAtOtherSite; }).length;
     if (taxonomy.read) {
-        add('Term store', 'read');
+        add('Term store', shortSets === 0 ? 'read' : 'partial', shortSets === 0 ? '' :
+            'Sitenalyzer read only some of the terms of ' + snaCountText(shortSets, 'term set', 'term sets') + ', because it reached ' +
+            SNA_TERMS_PER_SET_MAX.toLocaleString('en-US') + ' terms or SharePoint sent a link to a different site.');
     } else if (taxonomy.groups.length > 0) {
         add('Term store', 'partial', 'Sitenalyzer could not read all of the term store, so some term groups or terms may be missing from Taxonomy. Refresh the report to try again.');
     } else {
         add('Term store', 'failed', 'Sitenalyzer could not read the term store, so Taxonomy is empty. Refresh the report to try again.');
+    }
+
+    // Parent terms and term set use matter only when there is a term set to show them for.
+    if (termSets.length > 0) {
+        var parentsFailed = termSets.filter(function(set) { return set.parentsStatus === 'failed'; }).length;
+        var parentsUnread = termSets.filter(function(set) { return set.parentsStatus !== 'read'; }).length;
+        add('Parent terms', parentsUnread === 0 ? 'read' : (parentsFailed === termSets.length ? 'failed' : 'partial'), parentsUnread === 0 ? '' :
+            'Sitenalyzer could not read which term each term sits under in ' + snaCountText(parentsUnread, 'term set', 'term sets') +
+            ', so a term shown as Top level may sit under another term. Refresh the report to try again.');
+
+        var usage = taxonomy.usage || { status: 'failed', unreadLists: 0, siteColumnsFailed: true };
+        var usageNotes = [];
+        if (usage.status === 'failed') {
+            usageNotes.push('Sitenalyzer could not read which columns use each term set, so Taxonomy doesn\'t show where term sets are used. Refresh the report to try again.');
+        } else if (usage.status === 'partial') {
+            if (!report.listsRead) { usageNotes.push('Sitenalyzer could not read the lists and libraries.'); }
+            if (usage.unreadLists > 0) {
+                usageNotes.push('Sitenalyzer could not read the managed metadata columns of ' + snaCountText(usage.unreadLists, 'list or library', 'lists and libraries') + '.');
+            }
+            if (usage.siteColumnsFailed) { usageNotes.push('Sitenalyzer could not read the site\'s own managed metadata columns.'); }
+            usageNotes.push('Taxonomy may not show every column that uses a term set. Refresh the report to try again.');
+        }
+        add('Where term sets are used', usage.status, usageNotes.join(' '));
     }
     return rows;
 }
@@ -3142,9 +3231,148 @@ async function getRequestDigest(targetUrl) {
     return _snaRequestDigest;
 }
 
+// Returns a term from the term store API as { termName, termId, termDescription }, named by its default label.
+function snaTermFromGraph(t) {
+    var defaultLabel = '';
+    if (t.labels && t.labels.length > 0) {
+        var found = null;
+        t.labels.forEach(function(l) { if (l.isDefault) { found = l; } });
+        defaultLabel = found ? found.name : t.labels[0].name;
+    }
+    return {
+        termName:        defaultLabel || '',
+        termId:          t.id || '',
+        termDescription: (t.descriptions && t.descriptions[0]) ? t.descriptions[0].description : ''
+    };
+}
+
+// Reads a term store list, such as the terms of a term set, following SharePoint's next-batch link (@odata.nextLink)
+// only while it points to this site's REST API, up to max items. Throws when a request fails.
+// Returns { items, truncated, stoppedAtOtherSite }: truncated means max was reached before the end of the list.
+async function snaFetchAllPages(firstUrl, targetUrl, max) {
+    var result = { items: [], truncated: false, stoppedAtOtherSite: false };
+    var nextUrl = firstUrl;
+    while (nextUrl) {
+        var json = await spFetch(nextUrl);
+        result.items = result.items.concat((json && json.value) ? json.value : []);
+        var nextLink = json ? (json['@odata.nextLink'] || json['odata.nextLink'] || '') : '';
+        nextUrl = '';
+        if (!nextLink) { break; }
+        if (result.items.length >= max) { result.truncated = true; break; }
+        if (!snaIsSameSiteApiUrl(nextLink, targetUrl)) {
+            console.warn('Sitenalyzer: stopped reading a term store list because the next-batch link points to another site.');
+            result.stoppedAtOtherSite = true;
+            break;
+        }
+        nextUrl = new URL(nextLink, xlsxStripSlash(targetUrl) + '/').href;
+    }
+    if (result.items.length > max) { result.items = result.items.slice(0, max); result.truncated = true; }
+    return result;
+}
+
+// Works out which term each term of setObj sits under, and gives each term parentIds: the IDs of the terms it sits
+// under, as a list because a reused or pinned term can sit under more than one, or an empty list for a top-level term.
+// It first asks for every term with its children ($expand=children). When SharePoint doesn't answer that way, it asks
+// for the children of each term instead, at most SNA_MAX_PARALLEL_REQUESTS at a time, while budget.remaining lasts.
+// Terms found only as children are added to the set, so a set whose terms request lists only top-level terms is complete.
+// Returns 'read', 'partial' (some children could not be read), or 'failed' (none could).
+async function snaReadTermParents(termBase, setObj, targetUrl, budget) {
+    var setUrl = termBase + '/sets/' + setObj.setId;
+    var byId = {};
+    setObj.terms.forEach(function(t) { t.parentIds = []; byId[String(t.termId).toLowerCase()] = t; });
+    if (setObj.terms.length === 0) { return 'read'; }
+
+    // Terms whose own children are not known yet.
+    var pending = [];
+    function addChild(parentTerm, child) {
+        var id = String((child && child.id) || '').toLowerCase();
+        if (!SNA_GUID_PATTERN.test(id)) { return; }
+        var term = byId[id];
+        if (!term) {
+            if (setObj.terms.length >= SNA_TERMS_PER_SET_MAX) { setObj.termsTruncated = true; return; }
+            term = snaTermFromGraph(child);
+            term.parentIds = [];
+            byId[id] = term;
+            setObj.terms.push(term);
+            pending.push(term);
+        }
+        if (term !== parentTerm && term.parentIds.indexOf(parentTerm.termId) === -1) { term.parentIds.push(parentTerm.termId); }
+    }
+
+    var expanded = null;
+    try {
+        expanded = await snaFetchAllPages(setUrl + '/terms?$expand=children', targetUrl, SNA_TERMS_PER_SET_MAX);
+        if (!expanded.items.every(function(t) { return Array.isArray(t.children); })) { expanded = null; }
+    } catch(e) {
+        expanded = null;
+    }
+    if (expanded) {
+        expanded.items.forEach(function(item) {
+            var parent = byId[String(item.id || '').toLowerCase()];
+            if (parent) { item.children.forEach(function(child) { addChild(parent, child); }); }
+        });
+    } else {
+        pending = setObj.terms.slice();
+    }
+
+    var asked = 0;
+    var failed = 0;
+    while (pending.length > 0 && budget.remaining > 0) {
+        var round = pending.splice(0, budget.remaining);
+        budget.remaining -= round.length;
+        var answers = await snaMapWithLimit(round, SNA_MAX_PARALLEL_REQUESTS, async function(term) {
+            try {
+                return (await snaFetchAllPages(setUrl + '/terms/' + term.termId + '/children', targetUrl, SNA_TERMS_PER_SET_MAX)).items;
+            } catch(e) {
+                return null;
+            }
+        });
+        // Children are added in the order the terms were asked for, not the order the answers came back in.
+        round.forEach(function(term, index) {
+            asked++;
+            if (answers[index] === null) { failed++; return; }
+            answers[index].forEach(function(child) { addChild(term, child); });
+        });
+    }
+    if (!expanded && asked > 0 && failed === asked) { return 'failed'; }
+    return (failed > 0 || pending.length > 0 || (expanded && expanded.truncated)) ? 'partial' : 'read';
+}
+
+// Puts the terms of setObj in the order of the term tree: each term right after the term it sits under, and terms
+// that sit under the same term in the order SharePoint gave them. A term that sits under two terms comes after the
+// first one found. Adds parentNames to each term, such as 'Treatment', or 'Arm A; Arm B' in alphabetical order for
+// a term that sits under two terms, or '' for a top-level term.
+function snaOrderTermsAsTree(setObj) {
+    var byId = {};
+    var childrenOf = {};
+    setObj.terms.forEach(function(t) { byId[String(t.termId).toLowerCase()] = t; });
+    setObj.terms.forEach(function(t) {
+        var parents = (t.parentIds || []).filter(function(id) { return byId[String(id).toLowerCase()]; });
+        t.parentNames = parents.map(function(id) { return byId[String(id).toLowerCase()].termName; })
+            .sort(function(a, b) { return String(a).toLowerCase().localeCompare(String(b).toLowerCase()); }).join('; ');
+        var key = parents.length > 0 ? String(parents[0]).toLowerCase() : '';
+        (childrenOf[key] = childrenOf[key] || []).push(t);
+    });
+    var ordered = [];
+    var placed = {};
+    function place(term) {
+        var id = String(term.termId).toLowerCase();
+        if (placed[id]) { return; }
+        placed[id] = true;
+        ordered.push(term);
+        (childrenOf[id] || []).forEach(place);
+    }
+    (childrenOf[''] || []).forEach(place);
+    // Terms in a loop of parents, which SharePoint shouldn't allow, are kept at the end.
+    setObj.terms.forEach(place);
+    setObj.terms = ordered;
+}
+
 // Fetches site-collection-scoped taxonomy groups, term sets, and terms from the v2.1 term store API.
 // Returns { groups, read, siteCollectionId, termStoreId }. read is false when any request failed; groups then holds
 // what was read before the failure. Nothing is written to the report until the caller has the whole result.
+// Each term set also gets parentsStatus ('read', 'partial', or 'failed', from snaReadTermParents), and termsTruncated
+// and termsStoppedAtOtherSite when not all of its terms were read.
 async function fetchTaxonomy(targetUrl) {
     var result = { groups: [], read: false, siteCollectionId: '', termStoreId: '' };
     try {
@@ -3179,24 +3407,16 @@ async function fetchTaxonomy(targetUrl) {
                     setName:        setName,
                     setId:          set.id || '',
                     setDescription: set.description || '',
-                    terms:          []
+                    terms:          [],
+                    parentsStatus:  'failed',
+                    termsTruncated: false,
+                    termsStoppedAtOtherSite: false
                 };
 
-                var termsData = await spFetch(termBase + '/sets/' + set.id + '/terms');
-                var terms     = termsData.value || [];
-                setObj.terms  = terms.map(function(t) {
-                    var defaultLabel = '';
-                    if (t.labels && t.labels.length > 0) {
-                        var found = null;
-                        t.labels.forEach(function(l) { if (l.isDefault) { found = l; } });
-                        defaultLabel = found ? found.name : t.labels[0].name;
-                    }
-                    return {
-                        termName:        defaultLabel,
-                        termId:          t.id || '',
-                        termDescription: (t.descriptions && t.descriptions[0]) ? t.descriptions[0].description : ''
-                    };
-                });
+                var termsData = await snaFetchAllPages(termBase + '/sets/' + set.id + '/terms', targetUrl, SNA_TERMS_PER_SET_MAX);
+                setObj.terms  = termsData.items.map(snaTermFromGraph);
+                setObj.termsTruncated = termsData.truncated;
+                setObj.termsStoppedAtOtherSite = termsData.stoppedAtOtherSite;
 
                 groupObj.termSets.push(setObj);
             }
@@ -3206,7 +3426,125 @@ async function fetchTaxonomy(targetUrl) {
     } catch(e) {
         console.warn('Sitenalyzer: taxonomy fetch failed:', e);
     }
+
+    // Parents are read after every term set, so a failure here never hides the terms already read.
+    if (result.siteCollectionId) {
+        var parentsBase = targetUrl + '/_api/v2.1/sites/' + result.siteCollectionId + '/termStore';
+        var budget = { remaining: SNA_TERM_CHILD_LOOKUPS };
+        for (var pg = 0; pg < result.groups.length; pg++) {
+            for (var ps = 0; ps < result.groups[pg].termSets.length; ps++) {
+                var termSet = result.groups[pg].termSets[ps];
+                termSet.parentsStatus = await snaReadTermParents(parentsBase, termSet, targetUrl, budget);
+                snaOrderTermsAsTree(termSet);
+            }
+        }
+    }
     return result;
+}
+
+// Reads the term set of each managed metadata column from its SchemaXml, the column's definition in XML.
+// Returns { termSetId, anchorTermId, termStoreId }, each a lowercase GUID or ''. anchorTermId is the term the
+// column starts at, when the column offers only the terms under one term of the set.
+function snaReadTaxonomySchema(schemaXml) {
+    var result = { termSetId: '', anchorTermId: '', termStoreId: '' };
+    var text = String(schemaXml || '');
+    if (!text) { return result; }
+    var doc;
+    try { doc = new DOMParser().parseFromString(text, 'application/xml'); } catch(e) { return result; }
+    if (!doc || doc.getElementsByTagName('parsererror').length > 0) { return result; }
+    var names = { TermSetId: 'termSetId', AnchorId: 'anchorTermId', SspId: 'termStoreId' };
+    var elements = doc.getElementsByTagName('*');
+    for (var i = 0; i < elements.length; i++) {
+        if (elements[i].localName !== 'Property') { continue; }
+        var name = '';
+        var value = '';
+        for (var c = 0; c < elements[i].children.length; c++) {
+            var child = elements[i].children[c];
+            if (child.localName === 'Name') { name = child.textContent.trim(); }
+            if (child.localName === 'Value') { value = child.textContent.trim().toLowerCase(); }
+        }
+        // An all-zero ID means no value, such as a column with no anchor term.
+        if (names[name] && SNA_GUID_PATTERN.test(value) && !/^[0-]+$/.test(value)) { result[names[name]] = value; }
+    }
+    return result;
+}
+
+// Reads the managed metadata columns at fieldsUrl, such as a list's /fields or the site's /_api/web/fields, with the
+// term set each one uses. Throws when the request fails. Returns [{ fieldId, title, internalName, allowsSeveral,
+// termSetId, anchorTermId, termStoreId }], with IDs in lowercase.
+async function snaFetchTaxonomyColumns(fieldsUrl) {
+    var url = fieldsUrl + '?$select=Id,InternalName,Title,TypeAsString,SchemaXml' +
+        "&$filter=(TypeAsString eq 'TaxonomyFieldType' or TypeAsString eq 'TaxonomyFieldTypeMulti') and Hidden eq false";
+    var resp = await spFetch(url);
+    return ((resp && resp.value) ? resp.value : []).map(function(f) {
+        var schema = snaReadTaxonomySchema(f.SchemaXml);
+        return {
+            fieldId:       String(f.Id || '').toLowerCase(),
+            title:         f.Title || '',
+            internalName:  f.InternalName || '',
+            allowsSeveral: f.TypeAsString === 'TaxonomyFieldTypeMulti',
+            termSetId:     schema.termSetId,
+            anchorTermId:  schema.anchorTermId,
+            termStoreId:   schema.termStoreId
+        };
+    });
+}
+
+// Reads the site's own managed metadata columns, including those not added to any list or library.
+// Returns { columns, failed }.
+async function snaFetchSiteTaxonomyColumns(targetUrl) {
+    try {
+        return { columns: await snaFetchTaxonomyColumns(targetUrl + '/_api/web/fields'), failed: false };
+    } catch(e) {
+        console.warn('Sitenalyzer: could not read the site columns that use term sets:', e);
+        return { columns: [], failed: true };
+    }
+}
+
+// Lists, for each term set, the columns that use it. Grain: one row per list or library column that uses the set,
+// plus one row per site column that uses it and isn't in any list or library. A site column added to a list has the
+// same column ID there, so the list's row stands for it. Returns { bySet, status, unreadLists, siteColumnsFailed }:
+// bySet maps a lowercase term set ID to its rows, and status is 'read', 'partial', or 'failed' for Report coverage.
+function snaBuildTermSetUsage(report, siteColumns) {
+    var usage = { bySet: {}, status: 'read', unreadLists: 0, siteColumnsFailed: !!siteColumns.failed };
+    function add(setId, row) { (usage.bySet[setId] = usage.bySet[setId] || []).push(row); }
+    var listFieldIds = {};
+    report.lists.forEach(function(list) {
+        if (list.columnsStatus === 'failed' || list.termSetsStatus === 'failed') { usage.unreadLists++; }
+        list.columns.forEach(function(c) {
+            listFieldIds[String(c.fieldId).toLowerCase()] = true;
+            if (!c.termSetId) { return; }
+            add(c.termSetId, {
+                listTitle:     list.title,
+                listRouteId:   list.routeId,
+                // Matches the Columns tab's table, which has a filter box only when it has more than SNA_TABLE_FILTER_MIN_ROWS rows.
+                filterTable:   list.columns.length > SNA_TABLE_FILTER_MIN_ROWS ? 'sna-tbl-f-' + list.routeId : '',
+                columnTitle:   c.title,
+                internalName:  c.internalName,
+                anchorTermId:  c.anchorTermId,
+                allowsSeveral: c.allowsSeveral,
+                isSiteColumn:  false
+            });
+        });
+    });
+    (siteColumns.columns || []).forEach(function(c) {
+        if (!c.termSetId || listFieldIds[c.fieldId]) { return; }
+        add(c.termSetId, {
+            listTitle: '', listRouteId: '', filterTable: '', columnTitle: c.title, internalName: c.internalName,
+            anchorTermId: c.anchorTermId, allowsSeveral: c.allowsSeveral, isSiteColumn: true
+        });
+    });
+    Object.keys(usage.bySet).forEach(function(setId) {
+        usage.bySet[setId].sort(function(a, b) {
+            if (a.isSiteColumn !== b.isSiteColumn) { return a.isSiteColumn ? 1 : -1; }
+            var byList = String(a.listTitle).toLowerCase().localeCompare(String(b.listTitle).toLowerCase());
+            return byList !== 0 ? byList : String(a.columnTitle).toLowerCase().localeCompare(String(b.columnTitle).toLowerCase());
+        });
+    });
+    var listsUnknown = !report.listsRead || (report.lists.length > 0 && usage.unreadLists === report.lists.length);
+    if (listsUnknown && usage.siteColumnsFailed) { usage.status = 'failed'; }
+    else if (!report.listsRead || usage.unreadLists > 0 || usage.siteColumnsFailed) { usage.status = 'partial'; }
+    return usage;
 }
 
 // Reads the pages in the site's Site Pages library (template 119), whatever the library is called.
@@ -4721,7 +5059,7 @@ function snaRenderTaxonomy(route, report) {
 
     var body = taxonomy.read === false ? '<p class="sna-note">Sitenalyzer could not read all of the term store, so some term groups or terms may be missing.</p>' : '';
     if (selected) {
-        body += snaRenderTermSet(selectedGroup, selected);
+        body += snaRenderTermSet(selectedGroup, selected, report);
     } else if (route.anchor) {
         body += snaPartTitleHtml('Term set not found', '') +
             '<p class="sna-note">Sitenalyzer did not find this term set in the report. The address may be from another site or an older report. Choose a term set from the list.</p>';
@@ -4754,17 +5092,81 @@ function snaRenderTermGroups(report) {
     return html;
 }
 
-// Returns one term set: its term group, description, IDs while technical details are on, and a table of its terms.
-function snaRenderTermSet(group, set) {
+// Returns one term set: its term group, description, IDs while technical details are on, a table of its terms with
+// the term each one sits under, and a table of the columns that use the set.
+function snaRenderTermSet(group, set, report) {
     var terms = set.terms || [];
     var html = '<p class="sna-breadcrumb">' + snaEscapeHtml(group.groupName) + ' / Term set</p>' + snaPartTitleHtml(set.setName, '') +
         '<p class="sna-taxonomy-desc">' + renderAdminDescWrap(set.setDescription, 'termset:' + set.setId, set.setName) + '</p>';
     if (snaTechnicalDetailsOn()) { html += snaIdLineHtml('Term set ID', set.setId) + snaIdLineHtml('Term group ID', group.groupId); }
     html += '<h4 class="sna-subsection-title">Terms (' + terms.length + ')</h4>';
-    if (terms.length === 0) { return html + '<p class="sna-muted">This term set has no terms.</p>'; }
-    var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
-    _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', setId: set.setId });
-    return html + '<div id="' + tblId + '"></div>';
+    if (set.termsTruncated) {
+        html += '<p class="sna-note">Sitenalyzer read the first ' + SNA_TERMS_PER_SET_MAX.toLocaleString('en-US') + ' terms of this term set only.</p>';
+    }
+    if (set.termsStoppedAtOtherSite) {
+        html += '<p class="sna-note">Sitenalyzer stopped reading the terms of this term set because SharePoint sent a link to a different site, so some terms may be missing.</p>';
+    }
+    if (terms.length === 0) {
+        html += '<p class="sna-muted">This term set has no terms.</p>';
+    } else {
+        var parentsHidden = set.parentsStatus === 'failed';
+        if (parentsHidden) {
+            html += '<p class="sna-note">Sitenalyzer could not read which term each term sits under, so the table has no Parent term column. Refresh the report to try again.</p>';
+        } else if (set.parentsStatus === 'partial') {
+            html += '<p class="sna-note">Sitenalyzer could not read which term every term sits under, so a term shown as Top level may sit under another term. Refresh the report to try again.</p>';
+        }
+        var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
+        _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', setId: set.setId, parentsHidden: parentsHidden });
+        html += '<div id="' + tblId + '"></div>';
+    }
+    return html + snaRenderTermSetUsage(set, report);
+}
+
+// Returns the name of the term with termId in set, or '' when the set has no such term.
+function snaTermNameInSet(set, termId) {
+    var id = String(termId || '').toLowerCase();
+    var found = (set.terms || []).filter(function(t) { return String(t.termId).toLowerCase() === id; })[0];
+    return found ? found.termName : '';
+}
+
+// Returns the "Where this term set is used" part of a term set: each list or library and column that uses it, with a
+// link to that list's Columns tab, and each site column that uses it but isn't in any list or library.
+function snaRenderTermSetUsage(set, report) {
+    var technical = snaTechnicalDetailsOn();
+    var usage = report.taxonomy.usage || { bySet: {}, status: 'failed' };
+    var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
+    var html = '<h4 class="sna-subsection-title">Where this term set is used (' + rows.length + ')</h4>';
+    if (usage.status === 'failed') {
+        return html + '<p class="sna-note">Sitenalyzer could not read which columns use this term set. Refresh the report to try again.</p>';
+    }
+    if (usage.status === 'partial') {
+        html += '<p class="sna-note">Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns. Site review lists what it could not read.</p>';
+    }
+    if (rows.length === 0) {
+        return html + (usage.status === 'partial' ? '' : '<p class="sna-muted">No column on this site uses this term set.</p>');
+    }
+
+    var hasAnchor = rows.some(function(r) { return r.anchorTermId; });
+    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Columns that use ' + snaEscapeHtml(set.setName) + '</caption>' +
+        '<thead><tr><th scope="col">List or library</th><th scope="col">Column</th>' +
+        (technical ? '<th scope="col">Internal name</th>' : '') +
+        (hasAnchor ? '<th scope="col">Starts at term</th>' : '') +
+        '<th scope="col">Allows several values</th></tr></thead><tbody>';
+    rows.forEach(function(r) {
+        var listCell = r.isSiteColumn
+            ? '<span class="sna-muted">Site column (not in a list or library)</span>'
+            : '<a href="' + snaEscapeHtml(snaRouteHash({ section: 'contents', id: r.listRouteId, tab: 'columns' })) + '"' +
+                (r.filterTable ? ' data-filter-table="' + snaEscapeHtml(r.filterTable) + '" data-filter-text="' + snaEscapeHtml(r.columnTitle) + '"' : '') + '>' +
+                snaEscapeHtml(r.listTitle) + '<span class="sna-visually-hidden"> (' + snaEscapeHtml(r.columnTitle) + ' column)</span></a>';
+        var anchorName = r.anchorTermId ? snaTermNameInSet(set, r.anchorTermId) : '';
+        var anchorCell = !r.anchorTermId ? '<span class="sna-muted">Whole term set</span>'
+            : (anchorName ? snaEscapeHtml(anchorName) : 'A term not in this report (term ID ' + snaEscapeHtml(r.anchorTermId) + ')');
+        html += '<tr><td>' + listCell + '</td><td>' + snaEscapeHtml(r.columnTitle) + '</td>' +
+            (technical ? '<td><span class="list-id-text">' + snaEscapeHtml(r.internalName) + '</span></td>' : '') +
+            (hasAnchor ? '<td>' + anchorCell + '</td>' : '') +
+            '<td>' + (r.allowsSeveral ? 'Yes' : 'No') + '</td></tr>';
+    });
+    return html + '</tbody></table>';
 }
 
 // Draws Site review: one table of cleanup findings, the largest lists and libraries, and what this report could read.
@@ -4845,6 +5247,20 @@ function snaPrintTableHtml(caption, headers, rows, emptyText) {
                 return i === 0 ? '<th scope="row">' + text + '</th>' : '<td>' + text + '</td>';
             }).join('') + '</tr>';
         }).join('') + '</tbody></table>';
+}
+
+// Returns the columns that use a term set, for the print document, or a sentence when none do or they could not be read.
+function snaPrintTermSetUsageHtml(set, taxonomy) {
+    var usage = taxonomy.usage || { bySet: {}, status: 'failed' };
+    if (usage.status === 'failed') { return '<p>Sitenalyzer could not read which columns use this term set.</p>'; }
+    var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
+    return (usage.status === 'partial' ? '<p>Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns.</p>' : '') +
+        snaPrintTableHtml('Where ' + set.setName + ' is used', ['List or library', 'Column', 'Internal name', 'Starts at term', 'Allows several values'],
+            rows.map(function(r) {
+                var anchor = r.anchorTermId ? (snaTermNameInSet(set, r.anchorTermId) || r.anchorTermId) : 'Whole term set';
+                return [r.isSiteColumn ? 'Site column (not in a list or library)' : r.listTitle, r.columnTitle, r.internalName, anchor, r.allowsSeveral ? 'Yes' : 'No'];
+            }),
+            usage.status === 'partial' ? 'Sitenalyzer found no column that uses this term set.' : 'No column on this site uses this term set.');
 }
 
 // Returns a list of names and values for the print document. pairs is an array of [name, plain text value].
@@ -4972,11 +5388,18 @@ function snaBuildPrintDocument(report) {
                 snaPrintFactsHtml([['Description', group.groupDescription || 'No description.'], ['Term group ID', group.groupId]]) +
                 (sets.length === 0 ? '<p>This term group has no term sets.</p>' : '');
             sets.forEach(function(set) {
+                var withParents = set.parentsStatus !== 'failed';
                 html += '<h4>' + snaEscapeHtml(set.setName) + '</h4>' +
                     snaPrintFactsHtml([['Description', set.setDescription || 'No description.'], ['Term set ID', set.setId]]) +
-                    snaPrintTableHtml('Terms in ' + set.setName, ['Term name', 'Description', 'Term ID'],
-                        (set.terms || []).map(function(t) { return [t.termName, t.termDescription || 'No description.', t.termId]; }),
-                        'This term set has no terms.');
+                    snaPrintTableHtml('Terms in ' + set.setName,
+                        withParents ? ['Term name', 'Parent term', 'Description', 'Term ID'] : ['Term name', 'Description', 'Term ID'],
+                        (set.terms || []).map(function(t) {
+                            return withParents
+                                ? [t.termName, t.parentNames || 'Top level', t.termDescription || 'No description.', t.termId]
+                                : [t.termName, t.termDescription || 'No description.', t.termId];
+                        }),
+                        'This term set has no terms.') +
+                    snaPrintTermSetUsageHtml(set, taxonomy);
             });
             html += '</section>';
         });

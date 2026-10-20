@@ -97,7 +97,7 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 | **Overview** | Counts of document libraries, lists, site pages, term sets, and sharing links, each linked to the section that lists them. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
 | **Contents** | Document libraries, lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
 | **Permissions** | Who can open what on the site. See [Who can open what](#who-can-open-what). |
-| **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. |
+| **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
 | **Site review** | Lists and libraries to review for cleanup, the largest ones, and what Sitenalyzer could and could not read. See [Site review](#site-review). |
 
 #### Contents summary
@@ -185,6 +185,15 @@ Each row says what was found and what to do next. Select a name to open its deta
 
 At the bottom, **Report coverage** lists each part of the report, such as **Sharing links** or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
 
+### Term sets
+
+When you select a term set in **Taxonomy**, Sitenalyzer shows two tables.
+
+- **Terms** lists every term in the set. **Parent term** names the term each one sits under, or says **Top level**. A term that sits under two terms, such as a term pinned in two places, shows both names, such as "Arm A; Arm B". Each term comes right after the term it sits under.
+- **Where this term set is used** lists each managed metadata column that takes its values from the set. A managed metadata column is a SharePoint column whose values come from a term set. The table shows the list or library, the column, and whether the column allows several values. When a column offers only the terms under one term, **Starts at term** names that term. Select a list or library to open its **Columns** tab with the table filtered to that column. A site column that uses the set but isn't added to any list or library says **Site column (not in a list or library)**.
+
+If Sitenalyzer could not read this information, the term set says so instead of showing an empty table, and **Report coverage** in **Site review** has a **Parent terms** or **Where term sets are used** row that says **Partly read** or **Not read**.
+
 ### Site pages
 
 **Site pages** in **Contents** lists the pages in the site's Site Pages library, sorted by name, with each page's file name, last change, and address. Folders and files that aren't pages are left out.
@@ -211,7 +220,7 @@ The printed report is built from everything Sitenalyzer read, not from what is o
 3. **Document libraries** and **Lists**: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, and descriptions, and one with internal names, IDs, and other technical details.
 4. **Site pages**.
 5. **Permissions**: the access findings, site permissions, people and groups with their members, the result of **Check a person's access** if you ran one, lists and libraries with their own permissions, sharing links, and apps.
-6. **Taxonomy and term store**: every term group, term set, and term, with their IDs.
+6. **Taxonomy and term store**: every term group, term set, and term, with their IDs, each term's parent term, and the columns that use each term set.
 7. **Site review**: the cleanup findings, the largest lists and libraries, and **Report coverage**.
 
 Technical details are always printed, even when **Show technical details** is off. The printout leaves out buttons, search boxes, the section links, and the SharePoint page around Sitenalyzer. Table headings repeat at the top of each page. Page images aren't printed.

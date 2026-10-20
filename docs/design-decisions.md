@@ -48,7 +48,7 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 - **A list beside the details.** Contents shows the lists and libraries on the left and the details of the selected one on the right. On a narrow screen the details replace the list, and **Back to results** returns to it. Before anything is selected, the **Contents summary** shows the totals.
 - **The same layout in Permissions and Taxonomy.** Their parts or term sets are on the left, and the one you selected is on the right.
 - **No About this site card.** With technical details on, the site ID and a **Copy** button appear under the site's address in the header.
-- **Known gaps.** Taxonomy has no parent term column and doesn't show which columns use a term set, because Sitenalyzer doesn't read that information yet. [Issue #14](https://github.com/DepressionCenter/Sitenalyzer/issues/14) tracks it.
+- **Parent terms and term set use.** A term set shows each term's parent term in a column, and the terms are listed in tree order, with each term right after the term it sits under. The terms aren't indented, so the table still sorts and filters like the others. Below the terms, **Where this term set is used** lists the columns that use the set and links to their **Columns** tab.
 
 ### Tables
 
@@ -99,7 +99,6 @@ You now know what the report screen is meant to do and why each part works the w
 - [How Sitenalyzer works](architecture.md)
 - [Branding](branding.md)
 - [Building and testing Sitenalyzer](development.md)
-- [Issue #14: Show parent terms and where each term set is used in Taxonomy](https://github.com/DepressionCenter/Sitenalyzer/issues/14)
 - [WCAG 2.2](https://www.w3.org/TR/WCAG22/)
 - [GNU Free Documentation License](https://www.gnu.org/licenses/fdl-1.3.html)
 
