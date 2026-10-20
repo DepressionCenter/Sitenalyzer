@@ -2321,6 +2321,240 @@ test('says it could not read where a term set is used when neither the lists nor
     await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Where term sets are used/ })).toContainText('Not read');
 });
 
+// ### Hidden Values ###
+
+// Made-up values that look like personal information, placed in every kind of free text the report shows.
+const HIDDEN = {
+    siteTitle: 'Study 123-45-6789',
+    siteDescription: 'Call (734) 555-0100 for help.',
+    listTitle: 'Visits MRN 1234567',
+    listDescription: 'Ask participant@example.org',
+    columnTitle: 'Contact 734-555-0111',
+    columnDescription: 'DOB 01/02/1980',
+    columnChoice: 'MRN 7654321',
+    columnDefault: '734-555-0199',
+    folderName: 'MRN 2345678',
+    pageTitle: 'Notes 123-45-6780',
+    sharedFile: 'Consent 123-45-6781.docx',
+    termGroup: 'Team participant2@example.org',
+    termName: 'Arm 734-555-0123',
+    termDescription: 'born on 03/04/1950'
+};
+// The parts of each value that must never show while values are hidden.
+const HIDDEN_PARTS = ['123-45-6789', '555-0100', '1234567', 'participant@example.org', '555-0111', '01/02/1980', '7654321',
+    '555-0199', '2345678', '123-45-6780', '123-45-6781', 'participant2@example.org', '555-0123', '03/04/1950'];
+const HIDDEN_LIST_ID = 'aaaaaaaa-0000-4000-8000-000000000003';
+const HIDDEN_VALUE_ANSWERS = [
+    { pattern: /^\/_api\/web$/, body: { Title: HIDDEN.siteTitle, Url: SITE_URL, Id: '11111111-0000-4000-8000-000000000000', Description: HIDDEN.siteDescription, SiteLogoUrl: '' } },
+    { pattern: LIST_FIELDS_PATTERN, body: { value: [
+        { Id: 'bbbbbbbb-0000-4000-8000-000000000021', InternalName: 'Contact', Title: HIDDEN.columnTitle, TypeAsString: 'Choice', Description: HIDDEN.columnDescription,
+          Choices: ['Control', HIDDEN.columnChoice], DefaultValue: HIDDEN.columnDefault }
+    ] } },
+    { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/RootFolder\/Folders$/, body: { value: [
+        { Name: HIDDEN.folderName, UniqueId: 'cccccccc-0000-4000-8000-000000000021', ItemCount: 2, ServerRelativeUrl: SITE_PATH + '/Shared Documents/Participant Folder' }
+    ] } },
+    { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), body: { value: [
+        { Id: 1, Title: HIDDEN.pageTitle, FileLeafRef: 'Notes.aspx', FileRef: SITE_PATH + '/SitePages/Notes.aspx', FSObjType: 0, Modified: '2026-09-01T00:00:00Z' }
+    ] } },
+    { pattern: /^\/_api\/web\/GetFileById\('[^']+'\)$/, body: { Name: HIDDEN.sharedFile, ServerRelativeUrl: SITE_PATH + '/Shared Documents/Consent.docx' } },
+    { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/groups$/, body: { value: [
+        { id: 'dddddddd-0000-4000-8000-000000000001', displayName: HIDDEN.termGroup, description: '', scope: 'siteCollection' }
+    ] } },
+    { pattern: TERMS_PATTERN, answer: function(url) {
+        const term = { id: 'ffffffff-0000-4000-8000-000000000031', labels: [{ name: HIDDEN.termName, isDefault: true }], descriptions: [{ description: HIDDEN.termDescription }] };
+        return { value: [/children/.test(url.searchParams.get('$expand') || '') ? Object.assign({ children: [] }, term) : term] };
+    } }
+];
+const HIDDEN_VALUE_LIST = {
+    Id: HIDDEN_LIST_ID, EntityTypeName: 'ParticipantVisitsList', Title: HIDDEN.listTitle, Description: HIDDEN.listDescription,
+    ItemCount: 4, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 100, HasUniqueRoleAssignments: true,
+    DefaultViewUrl: SITE_PATH + '/Lists/ParticipantVisits/AllItems.aspx', LastItemModifiedDate: '2026-09-01T00:00:00Z',
+    EnableVersioning: true, EnableMinorVersions: false, MajorVersionLimit: 0
+};
+
+// Returns the text a person can see or hear in the app: the text of the page, and the attributes screen readers read.
+function readableText(page) {
+    return page.evaluate(function() {
+        const app = document.getElementById('sp-info-app');
+        const attributes = Array.prototype.map.call(app.querySelectorAll('[aria-label], [title], [alt]'), function(el) {
+            return [el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('alt')].join(' ');
+        });
+        return app.innerText + '\n' + attributes.join('\n');
+    });
+}
+
+// Fails when text contains any part of a hidden value, and names the view and the value.
+function expectNoHiddenValues(text, where) {
+    HIDDEN_PARTS.forEach(function(part) { expect(text.indexOf(part) === -1 ? '' : part + ' shows in ' + where).toBe(''); });
+}
+
+test('hides values that look like personal information in every view, search, the print document, and both workbooks', async function({ page }, testInfo) {
+    test.setTimeout(90000);
+    await stubPrint(page);
+    const record = await openPretendSite(page, { answerOverrides: HIDDEN_VALUE_ANSWERS, extraLists: [HIDDEN_VALUE_LIST] });
+    await extractSiteInformation(page);
+    await expect(page.getByRole('switch', { name: 'Show hidden values' })).not.toBeChecked();
+    await expect(page.locator('#sna-site-header h1')).toHaveText('Study [Social Security number hidden]');
+    await expect(page.locator('#sna-hidden-values-note')).toHaveText(/^Sitenalyzer hid \d+ values that look like personal information, such as phone numbers or email addresses\. To see them, turn on Show hidden values\.$/);
+    expectNoHiddenValues(await readableText(page), 'Overview');
+
+    await gotoSection(page, 'Contents');
+    expectNoHiddenValues(await readableText(page), 'Contents');
+    await page.locator('#sna-contents-inventory').getByRole('link', { name: /^Visits \[record number or ID hidden\]/ }).click();
+    await expect(page.locator('#sna-detail-title')).toContainText('Visits [record number or ID hidden]');
+    expectNoHiddenValues(await readableText(page), 'a list');
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    const columns = await openListDetail(page, 'Study Visits', 'Columns');
+    await expect(columns.locator('.tabulator-row', { hasText: 'Contact' })).toContainText('[date of birth or visit date hidden]');
+    expectNoHiddenValues(await readableText(page), 'Columns');
+    await openListDetail(page, 'Documents', 'Folders');
+    expectNoHiddenValues(await readableText(page), 'Folders');
+    const pagesSection = await openSitePages(page);
+    await pagesSection.locator('#sna-tbl-pages').getByRole('link', { name: /^Notes/ }).click();
+    expectNoHiddenValues(await readableText(page), 'Site pages');
+
+    for (const part of ['Site permissions', 'People and groups', 'Own permissions', 'Sharing links', 'Apps with access']) {
+        await openPermissionPart(page, part);
+        expectNoHiddenValues(await readableText(page), part);
+    }
+    // Names, emails, and sign-in names of people and groups stay visible.
+    const people = await openPermissionPart(page, 'People and groups');
+    await people.locator('summary', { hasText: 'Members' }).first().click();
+    await expect(people).toContainText('test.owner@example.org');
+
+    await gotoSection(page, 'Taxonomy');
+    expectNoHiddenValues(await readableText(page), 'Taxonomy');
+    await page.locator('#sp-results .sna-subnav').getByRole('link', { name: /^Study Arms/ }).click();
+    await expect(page.locator('#sna-taxonomy-section .tabulator-row')).toContainText('Arm [phone number hidden]');
+    expectNoHiddenValues(await readableText(page), 'a term set');
+    await gotoSection(page, 'Site review');
+    expectNoHiddenValues(await readableText(page), 'Site review');
+
+    // Search finds a hidden value's item by its other words, but not by the hidden value.
+    await searchReport(page, 'Visits');
+    expectNoHiddenValues(await readableText(page), 'search results');
+    await expect(page.locator('#sp-results')).toContainText('Visits [record number or ID hidden]');
+    await searchReport(page, '1234567');
+    await expect(page.locator('#sp-results')).toContainText('No results for "1234567"');
+
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    const printText = await printFrameDocument(page).innerText();
+    expect(printText).toContain('Sitenalyzer hid');
+    expectNoHiddenValues(printText, 'the print document');
+    expect(await page.frameLocator('#sna-print-frame').locator('title').textContent()).toContain('[Social Security number hidden]');
+
+    for (const buttonName of ['Data dictionary (.xlsx)', 'Permissions workbook (.xlsx)']) {
+        const { fileName, workbook } = await downloadWorkbook(page, testInfo, buttonName);
+        expectNoHiddenValues(fileName, buttonName + ' file name');
+        workbook.SheetNames.forEach(function(sheetName) {
+            expectNoHiddenValues(sheetRows(workbook, sheetName).map(function(row) { return row.join('\t'); }).join('\n'), buttonName + ' ' + sheetName);
+        });
+        const about = sheetRows(workbook, buttonName.indexOf('Data') === 0 ? 'Export_Info' : 'About');
+        expect(about.filter(function(row) { return /hidden.values/i.test(row[0]); })[0][1]).toMatch(/^Hidden\./);
+    }
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('shows hidden values only while the switch is on, and starts with them hidden on every visit', async function({ page }, testInfo) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: HIDDEN_VALUE_ANSWERS, extraLists: [HIDDEN_VALUE_LIST] });
+    await extractSiteInformation(page);
+    await openListDetail(page, 'Study Visits', 'Columns');
+
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    await hiddenSwitch.check();
+    await expect(hiddenSwitch).toBeFocused();
+    await expect(page.locator('#sna-site-header h1')).toHaveText(HIDDEN.siteTitle);
+    await expect(page.locator('#sna-contents-detail .tabulator-row', { hasText: HIDDEN.columnTitle })).toContainText(HIDDEN.columnDescription);
+    await expect(page.locator('#sna-hidden-values-note')).toHaveText(/^Sitenalyzer is showing \d+ values that look like personal information\. Turn off Show hidden values before you share your screen, print, or download\.$/);
+    await searchReport(page, '1234567');
+    await expect(page.locator('#sp-results')).toContainText(HIDDEN.listTitle);
+
+    // Print and the workbooks follow the switch.
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await expect(printFrameDocument(page)).toContainText(HIDDEN.siteDescription);
+    await expect(printFrameDocument(page)).toContainText('This printout includes');
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(sheetRows(workbook, 'Sources')[1]).toContain(HIDDEN.siteTitle);
+
+    await hiddenSwitch.uncheck();
+    await expect(hiddenSwitch).toBeFocused();
+    await expect(page.locator('#sna-site-header h1')).toHaveText('Study [Social Security number hidden]');
+    expect(await page.evaluate(function() { return JSON.stringify(Object.keys(window.localStorage)); })).not.toContain('hidden');
+
+    // The switch is never saved, so a new visit starts with values hidden.
+    await hiddenSwitch.check();
+    await page.reload();
+    await extractSiteInformation(page);
+    await expect(page.getByRole('switch', { name: 'Show hidden values' })).not.toBeChecked();
+    await expect(page.locator('#sna-site-header h1')).toHaveText('Study [Social Security number hidden]');
+});
+
+test('says 1 value when one value is hidden', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: [HIDDEN_VALUE_ANSWERS[0]].map(function(answer) {
+        return { pattern: answer.pattern, body: Object.assign({}, answer.body, { Title: 'Test Research Site' }) };
+    }) });
+    await extractSiteInformation(page);
+    await expect(page.locator('#sna-hidden-values-note')).toHaveText('Sitenalyzer hid 1 value that looks like personal information, such as phone numbers or email addresses. To see it, turn on Show hidden values.');
+    await page.getByRole('switch', { name: 'Show hidden values' }).check();
+    await expect(page.locator('#sna-hidden-values-note')).toHaveText('Sitenalyzer is showing 1 value that looks like personal information. Turn off Show hidden values before you share your screen, print, or download.');
+});
+
+test('opens the description editor with the real text and saves the real text while values are hidden', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: HIDDEN_VALUE_ANSWERS });
+    await extractSiteInformation(page);
+    const header = page.locator('#sna-site-header');
+    await expect(header.locator('.sna-site-desc .sna-editable-text')).toHaveText('Call [phone number hidden] for help.');
+
+    await header.getByRole('button', { name: /^Edit description of/ }).click();
+    const editor = header.getByRole('textbox', { name: /^Description for/ });
+    await expect(editor).toHaveValue(HIDDEN.siteDescription);
+    await editor.fill(HIDDEN.siteDescription + ' Updated.');
+    await editor.press('Enter');
+    await expect(header.locator('.sna-site-desc .sna-editable-text')).toHaveText('Call [phone number hidden] for help. Updated.');
+    const patch = record.writeRequests.filter(function(r) { return r.method === 'PATCH'; }).pop();
+    expect(JSON.parse(patch.body)).toEqual({ Description: HIDDEN.siteDescription + ' Updated.' });
+});
+
+test('hides each kind of value it looks for, and keeps text that only looks close', async function({ page }) {
+    // Each pair is a value that must be hidden, with its label, and a value close to it that must stay visible.
+    const cases = [
+        ['participant@example.org', 'email address', 'participant at example dot org'],
+        ['DOB: 01/02/1980', 'date of birth or visit date', 'Visit 01/02/1980'],
+        ['MRN: 12345678', 'record number or ID', 'MRN Source'],
+        ['4111 1111 1111 1111', 'card number', '4111 1111 1111 1112'],
+        ['123-45-6789', 'Social Security number', '000-12-3456'],
+        ['48109-1234', 'ZIP+4 code', '48109'],
+        ['(734) 555-0100', 'phone number', '555-0100'],
+        ['192.168.10.20', 'IP address', 'version 1.2.3'],
+        ['1500 Main Street', 'street address', 'Main Street'],
+        ['aged 93', 'age over 89', 'aged 45']
+    ];
+    const extras = ['Patient ID Number', 'Last Modified: 2026-10-09', 'PMID 12345678', 'Item 44444444-0000-4000-8000-000000000001'];
+    const columnsAnswer = { value: [] };
+    cases.forEach(function(c, i) {
+        columnsAnswer.value.push({ Id: 'bbbbbbbb-0000-4000-8000-0000000001' + String(i).padStart(2, '0') + '', InternalName: 'Hit' + i, Title: 'Hit ' + i, TypeAsString: 'Text', Description: c[0] });
+        columnsAnswer.value.push({ Id: 'bbbbbbbb-0000-4000-8000-0000000002' + String(i).padStart(2, '0') + '', InternalName: 'Miss' + i, Title: 'Miss ' + i, TypeAsString: 'Text', Description: c[2] });
+    });
+    extras.forEach(function(text, i) {
+        columnsAnswer.value.push({ Id: 'bbbbbbbb-0000-4000-8000-0000000003' + String(i).padStart(2, '0') + '', InternalName: 'Extra' + i, Title: text, TypeAsString: 'Text', Description: text });
+    });
+    await openPretendSite(page, { answerOverrides: [{ pattern: LIST_FIELDS_PATTERN, body: columnsAnswer }] });
+    await extractSiteInformation(page);
+    const columns = await openListDetail(page, 'Study Visits', 'Columns');
+    const description = function(title) {
+        return columns.locator('.tabulator-row').filter({ has: page.locator('[tabulator-field="title"]', { hasText: new RegExp('^\\S*' + escapeRegExp(title) + '$') }) })
+            .locator('[tabulator-field="description"] .sna-editable-text');
+    };
+    for (let i = 0; i < cases.length; i++) {
+        await expect(description('Hit ' + i)).toHaveText('[' + cases[i][1] + ' hidden]');
+        await expect(description('Miss ' + i)).toHaveText(cases[i][2]);
+    }
+    for (const text of extras) { await expect(description(text)).toHaveText(text); }
+});
+
 test('finds internal names but shows them only with technical details on', async function({ page }) {
     await openPretendSite(page);
     await extractSiteInformation(page);
@@ -2417,3 +2651,15 @@ test('has no automatically detectable accessibility problems on the start screen
         await expectNoAxeViolations(page);
     });
 });
+
+for (const shown of [false, true]) {
+    test('has no automatically detectable accessibility problems with hidden values ' + (shown ? 'shown' : 'hidden'), async function({ page }) {
+        await openPretendSite(page, { answerOverrides: HIDDEN_VALUE_ANSWERS, extraLists: [HIDDEN_VALUE_LIST] });
+        await extractSiteInformation(page);
+        if (shown) { await page.getByRole('switch', { name: 'Show hidden values' }).check(); }
+        await expect(page.locator('#sna-hidden-values-note')).toBeVisible();
+        await expectNoAxeViolations(page);
+        await openListDetail(page, 'Study Visits', 'Columns');
+        await expectNoAxeViolations(page);
+    });
+}

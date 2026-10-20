@@ -65,10 +65,17 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 						<li><a href="#sna/review" data-section="review"><span data-icon="check"></span>Site review</a></li>
 					</ul>
 				</nav>
-				<span class="sna-switch">
-					<input type="checkbox" role="switch" id="sna-technical-switch">
-					<label for="sna-technical-switch">Show technical details</label>
-				</span>
+				<div class="sna-switches">
+					<span class="sna-switch">
+						<input type="checkbox" role="switch" id="sna-hidden-values-switch" aria-describedby="sna-hidden-values-hint">
+						<label for="sna-hidden-values-switch">Show hidden values</label>
+					</span>
+					<span id="sna-hidden-values-hint" class="sna-visually-hidden">Shows values that look like personal information, such as phone numbers, on screen, in printouts, and in downloads.</span>
+					<span class="sna-switch">
+						<input type="checkbox" role="switch" id="sna-technical-switch">
+						<label for="sna-technical-switch">Show technical details</label>
+					</span>
+				</div>
 			</div>
 			<div class="sna-toolbar hide-on-print">
 				<form id="sna-search-form" class="sna-search-form" role="search" aria-label="Search this report">
@@ -85,9 +92,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 						<button type="button" class="sna-btn sna-btn-outline" data-action="export-permissions"><span data-icon="download"></span>Permissions workbook (.xlsx)</button>
 						<button type="button" class="sna-btn sna-btn-outline" data-action="print-report"><span data-icon="print"></span>Print full report / PDF</button>
 					</div>
-					<p id="sna-report-actions-hint" class="sna-hint">Downloads and the printed report always include everything, even when a filter is set.</p>
+					<p id="sna-report-actions-hint" class="sna-hint">Downloads and the printed report include everything, even when a filter is set, and hide the same values as the screen.</p>
 				</div>
 			</div>
+			<p id="sna-hidden-values-note" class="sna-hidden-values-note hide-on-print" role="status" hidden></p>
 			<div id="sp-results" class="sna-view"></div>
 			<p class="sna-back-to-top hide-on-print"><button type="button" class="sna-link-btn" data-action="scroll-top">Back to top</button></p>
 		</div>

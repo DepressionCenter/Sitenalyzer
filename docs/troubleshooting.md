@@ -95,6 +95,14 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 **Fix:** Ask a site owner to make the change, or to make you a site owner, then select **Save** again. To keep the saved description instead, select **Cancel**. For term groups, term sets, and terms that can't be edited here, use Term Store Management in the SharePoint admin center.
 
+### A value I need shows as hidden
+
+**What you see:** Text such as `[phone number hidden]` or `[record number or ID hidden]` in a name, description, printout, or workbook.
+
+**Cause:** Sitenalyzer hides text that looks like personal information, such as a phone number or a labeled record number. Some ordinary text has the same shape, such as a 10-digit study code.
+
+**Fix:** Turn on **Show hidden values** next to **Show technical details**. The screen, the printout, and the workbooks then show the real text. Turn it off again before you share your screen. See [Hidden values](usage.md#hidden-values).
+
 ### Site pages says it shows pages from the first 10,000 only
 
 **Cause:** The Site Pages library has more than 10,000 items. Sitenalyzer stops there so the page stays quick.

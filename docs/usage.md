@@ -71,8 +71,9 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. See [Report sections](#report-sections).
 5. To find a list, library, column, folder, page, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
 6. To see internal names, IDs, and other values that developers need, turn on **Show technical details** at the right end of the section links. See [Technical details](#technical-details).
-7. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
-8. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
+7. Values that look like personal information, such as phone numbers, are hidden at first. To see them, turn on **Show hidden values** next to **Show technical details**. See [Hidden values](#hidden-values).
+8. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
+9. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
 9. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
 10. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
 11. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. To close the box without changing the site, press Escape or select **Close**.
@@ -134,6 +135,37 @@ The page address changes as you move around the report, such as `.../SitePages/s
 **Show technical details** is off at first. When you turn it on, every section adds the values developers need: internal names, list, library, column, folder, term, term set, term group, and term store IDs, lookup targets, default values, maximum lengths, indexed columns, and calculation formulas. The site ID appears under the site's address, with a **Copy** button. Search finds these values even when the switch is off, and the workbooks and the printed report always include them.
 
 Sitenalyzer remembers the setting in this browser. See [How Sitenalyzer works](architecture.md#browser-storage).
+
+### Hidden values
+
+A research site's names and descriptions sometimes hold personal or health information, such as a participant's phone number in a folder name. So Sitenalyzer hides text that looks like personal information everywhere it shows the report: on screen, in search, in the printed report, and in both workbooks. Each hidden value shows what kind of value it is, such as `[phone number hidden]`. A line under the search box and the download buttons says how many values Sitenalyzer hid.
+
+Sitenalyzer looks for these kinds of values:
+
+| Kind | Example that is hidden | Example that stays visible |
+| --- | --- | --- |
+| Email address | `participant@example.org` | `participant at example dot org` |
+| Date of birth or visit date, after a label such as DOB or Visit date | `DOB: 01/02/1980` | `Visit 01/02/1980` |
+| Record number or ID with a digit, after a label such as MRN or Patient ID | `MRN: 12345678` | `MRN Source`, `Patient ID Number` |
+| Card number that passes the card number check | `4111 1111 1111 1111` | `4111 1111 1111 1112` |
+| Social Security number | `123-45-6789` | `000-12-3456` |
+| ZIP+4 code | `48109-1234` | `48109` |
+| Phone number with an area code | `(734) 555-0100` | `555-0100` |
+| IP address | `192.168.10.20` | `version 1.2.3` |
+| Street address | `1500 Main Street` | `Main Street` |
+| Age over 89 | `aged 93` | `aged 45` |
+
+Sitenalyzer checks the names and descriptions of the site, lists, libraries, columns, folders, site pages, shared items, term groups, term sets, and terms, and column choices, default values, and formulas. These stay visible:
+
+- Names, email addresses, and sign-in names of people and groups, because you need them to review who has access.
+- IDs, internal names, and addresses, so links and IDs keep working. A page or folder address can still hold a value that is hidden in its name.
+- The image chosen for a site page.
+
+To see the hidden values, turn on **Show hidden values**. The printed report and both workbooks then include them too, and the line under the search box reminds you to turn the switch off before you share your screen, print, or download. Sitenalyzer never remembers the switch, so values are hidden again the next time you open the page.
+
+When you edit a description, the description box shows the real text, and Sitenalyzer saves the text you typed.
+
+Pattern matching finds only text shaped like the examples above, so it doesn't find all personal information, such as a participant's name. Hidden values don't make a report safe to share or de-identify it. Check a printout or workbook before you share it, and store it the way you would other personal data.
 
 ### Who can open what
 
@@ -223,7 +255,7 @@ The printed report is built from everything Sitenalyzer read, not from what is o
 6. **Taxonomy and term store**: every term group, term set, and term, with their IDs, each term's parent term, and the columns that use each term set.
 7. **Site review**: the cleanup findings, the largest lists and libraries, and **Report coverage**.
 
-Technical details are always printed, even when **Show technical details** is off. The printout leaves out buttons, search boxes, the section links, and the SharePoint page around Sitenalyzer. Table headings repeat at the top of each page. Page images aren't printed.
+Technical details are always printed, even when **Show technical details** is off. Hidden values stay hidden in the printout unless **Show hidden values** is on. See [Hidden values](#hidden-values). The printout leaves out buttons, search boxes, the section links, and the SharePoint page around Sitenalyzer. Table headings repeat at the top of each page. Page images aren't printed.
 
 ### The permissions workbook
 
@@ -240,7 +272,7 @@ The **Permissions workbook (.xlsx)** button saves an Excel workbook named like `
 
 The workbook doesn't include permissions on single files, folders, or items, or the members of security and Microsoft 365 groups.
 
-**Privacy:** the workbook lists people's names and email addresses, and list names may describe a study. Store and share it the way you would other personal data. Don't attach it to a public issue or email it outside your team.
+**Privacy:** the workbook lists people's names and email addresses, and list names may describe a study. Store and share it the way you would other personal data. Don't attach it to a public issue or email it outside your team. Unless **Show hidden values** is on, the workbook hides values that look like personal information in list names, and the **About** sheet says whether they were hidden.
 
 ### Update to a newer version
 

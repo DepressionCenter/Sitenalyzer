@@ -306,7 +306,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 }
 .sna-switch { display: inline-flex; align-items: center; gap: 8px; padding: 8px 0; color: #ffffff; font-weight: 600; font-size: 15px; }
 /* A switch drawn from the checkbox itself, so it keeps the checkbox's keyboard behavior and screen reader role. */
-#sp-info-app #sna-technical-switch {
+#sp-info-app .sna-switch input[role="switch"] {
     appearance: none;
     -webkit-appearance: none;
     width: 44px;
@@ -319,7 +319,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     cursor: pointer;
     flex-shrink: 0;
 }
-#sp-info-app #sna-technical-switch::before {
+#sp-info-app .sna-switch input[role="switch"]::before {
     content: '';
     position: absolute;
     top: 2px;
@@ -330,9 +330,20 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     background: #ffffff;
     transition: transform 0.15s;
 }
-#sp-info-app #sna-technical-switch:checked { background: var(--um-maize); border-color: var(--um-maize); }
-#sp-info-app #sna-technical-switch:checked::before { background: var(--um-dark-blue); transform: translateX(20px); }
+#sp-info-app .sna-switch input[role="switch"]:checked { background: var(--um-maize); border-color: var(--um-maize); }
+#sp-info-app .sna-switch input[role="switch"]:checked::before { background: var(--um-dark-blue); transform: translateX(20px); }
 .sna-switch label { cursor: pointer; }
+.sna-switches { display: flex; flex-wrap: wrap; align-items: center; gap: 0 24px; }
+/* Says how many values that look like personal information are hidden or shown, under the search and report actions. */
+.sna-hidden-values-note {
+    margin: 0;
+    padding: 10px 24px;
+    background: var(--sna-panel);
+    border-bottom: 1px solid var(--sna-rule);
+    color: var(--sna-text);
+    font-size: 15px;
+}
+.sna-hidden-values-note[hidden] { display: none; }
 
 .sna-toolbar {
     display: flex;
@@ -883,10 +894,10 @@ details.permissions-section {
 
 /* ### Forced Colors and Reduced Motion ### */
 @media (forced-colors: active) {
-    #sp-info-app #sna-technical-switch { border-color: ButtonText; }
-    #sp-info-app #sna-technical-switch::before { background: ButtonText; }
-    #sp-info-app #sna-technical-switch:checked { background: Highlight; border-color: Highlight; }
-    #sp-info-app #sna-technical-switch:checked::before { background: HighlightText; }
+    #sp-info-app .sna-switch input[role="switch"] { border-color: ButtonText; }
+    #sp-info-app .sna-switch input[role="switch"]::before { background: ButtonText; }
+    #sp-info-app .sna-switch input[role="switch"]:checked { background: Highlight; border-color: Highlight; }
+    #sp-info-app .sna-switch input[role="switch"]:checked::before { background: HighlightText; }
     #sp-info-app .sna-nav a[aria-current="page"],
     #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
     #sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: Highlight; }

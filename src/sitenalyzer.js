@@ -244,9 +244,25 @@ var _snaUserCheckRunning = false;
 
 // ### Tables ###
 
-// Returns the Tabulator column settings for one table. tbl is a _snaTablesQueue entry: { id, type, data, searchLabel, setId }.
-// Technical columns belong to the same table and are shown only while Show technical details is on.
+// Returns the Tabulator column settings for one table, with hidden values hidden in every cell (see snaMaskHtml).
+// tbl is a _snaTablesQueue entry: { id, type, data, searchLabel, setId, parentsHidden }.
 function snaTableColumns(type, tbl) {
+  return snaTableColumnSettings(type, tbl).map(function(column) {
+    var formatter = column.formatter;
+    var masked = Object.assign({}, column);
+    masked.formatter = function(cell, params, onRendered) {
+      if (typeof formatter === 'function') { return snaMaskHtml(formatter(cell, params, onRendered)); }
+      // Tabulator's textarea formatter keeps line breaks; the plain formatter doesn't.
+      if (formatter === 'textarea') { cell.getElement().style.whiteSpace = 'pre-wrap'; }
+      return snaMaskHtml(snaEscapeHtml(cell.getValue()));
+    };
+    return masked;
+  });
+}
+
+// Returns the Tabulator column settings for one table, before hidden values are hidden.
+// Technical columns belong to the same table and are shown only while Show technical details is on.
+function snaTableColumnSettings(type, tbl) {
   var technical = snaTechnicalDetailsOn();
   function idFormatter(cell) { return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>'; }
   function yesFormatter(cell) { return cell.getValue() ? 'Yes' : ''; }
@@ -392,7 +408,8 @@ function snaRowEditKey(type, tbl, row) {
   return '';
 }
 
-// Shows only the rows that contain text in any value, including values in hidden technical columns.
+// Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
+// compared as they are shown, so a hidden value can't be found by typing it.
 function snaApplyTableFilter(table, text) {
   var val = String(text || '').trim().toLowerCase();
   if (!val) { table.clearFilter(); return; }
@@ -400,7 +417,7 @@ function snaApplyTableFilter(table, text) {
     var keys = Object.keys(data);
     for (var k = 0; k < keys.length; k++) {
       var v = data[keys[k]];
-      if (v && String(v).toLowerCase().indexOf(val) > -1) { return true; }
+      if (v && typeof v !== 'object' && snaMaskText(v).toLowerCase().indexOf(val) > -1) { return true; }
     }
     return false;
   });
@@ -431,7 +448,7 @@ function initSnaTabulators() {
       filterWrap.className = 'sna-table-filter hide-on-print';
       var filterLabel = document.createElement('label');
       filterLabel.setAttribute('for', tbl.id + '-s');
-      filterLabel.textContent = 'Filter ' + tbl.searchLabel;
+      filterLabel.textContent = 'Filter ' + snaMaskText(tbl.searchLabel);
       filterInput = document.createElement('input');
       filterInput.type = 'search';
       filterInput.id = tbl.id + '-s';
@@ -453,7 +470,7 @@ function initSnaTabulators() {
       scrollRegion.className = 'sna-table-scroll';
       scrollRegion.setAttribute('tabindex', '0');
       scrollRegion.setAttribute('role', 'region');
-      scrollRegion.setAttribute('aria-label', 'Table of ' + tbl.searchLabel);
+      scrollRegion.setAttribute('aria-label', 'Table of ' + snaMaskText(tbl.searchLabel));
       el.parentNode.insertBefore(scrollRegion, el);
       scrollRegion.appendChild(el);
     }
@@ -622,6 +639,187 @@ function snaEscapeHtml(value) {
     return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function(character) {
         return entities[character];
     });
+}
+
+// ### Hidden Values ###
+
+// Kinds of text that look like personal or health information. While Show hidden values is off, Sitenalyzer shows
+// each match as "[<label> hidden]" on screen, in search, in the print document, and in both workbooks. Pattern
+// matching finds only these shapes of text, so it does not find all personal information and is not de-identification.
+// Patterns are tried in this order, so a labeled record number is hidden whole before its digits look like a phone number.
+// None uses lookbehind, because one regular expression a browser can't read would stop this whole file from loading.
+// Adapted from the sharing checks in agentprise (https://github.com/DepressionCenter/agentprise), which take their
+// first patterns from FieldStationAI (https://github.com/DepressionCenter/FieldStationAI). The rule that a labeled ID
+// must contain a digit, and the Social Security number ranges, come from extractium's phi_lint.py
+// (https://github.com/DepressionCenter/extractium).
+var SNA_HIDDEN_VALUE_PATTERNS = [
+    { label: 'email address', re: /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b/g },
+    { label: 'date of birth or visit date', re: /\b(?:dob|date of birth|birth ?date|born(?: on)?|admitted(?: on)?|discharged(?: on)?|died(?: on)?|(?:admission|discharge|death|visit|service) date|date of (?:admission|discharge|death|visit|service))\b\s*[:#]?\s*(?:(?:0?[1-9]|1[0-2])[\/-](?:0?[1-9]|[12]\d|3[01])[\/-](?:19|20)?\d{2}|(?:19|20)\d{2}-(?:0?[1-9]|1[0-2])-(?:0?[1-9]|[12]\d|3[01])|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2},? (?:19|20)\d{2})/gi },
+    // A label followed by a value that has a digit, so a column title such as "Patient ID Number" stays visible.
+    { label: 'record number or ID', re: /\b(?:mrn|medical record(?: number)?|patient id|member id|account number|ssn)\b\s*[:#]?\s*(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{3,}/gi },
+    { label: 'card number', re: /\b(?:\d[ -]?){12,18}\d\b/g, isMatch: snaPassesLuhnCheck },
+    { label: 'Social Security number', re: /\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b/g },
+    { label: 'ZIP+4 code', re: /\b\d{5}-\d{4}\b/g },
+    { label: 'phone number', re: /(?:\+?\b1[-.\s]?)?(?:\(\d{3}\)\s?|\b\d{3}[-.\s]?)\d{3}[-.\s]?\d{4}\b/g },
+    { label: 'IP address', re: /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g },
+    { label: 'street address', re: /\b\d{1,6}\s+(?:[A-Za-z0-9.'-]+\s+){1,4}(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|court|ct|way|place|pl)\b\.?/gi },
+    { label: 'age over 89', re: /\b(?:(?:9\d|1[0-2]\d)[- ]?(?:years?[- ]old|y\/?o)|aged?\s*:?\s*(?:9\d|1[0-2]\d))\b/gi }
+];
+
+// Attributes of Sitenalyzer's own markup that people read or that filters compare, so hidden values are hidden there
+// too. Every other attribute, such as href or data-sna-orig (a description's saved text, for its editor), is kept.
+var SNA_HIDDEN_VALUE_ATTRIBUTES = /(\s(?:aria-label|title|alt|data-name|data-filter-text)=")([^"]*)(")/g;
+
+var _snaShowHiddenValues = false; // True while Show hidden values is on. Never saved, so every visit starts with values hidden.
+var _snaKeptValues = null;        // Matches found in people's and groups' names, emails, and sign-in names, which stay visible
+var _snaKeptPeople = [];          // Names and sign-in names from person checks, added to _snaKeptValues
+
+// True when the digits in text pass the Luhn check that card numbers use, so most other long numbers stay visible.
+function snaPassesLuhnCheck(text) {
+    var digits = String(text).replace(/\D/g, '');
+    if (digits.length < 13 || digits.length > 19) { return false; }
+    var sum = 0;
+    for (var i = 0; i < digits.length; i++) {
+        var digit = Number(digits.charAt(digits.length - 1 - i));
+        if (i % 2 === 1) { digit *= 2; if (digit > 9) { digit -= 9; } }
+        sum += digit;
+    }
+    return sum % 10 === 0;
+}
+
+// True while Show hidden values is on.
+function snaShowingHiddenValues() {
+    return _snaShowHiddenValues;
+}
+
+// GUIDs inside text, such as "Item ID: <GUID>". They are IDs, never personal information, and their digits must not
+// be read as a card or phone number.
+var SNA_GUID_IN_TEXT = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
+// Calls replace(match, pattern) for each match of SNA_HIDDEN_VALUE_PATTERNS in text, outside GUIDs, and returns the
+// text with each match replaced by what replace returns. Matches in kept (lowercase text to keep) are left as they are.
+function snaReplaceHiddenValues(text, kept, replace) {
+    var parts = String(text === null || text === undefined ? '' : text).split(SNA_GUID_IN_TEXT);
+    for (var i = 0; i < parts.length; i += 2) {
+        if (!parts[i]) { continue; }
+        SNA_HIDDEN_VALUE_PATTERNS.forEach(function(pattern) {
+            parts[i] = parts[i].replace(pattern.re, function(match) {
+                if (pattern.isMatch && !pattern.isMatch(match)) { return match; }
+                if (kept && kept[match.toLowerCase()]) { return match; }
+                return replace(match, pattern);
+            });
+        });
+    }
+    return parts.join('');
+}
+
+// Returns every match of SNA_HIDDEN_VALUE_PATTERNS in text, in lowercase, leaving out the matches in kept when given.
+function snaFindHiddenValues(text, kept) {
+    var found = [];
+    snaReplaceHiddenValues(text, kept, function(match) { found.push(match.toLowerCase()); return ''; });
+    return found;
+}
+
+// Returns the matches in the names, emails, and sign-in names of the people and groups in the report and of the
+// people checked with Check a person's access. These stay visible, because reviewing who has access needs them.
+function snaKeptValues() {
+    if (_snaKeptValues) { return _snaKeptValues; }
+    var kept = {};
+    function keep(value) { snaFindHiddenValues(value).forEach(function(match) { kept[match] = true; }); }
+    Object.keys(_snaPermIndex).forEach(function(key) {
+        var p = _snaPermIndex[key];
+        [p.title, p.loginName, p.email].forEach(keep);
+        (p.members || []).forEach(function(m) { [m.title, m.loginName, m.email].forEach(keep); });
+    });
+    (_snaSiteAdmins || []).forEach(function(a) { [a.Title, a.LoginName, a.Email].forEach(keep); });
+    if (_snaCurrentUser) { [_snaCurrentUser.name, _snaCurrentUser.email, _snaCurrentUser.loginName].forEach(keep); }
+    _snaKeptPeople.forEach(keep);
+    _snaKeptValues = kept;
+    return kept;
+}
+
+// Returns text with each value that looks like personal information replaced by "[<label> hidden]", such as
+// "[phone number hidden]", unless Show hidden values is on. Values of people and groups (snaKeptValues) are kept.
+function snaMaskText(value) {
+    var text = String(value === null || value === undefined ? '' : value);
+    if (_snaShowHiddenValues || !text) { return text; }
+    return snaReplaceHiddenValues(text, snaKeptValues(), function(match, pattern) { return '[' + pattern.label + ' hidden]'; });
+}
+
+// Hides values in markup that Sitenalyzer built, unless Show hidden values is on: in the text between tags and in the
+// attributes in SNA_HIDDEN_VALUE_ATTRIBUTES. Kept as they are: the text of a <textarea>, which is a description being
+// edited, and of elements with the class list-id-text or sna-code, which show IDs and internal names.
+// Values in the markup are already escaped; the hidden-value labels have no characters that need escaping.
+function snaMaskHtml(html) {
+    if (typeof html !== 'string') { return html; }
+    if (_snaShowHiddenValues || !html) { return html; }
+    var keepTag = '';
+    var keepDepth = 0;
+    return html.split(/(<[^>]*>)/).map(function(part) {
+        if (part.charAt(0) !== '<') { return keepDepth > 0 ? part : snaMaskText(part); }
+        var tag = /^<(\/?)([a-zA-Z][a-zA-Z0-9-]*)/.exec(part);
+        if (!tag) { return part; }
+        var name = tag[2].toLowerCase();
+        var isEnd = tag[1] === '/';
+        var isVoid = /\/>$/.test(part) || /^(?:br|img|input|hr|meta|link|col|source|wbr)$/.test(name);
+        if (keepDepth > 0) {
+            if (name === keepTag && !isVoid) { keepDepth += isEnd ? -1 : 1; }
+        } else if (!isEnd && !isVoid && (name === 'textarea' || /\sclass="[^"]*\b(?:list-id-text|sna-code)\b[^"]*"/.test(part))) {
+            keepTag = name;
+            keepDepth = 1;
+        }
+        if (isEnd) { return part; }
+        return part.replace(SNA_HIDDEN_VALUE_ATTRIBUTES, function(all, start, value, end) { return start + snaMaskText(value) + end; });
+    }).join('');
+}
+
+// Returns how many different values in the report's free text look like personal information: names and
+// descriptions of the site, lists, libraries, columns, folders, pages, shared items, and terms, and column choices,
+// default values, and formulas. People's and groups' values are kept, so they aren't counted.
+function snaCountHiddenValues(report) {
+    if (!report) { return 0; }
+    var kept = snaKeptValues();
+    var found = {};
+    function check(value) { snaFindHiddenValues(value, kept).forEach(function(match) { found[match] = true; }); }
+    [report.site.title, report.site.description].forEach(check);
+    report.lists.forEach(function(list) {
+        [list.title, list.description].forEach(check);
+        list.columns.forEach(function(c) { [c.title, c.description, c.choices, c.defaultValue, c.formula].forEach(check); });
+        list.folders.forEach(function(f) { check(f.name); });
+    });
+    (report.pages.pages || []).forEach(function(page) { [page.name, page.fileName].forEach(check); });
+    (report.permissions.sharingLinks.links || []).forEach(function(l) { check(l.name); });
+    report.taxonomy.groups.forEach(function(group) {
+        [group.groupName, group.groupDescription].forEach(check);
+        (group.termSets || []).forEach(function(set) {
+            [set.setName, set.setDescription].forEach(check);
+            (set.terms || []).forEach(function(t) { [t.termName, t.termDescription].forEach(check); });
+        });
+    });
+    return Object.keys(found).length;
+}
+
+// Returns the sentence about hidden values for the report screen and the print document, or '' when Sitenalyzer
+// found none, such as "Sitenalyzer hid 3 values that look like personal information, such as phone numbers or email
+// addresses." forPrint leaves out the switch, which isn't in a printout.
+function snaHiddenValuesText(report, forPrint) {
+    var count = snaCountHiddenValues(report);
+    if (count === 0) { return ''; }
+    var values = count === 1 ? '1 value that looks' : count + ' values that look';
+    if (_snaShowHiddenValues) {
+        return forPrint
+            ? 'This printout includes ' + values + ' like personal information.'
+            : 'Sitenalyzer is showing ' + values + ' like personal information. Turn off Show hidden values before you share your screen, print, or download.';
+    }
+    return 'Sitenalyzer hid ' + values + ' like personal information, such as phone numbers or email addresses.' +
+        (forPrint ? '' : ' To see ' + (count === 1 ? 'it' : 'them') + ', turn on Show hidden values.');
+}
+
+// Returns the sentence about hidden values for the About and Export_Info sheets of the workbooks.
+function snaWorkbookHiddenValuesText() {
+    return _snaShowHiddenValues
+        ? 'Included. Show hidden values was on, so values that look like personal information, such as phone numbers, are in this workbook.'
+        : 'Hidden. Values that look like personal information, such as phone numbers, show as [phone number hidden] and so on. Names, emails, and sign-in names of people and groups are not hidden.';
 }
 
 // Returns "1 list" or "3 lists", so messages built from counts read correctly.
@@ -1277,8 +1475,8 @@ async function snaCheckUserAccess() {
         _snaUserCheckResult = { input: text, status: statusText, html: html };
         var liveStatus = document.getElementById('sna-user-access-status');
         var liveOut = document.getElementById('sna-user-access-results');
-        if (liveOut) { liveOut.innerHTML = html; }
-        if (liveStatus) { liveStatus.textContent = statusText; }
+        if (liveOut) { liveOut.innerHTML = snaMaskHtml(html); }
+        if (liveStatus) { liveStatus.textContent = snaMaskText(statusText); }
     };
 
     _snaUserCheckRunning = true;
@@ -1293,6 +1491,9 @@ async function snaCheckUserAccess() {
 
     try {
         var person = await snaResolveUserLogin(text);
+        // The checked person's name and sign-in name stay visible, like those of the people in the report.
+        _snaKeptPeople.push(text, person.title, person.login);
+        _snaKeptValues = null;
         // Single quotes are doubled so the sign-in name can't end the quoted value early.
         var userParam = "@u='" + encodeURIComponent(person.login.replace(/'/g, "''")) + "'";
         var readLevel = async function(scopeUrl) {
@@ -1898,7 +2099,8 @@ function exportToXLSX() {
         ['tool_version',   '1.0'],
         ['format_version', '1.0'],
         ['scope_notes',    'SharePoint site: ' + siteUrl],
-        ['contact_email',  exporterEmail]
+        ['contact_email',  exporterEmail],
+        ['hidden_values',  snaWorkbookHiddenValuesText()]
     ];
     var wsExportInfo = XLSX.utils.aoa_to_sheet(exportInfoData);
     wsExportInfo['!cols'] = [{ wch: 20 }, { wch: 60 }];
@@ -2143,17 +2345,31 @@ function exportToXLSX() {
     var H_STW = ['steward_id','name','type','role_default','unit','email','phone','backup_steward_id','notes'];
 
     var wb = XLSX.utils.book_new();
+    // Free-text columns, where values that look like personal information are hidden unless Show hidden values is on.
+    // IDs, addresses, and internal names are never hidden.
+    var HIDDEN_VALUE_COLUMNS = ['source_name', 'database_or_site', 'description', 'asset_display_name', 'display_name',
+        'calculation_formula', 'default_value', 'value_set_name', 'value_code', 'value_label', 'value_definition'];
+    function hideValues(headers, rows) {
+        var columns = [];
+        headers.forEach(function(header, index) { if (HIDDEN_VALUE_COLUMNS.indexOf(header) > -1) { columns.push(index); } });
+        return rows.map(function(row) {
+            var copy = row.slice();
+            columns.forEach(function(index) { if (copy[index]) { copy[index] = snaMaskText(copy[index]); } });
+            return copy;
+        });
+    }
+
     XLSX.utils.book_append_sheet(wb, wsExportInfo,                          'Export_Info');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_SRC, sourcesRows),        'Sources');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_AST, assetsRows),         'Assets');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_FLD, fieldsRows),         'Fields');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_VS,  valueSetsRows),      'Value_Sets');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_REL, relationshipsRows),  'Relationships');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_SRC, hideValues(H_SRC, sourcesRows)),       'Sources');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_AST, hideValues(H_AST, assetsRows)),        'Assets');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_FLD, hideValues(H_FLD, fieldsRows)),        'Fields');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_VS,  hideValues(H_VS, valueSetsRows)),      'Value_Sets');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_REL, hideValues(H_REL, relationshipsRows)), 'Relationships');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_DSH, []),                 'Dashboards');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_VIZ, []),                 'Visualizations');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_STW, stewardsRows),        'Stewards');
 
-    snaDownloadWorkbook(wb, snaFileSafeSiteName(siteTitle) + '_Data_Dictionary_' + dateStr + '.xlsx');
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(siteTitle)) + '_Data_Dictionary_' + dateStr + '.xlsx');
 }
 
 // Saves the permissions workbook: every permission on the site and its lists, with group members,
@@ -2183,7 +2399,7 @@ function exportPermissionsToXLSX() {
         var notes = [];
         if (p.isLimited) { notes.push(LIMITED_NOTE); }
         if (p.isSystemGroup) { notes.push('SharePoint creates this group by itself, such as for a sharing link.'); }
-        return [p.scope, p.listTitle, p.listId, p.listUrl, p.listType, p.memberName, p.memberId, p.loginName, p.email,
+        return [p.scope, snaMaskText(p.listTitle), p.listId, p.listUrl, p.listType, p.memberName, p.memberId, p.loginName, p.email,
             SNA_PRINCIPAL_KIND_LABELS[p.memberKind], p.level, p.levelId, p.isLimited ? YES : NO, notes.join(' ')];
     });
 
@@ -2194,7 +2410,7 @@ function exportPermissionsToXLSX() {
         .map(function(item) {
             var l = item.l;
             var readText = item.own ? (l.rolesRead ? YES : 'No. Sitenalyzer could not read them.') : 'Uses the site\'s permissions';
-            return [l.title, l.id, l.url, l.isLib ? 'Library' : 'List', item.own ? YES : NO, readText];
+            return [snaMaskText(l.title), l.id, l.url, l.isLib ? 'Library' : 'List', item.own ? YES : NO, readText];
         });
 
     // Group_Members sheet. Grain: one row per SharePoint group per member; groups with no rows get one note row.
@@ -2237,7 +2453,7 @@ function exportPermissionsToXLSX() {
 
     var exporter = _snaCurrentUser ? (_snaCurrentUser.name || _snaCurrentUser.email || '') : '';
     var aboutRows = [
-        ['Site name', siteTitle],
+        ['Site name', snaMaskText(siteTitle)],
         ['Site address', siteUrl],
         ['Site ID', _snaSiteInfo.Id || ''],
         ['Exported by', exporter],
@@ -2252,7 +2468,8 @@ function exportPermissionsToXLSX() {
         ['About Limited Access', LIMITED_NOTE],
         ['About site collection administrators', 'They have full control of the whole site collection, but they are not listed on the Permissions sheet.'],
         ['Not included', 'Permissions on single files, folders, and items; members of security and Microsoft 365 groups, which Microsoft Entra ID manages.'],
-        ['Personal data', 'This workbook lists names and email addresses, and list names may describe a study. Store and share it the way you would other personal data.']
+        ['Personal data', 'This workbook lists names and email addresses, and list names may describe a study. Store and share it the way you would other personal data.'],
+        ['Hidden values', snaWorkbookHiddenValuesText()]
     ];
 
     var wb = XLSX.utils.book_new();
@@ -2269,7 +2486,7 @@ function exportPermissionsToXLSX() {
         'Used on this site'], textRows(levelRows)), 'Permission_Levels');
     XLSX.utils.book_append_sheet(wb, buildSheet(['Name', 'ID', 'Sign-in name', 'Email', 'Notes'], textRows(adminRows)), 'Site_Admins');
 
-    snaDownloadWorkbook(wb, snaFileSafeSiteName(siteTitle) + '_Permissions_' + snaDateStamp(now) + '.xlsx');
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(siteTitle)) + '_Permissions_' + snaDateStamp(now) + '.xlsx');
 }
 
 // Copies text to clipboard and shows a brief toast notification; falls back to execCommand if needed.
@@ -2439,6 +2656,8 @@ function snaClearReport() {
     _snaUserCheckResult  = null;
     _snaDrafts           = {};
     _snaEditFocus        = {};
+    _snaKeptValues       = null;
+    _snaKeptPeople       = [];
 }
 
 // Clears the report and returns to the start screen. Change site keeps the last address in the Site URL box so it can be
@@ -2968,6 +3187,7 @@ async function gatherSiteInformation(options) {
         var report = await collectReport(targetUrl, snaSetProgress, token);
         if (token !== _snaCollectionToken) { return; }
         _snaReport = report;
+        _snaKeptValues = null;
         _snaUseAddressRoute = false;
         buildSearchIndex();
         renderFrame(report);
@@ -3159,9 +3379,11 @@ function snaSearchQuery(query) {
         var dedupeKey = item.type + '|' + item.label + '|' + item.route + '|' + item.breadcrumb;
         if (seen[dedupeKey]) { return; }
 
-        var labelMatch      = fieldMatches(item.label);
+        // Names are compared as they are shown, so a hidden value can't be found by searching for it.
+        // The sublabel holds internal names and IDs, which are never hidden.
+        var labelMatch      = fieldMatches(snaMaskText(item.label));
         var sublabelMatch   = fieldMatches(item.sublabel);
-        var breadcrumbMatch = fieldMatches(item.breadcrumb);
+        var breadcrumbMatch = fieldMatches(snaMaskText(item.breadcrumb));
 
         if (!labelMatch && !sublabelMatch && !breadcrumbMatch) { return; }
 
@@ -3906,8 +4128,8 @@ function snaRedrawDescription(editKey, text, focus, force) {
             });
         }
         var holder = document.createElement('span');
-        holder.innerHTML = renderAdminDescWrap(typeof text === 'string' ? text : (wrap.getAttribute('data-sna-orig') || ''),
-            editKey, wrap.getAttribute('data-edit-name') || '');
+        holder.innerHTML = snaMaskHtml(renderAdminDescWrap(typeof text === 'string' ? text : (wrap.getAttribute('data-sna-orig') || ''),
+            editKey, wrap.getAttribute('data-edit-name') || ''));
         if (wrap.parentNode) { wrap.parentNode.replaceChild(holder.firstChild, wrap); }
         return null;
     });
@@ -4114,6 +4336,29 @@ function snaSetTechnicalDetails(isOn) {
     }
 }
 
+// Shows the switch setting on Show hidden values, and says how many values are hidden or shown.
+function snaSyncHiddenValuesSwitch() {
+    var hiddenSwitch = document.getElementById('sna-hidden-values-switch');
+    if (hiddenSwitch) { hiddenSwitch.checked = _snaShowHiddenValues; }
+    var note = document.getElementById('sna-hidden-values-note');
+    if (note) {
+        var text = _snaReport ? snaHiddenValuesText(_snaReport, false) : '';
+        note.textContent = text;
+        note.hidden = !text;
+    }
+}
+
+// Shows or hides the values that look like personal information, and redraws the site header and the view with
+// focus on the switch. The choice is never saved, so every visit starts with the values hidden. Descriptions being
+// edited are kept, because they are drawn from _snaDrafts.
+function snaSetShowHiddenValues(isOn) {
+    _snaShowHiddenValues = !!isOn;
+    snaSyncHiddenValuesSwitch();
+    if (!_snaReport) { return; }
+    renderFrame(_snaReport);
+    if (_snaRoute) { renderApp(_snaRoute, { focus: 'hidden-values-switch', full: true }); }
+}
+
 // ### Report Addresses ###
 
 // Tabs in a list or library's details, and the parts of Permissions, in the order of the Permissions navigation.
@@ -4295,11 +4540,11 @@ function renderApp(route, options) {
 
     if (!opts.full && previous && previous.section === 'contents' && route.section === 'contents' && detail) {
         snaDisposeViewTables(detail);
-        detail.innerHTML = snaRenderContentsDetail(route, _snaReport);
+        detail.innerHTML = snaMaskHtml(snaRenderContentsDetail(route, _snaReport));
         snaUpdateInventorySelection(route);
     } else {
         snaDisposeViewTables(main);
-        main.innerHTML = SNA_SECTIONS[route.section].render(route, _snaReport);
+        main.innerHTML = snaMaskHtml(SNA_SECTIONS[route.section].render(route, _snaReport));
     }
     initSnaTabulators();
     if (route.section === 'contents') { snaApplyInventoryFilter(); }
@@ -4330,6 +4575,7 @@ function snaFocusAfterRender(route, previous, opts) {
     var target = null;
     var isAnchor = false;
     if (focus === 'switch') { target = document.getElementById('sna-technical-switch'); }
+    else if (focus === 'hidden-values-switch') { target = document.getElementById('sna-hidden-values-switch'); }
     else if (focus === 'tab') { target = document.querySelector('#sna-contents-detail .sna-detail-tabs a[aria-current="page"]'); }
     else if (focus === 'detail') { target = document.getElementById('sna-detail-title'); }
     else if (focus === 'inventory') { target = document.getElementById('sna-inv-' + _snaLastInventoryId); }
@@ -4478,7 +4724,7 @@ function renderFrame(report) {
     var logoHtml = site.logoUrl
         ? '<img class="sna-site-logo" src="' + snaEscapeHtml(site.logoUrl) + '" alt="Site logo">'
         : '<span class="sna-site-logo sna-site-logo-placeholder" aria-hidden="true">' + snaEscapeHtml(snaInitials(site.title)) + '</span>';
-    header.innerHTML = logoHtml +
+    header.innerHTML = snaMaskHtml(logoHtml +
         '<div class="sna-site-text">' +
             '<h1 class="sna-site-title">' + snaEscapeHtml(site.title || 'Untitled site') + '</h1>' +
             '<p class="sna-site-desc">' + renderAdminDescWrap(site.description, 'site', site.title || 'this site') + '</p>' +
@@ -4488,7 +4734,7 @@ function renderFrame(report) {
         '<div class="sna-site-meta">' +
             '<span class="sna-tag">' + (report.isAdmin ? 'You can manage this site' : 'You can view this site') + '</span>' +
             '<span>Collected <time datetime="' + snaEscapeHtml(report.collectedAt) + '">' + snaEscapeHtml(snaFormatDateTime(report.collectedAt)) + '</time></span>' +
-        '</div>';
+        '</div>');
 
     var settingsLink = document.getElementById('sna-site-settings-link');
     if (settingsLink) {
@@ -4498,6 +4744,7 @@ function renderFrame(report) {
     }
     snaRenderSiteTech();
     snaSyncTechnicalSwitch();
+    snaSyncHiddenValuesSwitch();
 }
 
 // Shows the site ID, with a button that copies it, under the site's address while technical details are on.
@@ -4910,7 +5157,7 @@ function snaPageImageHtml(page) {
 function snaShowPageImage(page) {
     var area = document.getElementById('sna-page-image-area');
     if (!area || area.getAttribute('data-page-key') !== page.key) { return; }
-    area.innerHTML = snaPageImageHtml(page);
+    area.innerHTML = snaMaskHtml(snaPageImageHtml(page));
     var img = area.querySelector('img');
     if (img) {
         img.addEventListener('error', function() {
@@ -5328,6 +5575,7 @@ function snaBuildPrintDocument(report) {
     var user = report.currentUser;
     var html = '<h1>' + snaEscapeHtml(site.title || 'Untitled site') + '</h1>' +
         '<p>Sitenalyzer site report. It includes everything Sitenalyzer read for this report, even parts that were closed or filtered on screen.</p>' +
+        (snaHiddenValuesText(report, true) ? '<p>' + snaEscapeHtml(snaHiddenValuesText(report, true)) + '</p>' : '') +
         snaPrintFactsHtml([
             ['Site address', site.url],
             ['Description', site.description || 'No description.'],
@@ -5434,7 +5682,7 @@ function snaPreparePrintDocument() {
         root.className = 'sna-print-doc';
         document.body.appendChild(root);
     }
-    root.innerHTML = snaBuildPrintDocument(_snaReport);
+    root.innerHTML = snaMaskHtml(snaBuildPrintDocument(_snaReport));
     // Group members are in closed sections, and a printout shows only what is open.
     root.querySelectorAll('details').forEach(function(d) { d.open = true; });
     document.documentElement.classList.add('sna-printing');
@@ -5450,13 +5698,13 @@ function snaRemovePrintDocument() {
 // Fills the empty document of the hidden frame with the print document and Sitenalyzer's style sheet. onReady runs
 // once, after the style sheet loads or fails, or after 3 seconds, whichever comes first.
 function snaWritePrintDocument(doc, onReady) {
-    doc.title = 'Sitenalyzer report - ' + (_snaReport.site.title || 'Untitled site');
+    doc.title = 'Sitenalyzer report - ' + snaMaskText(_snaReport.site.title || 'Untitled site');
     doc.documentElement.lang = document.documentElement.lang || 'en';
     doc.documentElement.className = 'sna-printing';
     var root = doc.createElement('div');
     root.id = 'sna-print-root';
     root.className = 'sna-print-doc';
-    root.innerHTML = snaBuildPrintDocument(_snaReport);
+    root.innerHTML = snaMaskHtml(snaBuildPrintDocument(_snaReport));
     // Group members are in closed sections, and a printout shows only what is open.
     root.querySelectorAll('details').forEach(function(d) { d.open = true; });
     doc.body.appendChild(root);
@@ -5589,17 +5837,17 @@ function snaRenderSiteChoices() {
     var current = _snaReport ? xlsxStripSlash(_snaReport.siteUrl).toLowerCase() : '';
     function isCurrent(site) { return xlsxStripSlash(String(site.url || '')).toLowerCase() === current; }
     var matches = (globalAccessibleSites || []).filter(function(site) {
-        return !query || String(site.title || '').toLowerCase().indexOf(query) > -1 || String(site.url || '').toLowerCase().indexOf(query) > -1;
+        return !query || snaMaskText(site.title || '').toLowerCase().indexOf(query) > -1 || String(site.url || '').toLowerCase().indexOf(query) > -1;
     });
     matches = matches.filter(isCurrent).concat(matches.filter(function(site) { return !isCurrent(site); }));
     var shown = matches.slice(0, SNA_SITE_CHOICES_MAX);
 
-    list.innerHTML = shown.map(function(site) {
+    list.innerHTML = snaMaskHtml(shown.map(function(site) {
         return '<li><button type="button" class="sna-site-choice" data-action="choose-site" data-url="' + snaEscapeHtml(site.url) + '">' +
             '<span class="sna-site-choice-title">' + snaEscapeHtml(site.title || site.url) + '</span>' +
             '<span class="sna-site-choice-url">' + snaEscapeHtml(site.url) + '</span>' +
             (isCurrent(site) ? '<span class="sna-site-choice-note">Current site</span>' : '') + '</button></li>';
-    }).join('');
+    }).join(''));
 
     if ((globalAccessibleSites || []).length === 0) {
         status.textContent = 'Sitenalyzer has not found your sites yet. Select Refresh sites list, or enter the site address below.';
@@ -5721,6 +5969,11 @@ function startApplication() {
     }
 
     snaInsertIcons(app);
+
+    var hiddenValuesSwitch = document.getElementById('sna-hidden-values-switch');
+    if (hiddenValuesSwitch) {
+        hiddenValuesSwitch.addEventListener('change', function() { snaSetShowHiddenValues(hiddenValuesSwitch.checked); });
+    }
 
     var technicalSwitch = document.getElementById('sna-technical-switch');
     if (technicalSwitch) {
@@ -5917,7 +6170,7 @@ function startApplication() {
                 var li = document.createElement('li');
                 var titleSpan = document.createElement('div');
                 titleSpan.className = 'site-suggestion-title';
-                titleSpan.textContent = site.title;
+                titleSpan.textContent = snaMaskText(site.title);
                 var urlSpan = document.createElement('div');
                 urlSpan.className = 'site-suggestion-url';
                 urlSpan.textContent = site.url;

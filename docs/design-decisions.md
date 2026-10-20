@@ -59,6 +59,8 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 
 ### Technical details
 
+A second switch, **Show hidden values**, sits next to it. It is off every time the page opens, so a report shown on a shared screen or printed hides values that look like personal information unless someone turns it on. Each hidden value says what kind it was, such as `[phone number hidden]`, so the person knows what is missing and screen readers read it clearly. People's names and emails stay visible, because the permission views exist to review them.
+
 One switch, **Show technical details**, adds internal names, IDs, lookup targets, and other technical values to the tables that are already on screen. Sitenalyzer adds columns to the same table rather than drawing a second technical table. Search finds these values even while the switch is off, and the workbooks and the printed report always include them. The browser remembers the switch under `sitenalyzer:technical-details`. After the switch redraws the report, keyboard focus goes back to the switch.
 
 ### Search

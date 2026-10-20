@@ -170,13 +170,26 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 
 The app markup is kept in `src/sitenalyzer.html` so it is easy to edit. It holds the start screen, the frame of the report screen (the site header, section navigation, search, report actions, technical details switch, and footer), and the **Choose a site** dialog. It holds no site data. The build turns each line into a JavaScript string and puts the strings in `sitenalyzer.js`, replacing the line `var SNA_APP_HTML = [];`. This way the site owner uploads one app file, and the page code never changes when the markup does.
 
+### How hidden values work
+
+Sitenalyzer hides values that look like personal information unless **Show hidden values** is on. `SNA_HIDDEN_VALUE_PATTERNS` near the top of `src/sitenalyzer.js` lists the patterns, which are adapted from the sharing checks in agentprise and the PHI checks in extractium. None of them uses lookbehind, because a pattern the browser can't read would stop the whole file from loading.
+
+- `snaMaskText` replaces each match in a piece of text with a label, such as `[phone number hidden]`. It skips GUIDs inside the text, and matches found in the names, emails, and sign-in names of the people and groups in the report (`snaKeptValues`).
+- `snaMaskHtml` hides values in markup that Sitenalyzer has already built and escaped. It changes the text between tags and the `aria-label`, `title`, `alt`, `data-name`, and `data-filter-text` attributes. It keeps `<textarea>` text, which is a description being edited, and elements with the class `list-id-text` or `sna-code`, which show IDs and internal names. Every other attribute, such as `href` and `data-sna-orig` (a description's saved text, for its editor), is kept.
+- Every view, the site header, the person check result, the description redraw, the page image area, the site list, and the print document go through `snaMaskHtml` just before they are placed in the page. Every Tabulator column is wrapped by `snaTableColumns`, so table cells go through it too.
+- The table filters, the Contents name filter, search, and **Find a site** compare text as it is shown, so typing a hidden value finds nothing.
+- The workbooks hide values in their free-text columns only: the site's name and description, list titles and descriptions, column titles, descriptions, choices, default values, and formulas, and term names and descriptions. The download file names hide them too. The **About** and **Export_Info** sheets say whether values were hidden.
+- The report itself always holds the real text. So a description editor opens with it, and a save never writes a hidden-value label over a description.
+
+The switch is never saved, so each visit starts with values hidden. `snaSetShowHiddenValues` redraws the site header and the view and returns focus to the switch. Descriptions being edited are kept because they are drawn from `_snaDrafts`. Hiding values by pattern finds only the shapes of text in the patterns, so it doesn't de-identify a report.
+
 ### Browser storage
 
-Sitenalyzer saves two things in the browser's local storage. Neither holds any report data.
+Sitenalyzer saves two things in the browser's local storage. Neither holds any report data. **Show hidden values** is never saved.
 
 | Key | What it holds |
 | --- | --- |
-| `sitenalyzer:sites-cache` | The list of sites the person can open, so the **Site URL** list appears quickly next time. It is kept for up to 30 days. The **Refresh sites list** button next to the box clears it. |
+| `sitenalyzer:sites-cache` | The list of sites the person can open, so the **Site URL** list appears quickly next time. It is kept for up to 30 days. The **Refresh sites list** button next to the box clears it. It holds site names as SharePoint gives them, even names that Sitenalyzer hides on screen. |
 | `sitenalyzer:technical-details` | `1` while **Show technical details** is on. Sitenalyzer writes it only when someone turns the switch on, and removes it when they turn it off. |
 
 Other apps on the same SharePoint host share that storage, so every Sitenalyzer key starts with `sitenalyzer:`. When the browser blocks storage, both settings last only until the page closes. Sitenalyzer does not use IndexedDB or session storage.

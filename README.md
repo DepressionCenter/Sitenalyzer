@@ -38,6 +38,7 @@ With Sitenalyzer, you can:
 + Move between an Overview, Contents, Permissions, Taxonomy, and Site review, and search the whole report, with results grouped by kind.
 + Edit site, list, column, and term descriptions, if you own the site.
 + Turn on technical details to see internal names, and copy the site, list, and library IDs needed for Microsoft Graph and Microsoft Entra apps.
++ Hide values that look like personal information, such as phone numbers, on screen, in printouts, and in workbooks, until you choose to show them.
 
 
 ## Quick Start Guide
