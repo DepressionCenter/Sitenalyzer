@@ -1447,7 +1447,10 @@ function snaRenderRiskFlags() {
 }
 
 // Renders the lists and libraries that have their own permissions instead of using the site's permissions.
-function snaRenderInheritanceReport() {
+function snaRenderInheritanceReport(listsRead) {
+    if (listsRead === false) {
+        return '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so it could not check which have their own permissions. Refresh the report to try again.</p>';
+    }
     var unique = _snaUniqueLists.slice().sort(snaByTitle);
     var total = unique.length + _snaInheritedLists.length;
     if (total === 0) { return '<div class="perm-row">Sitenalyzer found no lists or libraries on this site.</div>'; }
@@ -4002,12 +4005,15 @@ function snaFindList(report, routeId) {
     return null;
 }
 
-// Returns the people and groups with access to the whole site, leaving out groups SharePoint creates by itself.
-function snaSitePrincipals(report) {
+// Returns the people and groups in Who has access, by person or group, leaving out groups SharePoint creates by itself.
+function snaAccessPrincipals(report) {
     var index = report.permissions.index;
-    return Object.keys(index).map(function(key) { return index[key]; }).filter(function(p) {
-        return !p.isSystemGroup && (p.siteLevels.length > 0 || p.siteLimited);
-    });
+    return Object.keys(index).map(function(key) { return index[key]; }).filter(function(p) { return !p.isSystemGroup; });
+}
+
+// Returns the number of lists and libraries with their own permissions, or 'could not read' when the lists were not read.
+function snaOwnPermissionsCount(report) {
+    return report.listsRead ? report.permissions.uniqueLists.length : 'could not read';
 }
 
 // ### Overview ###
@@ -4070,7 +4076,7 @@ function snaRenderOverview(route, report) {
     }
     var sharingCount = perms.sharingLinks.failed ? 'could not read' : perms.sharingLinks.links.length;
     var appsCount = perms.siteRolesRead ? perms.appAssignments.length : 'could not read';
-    var peopleCount = perms.siteRolesRead ? snaSitePrincipals(report).length : 'could not read';
+    var peopleCount = perms.siteRolesRead ? snaAccessPrincipals(report).length : 'could not read';
     var groupCount = report.taxonomy.groups.length;
     var taxonomyText = (!report.taxonomy.read && groupCount === 0) ? 'Sitenalyzer could not read the term store.'
         : (groupCount === 0 ? 'This site collection has no term groups.'
@@ -4082,7 +4088,7 @@ function snaRenderOverview(route, report) {
             ['View site permissions', '#sna/permissions/site'],
             ['Who has access, by person or group (' + peopleCount + ')', '#sna/permissions/people'],
             ['Check one person\'s access', '#sna/permissions/person'],
-            ['Lists and libraries with their own permissions (' + perms.uniqueLists.length + ')', '#sna/permissions/own'],
+            ['Lists and libraries with their own permissions (' + snaOwnPermissionsCount(report) + ')', '#sna/permissions/own'],
             ['Sharing links (' + sharingCount + ')', '#sna/permissions/sharing'],
             ['Apps with access to this site (' + appsCount + ')', '#sna/permissions/apps']
         ], true) +
@@ -4346,8 +4352,8 @@ function snaRenderPermissions(route, report) {
         '</details>';
     html += '<details class="permissions-section" id="sna-perm-people"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>';
     html += snaRenderUserAccessTool();
-    html += '<details class="permissions-section" id="sna-perm-own"><summary>Lists and libraries with their own permissions (' + perms.uniqueLists.length + ')</summary>' +
-        snaRenderInheritanceReport() + '</details>';
+    html += '<details class="permissions-section" id="sna-perm-own"><summary>Lists and libraries with their own permissions (' + snaOwnPermissionsCount(report) + ')</summary>' +
+        snaRenderInheritanceReport(report.listsRead) + '</details>';
     html += '<details class="permissions-section" id="sna-perm-sharing"><summary>Sharing links (' +
         (perms.sharingLinks.failed ? 'could not read' : perms.sharingLinks.links.length) + ')</summary>' + snaRenderSharingLinks(perms.sharingLinks) + '</details>';
     html += '<details class="permissions-section" id="sna-perm-apps"><summary>Apps with access to this site</summary>' + snaRenderAppsHtml(report) + '</details>';
@@ -4468,7 +4474,7 @@ function snaRenderPrint(route, report) {
             (report.permissions.siteRolesRead ? renderPermissionsHtml(report.permissions.siteRoleAssignments)
                 : '<div class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</div>') + '</details>' +
         '<details class="permissions-section"><summary>Who has access, by person or group</summary>' + renderPermissionsByPrincipal() + '</details>' +
-        '<details class="permissions-section"><summary>Lists and libraries with their own permissions (' + report.permissions.uniqueLists.length + ')</summary>' + snaRenderInheritanceReport() + '</details>' +
+        '<details class="permissions-section"><summary>Lists and libraries with their own permissions (' + snaOwnPermissionsCount(report) + ')</summary>' + snaRenderInheritanceReport(report.listsRead) + '</details>' +
         '<details class="permissions-section"><summary>Sharing links</summary>' + snaRenderSharingLinks(report.permissions.sharingLinks) + '</details>' +
         '<details class="permissions-section"><summary>Apps with access to this site</summary>' + snaRenderAppsHtml(report) + '</details>' +
         '<h4>Check one person\'s access</h4>' +

@@ -611,9 +611,10 @@ test('shows counts that link to their sections on the Overview', async function(
     await expect(counts.getByRole('link', { name: 'Site pages 2' })).toHaveAttribute('href', '#sna/contents/pages');
     await expect(counts.getByRole('link', { name: 'Term set 1' })).toHaveAttribute('href', '#sna/taxonomy');
     await expect(counts.getByRole('link', { name: 'Sharing link 1' })).toBeVisible();
-    // The Permissions card shortcuts carry the people and apps counts.
+    // The Permissions card shortcuts show the people and apps counts. The people count includes Test Study Team,
+    // which has access only to a list with its own permissions, the same as Who has access, by person or group.
     const cards = page.locator('.sna-cards');
-    await expect(cards.getByRole('link', { name: 'Who has access, by person or group (6)' })).toHaveAttribute('href', '#sna/permissions/people');
+    await expect(cards.getByRole('link', { name: 'Who has access, by person or group (7)' })).toHaveAttribute('href', '#sna/permissions/people');
     await expect(cards.getByRole('link', { name: 'Apps with access to this site (1)' })).toBeVisible();
     // Findings belong in Permissions and Site review, so the Overview has none.
     await expect(page.locator('#sp-results .sna-risk-panel')).toHaveCount(0);
@@ -705,6 +706,15 @@ test('reports columns, folders, and list permissions as not read when the lists 
     await expect(contents).not.toContainText('No document libraries found.');
     await expect(contents).not.toContainText('No lists found.');
     await expect(contents).not.toContainText('None found.');
+
+    // Permissions says it could not check which lists have their own permissions, not that none do.
+    await gotoSection(page, 'Overview');
+    await expect(page.locator('.sna-cards').getByRole('link', { name: 'Lists and libraries with their own permissions (could not read)' })).toBeVisible();
+    await gotoSection(page, 'Permissions');
+    const own = await openSection(page, 'Lists and libraries with their own permissions (could not read)');
+    await expect(own).toContainText('so it could not check which have their own permissions');
+    await expect(own).not.toContainText('Sitenalyzer found no lists or libraries');
+    await gotoSection(page, 'Contents');
     await expect(page.locator('#sna-contents-detail')).toContainText('so this summary has no tables');
     await expect(page.locator('#sna-contents-detail .sna-stats')).toContainText('ColumnsNot read');
 
@@ -750,6 +760,8 @@ test('lists who has access by person or group', async function({ page }) {
     await gotoSection(page, 'Permissions');
 
     const access = await openSection(page, 'Who has access, by person or group');
+    // The same 7 people and groups that the Overview counts.
+    await expect(access.locator('.sna-principal-block')).toHaveCount(7);
     const visitors = access.locator('.sna-principal-block', { hasText: 'Test Site Visitors' });
     await expect(visitors).toContainText('Whole site: Read. This also covers 1 list or library that uses the site\'s permissions.');
     await expect(access.locator('.sna-principal-block', { hasText: 'Study Staff Security Group' })).toContainText('Security or Microsoft 365 group');
