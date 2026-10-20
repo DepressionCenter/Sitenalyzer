@@ -54,12 +54,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     background: #ffffff;
     border: 1px solid var(--sna-rule);
     border-radius: 8px;
-    max-width: 1200px;
-    margin: auto;
     box-sizing: border-box;
     overflow-wrap: break-word;
 }
 #sp-info-app *, #sp-info-app *::before, #sp-info-app *::after { box-sizing: border-box; }
+/* The app fills the width of its web part, so wide tables have room. Paragraphs stop at 44rem, about 80 characters
+   of body text, because longer lines are hard to read. Smaller text wraps at the same width. */
+#sp-info-app p, #sp-info-app .site-url-helper { max-width: 44rem; }
+#sp-info-app .sna-back-to-top { max-width: none; }
 /* The hidden attribute always wins, so a view's own display rule never shows a hidden part. */
 #sp-info-app [hidden] { display: none !important; }
 

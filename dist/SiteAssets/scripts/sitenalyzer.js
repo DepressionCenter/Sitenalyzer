@@ -169,7 +169,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = '0fa1d5c8611a';
+var SNA_ASSET_VERSION = 'fa129ed17c83';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.

@@ -1590,6 +1590,21 @@ test('marks every link that opens a new window so SharePoint does not open it in
     await expect(page.locator('a[target="_blank"]:not([data-interception="off"])')).toHaveCount(0);
 });
 
+test('fills a wide web part and keeps paragraphs to a readable width', async function({ page }) {
+    await page.setViewportSize({ width: 1800, height: 1000 });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const widths = await page.evaluate(function() {
+        var app = document.getElementById('sp-info-app');
+        var intro = document.querySelector('#sna-section-title ~ p') || document.querySelector('#sp-results p');
+        return { app: app.getBoundingClientRect().width, host: app.parentElement.getBoundingClientRect().width, paragraph: intro.getBoundingClientRect().width };
+    });
+    expect(widths.host).toBeGreaterThan(1700);
+    expect(widths.app).toBe(widths.host);
+    // 44rem is 704 CSS pixels with the browser's default font size.
+    expect(widths.paragraph).toBeLessThanOrEqual(704);
+});
+
 test('shows the Sitenalyzer symbol on the start screen and in the top bar, and reads the name as one word', async function({ page }) {
     await openPretendSite(page);
     const title = page.locator('#sna-entry h1');
