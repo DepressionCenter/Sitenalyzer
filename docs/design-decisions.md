@@ -89,20 +89,6 @@ A page's details show the image chosen for the page. Sitenalyzer reads it from t
 - All code is in `.js` files in Site Assets, with no inline scripts, so Sitenalyzer works under SharePoint's Content Security Policy (CSP).
 - Every value from SharePoint is treated as text and escaped. The browser stores no report data.
 
-### Still to check on a real site
-
-Automated tests cover most of the report on a pretend SharePoint site. These checks still need a person and a real SharePoint site:
-
-- Keyboard, screen reader, 200% zoom, text spacing, and forced colors in the actual web part.
-- The reading order, headings, and table headings of a saved PDF, in a PDF accessibility checker.
-- Saving each of the six kinds of description with a site owner account, and a refused save with a site member account.
-- Page images on a site whose pages have images chosen for them.
-- The current version with `?csp=enforce` added to the page address.
-
-### Where the design came from
-
-The design was reviewed as a standalone preview with synthetic data before the app changed. The preview, its screenshots, its sample workbooks, and its sample PDF are no longer in the repository. You can still see them in the [Site brief preview on GitHub](https://github.com/DepressionCenter/Sitenalyzer/tree/a976399d32d3453b741dff66635efac9957aef40/mockups/site-brief), at the last commit that had them. [Issue #9](https://github.com/DepressionCenter/Sitenalyzer/issues/9) tracked the redesign.
-
 ### Conclusion
 
 You now know what the report screen is meant to do and why each part works the way it does. Before you change the interface, check the change against these decisions. If you change one, update this page in the same pull request.
@@ -115,7 +101,6 @@ You now know what the report screen is meant to do and why each part works the w
 - [Building and testing Sitenalyzer](development.md)
 - [Issue #14: Show parent terms and where each term set is used in Taxonomy](https://github.com/DepressionCenter/Sitenalyzer/issues/14)
 - [Issue #9: UI redesign](https://github.com/DepressionCenter/Sitenalyzer/issues/9)
-- [Site brief preview on GitHub](https://github.com/DepressionCenter/Sitenalyzer/tree/a976399d32d3453b741dff66635efac9957aef40/mockups/site-brief)
 - [WCAG 2.2](https://www.w3.org/TR/WCAG22/)
 - [GNU Free Documentation License](https://www.gnu.org/licenses/fdl-1.3.html)
 
