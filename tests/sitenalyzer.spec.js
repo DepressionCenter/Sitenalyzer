@@ -81,6 +81,24 @@ async function openPermissionPart(page, name) {
     return page.locator('#sp-results .sna-split-body');
 }
 
+// Replaces print() in the page and in every frame it adds, so no print window opens. window.top.__printCalls counts the calls.
+async function stubPrint(page) {
+    await page.addInitScript(function() {
+        if (window === window.top) { window.__printCalls = 0; }
+        window.print = function() { window.top.__printCalls++; };
+    });
+}
+
+// Returns how many times print() was called in the page or its frames.
+function printCalls(page) {
+    return page.evaluate(function() { return window.__printCalls; });
+}
+
+// Returns the print document in the frame that Print full report / PDF prints.
+function printFrameDocument(page) {
+    return page.frameLocator('#sna-print-frame').locator('#sna-print-root');
+}
+
 // Returns the collapsible section whose title contains summaryText.
 function section(page, summaryText) {
     return page.locator('details', { has: page.locator(':scope > summary', { hasText: summaryText }) });
@@ -567,6 +585,85 @@ test('fits a 320 pixel wide screen without scrolling sideways', async function({
     expect(await pageWidth()).toBeLessThanOrEqual(320);
 });
 
+test('sorts a table from its column headings with the keyboard on a 320 pixel wide screen', async function({ page }) {
+    await page.setViewportSize({ width: 320, height: 800 });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+    const heading = detail.getByRole('columnheader', { name: 'Data type' });
+    // Returns the data types in the order the table shows them. Tabulator can mark the heading as sorted before it
+    // redraws the rows, so the tests wait for the order rather than reading it once.
+    const field = await heading.getAttribute('tabulator-field');
+    function shownTypes() {
+        return detail.locator('.tabulator-row .tabulator-cell[tabulator-field="' + field + '"]').allInnerTexts();
+    }
+    const ascending = (await shownTypes()).sort(function(a, b) { return a.localeCompare(b); });
+    expect(new Set(ascending).size).toBeGreaterThan(1);
+
+    // The headings stay visible at this width, so there is no separate Sort by control.
+    await expect(heading).toBeVisible();
+    await heading.focus();
+    await expect(heading).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(heading).toHaveAttribute('aria-sort', 'ascending');
+    await expect.poll(shownTypes).toEqual(ascending);
+    await page.keyboard.press(' ');
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect(heading).toBeFocused();
+    await expect.poll(shownTypes).toEqual(ascending.slice().reverse());
+});
+
+test('keeps every word visible with wider text spacing on a 320 pixel wide screen', async function({ page }) {
+    await page.setViewportSize({ width: 320, height: 800 });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    // The text spacing that WCAG 2.2 success criterion 1.4.12 asks pages to allow.
+    await page.addStyleTag({ content: '#sitenalyzer-app * { line-height: 1.5 !important; letter-spacing: 0.12em !important; ' +
+        'word-spacing: 0.16em !important; } #sitenalyzer-app p { margin-bottom: 2em !important; }' });
+
+    function pageWidth() { return page.evaluate(function() { return document.documentElement.scrollWidth; }); }
+    // Returns the text of buttons and links whose words no longer fit inside them.
+    function clippedControls() {
+        return page.evaluate(function() {
+            return Array.from(document.querySelectorAll('#sitenalyzer-app a, #sitenalyzer-app button, #sitenalyzer-app label')).filter(function(el) {
+                if (!el.offsetParent || el.closest('.tabulator, .sna-visually-hidden')) { return false; }
+                var style = getComputedStyle(el);
+                var clips = style.overflow !== 'visible' || style.overflowX !== 'visible';
+                return clips && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1);
+            }).map(function(el) { return el.textContent.trim(); });
+        });
+    }
+    expect(await pageWidth()).toBeLessThanOrEqual(320);
+    expect(await clippedControls()).toEqual([]);
+    for (const name of ['Contents', 'Permissions', 'Taxonomy', 'Site review']) {
+        await gotoSection(page, name);
+        expect(await pageWidth()).toBeLessThanOrEqual(320);
+        expect(await clippedControls()).toEqual([]);
+    }
+    await openPageDetail(page, 'Welcome');
+    expect(await pageWidth()).toBeLessThanOrEqual(320);
+    expect(await clippedControls()).toEqual([]);
+});
+
+test('has no automatically detectable accessibility problems with forced colors and reduced motion', async function({ page }) {
+    await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    await expectNoAxeViolations(page);
+    const detail = await openListDetail(page, 'Documents', 'Columns');
+    await expect(detail.locator('.tabulator')).toBeVisible();
+    await expectNoAxeViolations(page);
+    // Nothing moves on its own when the person asks their system to reduce motion.
+    const durations = await page.evaluate(function() {
+        return [
+            getComputedStyle(document.getElementById('sna-technical-switch'), '::before').transitionDuration,
+            getComputedStyle(document.getElementById('sna-copy-toast')).transitionDuration
+        ];
+    });
+    expect(durations).toEqual(['0s', '0s']);
+});
+
 test('reads Site Pages in batches and lists only pages, sorted by name', async function({ page }) {
     const record = await openPretendSite(page);
     await extractSiteInformation(page);
@@ -575,7 +672,7 @@ test('reads Site Pages in batches and lists only pages, sorted by name', async f
     await expect(pages.locator('.item-count-badge')).toHaveText('2pages');
     const links = page.locator('#sna-tbl-pages a');
     await expect(links).toHaveText(['About the Study', 'Welcome']);
-    await expect(links.first()).toHaveAttribute('href', SITE_URL + '/SitePages/About.aspx');
+    await expect(links.first()).toHaveAttribute('href', '#sna/contents/pages/4');
     await expect(pages).not.toContainText('Templates');
     await expect(pages).not.toContainText('banner.png');
 
@@ -586,8 +683,77 @@ test('reads Site Pages in batches and lists only pages, sorted by name', async f
     expect(batches[1].searchParams.get('$skiptoken')).toBe('Paged=TRUE&p_ID=3');
 });
 
+// Opens a page's details from Site pages and returns the details panel.
+async function openPageDetail(page, name) {
+    const pages = await openSitePages(page);
+    await pages.getByRole('link', { name: name, exact: true }).click();
+    const detail = page.locator('#sna-contents-detail');
+    await expect(detail.getByRole('heading', { level: 3, name: name })).toBeFocused();
+    return detail;
+}
+
+test('shows a page\'s details with the image chosen for it', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+
+    let detail = await openPageDetail(page, 'Welcome');
+    expect(hashOf(page)).toBe('#sna/contents/pages/1');
+    await expect(detail).toContainText('Home.aspx');
+    await expect(detail).toContainText(SITE_URL + '/SitePages/Home.aspx');
+    await expect(detail.getByRole('link', { name: 'Open page (opens in a new window)' })).toHaveAttribute('href', SITE_URL + '/SitePages/Home.aspx');
+    const image = detail.locator('#sna-page-image-area img');
+    await expect(image).toHaveAttribute('src', SITE_URL + '/SiteAssets/images/welcome.png');
+    await expect(image).toHaveAttribute('alt', '');
+    await expect.poll(function() { return image.evaluate(function(img) { return img.complete && img.naturalWidth; }); }).toBe(1);
+    await expect(detail).toContainText('The image chosen for this page.');
+    const lookups = apiUrls(record).filter(function(u) { return /\/items\(1\)$/.test(u.pathname); });
+    expect(lookups.length).toBe(1);
+    expect(lookups[0].searchParams.get('$select')).toBe('BannerImageUrl');
+
+    // SharePoint's image for a new page counts as no image.
+    await detail.getByRole('link', { name: 'Back to Site pages' }).click();
+    detail = await openPageDetail(page, 'About the Study');
+    await expect(detail.locator('#sna-page-image-area')).toHaveText('This page has no image chosen for it.');
+    await expect(detail.locator('img')).toHaveCount(0);
+
+    // A search result for a page opens its details, and the image is not looked up again.
+    await searchReport(page, 'Home');
+    await page.locator('#sp-results').getByRole('link', { name: 'Welcome' }).click();
+    await expect(page.locator('#sna-contents-detail').getByRole('heading', { level: 3, name: 'Welcome' })).toBeVisible();
+    expect(apiUrls(record).filter(function(u) { return /\/items\(1\)$/.test(u.pathname); }).length).toBe(1);
+
+    // An address with a page key that is not in the report says so.
+    await page.evaluate(function() { window.location.hash = '#sna/contents/pages/99'; });
+    await expect(page.locator('#sna-detail-title')).toHaveText('Page not found');
+    expect(record.consoleErrors).toEqual([]);
+    expect(record.otherOriginRequests).toEqual([]);
+});
+
 [
-    { name: 'another site on the same tenant', nextLink: 'https://contoso.sharepoint.com/sites/othersite/_api/web/lists/items?$skiptoken=x' },
+    { name: 'stored on another host', image: { Url: 'https://images.example.com/banner.png' },
+      message: 'The image chosen for this page is stored outside your organization\'s SharePoint, so Sitenalyzer does not show it. Open the page to see it.' },
+    { name: 'that is not a web address', image: { Url: 'javascript:alert(1)' },
+      message: 'The image chosen for this page is stored outside your organization\'s SharePoint, so Sitenalyzer does not show it. Open the page to see it.' },
+    { name: 'that could not be looked up', image: null,
+      message: 'Sitenalyzer could not look up the image chosen for this page. Open the page to see it, or select Refresh report to try again.' },
+    { name: 'that could not be downloaded', image: { Url: SITE_URL + '/SiteAssets/images/missing.png' },
+      message: 'Sitenalyzer found the image chosen for this page but could not show it. Open the page to see it.' }
+].forEach(function(scenario) {
+    test('explains a page image ' + scenario.name, async function({ page }) {
+        const record = await openPretendSite(page, {
+            answerOverrides: [{ pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\(1\\)$"),
+                body: scenario.image ? { BannerImageUrl: scenario.image } : reply(500, { error: 'Server error' }) }]
+        });
+        await extractSiteInformation(page);
+        const detail = await openPageDetail(page, 'Welcome');
+        await expect(detail.locator('#sna-page-image-area')).toHaveText(scenario.message);
+        await expect(detail.getByRole('link', { name: 'Open page (opens in a new window)' })).toBeVisible();
+        expect(record.otherOriginRequests).toEqual([]);
+    });
+});
+
+[
+    { name: 'another site on the same tenant', nextLink:'https://contoso.sharepoint.com/sites/othersite/_api/web/lists/items?$skiptoken=x' },
     { name: 'another host', nextLink: 'https://example.com/sites/testsite/_api/web/lists/items?$skiptoken=x' }
 ].forEach(function(scenario) {
     test('does not follow a Site Pages next-batch link to ' + scenario.name, async function({ page }) {
@@ -1228,10 +1394,7 @@ test('waits for a running save before Refresh report or Start over', async funct
 });
 
 test('prints the saved site description, not the one being edited', async function({ page }) {
-    await page.addInitScript(function() {
-        window.__printCalls = 0;
-        window.print = function() { window.__printCalls++; };
-    });
+    await stubPrint(page);
     await openPretendSite(page);
     await extractSiteInformation(page);
     const header = page.locator('#sna-site-header');
@@ -1239,28 +1402,38 @@ test('prints the saved site description, not the one being edited', async functi
     await header.getByRole('button', { name: 'Edit description of Test Research Site' }).click();
     await header.getByRole('textbox', { name: 'Description for Test Research Site' }).fill('Unsaved header draft.');
 
-    // Printing any view leaves the editor out and shows the saved description.
+    // The browser's print menu prints the saved description, and the editor stays open on screen. The printout shows
+    // only the print document, without the app's screen or the SharePoint page around it.
+    await page.evaluate(function() { window.dispatchEvent(new Event('beforeprint')); });
+    const printed = page.locator('#sna-print-root');
+    await expect(printed.locator('dd').nth(1)).toHaveText(savedText);
+    await expect(printed).not.toContainText('Unsaved header draft.');
+    await expect(printed.locator('textarea, button, input')).toHaveCount(0);
     await page.emulateMedia({ media: 'print' });
-    await expect(header.locator('textarea')).toBeHidden();
-    await expect(header.locator('.sna-print-saved')).toBeVisible();
-    await expect(header.locator('.sna-print-saved')).toHaveText(savedText);
+    await expect(printed).toBeVisible();
+    await expect(page.locator('#sp-info-app')).toBeHidden();
+    await expect(page.locator('#pretend-host-bar')).toBeHidden();
     await page.emulateMedia({ media: 'screen' });
-    await expect(header.locator('.sna-print-saved')).toBeHidden();
+    await page.evaluate(function() { window.dispatchEvent(new Event('afterprint')); });
+    await expect(printed).toHaveCount(0);
+    await expect(page.locator('#pretend-host-bar')).toBeVisible();
+    await expect(header.getByRole('textbox', { name: 'Description for Test Research Site' })).toHaveValue('Unsaved header draft.');
 
-    // The print view draws the saved description in the header, and the editor comes back afterward.
+    // Print full report / PDF and Ctrl+P print the same document from a frame of their own.
     await page.getByRole('button', { name: 'Print full report / PDF' }).click();
-    await expect.poll(function() { return page.evaluate(function() { return window.__printCalls; }); }).toBe(1);
-    await expect(header.locator('textarea')).toHaveCount(0);
-    await expect(header).not.toContainText('Unsaved header draft.');
-    await gotoSection(page, 'Overview');
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await expect(printFrameDocument(page).locator('dd').nth(1)).toHaveText(savedText);
+    await expect(printFrameDocument(page)).not.toContainText('Unsaved header draft.');
+    // Focus comes back from the frame, so Ctrl+P still reaches the page and prints again.
+    await expect(page.getByRole('button', { name: 'Print full report / PDF' })).toBeFocused();
+    await page.keyboard.press('Control+P');
+    await expect.poll(function() { return printCalls(page); }).toBe(2);
+    await expect(page.locator('#sna-print-frame')).toHaveCount(1);
     await expect(header.getByRole('textbox', { name: 'Description for Test Research Site' })).toHaveValue('Unsaved header draft.');
 });
 
 test('keeps an unsaved draft across views and asks before Refresh report discards it', async function({ page }) {
-    await page.addInitScript(function() {
-        window.__printCalls = 0;
-        window.print = function() { window.__printCalls++; };
-    });
+    await stubPrint(page);
     const record = await openPretendSite(page);
     await extractSiteInformation(page);
     let detail = await openListDetail(page, 'Study Visits');
@@ -1272,9 +1445,10 @@ test('keeps an unsaved draft across views and asks before Refresh report discard
     detail = await openListDetail(page, 'Study Visits');
     await expect(detail.getByRole('textbox', { name: 'Description for Study Visits' })).toHaveValue('Unsaved draft text.');
     await page.getByRole('button', { name: 'Print full report / PDF' }).click();
-    await expect.poll(function() { return page.evaluate(function() { return window.__printCalls; }); }).toBe(1);
-    await expect(page.locator('#sp-results')).not.toContainText('Unsaved draft text.');
-    await expect(page.locator('#sp-results textarea')).toHaveCount(0);
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await expect(printFrameDocument(page)).toContainText('Study Visits');
+    await expect(printFrameDocument(page)).not.toContainText('Unsaved draft text.');
+    await expect(detail.getByRole('textbox', { name: 'Description for Study Visits' })).toHaveValue('Unsaved draft text.');
 
     // Refresh report asks first. Saying no keeps the report and the draft.
     function siteReads() { return apiUrls(record).filter(function(u) { return u.pathname === SITE_PATH + '/_api/web'; }).length; }
@@ -1328,10 +1502,7 @@ test('saves term group, term set, term, and site descriptions through their own 
 });
 
 test('prints a full report with every section', async function({ page }) {
-    await page.addInitScript(function() {
-        window.__printCalls = 0;
-        window.print = function() { window.__printCalls++; };
-    });
+    await stubPrint(page);
     await openPretendSite(page);
     await extractSiteInformation(page);
     // A filter set in Contents must not leave rows out of the printed report.
@@ -1339,29 +1510,84 @@ test('prints a full report with every section', async function({ page }) {
     await columns.getByRole('searchbox', { name: 'Filter columns' }).fill('Visit C');
     await expect(columns.locator('.sna-table-count')).toHaveText('Showing 1 of 12 columns.');
 
+    // The person check result is printed when one was run.
+    await openPermissionPart(page, 'Check a person\'s access');
+    await page.getByLabel('Email address or sign-in name').fill('test.coordinator@example.org');
+    await page.getByRole('button', { name: 'Check access' }).click();
+    await expect(page.locator('#sna-user-access-status')).toContainText('Finished checking access');
+
     await page.getByRole('button', { name: 'Print full report / PDF' }).click();
-    await expect(page.getByRole('heading', { level: 2, name: 'Full report' })).toBeFocused();
-    expect(hashOf(page)).toBe('#sna/print');
-    await expect.poll(function() { return page.evaluate(function() { return window.__printCalls; }); }).toBe(1);
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    // Printing stays on the view that was open.
+    expect(hashOf(page)).toBe('#sna/permissions/person');
+    await expect(page.frameLocator('#sna-print-frame').locator('link[rel="stylesheet"]')).toHaveAttribute('href', /\/SiteAssets\/styles\/sitenalyzer\.css/);
+    expect(await page.frameLocator('#sna-print-frame').locator('html').evaluate(function(el) { return el.ownerDocument.title; }))
+        .toBe('Sitenalyzer report - Test Research Site');
 
-    const results = page.locator('#sp-results');
-    for (const heading of ['Document libraries', 'Lists', 'Site pages', 'Permissions', 'Taxonomy and term store', 'Site review']) {
-        await expect(results.getByRole('heading', { level: 3, name: heading, exact: true })).toBeVisible();
+    // The print document is shown only in a printout, and hidden elements have no roles.
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page);
+    await expect(printed.getByRole('heading', { level: 1 })).toHaveText('Test Research Site');
+    for (const heading of ['Contents', 'Document libraries', 'Lists', 'Site pages', 'Permissions', 'Taxonomy and term store', 'Site review']) {
+        await expect(printed.getByRole('heading', { level: 2, name: heading, exact: true })).toHaveCount(1);
     }
-    await expect(results.locator('details:not([open])')).toHaveCount(0);
-    await expect(results.locator('#sna-tbl-f-' + LIST_ID + ' .tabulator-row')).toHaveCount(9);
-    await expect(results.locator('#sna-tbl-f-' + LIBRARY_ID + ' .tabulator-row')).toHaveCount(12);
-    await expect(results.locator('.sna-table-filter')).toHaveCount(0);
-    await expect(results).toContainText('No one\'s access was checked for this report.');
+    await expect(printed.getByRole('table', { name: 'Columns of Study Visits', exact: true }).locator('tbody tr')).toHaveCount(9);
+    await expect(printed.getByRole('table', { name: 'Columns of Documents', exact: true }).locator('tbody tr')).toHaveCount(12);
+    await expect(printed.getByRole('table', { name: 'Top-level folders in Documents' }).locator('tbody tr')).toHaveCount(1);
+    await expect(printed.getByRole('table', { name: 'Site pages' }).locator('tbody tr')).toHaveCount(2);
+    await expect(printed.getByRole('table', { name: 'Terms in Study Arms' }).locator('tbody tr')).toHaveCount(2);
+    await expect(printed.getByRole('table', { name: 'Access for Test Coordinator' })).toHaveCount(1);
+    await expect(printed.locator('details:not([open])')).toHaveCount(0);
+    await expect(printed.locator('.tabulator, input, button, textarea, nav')).toHaveCount(0);
+    await expect(printed).toContainText('Copyright © 2026 The Regents of the University of Michigan');
+    await expect(printed.locator('.sna-print-facts').first()).toContainText('Test User');
 
-    // The printed report includes technical details while the switch is off, and they go away after it.
-    await expect(page.getByRole('switch', { name: 'Show technical details' })).not.toBeChecked();
-    await expect(results.locator('#sna-tbl-f-' + LIST_ID + ' .tabulator-col', { hasText: 'Internal name' })).toBeVisible();
-    await expect(results).toContainText('Term set ID eeeeeeee-0000-4000-8000-000000000001');
-    await expect(page.locator('#sna-site-tech')).toContainText('Site ID 11111111-0000-4000-8000-000000000000');
-    await gotoSection(page, 'Taxonomy');
-    await expect(results).not.toContainText('Term set ID');
-    await expect(page.locator('#sna-site-tech')).toBeEmpty();
+    // Technical details are printed while the switch is off.
+    expect(await page.locator('#sna-technical-switch').evaluate(function(box) { return box.checked; })).toBe(false);
+    await expect(printed.getByRole('table', { name: 'Technical details of the columns of Study Visits' })).toContainText('VisitDate');
+    await expect(printed).toContainText('eeeeeeee-0000-4000-8000-000000000001');
+    await expect(printed).toContainText('11111111-0000-4000-8000-000000000000');
+
+    // Printing the frame changes nothing on the page itself.
+    await page.emulateMedia({ media: 'screen' });
+    await expect(page.locator('#pretend-host-bar')).toBeVisible();
+    expect(await page.evaluate(function() { return document.documentElement.classList.contains('sna-printing'); })).toBe(false);
+
+    // Start over removes the frame with the report in it.
+    await page.getByRole('button', { name: 'Start over' }).click();
+    await expect(page.locator('#sna-print-frame')).toHaveCount(0);
+});
+
+test('opens the Overview for the address of the old full report view', async function({ page }) {
+    await openPretendSite(page, { addressSuffix: '#sna/print' });
+    await extractSiteInformation(page);
+    await expect(page.locator('#sna-section-title')).toHaveText('Overview');
+    await expect.poll(function() { return hashOf(page); }).toBe('#sna/overview');
+});
+
+test('has no automatically detectable accessibility problems in the print document', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    await page.evaluate(function() { window.dispatchEvent(new Event('beforeprint')); });
+    await page.emulateMedia({ media: 'print' });
+    const results = await new AxeBuilder({ page }).include('#sna-print-root').withTags(WCAG_TAGS).analyze();
+    expect(describeViolations(results.violations)).toEqual([]);
+});
+
+test('marks every link that opens a new window so SharePoint does not open it in the same tab', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    // SharePoint's page router ignores target="_blank" on a link to a SharePoint page unless the link has data-interception="off".
+    const settings = page.getByRole('link', { name: 'Site settings (opens in a new window)' });
+    await expect(settings).toHaveAttribute('href', SITE_URL + '/_layouts/15/settings.aspx');
+    await expect(settings).toHaveAttribute('target', '_blank');
+    await expect(settings).toHaveAttribute('data-interception', 'off');
+    await expect(page.locator('a[target="_blank"]:not([data-interception="off"])')).toHaveCount(0);
+    await gotoSection(page, 'Permissions');
+    await expect(page.locator('a[target="_blank"]:not([data-interception="off"])')).toHaveCount(0);
+    await openPageDetail(page, 'Welcome');
+    await expect(page.getByRole('link', { name: 'Open page (opens in a new window)' })).toHaveAttribute('data-interception', 'off');
+    await expect(page.locator('a[target="_blank"]:not([data-interception="off"])')).toHaveCount(0);
 });
 
 // ### Navigation and Addresses ###
@@ -1736,6 +1962,10 @@ test('has no automatically detectable accessibility problems on the start screen
         await page.getByRole('switch', { name: 'Show technical details' }).check();
         await openSitePages(page);
         await expect(page.locator('#sna-tbl-pages .tabulator-row').first()).toBeVisible();
+    } },
+    { name: 'Site page details', open: async function(page) {
+        const detail = await openPageDetail(page, 'Welcome');
+        await expect(detail.locator('#sna-page-image-area img')).toBeVisible();
     } }
 ].forEach(function(view) {
     test('has no automatically detectable accessibility problems in ' + view.name, async function({ page }) {

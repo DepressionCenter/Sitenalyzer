@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/architecture.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: How Sitenalyzer's files fit together, how it starts on a SharePoint page, and why it is built this way.
 Notes: See README file for documentation and full license information.
 
@@ -77,6 +77,7 @@ Every request is a read made with the signed-in person's own permissions. The on
 | `/_api/web/sitegroups` and `/_api/web/GetFileById('…')` | Sharing links, read from the hidden `SharingLinks.*` groups, and the names of up to 60 shared files. |
 | `/_api/web/roledefinitions`, `/_api/web/siteusers?$filter=IsSiteAdmin eq true` | Permission levels and site collection administrators, for the permissions workbook. |
 | `/_api/web/lists?$filter=BaseTemplate eq 119` and its `items` | The Site Pages library and its pages. |
+| `/_api/web/lists(guid'...')/items(<ID>)?$select=BannerImageUrl` | The image chosen for one site page, read only when its details open. |
 | `/_api/web/siteusers?$filter=Email eq '…'` and `getUserEffectivePermissions(@u)` | Only when someone uses **Check one person's access**. |
 | Fields, root folders, and the term store (`/_api/v2.1/sites/…/termStore`) | Columns, top-level folders, and terms for the data dictionary. |
 
@@ -109,8 +110,10 @@ The report screen has two halves: collecting the report, and drawing views from 
 1. `collectReport` reads the whole site once, in the same order of requests as earlier versions, and returns one report object. It holds the site's identity, the time it was collected (in UTC), every list and library with its columns, folders, and permissions, the site pages, the term store, every permission, and a coverage list that says which parts could not be read. The report shares its arrays and objects with the globals that `exportToXLSX` and `exportPermissionsToXLSX` read, so the workbook builders did not change.
 2. `renderApp` draws one view at a time inside `<div id="sp-results">`. Each section, such as Contents or Permissions, has a render function that builds its markup from the report, with every SharePoint value escaped.
 3. Tabulator tables are built only for the view on screen, and are destroyed when the view closes. Each filter box's text is kept, so it is still there when the view opens again.
-4. Every description is drawn by `renderAdminDescWrap`. While someone edits one, its text is kept in `_snaDrafts` under the same key `snaSaveDescription` takes, such as `list:<list ID>`, and every view draws the editor from there. So a draft stays when the person opens another view, turns on technical details, or sorts a table. Descriptions inside Tabulator tables are drawn by the table's formatter, so the table redraws the row when the editor opens or closes. When a description is saved, `snaApplyDescriptionToReport` writes the new text into the report and into the globals, so views drawn later, search, and both workbooks use it. **Refresh report**, **Start over**, and opening another site ask before discarding an unsaved draft, and the browser asks before the page closes. While a save is running, those actions stop and ask the person to try again, because SharePoint may still make a change that was already sent. An open editor also holds the saved description, which only the print style sheet shows, so a printout never includes a draft. The print view draws the header's site description again without the editor.
+4. Every description is drawn by `renderAdminDescWrap`. While someone edits one, its text is kept in `_snaDrafts` under the same key `snaSaveDescription` takes, such as `list:<list ID>`, and every view draws the editor from there. So a draft stays when the person opens another view, turns on technical details, or sorts a table. Descriptions inside Tabulator tables are drawn by the table's formatter, so the table redraws the row when the editor opens or closes. When a description is saved, `snaApplyDescriptionToReport` writes the new text into the report and into the globals, so views drawn later, search, and both workbooks use it. **Refresh report**, **Start over**, and opening another site ask before discarding an unsaved draft, and the browser asks before the page closes. While a save is running, those actions stop and ask the person to try again, because SharePoint may still make a change that was already sent. The print document is built from the report, which holds only saved descriptions, so a printout never includes a draft.
 5. The search index is built from the report as soon as collection finishes, so search covers sections that haven't been opened.
+6. Printing builds a separate print document from the report with `snaBuildPrintDocument`: headings, text, and plain HTML tables, with every value escaped. **Print full report / PDF** and Ctrl+P put the document in a hidden frame, `#sna-print-frame`, with Sitenalyzer's style sheet, and print only that frame. Nothing on the SharePoint page changes, so the page's own scripts can't react to the printout, and focus returns to where it was. The frame is removed by the next printout or a new report. The browser's print menu prints the page itself, so a `beforeprint` listener adds the same document to the end of the page as `#sna-print-root` and gives the page the class `sna-printing`. The print style sheet then hides everything else on the page, including the SharePoint page around the app, and an `afterprint` listener removes the document. On screen the document is never shown.
+7. Tabulator column headings can't be reached with the keyboard, so `snaMakeHeadingsSortableByKeyboard` puts each sortable heading in the Tab order and sorts with Enter or Space. Tabulator keeps the headings visible at every width and shows the order with `aria-sort`, so narrow screens need no separate sort control.
 
 A collection is tied to a number that changes when another collection starts or the report is cleared. A collection or person check whose number no longer matches stops and drops its results, so an older site can never appear in a newer report.
 
@@ -124,13 +127,13 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 | `#sna/contents` | Contents, with nothing selected |
 | `#sna/contents/<list ID>` and `#sna/contents/<list ID>/folders`, `/columns`, or `/permissions` | A list or library, with one of its tabs |
 | `#sna/contents/pages` | Site pages |
+| `#sna/contents/pages/<page key>` | One site page's details. The key is the page's item ID, such as `#sna/contents/pages/4`, with `-2` and so on added for pages in a second Site Pages library. |
 | `#sna/permissions`, and `#sna/permissions/site`, `/people`, `/person`, `/own`, `/sharing`, or `/apps` | Permissions, with one part shown; `#sna/permissions` shows `site` |
 | `#sna/taxonomy` and `#sna/review` | Taxonomy and Site review |
 | `#sna/taxonomy/<term set ID>` | Taxonomy, with one term set shown |
 | `#sna/search?q=<text>` | Search results |
-| `#sna/print` | The full report, for printing |
 
-- Sections, tabs, and parts are checked against fixed lists, and list and term set IDs must look like a GUID. An address that starts with `#sna/` but doesn't match opens the Overview.
+- Sections, tabs, and parts are checked against fixed lists, list and term set IDs must look like a GUID, and a page key must be a number. An address that starts with `#sna/` but doesn't match opens the Overview.
 - Addresses that don't start with `#sna/`, such as `#top`, belong to the host page and are ignored.
 - Only a `?siteUrl=` link chooses the first view, such as `?siteUrl=...#sna/taxonomy`. Without one, Sitenalyzer removes a report address left in the page address, such as after reloading the page, so a new report opens on the Overview. **Refresh report** keeps the view that was open.
 - Moving between views changes the address with `location.hash`, so Back and Forward work, and the `hashchange` listener draws the view. Sitenalyzer never calls `history.pushState`. It uses `history.replaceState` for the first view after collection and to remove the address on **Start over**, so neither adds a history step.

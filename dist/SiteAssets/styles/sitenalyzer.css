@@ -464,7 +464,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .sna-contents { display: grid; grid-template-columns: 1fr; gap: 20px; }
 @media (min-width: 48rem) {
     .sna-contents { grid-template-columns: minmax(15rem, 1fr) 3fr; }
-    #sp-info-app .sna-back { display: none; }
+    #sp-info-app .sna-back:not(.sna-back-always) { display: none; }
 }
 @media (max-width: 47.99rem) {
     /* With details open, the list is hidden; Back to results shows it again with the summary under it. */
@@ -513,7 +513,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .sna-search-item > a { font-weight: 700; }
 .sna-search-summary { margin: 4px 0 0 0; font-size: 14px; color: var(--sna-text-2); }
 
-.sna-print-item { margin: 0 0 24px 0; }
+/* Site page details. The image keeps its shape and never grows wider than the details area. */
+.sna-page-image-area { margin: 0 0 16px 0; }
+.sna-page-figure { margin: 0; }
+#sp-info-app .sna-page-image {
+    display: block; max-width: 100%; max-height: 18rem; height: auto; object-fit: contain;
+    border: 1px solid var(--sna-rule); border-radius: 4px; background: #ffffff;
+}
+.sna-page-figure figcaption { margin: 6px 0 0 0; font-size: 14px; color: var(--sna-text-2); }
+.sna-break-anywhere { overflow-wrap: anywhere; }
 
 /* ### Permission Reports ###
    These styles also serve the permission sections drawn by the older render functions. */
@@ -834,7 +842,6 @@ details.permissions-section {
 .sna-editor-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0 0; }
 .sna-editor-message { display: block; font-size: 14px; margin: 6px 0 0 0; white-space: normal; }
 .sna-editor-message:empty { display: none; }
-.sna-print-saved { display: none; }
 
 /* Choose a site dialog. */
 #sp-info-app .sna-dialog {
@@ -857,6 +864,9 @@ details.permissions-section {
 .sna-site-address-form { border-top: 1px solid var(--sna-rule); padding-top: 12px; }
 #sp-info-app #sna-site-address { flex: 1 1 14rem; min-width: 0; padding: 8px 10px; font: inherit; border: 1px solid #767676; border-radius: 4px; }
 .sna-site-address-form .sna-url-row { flex-wrap: wrap; }
+
+/* Column headings sort the table, so keyboard focus on them must be visible. */
+#sp-info-app .tabulator .tabulator-col:focus-visible { outline: 3px solid var(--sna-focus); outline-offset: -3px; }
 
 /* ### Narrow Screens ###
    At 320 CSS pixels the frame keeps a 16 pixel gutter and nothing scrolls sideways except wide tables. */
@@ -882,29 +892,67 @@ details.permissions-section {
     #sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: Highlight; }
     #sp-info-app .sna-pencil-btn { border-color: ButtonText; }
     .sna-mark-dot { background: CanvasText; }
+    .sna-site-logo-placeholder { background: Canvas; color: CanvasText; border: 1px solid CanvasText; }
     .sna-utility-bar, .sna-nav-row { border-bottom: 1px solid CanvasText; }
 }
 @media (prefers-reduced-motion: reduce) {
-    #sp-info-app *, #sp-info-app *::before, #sp-info-app *::after { transition: none !important; animation: none !important; }
+    #sp-info-app *, #sp-info-app *::before, #sp-info-app *::after, .sna-copy-toast { transition: none !important; animation: none !important; }
 }
 
-/* ### Print ###
-   Printing leaves out the controls, navigation, and start screen; the full report view opens every section. */
+/* ### Print Document ###
+   Print full report / PDF and Ctrl+P print the print document from a hidden frame, and the browser's print menu adds it
+   to the end of the page while it prints. The frame or page is marked with sna-printing, so a printout shows only that
+   document, without the SharePoint page around the app. The document is never shown on screen. */
+#sna-print-root { display: none; }
+/* The frame that Print full report / PDF prints. It is on the page but takes no space and can't be seen. */
+.sna-print-frame { position: absolute; left: -10000px; top: 0; width: 1px; height: 1px; border: 0; visibility: hidden; }
+
+@media print {
+    html.sna-printing body > :not(#sna-print-root) { display: none !important; }
+    /* SharePoint gives the page a fixed height that scrolls inside, which would cut a printout to one page. */
+    html.sna-printing, html.sna-printing body { height: auto !important; min-height: 0 !important; max-height: none !important; overflow: visible !important; position: static !important; }
+    html.sna-printing body { margin: 0; padding: 0; background: #ffffff; }
+    html.sna-printing #sna-print-root { display: block; }
+
+    #sna-print-root {
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 10.5pt; line-height: 1.45; color: #000000; background: #ffffff; text-align: left;
+    }
+    #sna-print-root h1 { font-size: 20pt; margin: 0 0 6pt 0; }
+    #sna-print-root h2 { font-size: 16pt; margin: 0 0 8pt 0; padding: 0 0 4pt 0; border-bottom: 2px solid #00274c; }
+    #sna-print-root h3 { font-size: 13pt; margin: 14pt 0 6pt 0; }
+    #sna-print-root h4 { font-size: 11pt; margin: 10pt 0 4pt 0; }
+    #sna-print-root h1, #sna-print-root h2, #sna-print-root h3, #sna-print-root h4 { break-after: avoid; page-break-after: avoid; color: #000000; }
+    #sna-print-root p, #sna-print-root li, #sna-print-root dd { orphans: 3; widows: 3; }
+    /* Each main part starts on a new page. */
+    #sna-print-root .sna-print-section { break-before: page; page-break-before: always; }
+    #sna-print-root .sna-print-item { margin: 0 0 14pt 0; }
+    #sna-print-root .sna-print-facts { display: grid; grid-template-columns: minmax(7rem, max-content) 1fr; gap: 2pt 12pt; margin: 0 0 8pt 0; }
+    #sna-print-root .sna-print-facts dt { font-weight: 700; }
+    #sna-print-root .sna-print-facts dd { margin: 0; overflow-wrap: anywhere; }
+    /* Table headings repeat at the top of each page, and rows are not split across pages. */
+    #sna-print-root table { width: 100%; border-collapse: collapse; margin: 0 0 10pt 0; font-size: 9.5pt; }
+    #sna-print-root caption { caption-side: top; text-align: left; font-weight: 700; padding: 0 0 3pt 0; }
+    #sna-print-root thead { display: table-header-group; }
+    #sna-print-root tr { break-inside: avoid; page-break-inside: avoid; }
+    #sna-print-root th, #sna-print-root td { border: 1px solid #767676; padding: 3pt 5pt; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+    #sna-print-root thead th { overflow-wrap: normal; hyphens: auto; background: #e6e6e6; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    #sna-print-root tbody th { font-weight: 600; }
+    #sna-print-root a { color: #000000; text-decoration: none; }
+    #sna-print-root .hide-on-print, #sna-print-root .sna-visually-hidden:not(caption) { display: none !important; }
+    #sna-print-root caption.sna-visually-hidden { position: static !important; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+    #sna-print-root .sna-risk-panel, #sna-print-root .sna-finding, #sna-print-root .sna-callout { border: 1px solid #767676; padding: 4pt 8pt; margin: 0 0 8pt 0; break-inside: avoid; }
+    #sna-print-root .sna-principal-block { border-top: 1px solid #c8c8c8; padding: 4pt 0; break-inside: avoid; }
+    #sna-print-root .app-tag { border: 1px solid #767676; padding: 0 4pt; font-size: 8.5pt; }
+    #sna-print-root details > summary { list-style: none; font-weight: 600; }
+    #sna-print-root details > summary::-webkit-details-marker { display: none; }
+    #sna-print-root .sna-print-footer { margin: 18pt 0 0 0; padding: 6pt 0 0 0; border-top: 1px solid #767676; font-size: 9pt; }
+}
+
+/* ### Print Without a Report ###
+   Printing the start screen leaves out the controls. */
 @media print {
     #sp-info-app { border: none; max-width: 100%; margin: 0; font-size: 12pt; }
-    #sp-info-app .hide-on-print, #sna-entry, .sna-progress { display: none !important; }
-    .sna-view { padding: 0; }
-    .sna-site-header { padding: 0 0 12px 0; }
-    .print-section { break-after: page; }
-    details.permissions-section { background: transparent; border-left: 3px solid #ccc; }
-    .item-count-badge { background: #555 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    /* Tables print every row, without their scroll areas. */
-    #sp-info-app .tabulator { height: auto !important; border: 1px solid #ccc; }
-    #sp-info-app .tabulator-tableholder { height: auto !important; overflow: visible !important; }
-    .sna-table-scroll { max-height: none !important; overflow: visible !important; }
-    #sp-info-app .tabulator .tabulator-header { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    #sp-info-app .sna-pencil-btn, .sna-editor-controls, .sna-subnav, .sna-dialog { display: none !important; }
-    #sp-info-app .sna-editing > :not(.sna-print-saved) { display: none !important; }
-    #sp-info-app .sna-editing > .sna-print-saved { display: inline !important; }
+    #sp-info-app .hide-on-print, .sna-progress, .sna-dialog { display: none !important; }
     .app-footer { padding: 12px 0 0 0; }
 }
