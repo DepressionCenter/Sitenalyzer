@@ -1191,6 +1191,71 @@ test('keeps a draft when saving fails, and saves it on the next try', async func
     expect(record.writeRequests.filter(function(r) { return r.method === 'PATCH'; }).length).toBe(2);
 });
 
+test('waits for a running save before Refresh report or Start over', async function({ page }) {
+    let finishSave;
+    const saveHeld = new Promise(function(resolve) { finishSave = resolve; });
+    const record = await openPretendSite(page, {
+        answerOverrides: [{ method: 'PATCH', pattern: /^\/_api\/web\/lists\(guid'[^']+'\)$/, answer: async function() {
+            await saveHeld;
+            return undefined;
+        } }]
+    });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits');
+    await detail.getByRole('button', { name: 'Edit description of Study Visits' }).click();
+    await detail.getByRole('textbox', { name: 'Description for Study Visits' }).fill('Text still being saved.');
+    await detail.getByRole('button', { name: 'Save description of Study Visits' }).click();
+    await expect(detail.getByRole('status')).toHaveText('Saving...');
+
+    // Neither action offers to discard a save SharePoint may still make; each says to wait instead.
+    function siteReads() { return apiUrls(record).filter(function(u) { return u.pathname === SITE_PATH + '/_api/web'; }).length; }
+    const messages = [];
+    page.on('dialog', function(dialog) { messages.push(dialog.type() + ': ' + dialog.message()); dialog.accept(); });
+    await page.getByRole('button', { name: 'Refresh report' }).click();
+    await page.getByRole('button', { name: 'Start over' }).click();
+    await expect.poll(function() { return messages.length; }).toBe(2);
+    const waitMessage = 'alert: Sitenalyzer is still saving a description. Wait until it says the description is saved, then try again.';
+    expect(messages).toEqual([waitMessage, waitMessage]);
+    expect(siteReads()).toBe(1);
+    await expect(page.locator('#sna-report')).toBeVisible();
+
+    finishSave();
+    await expect(page.locator('#sna-copy-toast')).toHaveText('Description saved.');
+    await expect(detail.locator('.sna-facts')).toContainText('Text still being saved.');
+    await page.getByRole('button', { name: 'Refresh report' }).click();
+    await expect.poll(siteReads).toBe(2);
+    expect(messages.length).toBe(2);
+});
+
+test('prints the saved site description, not the one being edited', async function({ page }) {
+    await page.addInitScript(function() {
+        window.__printCalls = 0;
+        window.print = function() { window.__printCalls++; };
+    });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const header = page.locator('#sna-site-header');
+    const savedText = (await header.locator('.sna-editable-text').innerText()).trim();
+    await header.getByRole('button', { name: 'Edit description of Test Research Site' }).click();
+    await header.getByRole('textbox', { name: 'Description for Test Research Site' }).fill('Unsaved header draft.');
+
+    // Printing any view leaves the editor out and shows the saved description.
+    await page.emulateMedia({ media: 'print' });
+    await expect(header.locator('textarea')).toBeHidden();
+    await expect(header.locator('.sna-print-saved')).toBeVisible();
+    await expect(header.locator('.sna-print-saved')).toHaveText(savedText);
+    await page.emulateMedia({ media: 'screen' });
+    await expect(header.locator('.sna-print-saved')).toBeHidden();
+
+    // The print view draws the saved description in the header, and the editor comes back afterward.
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return page.evaluate(function() { return window.__printCalls; }); }).toBe(1);
+    await expect(header.locator('textarea')).toHaveCount(0);
+    await expect(header).not.toContainText('Unsaved header draft.');
+    await gotoSection(page, 'Overview');
+    await expect(header.getByRole('textbox', { name: 'Description for Test Research Site' })).toHaveValue('Unsaved header draft.');
+});
+
 test('keeps an unsaved draft across views and asks before Refresh report discards it', async function({ page }) {
     await page.addInitScript(function() {
         window.__printCalls = 0;

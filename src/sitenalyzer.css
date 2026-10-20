@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.css
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-19
+Last Modified: 2026-10-20
 Summary: Styles for the Sitenalyzer app. The build copies this file to dist/SiteAssets/styles/,
          and sitenalyzer.js adds it to the page from the site's Site Assets library.
          Every rule starts with the app's own elements, so the rest of the SharePoint page is unchanged.
@@ -834,6 +834,7 @@ details.permissions-section {
 .sna-editor-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0 0; }
 .sna-editor-message { display: block; font-size: 14px; margin: 6px 0 0 0; white-space: normal; }
 .sna-editor-message:empty { display: none; }
+.sna-print-saved { display: none; }
 
 /* Choose a site dialog. */
 #sp-info-app .sna-dialog {
@@ -903,5 +904,7 @@ details.permissions-section {
     .sna-table-scroll { max-height: none !important; overflow: visible !important; }
     #sp-info-app .tabulator .tabulator-header { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     #sp-info-app .sna-pencil-btn, .sna-editor-controls, .sna-subnav, .sna-dialog { display: none !important; }
+    #sp-info-app .sna-editing > :not(.sna-print-saved) { display: none !important; }
+    #sp-info-app .sna-editing > .sna-print-saved { display: inline !important; }
     .app-footer { padding: 12px 0 0 0; }
 }

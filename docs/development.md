@@ -81,6 +81,7 @@ The tests check that:
 - The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.
 - **Back to results** on a narrow screen returns focus to the item, and nothing scrolls sideways at 320 pixels wide.
 - Each part of **Permissions** opens from its navigation with its own address. **People and groups** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. **Site permissions** shows the guest finding with links, the own permissions finding, the site collection administrators, and the permission levels, and says what it couldn't check instead of saying no guests have access.
+- Sharing links are found in site groups read 5,000 at a time. When a later request fails, Site permissions, Sharing links, and Report coverage say some sharing links may be missing.
 - **Site review** shows one row per list or library per cleanup finding, the largest lists and libraries, and the coverage table.
 - **Check a person's access** works with the Enter key, keeps its result when Permissions reopens, and sends quotes in an email address as data.
 - HTML in site, group, member, permission level, page, file, column, and folder names shows as plain text, including in search results.
@@ -88,6 +89,7 @@ The tests check that:
 - Failed requests show "could not read" instead of "none found".
 - The edit buttons appear only with the ManageWeb permission. The description editor opens from its button or a double-click, Escape cancels, Shift+Enter and Alt+Enter add lines, and Enter saves. The site, list, column, term group, term set, and term descriptions save to their own addresses, and saved text appears in search and the data dictionary.
 - A failed save keeps the draft and says why, the next save works, an unsaved draft stays while other views open, the printed report leaves it out, and **Refresh report** asks before discarding it.
+- While a save is running, **Refresh report** and **Start over** say to wait instead of offering to discard it. Printing while the site description is open for editing shows the saved description.
 - The **Data dictionary (.xlsx)** and **Permissions workbook (.xlsx)** buttons save workbooks with the expected sheets, columns, and column filters.
 - **Print full report / PDF** shows every section with every part open, then opens the print window once.
 - Each section has its own address, Back and Forward move between sections, a `?siteUrl=...#sna/taxonomy` link opens that section, unknown addresses open the Overview, and other page addresses such as `#top` are ignored.

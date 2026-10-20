@@ -3171,7 +3171,10 @@ function renderAdminDescWrap(text, editKey, name) {
     var busy = draft.saving ? ' disabled' : '';
     var message = draft.saving ? 'Saving...' : draft.error;
     // A newline right after <textarea> is dropped by the browser, so one is added to keep a draft that starts with one.
+    // A printout shows the saved description instead of the editor, so an unsaved draft is never printed.
+    var saved = draft.original ? snaEscapeHtml(draft.original) : '<em class="sna-muted">No description.</em>';
     return '<span class="sna-editable-wrap sna-editing"' + attrs + '>' +
+        '<span class="sna-desc-text sna-print-saved">' + saved + '</span>' +
         '<label class="sna-editor-label" for="' + id + '">Description for ' + snaEscapeHtml(label) + '</label>' +
         '<textarea id="' + id + '" class="sna-editor-field" rows="3" aria-describedby="' + id + '-hint ' + id + '-msg"' +
             (draft.saving ? ' readonly' : '') + '>\n' + snaEscapeHtml(draft.text) + '</textarea>' +
@@ -3580,8 +3583,14 @@ function snaUnsavedDraftCount() {
 }
 
 // Asks before an action that would throw away unsaved descriptions, such as "Refresh report". Returns true when
-// there are none, or when the person agrees to discard them.
+// there are none, or when the person agrees to discard them. A save already sent to SharePoint can't be stopped,
+// so while one is running the action waits: the person is told to try again, and false is returned.
 function snaConfirmDiscardDrafts(actionName) {
+    var saving = Object.keys(_snaDrafts).some(function(key) { return _snaDrafts[key].saving; });
+    if (saving) {
+        window.alert('Sitenalyzer is still saving a description. Wait until it says the description is saved, then try again.');
+        return false;
+    }
     var count = snaUnsavedDraftCount();
     if (count === 0) { return true; }
     return window.confirm(actionName + ' discards ' + (count === 1 ? 'your unsaved description' : 'your ' + count + ' unsaved descriptions') +
@@ -3853,7 +3862,10 @@ function renderApp(route, options) {
         snaDisposeViewTables(main);
         main.innerHTML = SNA_SECTIONS[route.section].render(route, _snaReport);
     }
-    if (!previous || (previous.section === 'print') !== (route.section === 'print')) { snaRenderSiteTech(); }
+    if (!previous || (previous.section === 'print') !== (route.section === 'print')) {
+        snaRenderSiteTech();
+        snaRenderSiteDescription();
+    }
 
     if (route.section === 'print') {
         main.querySelectorAll('details').forEach(function(d) { d.open = true; });
@@ -4060,6 +4072,14 @@ function renderFrame(report) {
     }
     snaRenderSiteTech();
     snaSyncTechnicalSwitch();
+}
+
+// Draws the site's description in the header again. The print view shows the saved description there, and other views
+// show the editor again if the person was editing it.
+function snaRenderSiteDescription() {
+    var desc = document.querySelector('#sna-site-header .sna-site-desc');
+    if (!desc || !_snaReport) { return; }
+    desc.innerHTML = renderAdminDescWrap(_snaReport.site.description, 'site', _snaReport.site.title || 'this site');
 }
 
 // Shows the site ID, with a button that copies it, under the site's address while technical details are on.

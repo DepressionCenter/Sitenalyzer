@@ -86,7 +86,7 @@ You must be an owner of a site to see all of its permissions. If you can manage 
 2. Change the text in the box.
 3. Press Enter or select **Save**. To add a line, press Shift+Enter or Alt+Enter. To stop without saving, press Escape or select **Cancel**.
 
-If SharePoint doesn't save the description, Sitenalyzer says why and keeps your text in the box so you can try again. Text you haven't saved stays in its box while you look at other sections. Before **Refresh report**, **Start over**, or opening another site would throw it away, Sitenalyzer asks first. The printed report shows only saved descriptions.
+If SharePoint doesn't save the description, Sitenalyzer says why and keeps your text in the box so you can try again. Text you haven't saved stays in its box while you look at other sections. Before **Refresh report**, **Start over**, or opening another site would throw it away, Sitenalyzer asks first. While a description is still saving, those actions don't run; Sitenalyzer asks you to wait until the description is saved and try again. The printed report shows only saved descriptions, even if you print while a description is open for editing.
 
 ### Report sections
 
