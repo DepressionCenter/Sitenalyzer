@@ -95,9 +95,11 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### An old version still shows after an update
 
-**Cause:** The browser kept a saved copy of the old files.
+**What you see:** The old Sitenalyzer screen, or the new screen with no colors or layout and a very large site logo.
 
-**Fix:** Press Ctrl+F5 to reload the page and get the new files.
+**Cause:** The browser kept a saved copy of the old files. Versions from before October 2026 load their style sheets without a version in the address, so the browser can pair a new `sitenalyzer.js` with an old `sitenalyzer.css`.
+
+**Fix:** Press Ctrl+F5 to reload the page and get the new files. Newer versions add a version to each style sheet address, so this happens only once after updating from an older version.
 
 ### Conclusion
 

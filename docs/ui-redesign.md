@@ -67,7 +67,8 @@ The following issue status was checked on October 16, 2026:
 ### Agreed visual direction
 
 Use a light frame with navy text and a maize accent around the queried site's identity and information.
-The web part sits under SharePoint's own dark suite bar and site header, so the report adds no dark bar of its own.
+The web part sits under SharePoint's own dark suite bar and site header. This revision added no dark bar of its own;
+the production app went back to the dark blue bars of the original preview, as described under Implementation status.
 The utility bar is white with a thin rule, **Change site** and **Site settings** are outlined buttons,
 and the main navigation is navy text on white with a maize underline on the selected section.
 The site's logo, title, and description are the main identity. Sitenalyzer's own mark stays small.
@@ -372,13 +373,26 @@ Decisions about report caching, saving workbooks to SharePoint, or broader API p
 The production app is being changed in three phases, each in its own pull request.
 
 **Phase 1 (frame, navigation, Overview, Contents, search, and the technical details switch)** is implemented.
-The production app now has the light frame, the site header, the five sections with their own `#sna/` addresses,
-the Overview counts and cards, the Contents list and detail tabs, grouped search results, the technical details
+The production app now has the frame, the site header, the five sections with their own `#sna/` addresses,
+the Overview counts and cards, the Contents list, summary, and detail tabs, grouped search results, the technical details
 switch, **Refresh report**, **Change site** (which returns to the start screen), and a full-report view for printing.
 Permissions, Taxonomy, and the cleanup suggestions in Site review are drawn by the earlier render functions inside
 the new sections. [How Sitenalyzer works](architecture.md#how-the-report-screen-works) describes the report model and the addresses.
 
-Phase 1 differs from this design in these ways:
+Phase 1 differs from this design in these ways. The owner chose the first four after reviewing the first phase 1 build.
+
+- The frame keeps the dark blue bars of the original October 16 preview: a dark blue bar with the Sitenalyzer name,
+  **Refresh report**, **Start over**, **Change site**, and **Site settings**, and a dark blue section bar where the
+  open section is dark blue on maize. **Show technical details** sits at the right end of the section bar, and the
+  separate utility row is gone, which saves vertical space.
+- The Overview shows five counts: document libraries, lists, site pages, term sets, and sharing links. The
+  Permissions card shortcuts show the counts of people and groups, lists and libraries with their own permissions,
+  sharing links, and apps.
+- Contents shows a **Contents summary** until a list or library is selected: totals for items, columns, top-level
+  folders, and lists and libraries with their own permissions, the most recent change and where it happened, and a
+  table of every library and list. A **Contents summary** entry at the top of the list returns to it.
+- There is no **About this site** card. With technical details on, the site ID and a **Copy** button appear under
+  the site's address in the header.
 
 - Tables do not get a separate **Sort by** control on narrow screens. Tabulator keeps its column headings visible
   at every width, and the tables scroll sideways inside their own area, so the headings stay available for sorting.

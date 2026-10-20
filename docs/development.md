@@ -52,7 +52,7 @@ The build does these steps:
 1. Checks each library file in `src/lib` against `sha256sums.txt`, and stops if one doesn't match.
 2. Deletes `dist/` and creates it again.
 3. Copies the libraries and license texts to `dist/SiteAssets`.
-4. Writes `dist/SiteAssets/scripts/sitenalyzer.js`, with the markup from `src/sitenalyzer.html` in place of the line `var SNA_APP_HTML = [];`.
+4. Writes `dist/SiteAssets/scripts/sitenalyzer.js`, with the markup from `src/sitenalyzer.html` in place of the line `var SNA_APP_HTML = [];`, and the version of the style sheets and libraries in place of the line `var SNA_ASSET_VERSION = '';`. The version is the first 12 characters of the SHA-256 checksum of `src/sitenalyzer.css` followed by `src/lib/sha256sums.txt`, with carriage returns removed, so it changes whenever the app styles or a library change.
 5. Copies `src/sitenalyzer.css` and `src/sitenalyzer.html.txt` to `dist`.
 
 The output always uses UTF-8 and LF line endings, with no dates or commit numbers. The same source files always produce the same bytes, so you can compare builds with `git diff`.
@@ -73,11 +73,11 @@ npx playwright test
 The tests check that:
 
 - The app appears in the page with no console errors and no Content Security Policy violations.
-- The libraries and style sheets load from Site Assets, and the app adds no global names to the page.
+- The libraries and style sheets load from Site Assets with the build's version in their addresses, and the app adds no global names to the page.
 - The app starts when its `<div>` appears up to 10 seconds late, and writes an error when it never appears.
 - Every browser storage key starts with `sitenalyzer:`.
 - **Extract site information** opens the Overview, and Contents shows the pretend site's lists, libraries, column tables, folders, permissions, and site pages.
-- The Overview counts link to their sections, and counts that could not be read say **Not read**.
+- The Overview shows five counts that link to their sections, and counts that could not be read say **Not read**. The Contents summary shows the other totals and a table of every list and library.
 - The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.
 - **Back to results** on a narrow screen returns focus to the item, and nothing scrolls sideways at 320 pixels wide.
 - **Who has access** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. Cleanup suggestions and the coverage table are in Site review.
@@ -89,8 +89,8 @@ The tests check that:
 - The **Data dictionary (.xlsx)** and **Permissions workbook (.xlsx)** buttons save workbooks with the expected sheets, columns, and column filters.
 - **Print full report / PDF** shows every section with every part open, then opens the print window once.
 - Each section has its own address, Back and Forward move between sections, a `?siteUrl=...#sna/taxonomy` link opens that section, unknown addresses open the Overview, and other page addresses such as `#top` are ignored.
-- **Refresh report** keeps the section, **Start over** removes the address, and **Change site** keeps the typed address.
-- **Show technical details** is off at first, shows internal names and IDs when on, returns focus to the switch, and is remembered under `sitenalyzer:technical-details`.
+- **Refresh report** keeps the section, **Start over** removes the address, **Change site** keeps the typed address, and a report address left after reloading the page is removed.
+- **Show technical details** is off at first, shows internal names and IDs when on, including the site ID under the site's address, returns focus to the switch, and is remembered under `sitenalyzer:technical-details`.
 - Search results are grouped by kind with columns first, quoted phrases and too-short searches work, internal names are found but shown only with technical details on, and a column result opens its Columns tab.
 - A missing script or style sheet shows a message that names the file.
 - axe finds no WCAG 2.2 AA problems on the start screen or in any section of the report screen.

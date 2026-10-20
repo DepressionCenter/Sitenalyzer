@@ -66,14 +66,14 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 1. Open the `sitenalyzer` page.
 2. Keep the current site's address in the **Site URL** box, or type or pick another site. The list shows sites you can open.
 3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, and permissions, and says what it is reading, such as "Reading lists and libraries: 3 of 12". Large sites can take a minute.
-4. The report opens on the **Overview**. Use the section links under the site's name to move between sections. See [Report sections](#report-sections).
+4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. See [Report sections](#report-sections).
 5. To find a list, library, column, folder, page, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
-6. To see internal names, IDs, and other values that developers need, turn on **Show technical details**. See [Technical details](#technical-details).
+6. To see internal names, IDs, and other values that developers need, turn on **Show technical details** at the right end of the section links. See [Technical details](#technical-details).
 7. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
 8. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
 9. To print the whole report or save it as a PDF, select **Print full report / PDF**. Sitenalyzer shows every section on one page and then opens your browser's print window.
-10. To read the same site again, select **Refresh report**. You stay in the section you were looking at.
-11. To look at another site, select **Change site** or **Start over**. **Change site** keeps the last address in the **Site URL** box so you can correct it. **Start over** puts back the address of the site the page is on.
+10. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
+11. To look at another site, select **Change site** or **Start over**, next to **Refresh report**. **Change site** keeps the last address in the **Site URL** box so you can correct it. **Start over** puts back the address of the site the page is on.
 
 Both workbooks and the printed report always include the whole report, whatever section is open or filter is set.
 
@@ -83,11 +83,17 @@ You must be an owner of a site to see all of its permissions. If you can manage 
 
 | Section | What it shows |
 | --- | --- |
-| **Overview** | Counts of document libraries, lists, site pages, items, columns, top-level folders, term sets, people and groups with access to the site, lists and libraries with their own permissions, sharing links, and apps, plus the most recent change. Most counts link to the section that lists them. A count that Sitenalyzer could not read says **Not read** instead of 0. Short cards below the counts link to each section. |
-| **Contents** | Document libraries, lists, and Site pages. Select a name to see its details. **Filter by name** narrows the list. |
+| **Overview** | Counts of document libraries, lists, site pages, term sets, and sharing links, each linked to the section that lists them. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
+| **Contents** | Document libraries, lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
 | **Permissions** | Who can open what on the site. See [Who can open what](#who-can-open-what). |
 | **Taxonomy** | The term groups, term sets, and terms in the site collection's term store. |
 | **Site review** | Cleanup suggestions, and a table of what Sitenalyzer could and could not read. See [Site review](#site-review). |
+
+#### Contents summary
+
+The **Contents summary** shows the number of items in all lists and libraries, the number of columns and top-level folders, and how many lists and libraries have their own permissions. It also says where and when the most recent change happened: the last time an item, file, or page was added, changed, or deleted in any list or library. Under that are tables of every document library and list, with each one's description, number of items and columns, last change, and whether it has its own permissions. Select a name to open its details. **Contents summary** at the top of the list brings the summary back.
+
+#### List and library details
 
 The details of a list or library have these tabs:
 
@@ -114,7 +120,7 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 ### Technical details
 
-**Show technical details** is off at first. When you turn it on, every section adds the values developers need: internal names, list, library, column, folder, term, term set, term group, and term store IDs, the site ID, lookup targets, default values, maximum lengths, indexed columns, and calculation formulas. Search finds these values even when the switch is off, and the workbooks and the printed report always include them.
+**Show technical details** is off at first. When you turn it on, every section adds the values developers need: internal names, list, library, column, folder, term, term set, term group, and term store IDs, lookup targets, default values, maximum lengths, indexed columns, and calculation formulas. The site ID appears under the site's address, with a **Copy** button. Search finds these values even when the switch is off, and the workbooks and the printed report always include them.
 
 Sitenalyzer remembers the setting in this browser. See [How Sitenalyzer works](architecture.md#browser-storage).
 
@@ -156,9 +162,9 @@ The result stays in **Permissions** while you look at other sections, until you 
 
 ### Site review
 
-**Site review** suggests lists and libraries to look at for cleanup: lists not changed in 12 months, libraries with version history turned off, version history with no limit, and the largest lists and libraries. Sitenalyzer does not change or delete anything.
+**Site review** suggests lists and libraries to look at for cleanup: lists not changed in 12 months, libraries with version history turned off, version history with no limit, and the largest lists and libraries.
 
-Under the suggestions, **What this report could read** lists each part of the report, such as **Sharing links** or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
+Under the suggestions, **Report coverage** lists each part of the report, such as **Sharing links** or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
 
 ### Site pages
 
@@ -187,7 +193,7 @@ The workbook doesn't include permissions on single files, folders, or items, or 
 
 1. Download the latest `dist` folder from this repository.
 2. Upload the files from `dist/SiteAssets/scripts` and `dist/SiteAssets/styles` again, replacing the old ones.
-3. Refresh the `sitenalyzer` page. If the old version still shows, press Ctrl+F5 to reload without the browser's saved copy.
+3. Refresh the `sitenalyzer` page. If the old version still shows, press Ctrl+F5 to reload without the browser's saved copy. Sitenalyzer adds a version to the address of each style sheet and library it loads, so a new `sitenalyzer.js` always gets its own style sheets.
 
 You don't need to change the page unless the release notes say so.
 
