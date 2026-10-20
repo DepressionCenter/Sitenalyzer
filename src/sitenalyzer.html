@@ -3,9 +3,11 @@ This file is part of Sitenalyzer
 sitenalyzer.html
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-14
-Summary: Markup for the Sitenalyzer app. The build puts this markup inside sitenalyzer.js,
-         which places it in the page's <div id="sitenalyzer-app"></div> at startup.
+Last Modified: 2026-10-19
+Summary: Markup for the Sitenalyzer app: the start screen, and the frame of the report screen (site header,
+         section navigation, search, report actions, and footer). The build puts this markup inside sitenalyzer.js,
+         which places it in the page's <div id="sitenalyzer-app"></div> at startup. It holds no site data;
+         sitenalyzer.js draws each view inside <div id="sp-results">.
          Keep code out of this file: no script tags and no inline event handlers such as onclick.
 Notes: See README file for documentation and full license information.
 Website: https://github.com/DepressionCenter/Sitenalyzer
@@ -25,45 +27,83 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>.
 -->
 	<div id="sna-copy-toast" role="status" aria-live="polite" class="sna-copy-toast"></div>
-	<div id="sp-info-app">
-		<div style="margin-bottom: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
-		<h1 style="margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1;">
-			<span style="background: linear-gradient(135deg, #00274c 0%, #174992 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Sitenalyzer</span>
-			
-			<span style="font-size: 0.5em; font-weight: 700; color: #ffffff; background-color: #107c41; padding: 2px 8px; border-radius: 10px; letter-spacing: 1px; position: relative; top: -0.6em; margin-left: 2px;">SP</span>
-		</h1>
-		<p style="margin: 0; font-size: 0.95em; color: #595959; font-style: italic;">Data dictionary and security information extraction for SharePoint sites.</p>
+	<div id="sp-info-app" data-technical="false">
+		<div id="sna-entry" class="sna-entry">
+			<h1 class="sna-entry-title"><span class="sna-wordmark">Sitenalyzer</span> <span class="sna-sp-badge">SP</span></h1>
+			<p class="sna-tagline">Data dictionary and security information extraction for SharePoint sites.</p>
+			<div id="sna-url-section">
+				<label for="site-url-input" class="sna-field-label">Site URL:</label>
+				<div class="sna-url-row">
+					<input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL" autocomplete="off" spellcheck="false">
+					<button type="button" id="sna-sites-refresh-btn" class="hide-on-print" title="Refresh sites list" aria-label="Refresh sites list">&#8635;</button>
+				</div>
+				<ul id="site-suggestions"></ul>
+				<div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
+				<button type="button" id="sp-btn-gather" class="sna-btn sna-btn-primary">Extract site information</button>
+			</div>
+			<div id="sna-entry-message" class="sna-entry-message" role="alert" hidden></div>
+		</div>
+		<div id="sp-loader" class="sna-progress" role="status" tabindex="-1"></div>
+		<div id="sna-report" class="sna-report" hidden>
+			<div class="sna-utility-bar hide-on-print">
+				<span class="sna-mark"><span class="sna-mark-dot" aria-hidden="true"></span>Sitenalyzer</span>
+				<div class="sna-utility-actions">
+					<button type="button" class="sna-link-btn" data-action="refresh-report"><span data-icon="refresh"></span>Refresh report</button>
+					<button type="button" class="sna-link-btn" data-action="start-over"><span data-icon="undo"></span>Start over</button>
+					<button type="button" class="sna-btn sna-btn-outline sna-btn-small" data-action="change-site"><span data-icon="swap"></span>Change site</button>
+					<a id="sna-site-settings-link" class="sna-btn sna-btn-outline sna-btn-small" href="#" target="_blank" rel="noopener noreferrer"><span data-icon="settings"></span>Site settings<span class="sna-visually-hidden"> (opens in a new window)</span></a>
+				</div>
+			</div>
+			<div id="sna-site-header" class="sna-site-header"></div>
+			<div class="sna-nav-row hide-on-print">
+				<nav class="sna-nav" aria-label="Report sections">
+					<ul>
+						<li><a href="#sna/overview" data-section="overview"><span data-icon="home"></span>Overview</a></li>
+						<li><a href="#sna/contents" data-section="contents"><span data-icon="folder"></span>Contents</a></li>
+						<li><a href="#sna/permissions" data-section="permissions"><span data-icon="shield"></span>Permissions</a></li>
+						<li><a href="#sna/taxonomy" data-section="taxonomy"><span data-icon="tag"></span>Taxonomy</a></li>
+						<li><a href="#sna/review" data-section="review"><span data-icon="check"></span>Site review</a></li>
+					</ul>
+				</nav>
+				<span class="sna-switch">
+					<input type="checkbox" role="switch" id="sna-technical-switch">
+					<label for="sna-technical-switch">Show technical details</label>
+				</span>
+			</div>
+			<div class="sna-toolbar hide-on-print">
+				<form id="sna-search-form" class="sna-search-form" role="search" aria-label="Search this report">
+					<label for="sna-report-search" class="sna-search-label">Search this report</label>
+					<div class="sna-search-row">
+						<input type="search" id="sna-report-search" maxlength="200" placeholder="Find a list, library, column, folder, or term" autocomplete="off" spellcheck="false">
+						<button type="submit" class="sna-btn sna-btn-outline"><span data-icon="search"></span>Search</button>
+					</div>
+				</form>
+				<div class="sna-report-actions">
+					<p id="sna-report-actions-label" class="sna-visually-hidden">Download or print the full site report</p>
+					<div class="sna-report-buttons" role="group" aria-labelledby="sna-report-actions-label" aria-describedby="sna-report-actions-hint">
+						<button type="button" class="sna-btn sna-btn-primary" data-action="export-xlsx"><span data-icon="download"></span>Data dictionary (.xlsx)</button>
+						<button type="button" class="sna-btn sna-btn-outline" data-action="export-permissions"><span data-icon="download"></span>Permissions workbook (.xlsx)</button>
+						<button type="button" class="sna-btn sna-btn-outline" data-action="print-report"><span data-icon="print"></span>Print full report / PDF</button>
+					</div>
+					<p id="sna-report-actions-hint" class="sna-hint">Downloads and the printed report always include everything, even when a filter is set.</p>
+				</div>
+			</div>
+			<div id="sp-results" class="sna-view"></div>
+			<p class="sna-back-to-top hide-on-print"><button type="button" class="sna-link-btn" data-action="scroll-top">Back to top</button></p>
+		</div>
+		<div class="app-footer">
+			<div class="copyright-info">
+				Copyright &copy; 2026 The Regents of the University of Michigan |
+				<a href="https://depressioncenter.org" target="_blank" rel="noopener noreferrer">Eisenberg Family Depression Center</a>
+			</div>
+			<div class="sna-footer-links hide-on-print">
+				<a href="https://github.com/DepressionCenter/Sitenalyzer" target="_blank" rel="noopener noreferrer" class="sna-footer-link">
+					<svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false">
+						<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+					</svg>
+					View code<span class="sna-visually-hidden"> on GitHub</span>
+				</a>
+				<a href="https://code.depressioncenter.org" target="_blank" rel="noopener noreferrer" class="sna-footer-link">More apps</a>
+			</div>
+		</div>
 	</div>
-	
-    <div id="sna-url-section">
-        <div>
-            <label for="site-url-input" style="font-weight: bold;">Site URL:</label>
-            <div style="display:flex;align-items:center;gap:4px;margin:8px 0;">
-                <input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL" style="margin:0;flex:1;min-width:0;">
-                <button id="sna-sites-refresh-btn" class="hide-on-print" title="Refresh sites list" aria-label="Refresh sites list">&#8635;</button>
-            </div>
-            <ul id="site-suggestions"></ul>
-            <div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
-        </div>
-        <button id="sp-btn-gather">Extract site information</button>
-    </div>
-    <div id="sna-start-over-btn">
-        <button aria-label="Start over: clear results and enter a new site URL"><span aria-hidden="true">&#8635; </span>Start over</button>
-    </div>
-    <div id="sp-loader">Fetching data from SharePoint... this may take a moment.</div>
-    <div id="sp-results"></div>
-    <div class="app-footer">
-    <div class="copyright-info">
-        <strong>Sitenalyzer</strong> &copy; 2026 The Regents of the University of Michigan &nbsp;|&nbsp; 
-        <a href="https://depressioncenter.org" target="_blank" rel="noopener noreferrer">Eisenberg Family Depression Center</a>
-    </div>
-    <div class="github-promo">
-        <a href="https://github.com/DepressionCenter/Sitenalyzer" target="_blank" rel="noopener noreferrer" class="github-btn" aria-label="Code: Sitenalyzer source code on GitHub" title="Sitenalyzer source code on GitHub">
-            <svg height="18" width="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
-            </svg>
-            Code
-        </a>
-    </div>
-</div>
-</div>

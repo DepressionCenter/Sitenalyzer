@@ -3,9 +3,10 @@ This file is part of Sitenalyzer
 sitenalyzer.css
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: Styles for the Sitenalyzer app. The build copies this file to dist/SiteAssets/styles/,
          and sitenalyzer.js adds it to the page from the site's Site Assets library.
+         Every rule starts with the app's own elements, so the rest of the SharePoint page is unchanged.
 Notes: See README file for documentation and full license information.
 Website: https://github.com/DepressionCenter/Sitenalyzer
 
@@ -24,193 +25,498 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* University of Michigan colors. Declared on the app's own elements, not :root, so the rest of the SharePoint page is unchanged.
-   Contrast checked against WCAG 2.2 AA: white on dark blue 15.06:1, dark blue on #f3f2f1 13.47:1, dark blue on maize 9.89:1,
-   white on medium blue 8.73:1. Maize is used only behind dark blue text or as a decorative border, never as text on white. */
-#sp-info-app, #sna-global-search, #sna-copy-toast {
+/* ### Colors ###
+   University of Michigan colors and the report screen's colors. Declared on the app's own elements, not :root,
+   so the rest of the SharePoint page is unchanged. Contrast checked against WCAG 2.2 AA:
+   dark blue #00274c on white 15.06:1; text #173149 on white 12.96:1 and on the light panel 11.86:1;
+   secondary text #526476 on white 6.19:1 and on the light panel 5.66:1; links #174992 on white 8.73:1 and on
+   the light panel 7.98:1; focus outline #8b3600 on white 8.13:1; white on dark blue 15.06:1.
+   Maize is used only behind dark blue text (9.89:1) or as a decorative rule, never as text on white. */
+#sp-info-app, #sna-copy-toast {
     --um-dark-blue: #00274c;
     --um-medium-blue: #174992;
     --um-maize: #ffcb05;
+    --sna-text: #173149;
+    --sna-text-2: #526476;
+    --sna-panel: #eff4f8;
+    --sna-rule: #c9d3dc;
+    --sna-link: #174992;
+    --sna-focus: #8b3600;
+    --sna-error: #a4262c;
 }
 
+/* ### App Frame ### */
 #sp-info-app {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    color: #333;
-    background: #f9f9f9;
-    padding: 20px;
+    font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--sna-text);
+    background: #ffffff;
+    border: 1px solid var(--sna-rule);
     border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    max-width: 960px;
+    max-width: 1200px;
     margin: auto;
+    box-sizing: border-box;
+    overflow-wrap: break-word;
 }
+#sp-info-app *, #sp-info-app *::before, #sp-info-app *::after { box-sizing: border-box; }
+/* The hidden attribute always wins, so a view's own display rule never shows a hidden part. */
+#sp-info-app [hidden] { display: none !important; }
 
-#sp-info-app h2, #sp-info-app h3, #sp-info-app h4 {
+#sp-info-app h1, #sp-info-app h2, #sp-info-app h3, #sp-info-app h4, #sp-info-app h5 {
     color: var(--um-dark-blue);
+    line-height: 1.25;
 }
+#sp-info-app a { color: var(--sna-link); text-decoration: underline; }
+#sp-info-app a:hover { text-decoration-thickness: 2px; }
+#sp-info-app button { font-family: inherit; }
+#sp-info-app :focus-visible { outline: 3px solid var(--sna-focus); outline-offset: 2px; }
+#sp-info-app [tabindex="-1"]:focus { outline: none; }
+#sp-info-app [tabindex="-1"]:focus-visible { outline: 3px solid var(--sna-focus); outline-offset: 2px; }
 
-#sp-info-app button {
-    background-color: var(--um-dark-blue);
-    color: white;
-    border: none;
-    padding: 10px 15px;
-    font-size: 14px;
-    border-radius: 4px;
-    cursor: pointer;
-    margin-bottom: 20px;
-}
-
-#sp-info-app button:hover { background-color: var(--um-medium-blue); }
-#sp-info-app button:disabled { background-color: #cccccc; cursor: not-allowed; }
-
-/* Main call to action: dark blue text on maize (9.89:1). */
-#sp-info-app #sp-btn-gather {
-    background-color: var(--um-maize);
-    color: var(--um-dark-blue);
-    font-weight: 700;
-    border: 1px solid var(--um-dark-blue);
-}
-#sp-info-app #sp-btn-gather:hover { background-color: #ffd633; }
-#sp-info-app #sp-btn-gather:disabled { background-color: #cccccc; color: #323130; border-color: #767676; }
-
-.info-card {
-    background: #fff;
-    border: 1px solid #ddd;
-    padding: 15px;
-    border-radius: 6px;
-    margin-bottom: 15px;
-    /* Tells the browser to skip rendering off-screen cards */
-    content-visibility: auto;
-    contain-intrinsic-size: auto 500px;
-}
-
-.main-section-header {
-    background: #f3f2f1;
-    border-left: 5px solid var(--um-maize);
-    padding: 10px 15px;
-    margin-top: 25px;
-    margin-bottom: 15px;
-    border-radius: 4px;
-}
-
-.main-section-header h2 {
-    margin: 0 !important;
-    font-size: 1.4em;
-}
-
-.grid-container {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-bottom: 10px;
-}
-
-.section-header {
-    display: flex;
-    justify-content: space-between;
+/* ### Buttons ###
+   Buttons are at least 24 by 24 CSS pixels, the smallest target size WCAG 2.2 allows, and most are larger. */
+#sp-info-app .sna-btn {
+    display: inline-flex;
     align-items: center;
-    border-bottom: 2px solid var(--um-dark-blue);
-    margin-bottom: 15px;
-    padding-bottom: 5px;
+    justify-content: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 8px 14px;
+    border-radius: 4px;
+    border: 1px solid var(--um-dark-blue);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-decoration: none;
+    cursor: pointer;
 }
-	
-	.table-scroll-wrapper {
-    max-height: 350px;
-    overflow-y: auto;
-    overflow-x: auto;
-    margin-top: 8px;
-    margin-bottom: 10px;
+#sp-info-app .sna-btn-primary { background: var(--um-dark-blue); color: #ffffff; }
+#sp-info-app .sna-btn-primary:hover { background: var(--um-medium-blue); }
+#sp-info-app .sna-btn-outline { background: #ffffff; color: var(--um-dark-blue); }
+#sp-info-app .sna-btn-outline:hover { background: var(--sna-panel); }
+#sp-info-app .sna-btn:disabled { background: #e1e1e1; color: #323130; border-color: #767676; cursor: not-allowed; }
+
+/* Buttons that look like links, for the utility row and view actions. */
+#sp-info-app .sna-link-btn {
+    background: none;
+    border: none;
+    padding: 4px 2px;
+    min-height: 32px;
+    color: var(--sna-link);
+    font-size: 15px;
+    text-decoration: underline;
+    cursor: pointer;
+}
+#sp-info-app .sna-link-btn:hover { text-decoration-thickness: 2px; }
+
+/* ### Start Screen ### */
+.sna-entry { padding: 24px; }
+#sp-info-app .sna-entry-title { margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1; }
+.sna-wordmark {
+    background: linear-gradient(135deg, #00274c 0%, #174992 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+/* White on green #107c41 is 5.19:1. */
+.sna-sp-badge {
+    font-size: 0.5em;
+    font-weight: 700;
+    color: #ffffff;
+    background-color: #107c41;
+    padding: 2px 8px;
+    border-radius: 10px;
+    letter-spacing: 1px;
+    position: relative;
+    top: -0.6em;
+    margin-left: 2px;
+}
+.sna-tagline { margin: 0 0 20px 0; font-size: 0.95em; color: var(--sna-text-2); font-style: italic; }
+.sna-field-label { display: block; font-weight: 700; margin: 0 0 6px 0; font-size: 15px; }
+.sna-url-row { display: flex; align-items: center; gap: 6px; margin: 0 0 8px 0; }
+#site-url-input {
+    flex: 1;
+    min-width: 0;
+    padding: 10px;
+    font-size: 15px;
+    border: 1px solid #767676;
+    border-radius: 4px;
+    margin: 0;
+}
+#site-suggestions {
+    display: none;
+    list-style: none;
+    padding: 0;
+    margin: 0 0 10px 0;
     border: 1px solid #ddd;
+    max-height: 250px;
+    overflow-y: auto;
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+#site-suggestions li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; word-wrap: break-word; }
+#site-suggestions li:last-child { border-bottom: none; }
+#site-suggestions li:hover { background-color: #f0f0f0; }
+.site-suggestion-title { font-weight: bold; }
+.site-suggestion-url { font-size: 12px; color: var(--sna-text-2); }
+.site-url-helper { font-size: 13px; color: var(--sna-text-2); margin-bottom: 16px; }
+/* Dark blue text on maize is 9.89:1. */
+#sp-info-app #sp-btn-gather { background-color: var(--um-maize); color: var(--um-dark-blue); }
+#sp-info-app #sp-btn-gather:hover { background-color: #ffd633; }
+#sp-info-app #sp-btn-gather:disabled { background-color: #e1e1e1; color: #323130; border-color: #767676; }
+#sp-info-app #sna-sites-refresh-btn {
+    background: none;
+    border: 1px solid #767676;
+    border-radius: 50%;
+    color: #595959;
+    cursor: pointer;
+    font-size: 13px;
+    height: 28px;
+    width: 28px;
+    line-height: 1;
+    padding: 0;
+    margin: 0;
+    flex-shrink: 0;
+}
+#sp-info-app #sna-sites-refresh-btn:hover { background: #f0f0f0; color: #444; border-color: #595959; }
+.sna-entry-message {
+    margin-top: 16px;
+    color: var(--sna-error);
+    padding: 15px;
+    border: 1px solid var(--sna-error);
     border-radius: 4px;
 }
+.sna-progress { padding: 0 24px; font-style: italic; color: var(--sna-text-2); }
+.sna-progress:not(:empty) { padding-bottom: 16px; }
 
-.section-header h3 { margin: 0; }
-.section-header button { margin-bottom: 0; padding: 6px 12px; font-size: 13px; margin-left: 8px; }
+/* Spinning circle shown while the sites list loads. */
+.helper-spinner {
+    border: 2px solid #ddd;
+    border-top: 2px solid var(--um-dark-blue);
+    border-radius: 50%;
+    width: 12px;
+    height: 12px;
+    animation: sna-spin 1s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 6px;
+}
+@keyframes sna-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
 
-.print-btn { background-color: var(--um-dark-blue) !important; color: #fff !important; }
-.print-btn:hover { background-color: var(--um-medium-blue) !important; }
-.print-btn:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
+/* ### Icons ###
+   Line icons drawn with the text color. They are decorative and always sit next to text that says the same thing. */
+.sna-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vertical-align: -3px;
+}
+#sp-info-app .sna-link-btn .sna-icon { margin-right: 6px; }
 
-.csv-btn { background-color: var(--um-dark-blue) !important; color: #fff !important; }
-.csv-btn:hover { background-color: var(--um-medium-blue) !important; }
-.csv-btn:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
-
-#sp-info-app button:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
-
-/* Site card: maize stripe on top, and a right-aligned row of report buttons that wraps on narrow screens. */
-.sna-site-card { border-top: 4px solid var(--um-maize); }
-.sna-report-actions {
+/* ### Report Frame ###
+   Dark blue bars hold the Sitenalyzer name and site actions at the top, and the section links under the site's name.
+   On dark blue, text and borders are white or light blue, and the focus outline is maize (9.89:1). */
+.sna-utility-bar {
     display: flex;
     flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 12px;
     align-items: center;
-    margin: 0 0 10px 0;
+    justify-content: space-between;
+    gap: 8px 16px;
+    padding: 8px 24px;
+    background: var(--um-dark-blue);
+    color: #ffffff;
+    border-radius: 7px 7px 0 0;
 }
-.sna-report-actions button { margin: 0 !important; }
+.sna-mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05em; }
+.sna-mark-dot { width: 14px; height: 22px; background: var(--um-maize); border-radius: 1px 7px 1px 1px; }
+.sna-utility-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+#sp-info-app .sna-utility-bar .sna-link-btn { color: #ffffff; }
+/* #a7bfd6 borders keep a 7.8:1 contrast ratio against dark blue. */
+#sp-info-app .sna-utility-bar .sna-btn-outline { background: transparent; color: #ffffff; border-color: #a7bfd6; }
+#sp-info-app .sna-utility-bar .sna-btn-outline:hover { background: #244968; }
+#sp-info-app .sna-btn-small { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+#sp-info-app .sna-utility-bar :focus-visible,
+#sp-info-app .sna-nav-row :focus-visible { outline-color: var(--um-maize); }
 
-.icon-btn {
-    background: transparent !important;
-    color: #333 !important;
-    border: 1px solid #767676 !important;
-    padding: 4px 8px !important;
-    font-size: 15px !important;
-    line-height: 1;
-    border-radius: 4px;
+.sna-site-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 20px;
+    padding: 18px 24px;
+}
+.sna-site-logo { width: 64px; height: 64px; object-fit: contain; flex-shrink: 0; border-radius: 50%; }
+.sna-site-logo-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--um-dark-blue);
+    color: var(--um-maize);
+    font-size: 24px;
+    font-weight: 700;
+}
+.sna-site-text { flex: 1 1 20rem; min-width: 0; }
+#sp-info-app .sna-site-title { margin: 0 0 4px 0; font-size: 1.8em; }
+.sna-site-desc, .sna-site-address { margin: 0 0 4px 0; }
+.sna-site-address { font-size: 14px; overflow-wrap: anywhere; }
+.sna-site-id { margin: 4px 0 0 0; font-size: 14px; color: var(--sna-text-2); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.sna-code { font-family: Consolas, 'Courier New', monospace; color: var(--sna-text); overflow-wrap: anywhere; }
+#sp-info-app .sna-copy-btn { font-size: 14px; min-height: 28px; padding: 2px 4px; }
+#sp-info-app .sna-copy-btn .sna-icon { width: 16px; height: 16px; margin-right: 4px; }
+.sna-site-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 14px; color: var(--sna-text-2); text-align: right; }
+.sna-tag { border: 1px solid var(--sna-rule); border-radius: 4px; padding: 2px 8px; color: var(--sna-text); }
+
+.sna-nav-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0 16px;
+    padding: 0 16px 0 24px;
+    background: var(--um-dark-blue);
+}
+.sna-nav ul { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+#sp-info-app .sna-nav a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 50px;
+    padding: 12px 16px 8px;
+    color: #ffffff;
+    text-decoration: none;
+    border-bottom: 4px solid transparent;
+}
+#sp-info-app .sna-nav a:hover { background: #234a6d; }
+/* The open section is dark blue on maize (9.89:1) and bold; aria-current tells screen readers which one it is. */
+#sp-info-app .sna-nav a[aria-current="page"] {
+    background: var(--um-maize);
+    color: var(--um-dark-blue);
+    font-weight: 700;
+    border-bottom-color: #936f00;
+}
+.sna-switch { display: inline-flex; align-items: center; gap: 8px; padding: 8px 0; color: #ffffff; font-weight: 600; font-size: 15px; }
+/* A switch drawn from the checkbox itself, so it keeps the checkbox's keyboard behavior and screen reader role. */
+#sp-info-app #sna-technical-switch {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 44px;
+    height: 24px;
+    margin: 0;
+    border: 2px solid #ffffff;
+    border-radius: 12px;
+    background: transparent;
+    position: relative;
     cursor: pointer;
-    margin-bottom: 0 !important;
-    margin-left: 4px;
-    min-width: 34px;
-    min-height: 34px;
+    flex-shrink: 0;
 }
-.icon-btn:hover { background: #e8e8e8 !important; border-color: #333 !important; }
-.icon-btn:focus { outline: 3px solid var(--um-dark-blue) !important; outline-offset: 2px; }
+#sp-info-app #sna-technical-switch::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ffffff;
+    transition: transform 0.15s;
+}
+#sp-info-app #sna-technical-switch:checked { background: var(--um-maize); border-color: var(--um-maize); }
+#sp-info-app #sna-technical-switch:checked::before { background: var(--um-dark-blue); transform: translateX(20px); }
+.sna-switch label { cursor: pointer; }
 
-/* Footer: copyright on the left and the GitHub button on the right. They stack on narrow screens. */
+.sna-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 32px;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 14px 24px 12px;
+    background: var(--sna-panel);
+    border-bottom: 1px solid var(--sna-rule);
+}
+.sna-search-form { flex: 1 1 26rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.sna-search-label { font-weight: 700; font-size: 15px; color: var(--um-dark-blue); }
+.sna-search-row { flex: 1 1 18rem; display: flex; gap: 8px; min-width: 0; }
+#sna-report-search {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 12px;
+    font-size: 15px;
+    border: 1px solid #767676;
+    border-radius: 4px;
+}
+.sna-report-actions { flex: 0 1 auto; }
+.sna-report-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+#sp-info-app .sna-report-buttons .sna-btn { font-size: 14px; padding: 8px 12px; }
+.sna-hint { margin: 6px 0 0 0; font-size: 13px; color: var(--sna-text-2); }
+
+.sna-view { padding: 20px 24px 24px; }
+.sna-back-to-top { text-align: right; padding: 0 24px 12px; margin: 0; }
+
+/* ### Footer ###
+   Copyright on the left and the code and apps links on the right. They wrap in reading order on narrow screens. */
 .app-footer {
-		margin-top: 40px;
-		padding-top: 20px;
-		border-top: 1px solid #ddd;
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: space-between;
-		align-items: center;
-		gap: 12px;
-		text-align: left;
-		font-size: 13px;
-		color: #555;
-		line-height: 1.8;
-	}
-.app-footer a { color: var(--um-dark-blue); text-decoration: none; }
-.app-footer a:hover { text-decoration: underline; }
-	.github-promo {
-flex-shrink: 0;
-	}
-	.github-btn {
-display: inline-flex;
-align-items: center;
-gap: 8px;
-background-color: #24292e; /* Classic GitHub Dark Color */
-color: #ffffff !important;
-padding: 8px 16px;
-border-radius: 6px;
-text-decoration: none;
-font-size: 14px;
-font-weight: 500;
-transition: background-color 0.2s;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 14px 24px;
+    border-top: 1px solid var(--sna-rule);
+    font-size: 13px;
+    color: var(--sna-text-2);
 }
+.sna-footer-links { display: flex; flex-wrap: wrap; gap: 16px; }
+#sp-info-app .sna-footer-link { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; }
 
-.github-btn:hover {
-background-color: #000000;
-text-decoration: none;
-}
-.copyright-info a {
-color: var(--um-dark-blue);
-text-decoration: underline;   /* Underlined so the link stands out from the text around it without relying on color */
-}
+/* ### Views ### */
+#sp-info-app .sna-section-title { margin: 0 0 2px 0; font-size: 1.6em; }
+.sna-lead { margin: 0 0 16px 0; color: var(--sna-text-2); }
+#sp-info-app .sna-subsection-title { margin: 24px 0 8px 0; font-size: 1.2em; }
+.sna-view-actions { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px 0; }
+.sna-error-text { color: var(--sna-error); }
 
-.copyright-info a:hover {
-text-decoration-thickness: 2px;
+/* Facts shown as a two-column list of names and values. */
+.sna-facts { display: grid; grid-template-columns: minmax(8rem, max-content) 1fr; gap: 6px 16px; margin: 8px 0 12px 0; }
+.sna-facts dt { font-weight: 700; }
+.sna-facts dd { margin: 0; min-width: 0; }
+/* Technical values under a heading, shown while Show technical details is on. */
+.sna-tech-strip {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 12px;
+    margin: 8px 0 12px 0;
+    padding: 8px 12px;
+    background: var(--sna-panel);
+    border-radius: 4px;
+    font-size: 13px;
 }
+.sna-tech-strip dt { font-weight: 700; }
+.sna-tech-strip dd { margin: 0; word-break: break-all; font-family: Consolas, 'Courier New', monospace; }
+
+/* Counts: tiles on the light blue panel with a dark blue bar on top. */
+.sna-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 10px;
+    list-style: none;
+    margin: 0 0 20px 0;
+    padding: 0;
+}
+.sna-stat-link {
+    display: flex;
+    flex-direction: column-reverse;
+    justify-content: flex-end;
+    height: 100%;
+    padding: 10px 14px 12px;
+    background: var(--sna-panel);
+    border-top: 4px solid var(--um-dark-blue);
+    border-radius: 0 0 4px 4px;
+}
+#sp-info-app a.sna-stat-link { text-decoration: none; }
+#sp-info-app a.sna-stat-link .sna-stat-label { text-decoration: underline; color: var(--sna-link); }
+#sp-info-app a.sna-stat-link:hover { background: #dceaf5; }
+.sna-stat-value { font-size: 1.6em; font-weight: 700; color: var(--um-dark-blue); line-height: 1.2; }
+.sna-stat-label { font-size: 14px; color: var(--sna-text-2); }
+
+/* Overview cards: Contents, Taxonomy, and Site review stack on the left; Permissions fills the right. */
+.sna-cards { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 48rem) {
+    .sna-cards { grid-template-columns: 1fr 1fr; }
+    .sna-card-wide { grid-column: 2; grid-row: 1 / span 3; }
+}
+.sna-card { border-radius: 4px; padding: 14px 18px; background: var(--sna-panel); border-left: 4px solid var(--um-dark-blue); }
+#sp-info-app .sna-card-title { display: flex; align-items: center; gap: 10px; margin: 0 0 6px 0; font-size: 1.15em; }
+/* Dark blue icon on maize is 9.89:1. */
+.sna-card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--um-maize);
+    color: var(--um-dark-blue);
+    flex-shrink: 0;
+}
+.sna-card-text { margin: 0 0 8px 0; color: var(--sna-text-2); font-size: 15px; }
+.sna-card-links { list-style: none; margin: 0; padding: 0; }
+.sna-card-links li { margin: 0 0 6px 0; }
+
+/* Contents summary */
+.sna-summary-note { margin: -8px 0 16px 0; font-size: 14px; color: var(--sna-text-2); }
+#sp-info-app .sna-summary-heading { margin: 16px 0 6px 0; font-size: 1.05em; }
+/* Permission badges. Dark blue text on light maize is 12.4:1; the words carry the meaning. */
+.sna-badge { display: inline-block; white-space: nowrap; padding: 1px 8px; border: 1px solid #8fa3b5; border-radius: 4px; font-size: 13px; color: var(--sna-text); background: #ffffff; }
+.sna-badge-own { border-color: #936f00; background: #fff4c2; color: var(--um-dark-blue); }
+
+/* Contents: the list beside the details on wide screens, stacked on narrow ones. */
+.sna-contents { display: grid; grid-template-columns: 1fr; gap: 20px; }
+@media (min-width: 48rem) {
+    .sna-contents { grid-template-columns: minmax(15rem, 1fr) 3fr; }
+    #sp-info-app .sna-back { display: none; }
+}
+@media (max-width: 47.99rem) {
+    /* With details open, the list is hidden; Back to results shows it again with the summary under it. */
+    .sna-contents-detail-open .sna-inventory { display: none; }
+}
+.sna-inventory { border: 1px solid var(--sna-rule); border-radius: 4px; padding: 12px; align-self: start; min-width: 0; }
+.sna-inventory-filter label { display: block; font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+#sp-info-app .sna-inventory-heading { font-size: 1em; margin: 16px 0 6px 0; }
+.sna-inventory-list { list-style: none; margin: 0; padding: 0; }
+.sna-inventory-list li { margin: 0 0 4px 0; }
+#sp-info-app .sna-inventory-link {
+    display: block;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    text-decoration: none;
+    color: var(--sna-text);
+}
+#sp-info-app .sna-inventory-link:hover { background: var(--sna-panel); }
+#sp-info-app .sna-inventory-link[aria-current="page"] { border-color: var(--um-dark-blue); background: var(--sna-panel); border-left-width: 4px; }
+.sna-inventory-name { display: block; font-weight: 700; color: var(--sna-link); text-decoration: underline; }
+/* inline-block keeps the link underline off the icon. */
+.sna-inventory-icon { display: inline-block; margin-right: 6px; }
+.sna-inventory-meta { display: block; font-size: 13px; color: var(--sna-text-2); }
+.sna-detail { min-width: 0; }
+.sna-inventory-summary { margin: 0 0 10px 0; }
+.sna-back { margin: 0 0 8px 0; }
+.sna-detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 8px 16px; }
+#sp-info-app .sna-detail-title { margin: 0 0 8px 0; font-size: 1.4em; min-width: 0; }
+.sna-detail-tabs { display: flex; flex-wrap: wrap; gap: 0 4px; list-style: none; margin: 8px 0 16px 0; padding: 0; border-bottom: 1px solid var(--sna-rule); }
+#sp-info-app .sna-detail-tabs a {
+    display: inline-block;
+    padding: 8px 12px 6px;
+    text-decoration: none;
+    color: var(--um-dark-blue);
+    border-bottom: 3px solid transparent;
+}
+#sp-info-app .sna-detail-tabs a:hover { text-decoration: underline; }
+#sp-info-app .sna-detail-tabs a[aria-current="page"] { font-weight: 700; border-bottom-color: var(--um-dark-blue); }
+
+/* Search results */
+.sna-search-group { margin: 0 0 16px 0; }
+.sna-search-group > summary { font-size: 1.1em; padding: 4px 0; }
+.sna-search-list { list-style: none; margin: 4px 0 0 0; padding: 0; }
+.sna-search-item { padding: 10px 0; border-bottom: 1px solid var(--sna-rule); }
+.sna-search-item > a { font-weight: 700; }
+.sna-search-summary { margin: 4px 0 0 0; font-size: 14px; color: var(--sna-text-2); }
+
+.sna-print-item { margin: 0 0 24px 0; }
+
+/* ### Permission Reports ###
+   These styles also serve the permission sections drawn by the older render functions. */
 details.permissions-section {
     margin-top: 10px;
     padding: 10px;
@@ -218,19 +524,17 @@ details.permissions-section {
     border-left: 4px solid var(--um-dark-blue);
     border-radius: 4px;
 }
-
 /* Dark blue keeps a 13.47:1 contrast ratio on the gray section background. */
-summary { cursor: pointer; font-weight: bold; color: var(--um-dark-blue); }
-summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 2px; }
+#sp-info-app summary { cursor: pointer; font-weight: bold; color: var(--um-dark-blue); }
 
-.perm-row { border-bottom: 1px solid #e1dfdd; padding: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
+.perm-row { border-bottom: 1px solid #e1dfdd; padding: 4px 0; font-size: 14px; overflow-wrap: anywhere; }
 .perm-row:last-child { border-bottom: none; }
 
 .app-tag { background: #edebe9; color: #323130; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: 400; }
 
 /* Secondary text. #595959 keeps a 6.26:1 contrast ratio on the gray section background and 7.0:1 on white. */
 .sna-muted { color: #595959; }
-.sna-note { font-size: 12px; color: #595959; margin: 4px 0 10px 0; }
+.sna-note { font-size: 13px; color: #595959; margin: 4px 0 10px 0; }
 
 /* Hidden on screen but read by screen readers, such as table captions. */
 .sna-visually-hidden {
@@ -249,17 +553,18 @@ summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 
 .sna-principal-block { padding: 8px 0; border-bottom: 1px solid #e1dfdd; }
 .sna-principal-block:last-child { border-bottom: none; }
 .sna-principal-name { margin-bottom: 4px; overflow-wrap: anywhere; }
-.sna-principal-line { font-size: 13px; color: #323130; margin: 2px 0; }
+.sna-principal-line { font-size: 14px; color: #323130; margin: 2px 0; }
 .sna-principal-line.sna-muted { color: #595959; }
 .sna-guest-tag { background: #fde7e9; color: #a4262c; font-weight: 600; }
-.sna-perm-list-table { width: 100%; border-collapse: collapse; margin: 6px 0 2px 0; font-size: 13px; background: #fff; }
+.sna-perm-list-table { width: 100%; border-collapse: collapse; margin: 6px 0 2px 0; font-size: 14px; background: #fff; }
 .sna-perm-list-table caption { text-align: left; font-weight: 600; padding: 4px 0; color: #323130; }
 .sna-perm-list-table th { text-align: left; background: #f3f2f1; color: #323130; font-weight: 600; padding: 6px 10px; border-bottom: 2px solid var(--um-dark-blue); }
 .sna-perm-list-table td { padding: 6px 10px; border-bottom: 1px solid #edebe9; vertical-align: top; word-break: break-word; }
+.sna-perm-list-table tbody th { background: transparent; border-bottom: 1px solid #edebe9; vertical-align: top; }
 .sna-perm-list-table tr:nth-child(even) td { background: #faf9f8; }
 .sna-members { margin: 4px 0 2px 0; }
-.sna-members > summary { font-size: 13px; }
-.sna-members-list { margin: 4px 0 4px 6px; padding: 0; font-size: 13px; }
+.sna-members > summary { font-size: 14px; }
+.sna-members-list { margin: 4px 0 4px 6px; padding: 0; font-size: 14px; }
 .sna-members-list li { padding: 1px 0; list-style: disc; margin-left: 22px; }
 
 /* Check one person's access */
@@ -270,15 +575,13 @@ summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 
     flex: 1;
     min-width: min(220px, 100%);
     padding: 8px 10px;
-    font-size: 13px;
+    font-size: 14px;
     border: 1px solid #767676;
     border-radius: 4px;
-    box-sizing: border-box;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: inherit;
 }
-.sna-access-input:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 1px; border-color: var(--um-dark-blue); }
-#sna-user-access-hint { font-size: 12px; margin-top: 4px; }
-.sna-access-status { font-size: 13px; margin: 6px 0; }
+#sna-user-access-hint { font-size: 13px; margin-top: 4px; }
+.sna-access-status { font-size: 14px; margin: 6px 0; }
 .sna-access-status:empty { display: none; }
 
 /* Guests and organization-wide access. The words carry the meaning; color only adds emphasis. */
@@ -289,51 +592,53 @@ summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 
 #sp-info-app .sna-risk-clear .sna-risk-title { color: #0e6b38; margin-bottom: 0; }
 #sp-info-app .sna-risk-unknown .sna-risk-title { color: #323130; }
 .sna-risk-list { margin: 0; padding-left: 20px; }
-.sna-risk-row { font-size: 13px; padding: 3px 0; color: #323130; margin: 0; overflow-wrap: anywhere; }
+.sna-risk-row { font-size: 14px; padding: 3px 0; color: #323130; margin: 0; overflow-wrap: anywhere; }
 .sna-risk-reason { font-weight: 600; color: #a4262c; }
 
 /* Cleanup suggestions. #6b5400 keeps a 6.49:1 contrast ratio on the gray section background. */
 .sna-cleanup-group { margin: 8px 0; }
-#sp-info-app .sna-cleanup-head { font-weight: 600; font-size: 13px; padding: 4px 0; margin: 0; color: #323130; }
+#sp-info-app .sna-cleanup-head { font-weight: 600; font-size: 15px; padding: 4px 0; margin: 0; color: #323130; }
 #sp-info-app .sna-cleanup-alert { color: #a4262c; }
 #sp-info-app .sna-cleanup-warning { color: #6b5400; }
-.sna-cleanup-row { font-size: 13px; padding: 2px 0 2px 12px; color: #323130; }
+.sna-cleanup-row { font-size: 14px; padding: 2px 0 2px 12px; color: #323130; }
 
-/* Tabulator theme — matches Sitenalyzer palette */
-.tabulator {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    font-size: 13px;
+/* ### Tables ###
+   Tabulator theme that matches the Sitenalyzer palette. */
+#sp-info-app .tabulator {
+    font-family: inherit;
+    font-size: 14px;
     border: 1px solid #c8c6c4;
     border-radius: 4px;
     background: #fff;
     margin-top: 4px;
 }
-.tabulator .tabulator-header {
+#sp-info-app .tabulator .tabulator-header {
     background: #f3f2f1;
     border-bottom: 2px solid var(--um-dark-blue);
     border-radius: 4px 4px 0 0;
 }
-.tabulator .tabulator-header .tabulator-col {
+#sp-info-app .tabulator .tabulator-header .tabulator-col {
     background: transparent;
     border-right: 1px solid #e1dfdd;
     color: #323130;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 14px;
     padding: 8px 10px;
 }
-.tabulator .tabulator-header .tabulator-col:last-child { border-right: none; }
-.tabulator .tabulator-header .tabulator-col .tabulator-col-title { white-space: normal; }
-.tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover { background: rgba(0,120,212,0.08); cursor: pointer; }
-/* Fields (column definitions) tables are not row-clickable — reset to default cursor */
+#sp-info-app .tabulator .tabulator-header .tabulator-col:last-child { border-right: none; }
+/* Headings wrap between words only, so a narrow column never shows half a word on each line. */
+#sp-info-app .tabulator .tabulator-header .tabulator-col .tabulator-col-title { white-space: normal; overflow-wrap: normal; word-break: normal; }
+#sp-info-app .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover { background: rgba(0,120,212,0.08); cursor: pointer; }
+/* Column tables are not row-clickable, so rows keep the default pointer. */
 .sna-fields-table .tabulator-row,
 .sna-fields-table .tabulator-row .tabulator-cell { cursor: default; }
-.tabulator .tabulator-header .tabulator-col .tabulator-col-sorter .tabulator-arrow { border-top-color: var(--um-dark-blue); border-bottom-color: var(--um-dark-blue); }
-.tabulator-row { border-bottom: 1px solid #edebe9; }
-.tabulator-row:nth-child(even) { background: #faf9f8; }
-.tabulator-row:nth-child(odd)  { background: #ffffff; }
-.tabulator-row:hover,
-.tabulator-row.tabulator-row-even:hover { background: #e8f3fb !important; }
-.tabulator-row .tabulator-cell {
+#sp-info-app .tabulator .tabulator-header .tabulator-col .tabulator-col-sorter .tabulator-arrow { border-top-color: var(--um-dark-blue); border-bottom-color: var(--um-dark-blue); }
+#sp-info-app .tabulator-row { border-bottom: 1px solid #edebe9; }
+#sp-info-app .tabulator-row:nth-child(even) { background: #faf9f8; }
+#sp-info-app .tabulator-row:nth-child(odd)  { background: #ffffff; }
+#sp-info-app .tabulator-row:hover,
+#sp-info-app .tabulator-row.tabulator-row-even:hover { background: #e8f3fb; }
+#sp-info-app .tabulator-row .tabulator-cell {
     padding: 7px 10px;
     border-right: 1px solid #edebe9;
     vertical-align: top;
@@ -341,79 +646,56 @@ summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 
     overflow-wrap: break-word;
     white-space: normal;
     line-height: 1.5;
-    font-size: 13px;
+    font-size: 14px;
     color: #323130;
 }
-.tabulator-row .tabulator-cell:last-child { border-right: none; }
-.tabulator .tabulator-footer { display: none !important; }
-.tabulator-placeholder span { color: #595959; font-style: italic; }
-.tabulator .tabulator-tableholder { overflow-y: auto; }
-/* Scroll area around long tables; keyboard users can focus it and scroll with the arrow keys. */
-.sna-table-scroll { max-height: 360px; overflow: auto; margin-top: 4px; border-radius: 4px; }
-.sna-table-scroll .tabulator { margin-top: 0; }
-.sna-table-scroll:focus-visible { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
-
-/* Table search input */
-.sna-table-search-wrap { margin: 8px 0 5px 0; }
-.sna-table-search {
-    width: 100%;
-    padding: 7px 10px 7px 32px;
-    font-size: 13px;
-    border: 1px solid #767676;
-    border-radius: 4px;
-    box-sizing: border-box;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 10px center;
-    transition: border-color 0.2s;
-}
-.sna-table-search:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 1px; border-color: var(--um-dark-blue); }
-.sna-table-search::placeholder { color: #767676; }
-
-/* Section action buttons (Copy ID, Open, header row) */
-.sna-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 10px;
-    margin-bottom: 4px;
-}
-.sna-card-header h3 {
-    margin: 0;
-    flex: 1;
-    min-width: 0;
-    word-break: break-word;
-}
-.sna-card-actions {
-    display: flex;
-    gap: 4px;
-    flex-shrink: 0;
-    align-items: center;
-}
-.sna-action-btn {
-    background: #fff !important;
-    color: var(--um-dark-blue) !important;
-    border: 1px solid var(--um-dark-blue) !important;
-    padding: 3px 9px !important;
-    font-size: 12px !important;
-    font-weight: 600;
-    border-radius: 4px;
-    cursor: pointer;
-    margin: 0 !important;
-    min-width: 0;
-    min-height: 28px;
-    white-space: nowrap;
-    line-height: 1.4;
-    transition: background 0.15s, color 0.15s;
-}
-.sna-action-btn:hover { background: var(--um-dark-blue) !important; color: #fff !important; }
-.sna-action-btn:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
+#sp-info-app .tabulator-row .tabulator-cell:last-child { border-right: none; }
+#sp-info-app .tabulator .tabulator-footer { display: none; }
+#sp-info-app .tabulator-placeholder span { color: #595959; font-style: italic; }
+#sp-info-app .tabulator .tabulator-tableholder { overflow-y: auto; }
 /* Let Tabulator rows expand and overflow when a cell editor is active */
-.tabulator-row.tabulator-editing,
-.tabulator-row .tabulator-cell.tabulator-editing {
-    overflow: visible !important;
+#sp-info-app .tabulator-row.tabulator-editing,
+#sp-info-app .tabulator-row .tabulator-cell.tabulator-editing {
+    overflow: visible;
     z-index: 50;
     position: relative;
 }
+/* Scroll area around long tables; keyboard users can focus it and scroll with the arrow keys. */
+.sna-table-scroll { max-height: 420px; overflow: auto; margin-top: 4px; border-radius: 4px; }
+#sp-info-app .sna-table-scroll .tabulator { margin-top: 0; }
+
+/* Filter box and row count above tables with more than 10 rows, and above the Contents list. */
+.sna-table-filter { margin: 4px 0 8px 0; }
+.sna-table-filter label { display: block; font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+#sp-info-app .sna-table-search {
+    width: 100%;
+    padding: 7px 10px;
+    font-size: 14px;
+    border: 1px solid #767676;
+    border-radius: 4px;
+    font-family: inherit;
+}
+.sna-table-count { margin: 4px 0 0 0; font-size: 13px; color: var(--sna-text-2); }
+
+/* ### Small Parts ### */
+/* ID, Open, and Permissions buttons for a list or library */
+.sna-card-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#sp-info-app .sna-action-btn {
+    background: #fff;
+    color: var(--um-dark-blue);
+    border: 1px solid var(--um-dark-blue);
+    padding: 3px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 0;
+    min-height: 32px;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+#sp-info-app .sna-action-btn:hover { background: var(--um-dark-blue); color: #fff; }
+#sp-info-app .sna-action-btn:disabled { background: #e1e1e1; color: #323130; border-color: #767676; cursor: not-allowed; }
 
 .sna-copy-toast {
     position: fixed;
@@ -436,116 +718,27 @@ summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 
 .sna-type-icon { font-style: normal; margin-right: 4px; vertical-align: middle; opacity: 0.85; }
 
 /* Links to folders, pages, and files inside tables */
-.sna-folder-link { color: var(--um-dark-blue); text-decoration: underline; cursor: pointer; }
-.sna-folder-link:hover { text-decoration: none; }
+#sp-info-app .sna-folder-link { color: var(--um-dark-blue); text-decoration: underline; cursor: pointer; }
+#sp-info-app .sna-folder-link:hover { text-decoration: none; }
 
 /* Folder items right-align */
 .sna-tab-items-cell { text-align: right; font-variant-numeric: tabular-nums; }
 
-#sp-loader { display: none; font-style: italic; color: #666; margin-bottom: 15px; }
+/* ID text: small and muted */
+.list-id-text { font-size: 0.8rem; color: #595959; word-break: break-all; font-weight: 400; }
+.sna-summary-id { margin-left: 6px; }
 
-#site-url-input {
-    width: 100%;
-    padding: 10px;
-    font-size: 14px;
-    border: 1px solid #767676;
-    border-radius: 4px;
-    margin: 8px 0;
-    box-sizing: border-box;
-}
-
-#site-suggestions {
-    display: none;
-    list-style: none;
-    padding: 0;
-    margin: 0 0 10px 0;
-    border: 1px solid #ddd;
-    max-height: 250px;
-    overflow-y: auto;
-    background: white;
-    border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-#site-suggestions li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; word-wrap: break-word; }
-#site-suggestions li:last-child { border-bottom: none; }
-#site-suggestions li:hover { background-color: #f0f0f0; }
-.site-suggestion-title { font-weight: bold; }
-.site-suggestion-url { font-size: 11px; color: #666; }
-.site-url-helper { font-size: 12px; color: #666; margin-bottom: 15px; }
-/* 24 by 24 pixels is the smallest target size WCAG 2.2 allows; #595959 and #767676 meet the contrast minimums. */
-#sp-info-app #sna-sites-refresh-btn { background: none !important; border: 1px solid #767676 !important; border-radius: 50% !important; color: #595959 !important; cursor: pointer; font-size: 13px !important; height: 24px; width: 24px; line-height: 1; padding: 0 !important; margin: 0 !important; flex-shrink: 0; }
-#sp-info-app #sna-sites-refresh-btn:hover { background: #f0f0f0 !important; color: #444 !important; border-color: #595959 !important; }
-
-/* Spinning Circle CSS */
-.helper-spinner {
-    border: 2px solid #ddd;
-    border-top: 2px solid var(--um-dark-blue);
-    border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    animation: spin 1s linear infinite;
-    display: inline-block;
-    vertical-align: middle;
-    margin-right: 6px;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-/* URL input section collapse animation */
-#sna-url-section {
-    overflow: hidden;
-    transition: max-height 0.35s ease, opacity 0.3s ease;
-    max-height: 300px;
-    opacity: 1;
-}
-/* visibility: hidden removes the collapsed fields from keyboard focus and screen readers after the fade ends. */
-#sna-url-section.collapsed {
-    max-height: 0 !important;
-    opacity: 0;
-    visibility: hidden;
-    transition: max-height 0.35s ease, opacity 0.3s ease, visibility 0s linear 0.35s;
-    pointer-events: none;
-    margin: 0;
-    padding: 0;
-}
-
-/* Start Over button */
-#sna-start-over-btn {
-    display: none;
-    text-align: right;
-    margin-bottom: 10px;
-}
-#sna-start-over-btn button {
-    background-color: #605e5c;
-    font-size: 13px;
-    padding: 7px 14px;
-    margin-bottom: 0;
-}
-#sna-start-over-btn button:hover { background-color: #3b3a39; }
-
-/* ID text — small and muted */
-.list-id-text {
-    font-size: 0.73rem;
-    color: #595959;
-    word-break: break-all;
-    font-weight: 400;
-}
-
-/* Inline ID reveal (shown temporarily on ID button click) */
+/* ID shown for a few seconds after the ID button copies it */
 .sna-id-inline {
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     color: #595959;
-    font-family: 'Courier New', monospace;
+    font-family: Consolas, 'Courier New', monospace;
     word-break: break-all;
     vertical-align: middle;
     margin-right: 4px;
 }
 
-/* Item count badge */
+/* Item count badge: dark blue text on maize is 9.89:1. */
 .item-count-badge {
     display: inline-flex;
     align-items: baseline;
@@ -554,60 +747,16 @@ summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 
     color: var(--um-dark-blue);
     padding: 2px 9px 2px 8px;
     border-radius: 12px;
-    font-size: 0.8em;
+    font-size: 0.75em;
     font-weight: 700;
     margin-left: 8px;
     vertical-align: middle;
     white-space: nowrap;
     line-height: 1.6;
 }
-.item-count-badge sup {
-    font-size: 0.65em;
-    font-weight: 400;
-    margin-left: 2px;
-    opacity: 0.85;
-}
+.item-count-badge sup { font-size: 0.65em; font-weight: 400; margin-left: 2px; opacity: 0.85; }
 
-/* Print specific styling */
-@media print {
-    body { background-color: white; font-size: 12pt; }
-    #sna-url-section, #sna-start-over-btn { display: none !important; }
-    #site-url-input, label[for="site-url-input"], #site-suggestions, #site-url-helper-message, #sp-btn-gather { display: none !important; }
-    .section-header button { display: none !important; }
-    .hide-on-print { display: none !important; }
-    #sp-info-app { box-shadow: none; background: transparent; padding: 0; max-width: 100%; margin: 0; border: none; }
-    /* Force everything to render for printing, overriding the scrollbars and content-visibility */
-    .info-card { border: none; padding: 0 0 20px 0; margin-bottom: 20px; content-visibility: visible !important; }
-    .table-scroll-wrapper { max-height: none !important; overflow: visible !important; border: none !important; }
-    .print-section { page-break-after: always; break-after: page; }
-    details.permissions-section { background: transparent; border-left: 3px solid #ccc; page-break-inside: avoid; }
-    .fields-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .folders-table th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .item-count-badge { background: #555 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    /* Tabulator print: expand all rows, hide search */
-    .tabulator { height: auto !important; border: 1px solid #ccc !important; }
-    .tabulator-tableholder { height: auto !important; overflow: visible !important; }
-    .sna-table-scroll { max-height: none !important; overflow: visible !important; }
-    .tabulator .tabulator-header { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .sna-table-search-wrap { display: none !important; }
-
-    .github-btn {
-        background-color: transparent !important;
-        color: #333 !important;
-        border: 1px solid #333;
-        padding: 5px 10px;
-    }
-
-    /* Automatically spell out the URL next to the link when printing */
-    .github-btn::after {
-        content: " (https://github.com/DepressionCenter/Sitenalyzer)";
-        font-weight: normal;
-        font-size: 11px;
-        color: #555;
-    }
-    .sna-pencil-btn { display: none !important; }
-    .sna-editor-controls { display: none !important; }
-}
+.info-card { background: #fff; padding: 0; margin-bottom: 15px; }
 
 /* Taxonomy section */
 .sna-taxonomy-group {
@@ -624,198 +773,101 @@ summary:focus-visible { outline: 2px solid var(--um-dark-blue); outline-offset: 
     border-left: 3px solid #c8c6c4;
     border-radius: 3px;
 }
-.sna-taxonomy-group > summary,
-.sna-taxonomy-set > summary { font-weight: 600; color: var(--um-dark-blue); }
+#sp-info-app .sna-taxonomy-group > summary,
+#sp-info-app .sna-taxonomy-set > summary { font-weight: 600; color: var(--um-dark-blue); }
+.sna-taxonomy-desc { font-size: 14px; color: #555; margin: 8px 0 6px 0; }
 
 /* Admin inline edit */
 .sna-editable-wrap { position: relative; display: inline; }
-.sna-pencil-btn {
-    background: transparent !important;
-    border: none !important;
+#sp-info-app .sna-pencil-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
     cursor: pointer;
-    font-size: 14px;
-    padding: 0 4px !important;
-    margin: 0 0 0 4px !important;
-    opacity: 0;
+    font-size: 15px;
+    padding: 0 4px;
+    margin: 0 0 0 4px;
+    min-width: 24px;
+    min-height: 24px;
+    opacity: 0.6;
     transition: opacity 0.15s;
     vertical-align: middle;
-    color: var(--um-dark-blue) !important;
-    min-width: 0 !important;
-    min-height: 0 !important;
+    color: var(--um-dark-blue);
 }
-.sna-editable-wrap:hover .sna-pencil-btn,
-.sna-editable-wrap:focus-within .sna-pencil-btn { opacity: 1; }
-.sna-pencil-btn:focus { opacity: 1; outline: 2px solid var(--um-dark-blue); }
-/* Empty field: keep pencil at reduced opacity so admins can always discover it */
-.sna-editable-wrap--empty .sna-pencil-btn { opacity: 0.55; }
-.sna-editable-wrap--empty:hover .sna-pencil-btn { opacity: 1; }
-.sna-editor-wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: 4px;
-}
+#sp-info-app .sna-editable-wrap:hover .sna-pencil-btn,
+#sp-info-app .sna-editable-wrap:focus-within .sna-pencil-btn,
+#sp-info-app .sna-pencil-btn:focus { opacity: 1; border-color: var(--um-dark-blue); }
+.sna-editor-wrap { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .sna-editor-field {
     min-height: 60px;
     padding: 6px 8px;
-    font-size: 13px;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 14px;
+    font-family: inherit;
     border: 2px solid var(--um-dark-blue);
     border-radius: 4px;
     background: #fff;
-    outline: none;
     white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.5;
 }
 .sna-editor-controls { display: flex; gap: 6px; margin-top: 2px; }
-.sna-editor-save-btn {
-    background: var(--um-dark-blue) !important;
-    color: #fff !important;
-    border: none !important;
-    padding: 4px 12px !important;
-    font-size: 12px !important;
+#sp-info-app .sna-editor-save-btn,
+#sp-info-app .sna-editor-cancel-btn {
+    padding: 4px 12px;
+    font-size: 13px;
     border-radius: 4px;
     cursor: pointer;
-    margin: 0 !important;
-    min-height: 0 !important;
-}
-.sna-editor-save-btn:hover { background: var(--um-medium-blue) !important; }
-.sna-editor-cancel-btn {
-    background: #fff !important;
-    color: #323130 !important;
-    border: 1px solid #8a8886 !important;
-    padding: 4px 12px !important;
-    font-size: 12px !important;
-    border-radius: 4px;
-    cursor: pointer;
-    margin: 0 !important;
-    min-height: 0 !important;
-}
-.sna-editor-cancel-btn:hover { background: #f3f2f1 !important; }
-
-/* Global search widget */
-#sna-global-search {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    z-index: 10000;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 8px;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-}
-#sna-search-toggle {
-    background: var(--um-dark-blue);
-    color: #fff;
-    border: none;
-    border-radius: 50%;
-    width: 48px;
-    height: 48px;
-    font-size: 22px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-    padding: 0;
     margin: 0;
-    line-height: 1;
-    transition: background 0.15s, transform 0.15s;
+    min-height: 28px;
 }
-#sna-search-toggle:hover { background: var(--um-medium-blue); transform: scale(1.08); }
-#sna-search-toggle:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 2px; }
-#sna-search-panel {
-    background: #fff;
-    border: 1px solid #c8c6c4;
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    padding: 10px;
-    width: 320px;
-    max-width: calc(100vw - 56px);
-    order: -1;
+#sp-info-app .sna-editor-save-btn { background: var(--um-dark-blue); color: #fff; border: 1px solid var(--um-dark-blue); }
+#sp-info-app .sna-editor-save-btn:hover { background: var(--um-medium-blue); }
+#sp-info-app .sna-editor-cancel-btn { background: #fff; color: #323130; border: 1px solid #8a8886; }
+#sp-info-app .sna-editor-cancel-btn:hover { background: #f3f2f1; }
+
+/* ### Narrow Screens ###
+   At 320 CSS pixels the frame keeps a 16 pixel gutter and nothing scrolls sideways except wide tables. */
+@media (max-width: 40rem) {
+    .sna-entry, .sna-site-header, .sna-toolbar, .sna-view { padding: 16px; }
+    .sna-utility-bar, .sna-nav-row, .app-footer, .sna-back-to-top { padding-left: 16px; padding-right: 16px; }
+    .sna-site-meta { align-items: flex-start; text-align: left; }
+    .sna-site-logo { width: 48px; height: 48px; font-size: 18px; }
+    #sp-info-app .sna-nav a { padding: 10px 10px 6px; min-height: 44px; }
+    .sna-nav .sna-icon { display: none; }
+    .sna-facts { grid-template-columns: 1fr; gap: 0; }
+    .sna-facts dd { margin-bottom: 8px; }
 }
-#sna-search-input {
-    width: 100%;
-    padding: 8px 12px;
-    font-size: 14px;
-    border: 1px solid #767676;
-    border-radius: 4px;
-    box-sizing: border-box;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
+/* ### Forced Colors and Reduced Motion ### */
+@media (forced-colors: active) {
+    #sp-info-app #sna-technical-switch { border-color: ButtonText; }
+    #sp-info-app #sna-technical-switch::before { background: ButtonText; }
+    #sp-info-app #sna-technical-switch:checked { background: Highlight; border-color: Highlight; }
+    #sp-info-app #sna-technical-switch:checked::before { background: HighlightText; }
+    #sp-info-app .sna-nav a[aria-current="page"],
+    #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
+    .sna-mark-dot { background: CanvasText; }
+    .sna-utility-bar, .sna-nav-row { border-bottom: 1px solid CanvasText; }
 }
-#sna-search-input:focus { outline: 3px solid var(--um-dark-blue); outline-offset: 1px; border-color: var(--um-dark-blue); }
-#sna-search-results {
-    list-style: none;
-    padding: 0;
-    margin: 6px 0 0 0;
-    max-height: 300px;
-    overflow-y: auto;
-    border-top: 1px solid #edebe9;
+@media (prefers-reduced-motion: reduce) {
+    #sp-info-app *, #sp-info-app *::before, #sp-info-app *::after { transition: none !important; animation: none !important; }
 }
-#sna-search-results:empty { display: none; }
-.sna-search-result {
-    padding: 8px 10px;
-    cursor: pointer;
-    border-bottom: 1px solid #f3f2f1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-.sna-search-result:last-child { border-bottom: none; }
-.sna-search-result:hover,
-.sna-search-result[aria-selected="true"] { background: #e8f3fb; }
-.sna-search-result-primary {
-    font-size: 13px;
-    font-weight: 600;
-    color: #323130;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.sna-search-result-secondary {
-    font-size: 11px;
-    color: #555;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.sna-search-result-breadcrumb {
-    font-size: 10px;
-    color: #595959;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.sna-search-no-results {
-    padding: 10px;
-    font-size: 13px;
-    color: #595959;
-    font-style: italic;
-    text-align: center;
-}
-.sna-search-separator {
-    height: 0;
-    border: none;
-    border-top: 1px solid #c8c6c4;
-    margin: 4px 0;
-    padding: 0;
-    list-style: none;
-    pointer-events: none;
-}
-@keyframes sna-highlight-pulse {
-    0%   { outline: 4px solid var(--um-dark-blue); outline-offset: 3px; background-color: #cce4f6; }
-    65%  { outline: 4px solid var(--um-dark-blue); outline-offset: 3px; background-color: #cce4f6; }
-    100% { outline: none; outline-offset: 0; background-color: transparent; }
-}
-.sna-highlight-pulse {
-    animation: sna-highlight-pulse 1.8s ease-out forwards;
-    border-radius: 4px;
-}
-@media (max-width: 480px) {
-    #sna-search-panel { width: calc(100vw - 56px); }
-}
+
+/* ### Print ###
+   Printing leaves out the controls, navigation, and start screen; the full report view opens every section. */
 @media print {
-    #sna-global-search { display: none !important; }
+    #sp-info-app { border: none; max-width: 100%; margin: 0; font-size: 12pt; }
+    #sp-info-app .hide-on-print, #sna-entry, .sna-progress { display: none !important; }
+    .sna-view { padding: 0; }
+    .sna-site-header { padding: 0 0 12px 0; }
+    .print-section { break-after: page; }
+    details.permissions-section { background: transparent; border-left: 3px solid #ccc; }
+    .item-count-badge { background: #555 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* Tables print every row, without their scroll areas. */
+    #sp-info-app .tabulator { height: auto !important; border: 1px solid #ccc; }
+    #sp-info-app .tabulator-tableholder { height: auto !important; overflow: visible !important; }
+    .sna-table-scroll { max-height: none !important; overflow: visible !important; }
+    #sp-info-app .tabulator .tabulator-header { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    #sp-info-app .sna-pencil-btn, .sna-editor-controls { display: none !important; }
+    .app-footer { padding: 12px 0 0 0; }
 }

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 build.ps1
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-14
+Last Modified: 2026-10-19
 Summary: Builds the files that site owners copy to SharePoint. Reads src/ and writes dist/.
          Runs with the Windows PowerShell 5.1 that comes with Windows, or with PowerShell 7 on
          any system. build.sh does the same work in bash, and both scripts must write identical
@@ -44,6 +44,8 @@ $PagesOut = Join-Path $DistDir 'SitePages'
 $ChecksumFile = Join-Path $LibDir 'sha256sums.txt'
 # The build replaces this exact line in src/sitenalyzer.js with the markup from src/sitenalyzer.html.
 $AppHtmlMarker = 'var SNA_APP_HTML = [];'
+# The build replaces this exact line in src/sitenalyzer.js with the version of the style sheets and libraries.
+$AssetVersionMarker = "var SNA_ASSET_VERSION = '';"
 # UTF-8 without a byte order mark, so the output matches build.sh byte for byte.
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:FilesWritten = 0
@@ -100,6 +102,10 @@ $markerCount = @($appLines | Where-Object { $_ -ceq $AppHtmlMarker }).Count
 if ($markerCount -ne 1) {
     Stop-Build "src/sitenalyzer.js must contain the line '$AppHtmlMarker' exactly once, but it appears $markerCount times."
 }
+$versionMarkerCount = @($appLines | Where-Object { $_ -ceq $AssetVersionMarker }).Count
+if ($versionMarkerCount -ne 1) {
+    Stop-Build "src/sitenalyzer.js must contain the line '$AssetVersionMarker' exactly once, but it appears $versionMarkerCount times."
+}
 
 # Only files listed in sha256sums.txt are copied, so an unexpected or changed library never reaches dist/.
 $libraryFiles = @()
@@ -146,6 +152,16 @@ foreach ($libraryName in $libraryFiles) {
 }
 
 ### Build sitenalyzer.js ###
+# The version is the first 12 characters of the SHA-256 checksum of sitenalyzer.css followed by sha256sums.txt,
+# both with carriage returns removed. It changes whenever the app styles or a library change. build.sh computes
+# the same value.
+$versionText = [System.IO.File]::ReadAllText((Join-Path $SrcDir 'sitenalyzer.css'), [System.Text.Encoding]::UTF8).Replace("`r", '') +
+    [System.IO.File]::ReadAllText($ChecksumFile, [System.Text.Encoding]::UTF8).Replace("`r", '')
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$versionHash = $sha256.ComputeHash($Utf8NoBom.GetBytes($versionText))
+$sha256.Dispose()
+$assetVersion = (-join ($versionHash | ForEach-Object { $_.ToString('x2') })).Substring(0, 12)
+
 # Drop the license comment at the top of the markup, then turn each line into a quoted JavaScript
 # string. Escaping rules, shared with build.sh: \ becomes \\, " becomes \", and a tab becomes \t.
 $markupLines = Read-TextLines (Join-Path $SrcDir 'sitenalyzer.html')
@@ -168,6 +184,8 @@ foreach ($line in $appLines) {
         $builtApp.Add('var SNA_APP_HTML = [')
         foreach ($quotedLine in $quotedMarkup) { $builtApp.Add($quotedLine) }
         $builtApp.Add('];')
+    } elseif ($line -ceq $AssetVersionMarker) {
+        $builtApp.Add("var SNA_ASSET_VERSION = '$assetVersion';")
     } else {
         $builtApp.Add($line)
     }

@@ -3,7 +3,7 @@
 # build.sh
 # Author(s): Gabriel Mongefranco.
 # Created: 2026-10-14
-# Last Modified: 2026-10-14
+# Last Modified: 2026-10-19
 # Summary: Builds the files that site owners copy to SharePoint. Reads src/ and writes dist/.
 #          Needs only bash and standard tools (sed, awk, and sha256sum or shasum), so it runs on
 #          Linux, macOS, and Git Bash on Windows. build.ps1 does the same work in PowerShell, and
@@ -38,6 +38,8 @@ PAGES_OUT="$DIST_DIR/SitePages"
 CHECKSUM_FILE="$LIB_DIR/sha256sums.txt"
 # The build replaces this exact line in src/sitenalyzer.js with the markup from src/sitenalyzer.html.
 APP_HTML_MARKER='var SNA_APP_HTML = [];'
+# The build replaces this exact line in src/sitenalyzer.js with the version of the style sheets and libraries.
+ASSET_VERSION_MARKER="var SNA_ASSET_VERSION = '';"
 TAB="$(printf '\t')"
 FILES_WRITTEN=0
 
@@ -60,8 +62,10 @@ copy_text_file() {
 
 if command -v sha256sum > /dev/null 2>&1; then
   file_sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
+  stdin_sha256() { sha256sum | cut -d ' ' -f 1; }
 elif command -v shasum > /dev/null 2>&1; then
   file_sha256() { shasum -a 256 "$1" | cut -d ' ' -f 1; }
+  stdin_sha256() { shasum -a 256 | cut -d ' ' -f 1; }
 else
   fail "this script needs sha256sum or shasum to check the library files. Install one of them and run the build again."
 fi
@@ -73,6 +77,8 @@ done
 
 marker_count="$(tr -d '\r' < "$SRC_DIR/sitenalyzer.js" | grep -cxF "$APP_HTML_MARKER" || true)"
 [ "$marker_count" = "1" ] || fail "src/sitenalyzer.js must contain the line '$APP_HTML_MARKER' exactly once, but it appears $marker_count times."
+version_marker_count="$(tr -d '' < "$SRC_DIR/sitenalyzer.js" | grep -cxF "$ASSET_VERSION_MARKER" || true)"
+[ "$version_marker_count" = "1" ] || fail "src/sitenalyzer.js must contain the line '$ASSET_VERSION_MARKER' exactly once, but it appears $version_marker_count times."
 
 # Only files listed in sha256sums.txt are copied, so an unexpected or changed library never reaches dist/.
 library_files=()
@@ -116,6 +122,10 @@ for library_name in "${library_files[@]}"; do
 done
 
 ### Build sitenalyzer.js ###
+# The version is the first 12 characters of the SHA-256 checksum of sitenalyzer.css followed by sha256sums.txt,
+# both with carriage returns removed. It changes whenever the app styles or a library change. build.ps1 computes
+# the same value.
+asset_version="$( { tr -d '' < "$SRC_DIR/sitenalyzer.css"; tr -d '' < "$CHECKSUM_FILE"; } | stdin_sha256 | cut -c 1-12)"
 markup_lines="$(mktemp)"
 trap 'rm -f "$markup_lines"' EXIT
 
@@ -127,11 +137,15 @@ tr -d '\r' < "$SRC_DIR/sitenalyzer.html" \
   > "$markup_lines"
 
 tr -d '\r' < "$SRC_DIR/sitenalyzer.js" \
-  | awk -v marker="$APP_HTML_MARKER" -v markup_file="$markup_lines" '
+  | awk -v marker="$APP_HTML_MARKER" -v version_marker="$ASSET_VERSION_MARKER" -v version="$asset_version" -v quote="'" -v markup_file="$markup_lines" '
       $0 == marker {
         print "var SNA_APP_HTML = ["
         while ((getline markup_line < markup_file) > 0) { print markup_line }
         print "];"
+        next
+      }
+      $0 == version_marker {
+        print "var SNA_ASSET_VERSION = " quote version quote ";"
         next
       }
       { print }' \
