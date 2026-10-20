@@ -54,12 +54,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     background: #ffffff;
     border: 1px solid var(--sna-rule);
     border-radius: 8px;
-    max-width: 1200px;
-    margin: auto;
     box-sizing: border-box;
     overflow-wrap: break-word;
 }
 #sp-info-app *, #sp-info-app *::before, #sp-info-app *::after { box-sizing: border-box; }
+/* The app fills the width of its web part, so wide tables have room. Paragraphs stop at 44rem, about 80 characters
+   of body text, because longer lines are hard to read. Smaller text wraps at the same width. */
+#sp-info-app p, #sp-info-app .site-url-helper { max-width: 44rem; }
+#sp-info-app .sna-back-to-top { max-width: none; }
 /* The hidden attribute always wins, so a view's own display rule never shows a hidden part. */
 #sp-info-app [hidden] { display: none !important; }
 
@@ -112,26 +114,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 /* ### Start Screen ### */
 .sna-entry { padding: 24px; }
-#sp-info-app .sna-entry-title { margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1; }
+#sp-info-app .sna-entry-title { display: flex; align-items: center; gap: 12px; margin: 0 0 4px 0; font-size: 2.4em; font-weight: 900; letter-spacing: -1px; line-height: 1.1; }
 .sna-wordmark {
     background: linear-gradient(135deg, #00274c 0%, #174992 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
-/* White on green #107c41 is 5.19:1. */
-.sna-sp-badge {
-    font-size: 0.5em;
-    font-weight: 700;
-    color: #ffffff;
-    background-color: #107c41;
-    padding: 2px 8px;
-    border-radius: 10px;
-    letter-spacing: 1px;
-    position: relative;
-    top: -0.6em;
-    margin-left: 2px;
-}
+/* The Sitenalyzer symbol in its colors for white: dark blue 15.06:1 and medium blue 8.73:1 on white. */
+.sna-entry-symbol { width: 1.1em; height: 1.1em; flex: none; }
+.sna-entry-symbol .sna-symbol-site { fill: var(--um-dark-blue); }
+.sna-entry-symbol .sna-symbol-list { fill: var(--um-medium-blue); }
+.sna-entry-symbol .sna-symbol-branch { stroke: var(--um-medium-blue); }
 .sna-tagline { margin: 0 0 20px 0; font-size: 0.95em; color: var(--sna-text-2); font-style: italic; }
 .sna-field-label { display: block; font-weight: 700; margin: 0 0 6px 0; font-size: 15px; }
 .sna-url-row { display: flex; align-items: center; gap: 6px; margin: 0 0 8px 0; }
@@ -238,7 +232,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     border-radius: 7px 7px 0 0;
 }
 .sna-mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05em; }
-.sna-mark-dot { width: 14px; height: 22px; background: var(--um-maize); border-radius: 1px 7px 1px 1px; }
+/* Sitenalyzer symbol: the site (maize) with two lists and libraries (white) branching from it. On dark blue,
+   maize is 9.89:1, white 15.06:1, and the #a7bfd6 branch line 7.94:1. The same drawing is in images/. */
+.sna-mark-symbol { width: 24px; height: 24px; flex: none; }
+.sna-symbol-site { fill: var(--um-maize); }
+.sna-symbol-list { fill: #ffffff; }
+.sna-symbol-branch { fill: none; stroke: #a7bfd6; stroke-width: 2.6; stroke-linejoin: round; }
+.sna-mark-site { color: var(--um-maize); }
 .sna-utility-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
 #sp-info-app .sna-utility-bar .sna-link-btn { color: #ffffff; }
 /* #a7bfd6 borders keep a 7.8:1 contrast ratio against dark blue. */
@@ -891,7 +891,9 @@ details.permissions-section {
     #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
     #sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: Highlight; }
     #sp-info-app .sna-pencil-btn { border-color: ButtonText; }
-    .sna-mark-dot { background: CanvasText; }
+    .sna-symbol .sna-symbol-site, .sna-symbol .sna-symbol-list { fill: CanvasText; }
+    .sna-symbol .sna-symbol-branch { stroke: CanvasText; }
+    .sna-mark-site { color: inherit; }
     .sna-site-logo-placeholder { background: Canvas; color: CanvasText; border: 1px solid CanvasText; }
     .sna-utility-bar, .sna-nav-row { border-bottom: 1px solid CanvasText; }
 }

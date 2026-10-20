@@ -1,0 +1,21 @@
+This file is part of Sitenalyzer
+images/LICENSE.txt
+Summary: Copyright and license of the images in this folder and of favicon.ico in the repository root.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+The Sitenalyzer symbol, logo, browser icon, README screenshot, and repository
+preview images in this folder, and favicon.ico in the repository root, are
+licensed under the GNU Free Documentation License v1.3 or later. See
+<https://www.gnu.org/licenses/fdl-1.3.html>.
+
+The name in sitenalyzer-logo-on-dark.png, sitenalyzer-logo-on-light.png,
+Repo-preview.png, and Repo-preview-thumb.png is set in Segoe UI, a Microsoft
+font. These files are pictures of the text. No font file or font outline is
+included in this repository.
+
+The screenshots show Sitenalyzer reading a pretend site with made-up data. They
+contain no real site, person, or participant information.
+
+The University of Michigan and Eisenberg Family Depression Center logos are not
+part of this folder and keep their own terms. See <https://brand.umich.edu/>.

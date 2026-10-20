@@ -66,7 +66,7 @@ var SNA_APP_HTML = [
     "\t<div id=\"sna-copy-toast\" role=\"status\" aria-live=\"polite\" class=\"sna-copy-toast\"></div>",
     "\t<div id=\"sp-info-app\" data-technical=\"false\">",
     "\t\t<div id=\"sna-entry\" class=\"sna-entry\">",
-    "\t\t\t<h1 class=\"sna-entry-title\"><span class=\"sna-wordmark\">Sitenalyzer</span> <span class=\"sna-sp-badge\">SP</span></h1>",
+    "\t\t\t<h1 class=\"sna-entry-title\"><svg class=\"sna-symbol sna-entry-symbol\" viewBox=\"0 0 32 32\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"sna-symbol-site\" x=\"3.5\" y=\"3.5\" width=\"11\" height=\"9\" rx=\"2\"/><path class=\"sna-symbol-branch\" d=\"M9 12.5V25.5H15M9 17.5H15\"/><rect class=\"sna-symbol-list\" x=\"15.5\" y=\"14.1\" width=\"13\" height=\"6.8\" rx=\"2\"/><rect class=\"sna-symbol-list\" x=\"15.5\" y=\"22.1\" width=\"13\" height=\"6.8\" rx=\"2\"/></svg><span class=\"sna-wordmark\">Sitenalyzer</span></h1>",
     "\t\t\t<p class=\"sna-tagline\">Data dictionary and security information extraction for SharePoint sites.</p>",
     "\t\t\t<div id=\"sna-url-section\">",
     "\t\t\t\t<label for=\"site-url-input\" class=\"sna-field-label\">Site URL:</label>",
@@ -83,7 +83,7 @@ var SNA_APP_HTML = [
     "\t\t<div id=\"sp-loader\" class=\"sna-progress\" role=\"status\" tabindex=\"-1\"></div>",
     "\t\t<div id=\"sna-report\" class=\"sna-report\" hidden>",
     "\t\t\t<div class=\"sna-utility-bar hide-on-print\">",
-    "\t\t\t\t<span class=\"sna-mark\"><span class=\"sna-mark-dot\" aria-hidden=\"true\"></span>Sitenalyzer</span>",
+    "\t\t\t\t<span class=\"sna-mark\"><svg class=\"sna-symbol sna-mark-symbol\" viewBox=\"0 0 32 32\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"sna-symbol-site\" x=\"3.5\" y=\"3.5\" width=\"11\" height=\"9\" rx=\"2\"/><path class=\"sna-symbol-branch\" d=\"M9 12.5V25.5H15M9 17.5H15\"/><rect class=\"sna-symbol-list\" x=\"15.5\" y=\"14.1\" width=\"13\" height=\"6.8\" rx=\"2\"/><rect class=\"sna-symbol-list\" x=\"15.5\" y=\"22.1\" width=\"13\" height=\"6.8\" rx=\"2\"/></svg><span class=\"sna-visually-hidden\">Sitenalyzer</span><span aria-hidden=\"true\"><span class=\"sna-mark-site\">Site</span>nalyzer</span></span>",
     "\t\t\t\t<div class=\"sna-utility-actions\">",
     "\t\t\t\t\t<button type=\"button\" class=\"sna-link-btn\" data-action=\"refresh-report\"><span data-icon=\"refresh\"></span>Refresh report</button>",
     "\t\t\t\t\t<button type=\"button\" class=\"sna-link-btn\" data-action=\"start-over\"><span data-icon=\"undo\"></span>Start over</button>",
@@ -169,7 +169,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = 'cb8137fcb18c';
+var SNA_ASSET_VERSION = 'fa129ed17c83';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.

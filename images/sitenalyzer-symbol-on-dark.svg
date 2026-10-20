@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This file is part of Sitenalyzer
+images/sitenalyzer-symbol-on-dark.svg
+Author(s): Gabriel Mongefranco
+Created: 2026-10-20
+Last Modified: 2026-10-20
+Summary: Sitenalyzer symbol for dark blue backgrounds: a maize site with two white lists branching from it.
+Notes: See README file for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+Licensed under the GNU Free Documentation License v1.3 or later.
+See <https://www.gnu.org/licenses/fdl-1.3.html>. See images/LICENSE.txt and the README for full license information.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img">
+  <title>Sitenalyzer</title>
+  <rect x="3.5" y="3.5" width="11" height="9" rx="2" fill="#FFCB05"/>
+  <path d="M9 12.5V25.5H15M9 17.5H15" fill="none" stroke="#A7BFD6" stroke-width="2.6" stroke-linejoin="round"/>
+  <rect x="15.5" y="14.1" width="13" height="6.8" rx="2" fill="#FFFFFF"/>
+  <rect x="15.5" y="22.1" width="13" height="6.8" rx="2" fill="#FFFFFF"/>
+</svg>
