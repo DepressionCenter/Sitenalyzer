@@ -16,13 +16,13 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 # Sitenalyzer
 
-## How Sitenalyzer works
+## Sitenalyzer architecture
 
 [Back to README](../README.md)
 
 This page describes Sitenalyzer's parts, how it starts on a SharePoint page, and why it is built this way. It is for developers and maintainers. Sitenalyzer runs entirely in the browser of the person using it. It reads site information through the SharePoint REST API with that person's own permissions, and it has no server of its own.
 
-### Why the files are split up
+### Separate files for the page and the app
 
 SharePoint Online enforces a Content Security Policy (CSP). CSP is a browser rule that decides which scripts a page may run. Under it, SharePoint blocks code written directly into a page, including code pasted into a Modern Script Editor web part. It also blocks scripts from content delivery networks unless a tenant administrator trusts them. Scripts stored in the tenant's own SharePoint sites are allowed.
 
@@ -40,7 +40,7 @@ So the web part holds only an empty `<div>` and one `<script src>` line. Everyth
 
 The build scripts turn `src/` into `dist/`, which has the same folder layout as SharePoint. See [Building and testing Sitenalyzer](development.md).
 
-### How Sitenalyzer starts
+### Startup
 
 ```mermaid
 flowchart TD
@@ -63,7 +63,7 @@ The diagram shows these steps:
 5. When every file has loaded, it places the app markup in `<div id="sitenalyzer-app">` and starts the app. SharePoint sometimes adds the web part's `<div>` to the page a little later, so Sitenalyzer checks for it every 100 milliseconds for up to 10 seconds. If the `<div>` never appears, it writes an error in the browser console. Both times are set at the top of `src/sitenalyzer.js` (`SNA_MOUNT_WAIT_MS` and `SNA_MOUNT_CHECK_INTERVAL_MS`).
 6. If any file fails to load, it shows a message in the `<div>` that names the file and tells the person which folder to copy it to.
 
-### What Sitenalyzer asks SharePoint
+### Requests to SharePoint
 
 Every request is a read made with the signed-in person's own permissions. The only writes are the description edits that site owners make on purpose. The `$batch` requests for shared item names are sent as POST requests, but they hold only reads and change nothing on the site.
 
@@ -75,18 +75,18 @@ Every request is a read made with the signed-in person's own permissions. The on
 | `/_api/web/lists` | Lists and libraries, with version history settings and last-changed dates for the cleanup suggestions. |
 | `/_api/web/sitegroups(<ID>)/users` | Members of each SharePoint group in the permission list. |
 | `/_api/web/sitegroups` | Sharing links, read from the hidden `SharingLinks.*` groups. |
-| `/_api/contextinfo` and `/_api/$batch`, holding `GetFileById('…')` and then `GetFolderById('…')` | The names and addresses of up to 60 shared files and folders. See [How shared items are named](#how-shared-items-are-named). |
+| `/_api/contextinfo` and `/_api/$batch`, holding `GetFileById('…')` and then `GetFolderById('…')` | The names and addresses of up to 60 shared files and folders. See [Shared item names](#shared-item-names). |
 | `/_api/web/roledefinitions`, `/_api/web/siteusers?$filter=IsSiteAdmin eq true` | Permission levels and site collection administrators, for the permissions workbook. |
 | `/_api/web/lists?$filter=BaseTemplate eq 119` and its `items` | The Site Pages library and its pages. |
 | `/_api/web/lists(guid'...')/items(<ID>)?$select=BannerImageUrl` | The image chosen for one site page, read only when its details open. |
 | `/_api/web/siteusers?$filter=Email eq '…'` and `getUserEffectivePermissions(@u)` | Only when someone uses **Check one person's access**. |
 | Fields, root folders, and the term store (`/_api/v2.1/sites/…/termStore`) | Columns, top-level folders, and terms for the data dictionary. |
-| `…/termStore/sets/<ID>/terms?$expand=children`, and `…/terms/<ID>/children` when needed | Which term each term sits under. See [How parent terms are read](#how-parent-terms-are-read). |
+| `…/termStore/sets/<ID>/terms?$expand=children`, and `…/terms/<ID>/children` when needed | Which term each term sits under. See [Parent terms and term set use](#parent-terms-and-term-set-use). |
 | `/_api/web/lists(guid'…')/fields` and `/_api/web/fields`, each filtered to managed metadata columns, with `SchemaXml` | Which columns use each term set. A list sends this request only when it has a managed metadata column. |
 
 Group member lookups and person checks run at most 6 at a time (`SNA_MAX_PARALLEL_REQUESTS`), so large sites aren't slowed down by SharePoint's request limits.
 
-#### How shared items are named
+#### Shared item names
 
 SharePoint names each sharing link group `SharingLinks.<item ID>.<link type>.<link ID>`. The shared item can be a file, a folder, a list item, or a file someone deleted after sharing it. Sitenalyzer looks up the names this way:
 
@@ -95,9 +95,9 @@ SharePoint names each sharing link group `SharingLinks.<item ID>.<link type>.<li
 3. It sends `GetFolderById` in the same way for the items SharePoint answered 404 Not Found for, so links to folders show the folder's name with "(folder)".
 4. Items that still aren't found, such as list items and deleted files, are shown with "No name found" and their ID.
 
-Because SharePoint answers the batch itself with 200 OK, the browser console shows no failed request for items that aren't files. The answer is read by `snaParseBatchResponse`, which accepts CRLF and LF line endings. If the digest or a batch fails, the links that haven't been named yet are shown without names. A batch holds only GET requests to the site's own REST API, and `snaBatchGet` refuses any other address.
+Because SharePoint answers the batch itself with 200 OK, the browser console shows no failed request for items that aren't files. The answer is read by `snaParseBatchResponse`, which accepts CRLF and LF line endings. SharePoint can answer a batch with 200 OK and still throttle single lookups inside it with 429 Too Many Requests. Sitenalyzer sends those lookups again in a batch of their own, after the wait in their `Retry-After` header (at least 2 seconds), up to 5 times. If the digest or a batch fails, the links that haven't been named yet are shown without names. A batch holds only GET requests to the site's own REST API, and `snaBatchGet` refuses any other address.
 
-### How parent terms are read
+### Parent terms and term set use
 
 The terms request for a term set doesn't say which term is the parent of which, so Sitenalyzer reads parents after every term set has been read. For each term set, it does these steps:
 
@@ -109,7 +109,7 @@ A term can sit under more than one term, such as a term pinned in two places, so
 
 The term set of a managed metadata column isn't returned by the columns request. So a list with a managed metadata column sends one more request for those columns, with `SchemaXml`, the column's definition in XML. Sitenalyzer reads `TermSetId` and `AnchorId` (the term a column starts at) from it with `DOMParser`, and keeps them only when they look like a GUID. The site's own columns are read the same way from `/_api/web/fields`. A site column added to a list has the same column ID in the list, so it is shown once, as the list's column. In the data dictionary, a managed metadata column's `value_set_id` names its term set's value set.
 
-### How permissions are counted
+### Permission rows
 
 Sitenalyzer keeps one permission row for each scope, person or group, and permission level. A scope is the whole site or one list or library that has its own permissions. The **Who has access** section and the Permissions sheet of the workbook are both built from these rows, so they always agree.
 
@@ -129,7 +129,7 @@ Sitenalyzer keeps one permission row for each scope, person or group, and permis
 - The site logo is shown, and the **Open** and **Permissions** buttons open a new window, only for `https://` addresses on the SharePoint tenant being read. Addresses within the site, such as `/sites/example/SiteAssets/logo.png`, are completed with the site's host first.
 - Every cell in the permissions workbook is written as text, so a name such as `=SUM(A1)` can't run as a formula.
 
-### How the report screen works
+### Report screen
 
 The report screen has two halves: collecting the report, and drawing views from it.
 
@@ -166,11 +166,11 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 - `SNA_ROUTE_MODE` at the top of `src/sitenalyzer.js` is `'hash'`. This was checked on a SharePoint page with the Modern Script Editor web part and `?csp=enforce`. If a page rewrites the address right after Sitenalyzer sets it, Sitenalyzer writes a warning in the console and keeps views in memory for the rest of the visit. Back and Forward then don't change views on that page.
 - After every view change, focus moves to the view's heading, the heading of the part or term set in the address, the selected tab or part link, or the item that was open, so keyboard and screen reader users keep their place.
 
-### Where the app markup comes from
+### App markup
 
 The app markup is kept in `src/sitenalyzer.html` so it is easy to edit. It holds the start screen, the frame of the report screen (the site header, section navigation, search, report actions, technical details switch, and footer), and the **Choose a site** dialog. It holds no site data. The build turns each line into a JavaScript string and puts the strings in `sitenalyzer.js`, replacing the line `var SNA_APP_HTML = [];`. This way the site owner uploads one app file, and the page code never changes when the markup does.
 
-### How hidden values work
+### Hidden values
 
 Sitenalyzer hides values that look like personal information unless **Show hidden values** is on. `SNA_HIDDEN_VALUE_PATTERNS` near the top of `src/sitenalyzer.js` lists the patterns, which are adapted from the sharing checks in agentprise and the PHI checks in extractium. None of them uses lookbehind, because a pattern the browser can't read would stop the whole file from loading.
 
@@ -181,7 +181,7 @@ Sitenalyzer hides values that look like personal information unless **Show hidde
 - The workbooks hide values in their free-text columns only: the site's name and description, list titles and descriptions, column titles, descriptions, choices, default values, and formulas, and term names and descriptions. The download file names hide them too. The **About** and **Export_Info** sheets say whether values were hidden.
 - The report itself always holds the real text. So a description editor opens with it, and a save never writes a hidden-value label over a description.
 
-The switch is never saved, so each visit starts with values hidden. It appears only when `snaCountHiddenValues` finds at least one value, and its tooltip (`#sna-hidden-values-tip`, also its accessible description) says how many. `snaSetShowHiddenValues` redraws the site header and the view and returns focus to the switch. Descriptions being edited are kept because they are drawn from `_snaDrafts`. Hiding values by pattern finds only the shapes of text in the patterns, so it doesn't de-identify a report.
+The switch is never saved, so each visit starts with values hidden. It appears only when there is something to show: a value that `snaCountHiddenValues` finds in the report's names and descriptions, including permission levels, or any other value `snaMaskText` hid while it drew a view or saved a workbook. `snaNoteHiddenValue` records each hidden value and updates the switch once the drawing finishes, and its tooltip (`#sna-hidden-values-tip`, also its accessible description) says how many. `snaSetShowHiddenValues` redraws the site header and the view and returns focus to the switch. Descriptions being edited are kept because they are drawn from `_snaDrafts`. Hiding values by pattern finds only the shapes of text in the patterns, so it doesn't de-identify a report.
 
 ### Browser storage
 

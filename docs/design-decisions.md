@@ -20,7 +20,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 [Back to README](../README.md)
 
-This page explains why the Sitenalyzer report screen looks and works the way it does. It is for developers and designers who change the interface and want to keep what already works. Each decision says what Sitenalyzer does and why. [Installing and using Sitenalyzer](usage.md) describes each screen in detail, and [How Sitenalyzer works](architecture.md) explains the code behind it.
+This page explains why the Sitenalyzer report screen looks and works the way it does. It is for developers and designers who change the interface and want to keep what already works. Each decision says what Sitenalyzer does and why. [Installing and using Sitenalyzer](usage.md) describes each screen in detail, and [Sitenalyzer architecture](architecture.md) explains the code behind it.
 
 ### Goals
 
@@ -98,7 +98,7 @@ You now know what the report screen is meant to do and why each part works the w
 ### Additional resources
 
 - [Installing and using Sitenalyzer](usage.md)
-- [How Sitenalyzer works](architecture.md)
+- [Sitenalyzer architecture](architecture.md)
 - [Branding](branding.md)
 - [Building and testing Sitenalyzer](development.md)
 - [WCAG 2.2](https://www.w3.org/TR/WCAG22/)

@@ -22,7 +22,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 This page explains how to add Sitenalyzer to a SharePoint Online site, how to update it, and how to use it. It is for site owners who set it up and for anyone who uses it to look at a site. You need to be able to add files to the site's Site Assets library and create pages.
 
-### What you need
+### Requirements
 
 - A SharePoint Online site where you can create pages and add files to the Site Assets library.
 - The Modern Script Editor web part. If it isn't available on your site, ask your site administrator to install it.
@@ -97,7 +97,7 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 | --- | --- |
 | **Overview** | Counts of document libraries, lists, site pages, term sets, and sharing links, each linked to the section that lists them. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
 | **Contents** | Document libraries, lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
-| **Permissions** | Who can open what on the site. See [Who can open what](#who-can-open-what). |
+| **Permissions** | Who can open what on the site. See [Permissions](#permissions). |
 | **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
 | **Site review** | Lists and libraries to review for cleanup, the largest ones, and what Sitenalyzer could and could not read. See [Site review](#site-review). |
 
@@ -134,7 +134,7 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 **Show technical details** is off at first. When you turn it on, every section adds the values developers need: internal names, list, library, column, folder, term, term set, term group, and term store IDs, lookup targets, default values, maximum lengths, indexed columns, and calculation formulas. The site ID appears under the site's address, with a **Copy** button. Search finds these values even when the switch is off, and the workbooks and the printed report always include them.
 
-Sitenalyzer remembers the setting in this browser. See [How Sitenalyzer works](architecture.md#browser-storage).
+Sitenalyzer remembers the setting in this browser. See [Browser storage](architecture.md#browser-storage).
 
 ### Hidden values
 
@@ -155,7 +155,7 @@ Sitenalyzer looks for these kinds of values:
 | Street address | `1500 Main Street` | `Main Street` |
 | Age over 89 | `aged 93` | `aged 45` |
 
-Sitenalyzer checks the names and descriptions of the site, lists, libraries, columns, folders, site pages, shared items, term groups, term sets, and terms, and column choices, default values, and formulas. These stay visible:
+Sitenalyzer checks the names and descriptions of the site, lists, libraries, columns, folders, site pages, shared items, permission levels, term groups, term sets, and terms, and column choices, default values, and formulas. These stay visible:
 
 - Names, email addresses, and sign-in names of people and groups, because you need them to review who has access.
 - IDs, internal names, and addresses, so links and IDs keep working. A page or folder address can still hold a value that is hidden in its name.
@@ -167,7 +167,7 @@ When you edit a description, the description box shows the real text, and Sitena
 
 Pattern matching finds only text shaped like the examples above, so it doesn't find all personal information, such as a participant's name. Hidden values don't make a report safe to share or de-identify it. Check a printout or workbook before you share it, and store it the way you would other personal data.
 
-### Who can open what
+### Permissions
 
 The **Permissions** section lists its parts on the left. Select one to open it.
 
@@ -289,7 +289,7 @@ You can now install Sitenalyzer on a site, use it to document the site and its p
 ### Additional resources
 
 - [Troubleshooting](troubleshooting.md)
-- [How Sitenalyzer works](architecture.md)
+- [Sitenalyzer architecture](architecture.md)
 - [Modern Script Editor web part](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor)
 - [Understanding permission levels in SharePoint](https://learn.microsoft.com/en-us/sharepoint/understanding-permission-levels)
 - [How to Connect to SharePoint from Scripts, Workflows or Data Pipelines](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245) (UM login required)

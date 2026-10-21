@@ -82,7 +82,7 @@ The tests check that:
 - **Back to results** on a narrow screen returns focus to the item, and nothing scrolls sideways at 320 pixels wide.
 - Each part of **Permissions** opens from its navigation with its own address. **People and groups** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. **Site permissions** shows the guest finding with links, the own permissions finding, the site collection administrators, and the permission levels, and says what it couldn't check instead of saying no guests have access.
 - Sharing links are found in site groups read 5,000 at a time. When a later request fails, Site permissions, Sharing links, and Report coverage say some sharing links may be missing.
-- Shared files and folders are named from `$batch` requests of at most 20 lookups, files first and then folders, with no failed requests in the console. An item that is neither says "No name found". When the batch or the request digest fails, the links are shown without names. Batch answers with LF line endings, a boundary in quotes, or a failed part are read correctly.
+- Shared files and folders are named from `$batch` requests of at most 20 lookups, files first and then folders, with no failed requests in the console. An item that is neither says "No name found". A lookup that SharePoint throttles inside a batch is sent again on its own. When the batch or the request digest fails, the links are shown without names. Batch answers with LF line endings, a boundary in quotes, or a failed part are read correctly.
 - **Site review** shows one row per list or library per cleanup finding, the largest lists and libraries, and the coverage table.
 - **Check a person's access** works with the Enter key, keeps its result when Permissions reopens, and sends quotes in an email address as data.
 - HTML in site, group, member, permission level, page, file, column, and folder names shows as plain text, including in search results.
@@ -102,7 +102,7 @@ The tests check that:
 - Taxonomy lists its term sets, opens one from its address or a search result, and says when a term set in the address is not in the report.
 - A term set shows each term's parent term in tree order, including a term pinned under two terms, whether SharePoint returns children with `$expand=children` or one term at a time. When parents can't be read, the **Parent term** column is left out and Report coverage says **Not read**. Term requests follow next-batch links only to the same site.
 - **Lists and libraries using this term set** lists the list and site columns that use a term set, read from `SchemaXml`, with the term a column starts at. Its links open the list's Columns tab filtered to the column. The print document and the data dictionary include them, and a failed read says so instead of showing an empty table.
-- Values that look like personal information are hidden in every view, search, the print document and its title, every workbook cell, and the download file names. People's emails stay visible. Search and filters don't find hidden values. **Show hidden values** shows them on screen, in print, and in the workbooks, returns focus to the switch, and is off again after the page reloads. The switch appears only when values were hidden, and its tooltip shows on hover and focus, closes with Escape, and says 1 value or 3 values correctly. The description editor opens with the real text and saves it. Each pattern has a value it hides and a close value it keeps, and IDs, dates, and labels without digits stay visible. axe passes with the switch on and off.
+- Values that look like personal information are hidden in every view, search, the print document and its title, every workbook cell, and the download file names. People's emails stay visible. Search and filters don't find hidden values. **Show hidden values** shows them on screen, in print, and in the workbooks, returns focus to the switch, and is off again after the page reloads. The switch appears only when values were hidden, including values only in a custom permission level or in **Choose a site**, and its tooltip shows on hover and focus, closes with Escape, and says 1 value or 3 values correctly. The description editor opens with the real text and saves it. Each pattern has a value it hides and a close value it keeps, and IDs, dates, and labels without digits stay visible. axe passes with the switch on and off.
 - **Show technical details** is off at first, shows internal names and IDs when on, including the site ID under the site's address, returns focus to the switch, and is remembered under `sitenalyzer:technical-details`.
 - Search results are grouped by kind with columns first, quoted phrases and too-short searches work, internal names are found but shown only with technical details on, and a column result opens its Columns tab.
 - A missing script or style sheet shows a message that names the file.
@@ -132,7 +132,7 @@ Automated checks find only part of all accessibility problems. Check keyboard us
 5. Update the version and license text in `THIRD-PARTY-NOTICES.md`, and the version in the README credits.
 6. Build, run the tests, and commit.
 
-### What CI checks
+### CI checks
 
 The CI workflow in `.github/workflows/ci.yml` runs on every pull request and on every push to `main`.
 
@@ -147,7 +147,7 @@ You can now build Sitenalyzer, run its tests, and update its libraries. Before y
 
 ### Additional resources
 
-- [How Sitenalyzer works](architecture.md)
+- [Sitenalyzer architecture](architecture.md)
 - [Installing and using Sitenalyzer](usage.md)
 - [Project preferences](../skills/project-preferences/SKILL.md)
 - [Playwright](https://playwright.dev/)

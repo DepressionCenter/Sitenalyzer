@@ -2638,6 +2638,65 @@ test('leaves out the parent column of a term set whose terms were never looked u
     await expect(termSet.locator('[tabulator-field="parentNames"]:visible')).toHaveCount(0);
 });
 
+test('looks up a shared item again when SharePoint throttles it inside a batch', async function({ page }) {
+    let fileAnswers = 0;
+    const record = await openPretendSite(page, { answerOverrides: OWNERS_ONLY_ANSWERS.concat(THREE_SHARED_ITEMS, [
+        { pattern: /^\/_api\/web\/GetFileById\('([^']+)'\)$/, answer: function(url, match) {
+            if (match[1] !== SHARED_FILE_ID) { return undefined; }
+            fileAnswers++;
+            return fileAnswers === 1 ? reply(429, { error: 'Too many requests' }) : undefined;
+        } }
+    ]) });
+    await extractSiteInformation(page);
+
+    const sharing = await openPermissionPart(page, 'Sharing links (3)');
+    await expect(sharing.getByRole('link', { name: 'Visit Schedule.docx' })).toBeVisible();
+    // The throttled file is sent again on its own, then the two items that aren't files are looked up as folders.
+    const batches = batchRequests(record);
+    expect(batches.length).toBe(3);
+    expect(batchRequestLines(batches[1].body)).toEqual([
+        'GET ' + SITE_URL + "/_api/web/GetFileById('" + SHARED_FILE_ID + "')?$select=Name,ServerRelativeUrl HTTP/1.1"
+    ]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('shows Show hidden values when the only hidden values are in a custom permission level', async function({ page }) {
+    const level = { Id: 1073741931, Name: 'Caller 734-555-0142', Description: 'Calls (734) 555-0143 each week.', Hidden: false, RoleTypeKind: 0, Order: 210,
+        BasePermissions: { High: '0', Low: '69639' } };
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/web\/roledefinitions$/, body: { value: [level] } },
+        { pattern: /^\/_api\/web\/roleassignments$/, body: { value: [
+            { Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 }, RoleDefinitionBindings: [{ Id: level.Id, Name: level.Name, Hidden: false, RoleTypeKind: 0 }] }
+        ] } }
+    ] });
+    await extractSiteInformation(page);
+
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    await expect(hiddenSwitch).toBeVisible();
+    await expect(hiddenSwitch).toHaveAccessibleDescription('Hid 2 values that look like personal information, such as phone numbers.');
+    const site = await openPermissionPart(page, 'Site permissions');
+    await expect(site).toContainText('Caller [phone number hidden]');
+    await hiddenSwitch.check();
+    await expect(page.locator('#sp-results')).toContainText('Caller 734-555-0142');
+});
+
+test('shows Show hidden values once a value is hidden anywhere on screen, such as in Choose a site', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: [{ pattern: /^\/_api\/search\/query$/, body: { PrimaryQueryResult: { RelevantResults: { Table: { Rows: [
+        { Cells: [{ Key: 'Title', Value: 'Test Research Site' }, { Key: 'Path', Value: SITE_URL }] },
+        { Cells: [{ Key: 'Title', Value: 'Archive 734-555-0177' }, { Key: 'Path', Value: 'https://contoso.sharepoint.com/sites/testarchive' }] }
+    ] } } } } }] });
+    await extractSiteInformation(page);
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    await expect(hiddenSwitch).toBeHidden();
+
+    await page.getByRole('button', { name: 'Change site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    await expect(dialog).toContainText('Archive [phone number hidden]');
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    await expect(hiddenSwitch).toBeVisible();
+    await expect(hiddenSwitch).toHaveAccessibleDescription('Hid 1 value that looks like personal information, such as a phone number.');
+});
+
 test('finds internal names but shows them only with technical details on', async function({ page }) {
     await openPretendSite(page);
     await extractSiteInformation(page);

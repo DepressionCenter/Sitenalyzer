@@ -781,6 +781,8 @@ var SNA_HIDDEN_VALUE_ATTRIBUTES = /(\s(?:aria-label|title|alt|data-name|data-fil
 var _snaShowHiddenValues = false; // True while Show hidden values is on. Never saved, so every visit starts with values hidden.
 var _snaKeptValues = null;        // Matches found in people's and groups' names, emails, and sign-in names, which stay visible
 var _snaKeptPeople = [];          // Names and sign-in names from person checks, added to _snaKeptValues
+var _snaHiddenSeen = {};          // Every value hidden while drawing or saving this report, in lowercase
+var _snaHiddenSyncQueued = false; // True while an update of Show hidden values is waiting to run
 
 // True when the digits in text pass the Luhn check that card numbers use, so most other long numbers stay visible.
 function snaPassesLuhnCheck(text) {
@@ -851,7 +853,24 @@ function snaKeptValues() {
 function snaMaskText(value) {
     var text = String(value === null || value === undefined ? '' : value);
     if (_snaShowHiddenValues || !text) { return text; }
-    return snaReplaceHiddenValues(text, snaKeptValues(), function(match, pattern) { return '[' + pattern.label + ' hidden]'; });
+    return snaReplaceHiddenValues(text, snaKeptValues(), function(match, pattern) {
+        snaNoteHiddenValue(match);
+        return '[' + pattern.label + ' hidden]';
+    });
+}
+
+// Records a value that was just hidden. The first time a value is hidden, Show hidden values is updated after the
+// current drawing finishes, so the switch appears whenever anything is hidden, even text snaCountHiddenValues doesn't check.
+function snaNoteHiddenValue(match) {
+    var key = String(match).toLowerCase();
+    if (_snaHiddenSeen[key]) { return; }
+    _snaHiddenSeen[key] = true;
+    if (_snaHiddenSyncQueued) { return; }
+    _snaHiddenSyncQueued = true;
+    Promise.resolve().then(function() {
+        _snaHiddenSyncQueued = false;
+        snaSyncHiddenValuesSwitch();
+    });
 }
 
 // Hides values in markup that Sitenalyzer built, unless Show hidden values is on: in the text between tags and in the
@@ -882,8 +901,9 @@ function snaMaskHtml(html) {
 }
 
 // Returns how many different values in the report's free text look like personal information: names and
-// descriptions of the site, lists, libraries, columns, folders, pages, shared items, and terms, and column choices,
-// default values, and formulas. People's and groups' values are kept, so they aren't counted.
+// descriptions of the site, lists, libraries, columns, folders, pages, shared items, permission levels, and terms,
+// and column choices, default values, and formulas. Values hidden anywhere else while the report was drawn or saved
+// are counted too. People's and groups' values are kept, so they aren't counted.
 function snaCountHiddenValues(report) {
     if (!report) { return 0; }
     var kept = snaKeptValues();
@@ -897,6 +917,8 @@ function snaCountHiddenValues(report) {
     });
     (report.pages.pages || []).forEach(function(page) { [page.name, page.fileName].forEach(check); });
     (report.permissions.sharingLinks.links || []).forEach(function(l) { check(l.name); });
+    (report.permissions.roleDefinitions || []).forEach(function(d) { [d.Name, d.Description].forEach(check); });
+    (report.permissions.rows || []).forEach(function(row) { check(row.level); });
     report.taxonomy.groups.forEach(function(group) {
         [group.groupName, group.groupDescription].forEach(check);
         (group.termSets || []).forEach(function(set) {
@@ -904,6 +926,7 @@ function snaCountHiddenValues(report) {
             (set.terms || []).forEach(function(t) { [t.termName, t.termDescription].forEach(check); });
         });
     });
+    Object.keys(_snaHiddenSeen).forEach(function(key) { if (!kept[key]) { found[key] = true; } });
     return Object.keys(found).length;
 }
 
@@ -1137,9 +1160,9 @@ function snaBuildBatchBody(boundary, urls) {
 
 // Reads the answer to a $batch request. text is the answer's body and contentType its Content-Type header,
 // which names the boundary between parts; without one, the boundary is read from the first line of text.
-// Returns one { status, body } for each part, in the order the requests were sent. status is the part's HTTP
-// status, such as 200 or 404, or 0 when the part has none, and body is the part's JSON, or null.
-// Accepts CRLF and LF line endings.
+// Returns one { status, body, retryAfter } for each part, in the order the requests were sent. status is the part's
+// HTTP status, such as 200 or 404, or 0 when the part has none; body is the part's JSON, or null; and retryAfter is
+// the part's Retry-After header in seconds, or 0. Accepts CRLF and LF line endings.
 function snaParseBatchResponse(text, contentType) {
     var source = String(text || '');
     var headerMatch = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(String(contentType || ''));
@@ -1161,11 +1184,12 @@ function snaParseBatchResponse(text, contentType) {
         var afterStatus = part.substring(statusMatch.index);
         var blankLine = /\r?\n\r?\n/.exec(afterStatus);
         var bodyText = blankLine ? afterStatus.substring(blankLine.index + blankLine[0].length).trim() : '';
+        var retryAfter = /^retry-after:\s*(\d+)/im.exec(blankLine ? afterStatus.substring(0, blankLine.index) : afterStatus);
         var body = null;
         if (bodyText) {
             try { body = JSON.parse(bodyText); } catch(e) { body = null; }
         }
-        results.push({ status: parseInt(statusMatch[1], 10), body: body });
+        results.push({ status: parseInt(statusMatch[1], 10), body: body, retryAfter: retryAfter ? parseInt(retryAfter[1], 10) : 0 });
     }
     return results;
 }
@@ -1173,7 +1197,8 @@ function snaParseBatchResponse(text, contentType) {
 // Sends GET requests to the site in one $batch request and returns snaParseBatchResponse's result for them.
 // Every address must be on the site's own REST API, because SharePoint answers a batch only for one site.
 // A batch is a POST, so it needs a request digest, but it holds only reads and changes nothing on the site.
-// Throws when the batch itself fails or doesn't answer every request; retries 429 responses like spFetch.
+// Throws when the batch itself fails or doesn't answer every request. Retries 429 responses like spFetch, both for the
+// whole batch and for single requests inside a batch that SharePoint answered with 200 OK.
 async function snaBatchGet(targetUrl, urls, throttleRetries) {
     if (typeof throttleRetries === 'undefined') { throttleRetries = 5; }
     var apiRoot = targetUrl + '/_api/';
@@ -1207,6 +1232,22 @@ async function snaBatchGet(targetUrl, urls, throttleRetries) {
     var parts = snaParseBatchResponse(await res.text(), res.headers.get('Content-Type'));
     if (parts.length !== urls.length) {
         throw new Error('The $batch answer had ' + parts.length + ' parts for ' + urls.length + ' requests.');
+    }
+
+    // SharePoint can answer the batch with 200 OK and still throttle single requests inside it. Those are sent again,
+    // in a batch of their own, after the longest wait their parts ask for. If that batch fails, they stay throttled.
+    var throttled = [];
+    parts.forEach(function(part, index) { if (part.status === 429) { throttled.push(index); } });
+    if (throttled.length > 0 && throttleRetries > 0) {
+        var partWait = 0;
+        throttled.forEach(function(index) { partWait = Math.max(partWait, parts[index].retryAfter || 0); });
+        await new Promise(function(r) { setTimeout(r, Math.max(partWait || 10, 2) * 1000); });
+        try {
+            var retried = await snaBatchGet(targetUrl, throttled.map(function(index) { return urls[index]; }), throttleRetries - 1);
+            throttled.forEach(function(index, k) { parts[index] = retried[k]; });
+        } catch(e) {
+            console.warn('Sitenalyzer: a batch of throttled requests failed again, so they are left out.', e);
+        }
     }
     return parts;
 }
@@ -2771,6 +2812,7 @@ function snaClearReport() {
     _snaEditFocus        = {};
     _snaKeptValues       = null;
     _snaKeptPeople       = [];
+    _snaHiddenSeen       = {};
 }
 
 // Clears the report and returns to the start screen. Change site keeps the last address in the Site URL box so it can be
@@ -4452,7 +4494,7 @@ function snaSetTechnicalDetails(isOn) {
 }
 
 // Shows the switch setting on Show hidden values, and puts how many values are hidden or shown in its tooltip.
-// The switch appears only when the report has values to hide.
+// The switch appears only when the report has values to hide, or something was hidden while it was drawn.
 function snaSyncHiddenValuesSwitch() {
     var hiddenSwitch = document.getElementById('sna-hidden-values-switch');
     if (hiddenSwitch) { hiddenSwitch.checked = _snaShowHiddenValues; }

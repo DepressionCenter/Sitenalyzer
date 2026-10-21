@@ -132,7 +132,7 @@ Most problems are fixed by checking the files in Site Assets and the code in the
 ### Additional resources
 
 - [Installing and using Sitenalyzer](usage.md)
-- [How Sitenalyzer works](architecture.md)
+- [Sitenalyzer architecture](architecture.md)
 - [Support for Content Security Policy (CSP) in SharePoint Online](https://learn.microsoft.com/en-us/sharepoint/dev/spfx/content-securty-policy-trusted-script-sources)
 
 [Back to README](../README.md)

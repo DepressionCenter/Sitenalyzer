@@ -323,11 +323,13 @@ function readBatchRequests(body) {
 }
 
 // Builds one part of a $batch answer, as SharePoint does: an HTTP status line, headers, and a JSON body.
+// A part answered with 429 Too Many Requests also has a Retry-After header asking for 1 second; Sitenalyzer waits at least 2.
 function batchResponsePart(status, body) {
-    const statusText = { 200: 'OK', 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found', 500: 'Internal Server Error' }[status] || 'Status';
+    const statusText = { 200: 'OK', 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found', 429: 'Too Many Requests', 500: 'Internal Server Error' }[status] || 'Status';
     return '--' + BATCH_RESPONSE_BOUNDARY + '\r\n' +
         'Content-Type: application/http\r\nContent-Transfer-Encoding: binary\r\n\r\n' +
         'HTTP/1.1 ' + status + ' ' + statusText + '\r\n' +
+        (status === 429 ? 'Retry-After: 1\r\n' : '') +
         'CONTENT-TYPE: application/json;odata=nometadata;streaming=true;charset=utf-8\r\n\r\n' +
         JSON.stringify(body) + '\r\n';
 }
