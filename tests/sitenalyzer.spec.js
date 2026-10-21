@@ -923,6 +923,34 @@ test('scrolls to the section navigation, not the site name, after a section open
     await expect(page.locator('.sna-nav').getByRole('link', { name: 'Overview', exact: true })).toBeFocused();
 });
 
+test('keeps the section navigation below a page bar that appears when the page scrolls up', async function({ page }) {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    // Like SharePoint's page bar with Edit: a fixed bar, 48 pixels tall, that shows a moment after the page scrolls up
+    // and hides when it scrolls down.
+    await page.evaluate(function() {
+        const bar = document.createElement('div');
+        bar.id = 'host-page-bar';
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:48px;background:#fff;z-index:1000;display:none';
+        document.body.appendChild(bar);
+        let lastY = window.scrollY;
+        window.addEventListener('scroll', function() {
+            const up = window.scrollY < lastY;
+            lastY = window.scrollY;
+            setTimeout(function() { bar.style.display = up ? 'block' : 'none'; }, 150);
+        });
+    });
+
+    await gotoSection(page, 'Permissions');
+    await expect.poll(function() { return navRowTop(page); }).toBe(0);
+    await page.evaluate(function() { window.scrollTo(0, document.documentElement.scrollHeight); });
+    await page.getByRole('button', { name: 'Back to top' }).click();
+    await expect(page.locator('#host-page-bar')).toBeVisible();
+    await expect.poll(function() { return navRowTop(page); }).toBe(48);
+    await expect(page.locator('.sna-nav a[aria-current="page"]')).toBeFocused();
+});
+
 test('counts a list named Events as an ordinary list when it is not made from the events template', async function({ page }) {
     const madeByPeople = Object.assign({}, SYSTEM_LISTS[1], { Id: 'aaaaaaaa-0000-4000-8000-000000000053', BaseTemplate: 100, ItemCount: 7 });
     await openPretendSite(page, { extraLists: [SYSTEM_LISTS[0], madeByPeople] });

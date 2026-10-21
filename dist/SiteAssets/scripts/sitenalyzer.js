@@ -2743,21 +2743,59 @@ function snaNavRow() {
     return document.querySelector('#sna-report .sna-nav-row');
 }
 
-// Back to top: puts focus on the open section's link, so the keyboard continues from the top of the view, then scrolls
-// to the section navigation, not the site's name above it. Focus moves first, because moving focus during a smooth
-// scroll stops the scroll partway on some SharePoint pages.
+// Back to top: scrolls to the section navigation, not the site's name above it, and puts focus on the open section's
+// link, so the keyboard continues from the top of the view.
 function snaScrollToNav() {
     var navRow = snaNavRow();
     if (!navRow) { return; }
     // Search results have no section link of their own, so focus goes to the first section link instead.
     var current = navRow.querySelector('.sna-nav a[aria-current="page"]') || navRow.querySelector('.sna-nav a');
     if (current) { try { current.focus({ preventScroll: true }); } catch(e) { current.focus(); } }
-    navRow.scrollIntoView({ behavior: snaScrollBehavior(), block: 'start' });
+    snaScrollNavRowToTop(navRow);
 }
 
-// Smooth scrolling, unless the person asked their system to reduce motion.
-function snaScrollBehavior() {
-    return (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) ? 'auto' : 'smooth';
+// Most CSS pixels a bar of the host page may cover at the top of the window. Anything taller isn't treated as a bar.
+var SNA_HOST_BAR_MAX_HEIGHT = 200;
+
+// Scrolls until the section navigation is at the top of the window, below any bar of the host page that stays over the
+// top of the page. SharePoint shows its page bar, with Edit, again when the page scrolls up, and the bar can appear a
+// moment after the scroll, so Sitenalyzer checks again after SNA_HOST_BAR_DELAY_MS.
+var SNA_HOST_BAR_DELAY_MS = 400;
+function snaScrollNavRowToTop(navRow) {
+    navRow.scrollIntoView({ block: 'start' });
+    snaUncoverNavRow(navRow);
+    setTimeout(function() { snaUncoverNavRow(navRow); }, SNA_HOST_BAR_DELAY_MS);
+}
+
+// When an element of the host page that is fixed or sticky covers the top of the section navigation, scrolls up by
+// the height it covers. Elements of Sitenalyzer itself are never treated as covering it.
+function snaUncoverNavRow(navRow) {
+    var rect = navRow.getBoundingClientRect();
+    // The top can be a fraction of a pixel above the window after scrolling, such as -0.3.
+    if (rect.height === 0 || rect.top < -1) { return; }
+    var top = Math.max(0, rect.top);
+    var hit = document.elementFromPoint(rect.left + Math.min(20, rect.width / 2), top + 1);
+    var app = document.getElementById('sp-info-app');
+    if (!hit || (app && app.contains(hit))) { return; }
+    var cover = null;
+    for (var el = hit; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+        var position = window.getComputedStyle(el).position;
+        if (position === 'fixed' || position === 'sticky') { cover = el; break; }
+    }
+    if (!cover) { return; }
+    var overlap = cover.getBoundingClientRect().bottom - top;
+    if (overlap <= 0 || overlap > SNA_HOST_BAR_MAX_HEIGHT) { return; }
+    snaScrollParent(navRow).scrollBy(0, -overlap);
+}
+
+// Returns the element that scrolls el into view: its closest ancestor that scrolls up and down, such as the part of a
+// SharePoint page that holds the web parts, or the page itself.
+function snaScrollParent(el) {
+    for (var node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+        var overflowY = window.getComputedStyle(node).overflowY;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight) { return node; }
+    }
+    return document.scrollingElement || document.documentElement;
 }
 
 // Copy ID to clipboard and temporarily reveal it as small text next to the button.
@@ -4864,7 +4902,7 @@ function snaFocusAfterRender(route, previous, opts) {
         if (reportEl) { reportEl.scrollIntoView({ block: 'start' }); }
     } else if (sectionChanged) {
         var navRow = snaNavRow();
-        if (navRow) { navRow.scrollIntoView({ block: 'start' }); }
+        if (navRow) { snaScrollNavRowToTop(navRow); }
     } else {
         target.scrollIntoView({ block: 'nearest' });
     }
