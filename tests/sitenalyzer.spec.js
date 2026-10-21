@@ -804,9 +804,10 @@ test('shows counts that link to their sections on the Overview', async function(
     await extractSiteInformation(page);
 
     const counts = page.locator('#sp-results .sna-stats');
-    await expect(counts.locator('.sna-stat')).toHaveCount(5);
-    await expect(counts.getByRole('link', { name: 'Document library 1' })).toHaveAttribute('href', '#sna/contents');
-    await expect(counts.getByRole('link', { name: 'List 1' })).toBeVisible();
+    await expect(counts.locator('.sna-stat')).toHaveCount(6);
+    await expect(counts.getByRole('link', { name: 'Document library 1 3 items', exact: true })).toHaveAttribute('href', '#sna/contents');
+    await expect(counts.getByRole('link', { name: 'List 1 12 items', exact: true })).toBeVisible();
+    await expect(counts.getByRole('link', { name: 'System lists 0 0 items', exact: true })).toHaveAttribute('href', '#sna/contents');
     await expect(counts.getByRole('link', { name: 'Site pages 2' })).toHaveAttribute('href', '#sna/contents/pages');
     await expect(counts.getByRole('link', { name: 'Term set 1' })).toHaveAttribute('href', '#sna/taxonomy');
     await expect(counts.getByRole('link', { name: 'Sharing link 1' })).toBeVisible();
@@ -823,6 +824,90 @@ test('shows counts that link to their sections on the Overview', async function(
     await expect(page.locator('#sna-part-title')).toBeFocused();
     await expect(page.locator('.sna-subnav a[aria-current="page"]')).toHaveText('Sharing links (1)');
     expect(hashOf(page)).toBe('#sna/permissions/sharing');
+});
+
+// The two system lists Sitenalyzer reads on purpose. The User Information List is large, as it can be in a real tenant.
+const SYSTEM_LISTS = [
+    { Id: 'aaaaaaaa-0000-4000-8000-000000000051', EntityTypeName: 'UserInfo', Title: 'User Information List', Description: '',
+        ItemCount: 5000, BaseType: 0, Hidden: true, IsApplicationList: false, BaseTemplate: 112, HasUniqueRoleAssignments: false,
+        DefaultViewUrl: SITE_PATH + '/_catalogs/users/detail.aspx', LastItemModifiedDate: '2024-01-01T00:00:00Z',
+        EnableVersioning: false, EnableMinorVersions: false, MajorVersionLimit: 0 },
+    { Id: 'aaaaaaaa-0000-4000-8000-000000000052', EntityTypeName: 'EventsList', Title: 'Events', Description: '',
+        ItemCount: 2, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 106, HasUniqueRoleAssignments: false,
+        DefaultViewUrl: SITE_PATH + '/Lists/Events/AllItems.aspx', LastItemModifiedDate: '2024-01-01T00:00:00Z',
+        EnableVersioning: false, EnableMinorVersions: false, MajorVersionLimit: 0 }
+];
+
+test('counts system lists and their items apart from the other lists and libraries', async function({ page }) {
+    const record = await openPretendSite(page, { extraLists: SYSTEM_LISTS });
+    await extractSiteInformation(page);
+
+    // Overview: the Lists count and its items leave out the system lists, which get their own count.
+    const counts = page.locator('#sp-results .sna-stats');
+    await expect(counts.getByRole('link', { name: 'List 1 12 items', exact: true })).toBeVisible();
+    await expect(counts.getByRole('link', { name: 'System lists 2 5,002 items', exact: true })).toHaveAttribute('href', '#sna/contents');
+    await expect(page.locator('.sna-cards')).toContainText('The largest is Study Visits, with 12 items.');
+
+    // Contents: a System lists group and table, and a separate item count.
+    await gotoSection(page, 'Contents');
+    const inventory = page.locator('#sna-contents-inventory');
+    await expect(inventory.getByRole('heading', { level: 3, name: 'Lists (1)' })).toBeVisible();
+    await expect(inventory.getByRole('heading', { level: 3, name: 'System lists (2)' })).toBeVisible();
+    const summary = page.locator('#sna-contents-detail');
+    await expect(summary.locator('.sna-stats')).toContainText('Items in lists and libraries15');
+    await expect(summary.locator('.sna-stats')).toContainText('Items in system lists5,002');
+    await expect(summary.getByRole('heading', { level: 4, name: 'Lists (1)' })).toBeVisible();
+    await expect(summary.getByRole('heading', { level: 4, name: 'System lists (2)' })).toBeVisible();
+    await expect(summary.locator('#sna-tbl-system .tabulator-row')).toHaveCount(2);
+    await expect(summary.locator('#sna-tbl-lists .tabulator-row')).toHaveCount(1);
+
+    const detail = await openListDetail(page, 'User Information List');
+    await expect(detail.locator('.sna-facts')).toContainText('System list. SharePoint keeps these lists for the site itself');
+
+    // Site review leaves the system lists out of its findings and the largest lists.
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('#sp-results')).not.toContainText('User Information List');
+    await expect(page.locator('#sp-results')).not.toContainText('Events');
+
+    await searchReport(page, 'User Information');
+    const listResult = page.locator('#sp-results .sna-search-item', { has: page.getByRole('link', { name: 'User Information List', exact: true }) });
+    await expect(listResult.locator('.app-tag')).toHaveText('System list');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('prints system lists in their own part of the print document', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { extraLists: SYSTEM_LISTS });
+    await extractSiteInformation(page);
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    const printDoc = printFrameDocument(page);
+    await expect(printDoc.locator('h2', { hasText: /^System lists$/ })).toHaveCount(1);
+    await expect(printDoc.locator('tr', { hasText: 'User Information List' }).first()).toContainText('System list');
+});
+
+// Returns how far the top of the section navigation is from the top of the window, in CSS pixels.
+function navRowTop(page) {
+    return page.evaluate(function() { return Math.abs(Math.round(document.querySelector('#sna-report .sna-nav-row').getBoundingClientRect().top)); });
+}
+
+test('scrolls to the section navigation, not the site name, after a section opens or Back to top', async function({ page }) {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.setViewportSize({ width: 1024, height: 400 });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    // The report opens at the top, with the site's name.
+    await expect(page.locator('#sna-site-header h1')).toBeInViewport();
+
+    await gotoSection(page, 'Permissions');
+    await expect.poll(function() { return navRowTop(page); }).toBe(0);
+    await expect(page.locator('#sna-site-header h1')).not.toBeInViewport();
+
+    await page.evaluate(function() { window.scrollTo(0, document.documentElement.scrollHeight); });
+    await page.getByRole('button', { name: 'Back to top' }).click();
+    await expect.poll(function() { return navRowTop(page); }).toBe(0);
+    await expect(page.locator('.sna-nav a[aria-current="page"]')).toBeFocused();
+    await expect(page.locator('.sna-nav a[aria-current="page"]')).toHaveText('Permissions');
 });
 
 test('says Not read on the Overview for counts it could not read', async function({ page }) {
@@ -2207,6 +2292,43 @@ test('reads every page of a term set, and stops at a next-batch link to another 
     await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Term store/ })).toContainText('Partly read');
 });
 
+test('says parent terms were read in part when a next-batch link with children points to another site', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
+            if (!url.searchParams.get('$expand')) { return undefined; }
+            return { value: [Object.assign({ children: [] }, graphTerm('ffffffff-0000-4000-8000-000000000001', 'Control'))],
+                '@odata.nextLink': 'https://contoso.sharepoint.com/sites/othersite/_api/v2.1/terms?$expand=children&$skiptoken=2' };
+        } }]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet).toContainText('Sitenalyzer could not read which term every term sits under');
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ })).toContainText('Partly read');
+});
+
+test('says parent terms were read in part when a term\'s children stop at a link to another site', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: TERMS_PATTERN, answer: function(url) {
+                return url.searchParams.get('$expand') ? reply(400, { error: 'Expand is not supported' }) : undefined;
+            } },
+            { pattern: TERM_CHILDREN_PATTERN, answer: function(url, match) {
+                if (match[1] !== 'ffffffff-0000-4000-8000-000000000001') { return { value: [] }; }
+                return { value: [], '@odata.nextLink': 'https://contoso.sharepoint.com/sites/othersite/_api/v2.1/children?$skiptoken=2' };
+            } }
+        ]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet).toContainText('Sitenalyzer could not read which term every term sits under');
+    await expect(termSet.getByRole('columnheader', { name: 'Parent term' })).toBeVisible();
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ })).toContainText('Partly read');
+});
+
 // Two managed metadata columns in Study Visits that use Study Arms: one offers the whole set, and one allows several
 // values and starts at the Treatment term. A third site column uses the set but isn't in any list.
 const ARM_TAG_ID = 'bbbbbbbb-0000-4000-8000-000000000011';
@@ -2467,7 +2589,7 @@ test('hides values that look like personal information in every view, search, th
     expectNoHiddenValues(await readableText(page), 'search results');
     await expect(page.locator('#sp-results')).toContainText('Visits [record number or ID hidden]');
     await searchReport(page, '1234567');
-    await expect(page.locator('#sp-results')).toContainText('No results for "1234567"');
+    await expect(page.locator('#sp-results')).toContainText('Sitenalyzer hides values that look like personal information, so it doesn\'t search for them.');
 
     await page.getByRole('button', { name: 'Print full report / PDF' }).click();
     await expect.poll(function() { return printCalls(page); }).toBe(1);
@@ -2751,12 +2873,51 @@ test('does not find a site page by a hidden value in its file name', async funct
     await extractSiteInformation(page);
 
     await searchReport(page, '555-0100');
-    await expect(page.locator('#sp-results')).toContainText('No results for "555-0100"');
+    await expect(page.locator('#sp-results')).toContainText('Sitenalyzer hides values that look like personal information, so it doesn\'t search for them.');
     await searchReport(page, 'Call notes');
     await expect(page.locator('#sp-results .sna-search-list')).toContainText('Call-[phone number hidden].aspx');
     await page.getByRole('switch', { name: 'Show hidden values' }).check();
     await searchReport(page, '555-0100');
     await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Call notes' })).toBeVisible();
+});
+
+test('keeps a search for a hidden value out of the page address, from the search box or from a link', async function({ page }) {
+    await openPretendSite(page, { extraLists: [HIDDEN_VALUE_LIST] });
+    await extractSiteInformation(page);
+    const searchBox = page.getByRole('searchbox', { name: 'Search this report' });
+    const notice = 'Sitenalyzer hides values that look like personal information, so it doesn\'t search for them. To search for this text, turn on Show hidden values.';
+
+    // Typed into Search this report: the address and browser history never hold the value.
+    const historyBefore = await page.evaluate(function() { return window.history.length; });
+    await searchReport(page, '1234567');
+    await expect(page.locator('#sp-results')).toContainText(notice);
+    await expect(searchBox).toHaveValue('');
+    expect(hashOf(page)).toBe('#sna/search?q=');
+    expect(await page.evaluate(function() { return window.history.length; })).toBe(historyBefore + 1);
+
+    // Part of a hidden value, such as the end of a phone number, is replaced too.
+    await searchReport(page, '4567');
+    await expect(page.locator('#sp-results')).toContainText(notice);
+
+    // From a link or Back: the address is replaced with an empty search.
+    await page.evaluate(function() { window.location.hash = '#sna/search?q=MRN%201234567'; });
+    await expect(page.locator('#sp-results')).toContainText(notice);
+    await expect.poll(function() { return hashOf(page); }).toBe('#sna/search?q=');
+    await expect(searchBox).toHaveValue('');
+
+    // With Show hidden values on, the same search runs.
+    await page.getByRole('switch', { name: 'Show hidden values' }).check();
+    await searchReport(page, '1234567');
+    await expect(page.locator('#sp-results')).toContainText(HIDDEN.listTitle);
+    expect(decodeURIComponent(hashOf(page))).toBe('#sna/search?q=1234567');
+});
+
+test('opens an empty search when the page opens with a search address that holds a hidden value', async function({ page }) {
+    await openPretendSite(page, { extraLists: [HIDDEN_VALUE_LIST], addressSuffix: '?siteUrl=' + encodeURIComponent(SITE_URL) + '#sna/search?q=1234567' });
+    await expect(page.locator('#sna-section-title')).toHaveText('Search results');
+    await expect(page.locator('#sp-results')).toContainText('so it doesn\'t search for them');
+    expect(hashOf(page)).toBe('#sna/search?q=');
+    await expect(page.getByRole('searchbox', { name: 'Search this report' })).toHaveValue('');
 });
 
 test('clears a hidden value typed into a filter or search box when Show hidden values is turned off', async function({ page }) {
