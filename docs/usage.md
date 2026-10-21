@@ -120,7 +120,14 @@ The details of a list or library have these tabs:
 
 Above the tabs are the **ID**, **Open**, and **Permissions** buttons. **ID** copies the list or library ID. **Permissions** opens SharePoint's own permissions page for it. On a narrow screen, the details replace the list; select **Back to results** to return to it.
 
-To sort a table, select a column heading, or move to it with the Tab key and press Enter or Space. Select it again to sort the other way. The headings stay at the top of the table on every screen size; on a narrow screen, the table scrolls sideways. Tables with more than 10 rows have a filter box above them that shows only the rows containing what you type, with a row count under it.
+#### Tables in the report
+
+Every table in the report works the same way, including the permission tables, the sharing links, the person check result, and the tables in **Site review**. The one exception is the short list of lists and libraries inside each card in **People and groups**, which keeps a plain table. To sort or filter the people and groups who can use one list or library, open its **Permissions** tab.
+
+- **Sort.** Select a column heading, or move to it with the Tab key and press Enter or Space. Select it again to sort the other way. Sorting sorts every row, not only the rows on the page you're looking at.
+- **Filter.** Tables with more than 10 rows have a filter box above them. It shows only the rows that contain what you type, with a row count under it.
+- **Pages.** Tables with more than 50 rows show 50 rows at a time. Use **First**, **Previous**, the page numbers, **Next**, and **Last** under the table to move between pages. Use **Rows per page** to show 25, 50, or 100 rows, or **All** of them. The row count names the rows you can see, such as "Showing 51 to 100 of 340 columns." With a filter, it names both totals, such as "Showing 51 to 100 of 120 columns that match, out of 340." A new filter starts on the first page.
+- **Size.** A table is as tall as its rows, so you never scroll inside it. On a narrow screen, a table whose columns don't fit scrolls sideways. To scroll it with the keyboard, move to it with the Tab key and press the arrow keys.
 
 #### Addresses for each section
 
@@ -185,7 +192,7 @@ The **Permissions** section lists its parts on the left. Select one to open it.
 | **Sharing links** | Each sharing link, the file or folder it opens, and who can use it: **Anyone with the link**, **People in your organization**, or **Specific people**. A link to a list item, or to a file deleted after it was shared, says "No name found" and shows the item's ID. |
 | **Apps with access** | Apps that were given permissions in SharePoint. Apps given access in Microsoft Entra ID, such as through Sites.Selected, aren't listed. |
 
-A permission level is a named set of permissions, such as Read or Contribute. In **People and groups**, **Expand all details** and **Collapse all details** open and close every group's member list at once. The Overview links straight to each part.
+A permission level is a named set of permissions, such as Read or Contribute. In **People and groups**, **Expand all details** and **Collapse all details** open and close every group's member list at once. **Filter by name** shows only the people and groups whose names contain what you type. **Sort by** puts them in another order: people and groups with access to the whole site first (the usual order), by name, by type, or by the most lists and libraries with their own permissions. The Overview links straight to each part.
 
 Sitenalyzer says no guests or organization-wide groups have access only when it could read every permission it needs. When it couldn't read some of them, such as a group's members, it says what it couldn't check.
 
@@ -250,7 +257,7 @@ Sitenalyzer reads Site Pages 2,000 items at a time, up to 10,000 items. If the l
 
 **Print full report / PDF** opens your browser's print window with a printable copy of the whole report. To save it as a PDF, choose **Save as PDF** or **Microsoft Print to PDF** as the printer. Ctrl+P, or Command+P on a Mac, and your browser's print menu print the same copy while a report is open.
 
-The printed report is built from everything Sitenalyzer read, not from what is on screen, so closed sections, filters, and tables you haven't scrolled through leave nothing out. It has these parts, each starting on a new page:
+The printed report is built from everything Sitenalyzer read, not from what is on screen, so closed sections, filters, sorting, and tables split into pages leave nothing out. Its tables are plain tables, with every row. It has these parts, each starting on a new page:
 
 1. The site's name, address, description, ID, when the report was collected, and who collected it.
 2. **Contents**: a table of every list and library.

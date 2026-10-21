@@ -35,7 +35,7 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 - **Five sections.** Overview, Contents, Permissions, Taxonomy, and Site review. Site review is its own section so cleanup suggestions always have the same place.
 - **Real links with their own addresses.** Each view has an address after `#sna/`, so Back and Forward work. A link that starts with `?siteUrl=`, such as `?siteUrl=https://contoso.sharepoint.com/sites/example#sna/permissions`, opens that site's report on that view. The section links are ordinary links with `aria-current="page"`, not tabs, because a tab interface needs keyboard behavior that links don't have.
 - **No second main landmark.** The report area is a `<div>`, not a `<main>` element, because the SharePoint page already has one.
-- **Full width.** The app fills the width of its web part, so wide tables have room. Paragraphs stop at about 80 characters, because longer lines are hard to read. The height follows the content, so the page has one scroll bar.
+- **Full width.** The app fills the width of its web part, so wide tables have room. Paragraphs stop at about 80 characters, because longer lines are hard to read. The height follows the content, tables included, so the page has one scroll bar.
 
 ### Overview and findings
 
@@ -52,10 +52,11 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 
 ### Tables
 
-- **Tabulator for every interactive table.** It was already bundled and tested in SharePoint.
+- **Tabulator for every table on screen.** It was already bundled and tested in SharePoint. The permission tables, sharing links, the person check result, the columns that use a term set, and the Site review tables all use it, so every table sorts and filters the same way. The printed report keeps plain tables. The short table of lists and libraries inside each People and groups card stays a plain table, because it is part of the card and lists only that person's or group's lists and libraries, which the filter and **Sort by** hide and move along with the card. Each list's **Permissions** tab shows the same access in a sortable table.
 - **Sort with the column headings.** Tabulator headings can't be reached with the keyboard, so Sitenalyzer adds each sortable heading to the Tab order. Enter or Space sorts it.
-- **No separate Sort by control.** The headings stay visible at every width, and narrow tables scroll sideways inside their own area. A second control for the same action would add clutter.
+- **No separate Sort by control for tables.** The headings stay visible at every width, and a table whose columns don't fit scrolls sideways, with its headings. A second control for the same action would add clutter. People and groups is the exception, because it is a set of cards with no headings to select, so it has a **Sort by** box.
 - **A filter box only for long tables.** Tables with more than 10 rows get a filter box with a row count. A filter changes only that table, never a workbook or the printed report.
+- **Pages instead of a scroll box.** A table is as tall as its rows, so its frame and headings stay in view and the page has one scroll bar. Tables with more than 50 rows show 50 rows at a time, with page buttons and a **Rows per page** box under them. The row count names the rows on the page, so a person always knows which part of the table they are looking at.
 
 ### Technical details
 
@@ -76,7 +77,7 @@ One switch, **Show technical details**, adds internal names, IDs, lookup targets
 
 ### Printing
 
-- **A print document built from the report.** **Print full report / PDF** prints a separate document made from everything Sitenalyzer read, with plain tables and no controls. Closed sections, filters, and tables nobody scrolled through don't leave anything out.
+- **A print document built from the report.** **Print full report / PDF** prints a separate document made from everything Sitenalyzer read, with plain tables and no controls. Closed sections, filters, sorting, and tables split into pages don't leave anything out.
 - **A hidden frame.** **Print full report / PDF** and Ctrl+P print from a hidden frame, so the SharePoint page and its scripts are left alone. Only the browser's own print menu changes the page while it prints.
 - **Page breaks and images.** Each main part starts on a new page. Page images aren't printed.
 

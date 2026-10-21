@@ -561,6 +561,137 @@ test('shows a filter box only above tables with more than 10 rows, and keeps its
     await expect(detail.locator('.sna-table-count')).toHaveText('Showing 1 of 12 columns.');
 });
 
+// Answers for a Study Visits list with 120 columns, named Column 001 to Column 120, so its Columns tab has 126 rows
+// with the 6 columns every list has. Every even column's description is "Visit note", so a filter for it matches
+// 60 columns, more than one page.
+const MANY_COLUMNS = { value: [] };
+for (let i = 1; i <= 120; i++) {
+    MANY_COLUMNS.value.push({ Id: 'bbbbbbbb-0000-4000-8000-000000005' + String(i).padStart(3, '0'), InternalName: 'Col' + i,
+        Title: 'Column ' + String(i).padStart(3, '0'), TypeAsString: 'Text', Description: i % 2 === 0 ? 'Visit note' : '' });
+}
+const MANY_COLUMNS_ANSWERS = [{ pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, answer: function(url) {
+    return url.pathname.indexOf(LIST_ID) > -1 ? MANY_COLUMNS : undefined;
+} }];
+
+test('splits a table with more than 50 rows into pages, with paging controls under it', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: MANY_COLUMNS_ANSWERS });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+    const grid = detail.getByRole('grid', { name: 'Columns of Study Visits' });
+    const count = detail.locator('.sna-table-count');
+    const rows = grid.locator('.tabulator-row');
+    // The paging controls are under the table, outside the grid.
+    const pages = detail.getByRole('group', { name: 'Pages of Columns of Study Visits' });
+    const currentPage = pages.locator('.tabulator-page[aria-current="page"]');
+
+    // The table grows with its rows, with no scroll box around it, and shows 50 rows at a time.
+    await expect(count).toHaveText('Showing 1 to 50 of 126 columns.');
+    await expect(rows).toHaveCount(50);
+    await expect(detail.locator('.sna-table-wrap')).not.toHaveAttribute('tabindex');
+    expect(await grid.evaluate(function(el) { return el.querySelector('.tabulator-tableholder').hasAttribute('tabindex'); })).toBe(false);
+    for (const name of ['First page', 'Previous page', 'Next page', 'Last page', 'Show page 1', 'Show page 2', 'Show page 3']) {
+        await expect(pages.getByRole('button', { name: name, exact: true })).toBeVisible();
+    }
+    await expect(pages.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    await expect(pages.getByRole('combobox', { name: 'Rows per page' })).toHaveValue('50');
+    await expect(currentPage).toHaveText('1');
+    await expect(grid.locator('.tabulator-footer')).toHaveCount(0);
+
+    await pages.getByRole('button', { name: 'Next page' }).click();
+    await expect(count).toHaveText('Showing 51 to 100 of 126 columns.');
+    await expect(currentPage).toHaveText('2');
+    await pages.getByRole('button', { name: 'Show page 3' }).click();
+    await expect(count).toHaveText('Showing 101 to 126 of 126 columns.');
+    await expect(rows).toHaveCount(26);
+
+    // A filter goes back to the first page, and the count names both totals while the matches fill more than one page.
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Visit note');
+    await expect(count).toHaveText('Showing 1 to 50 of 60 columns that match, out of 126.');
+    await expect(currentPage).toHaveText('1');
+    await pages.getByRole('button', { name: 'Last page' }).click();
+    await expect(count).toHaveText('Showing 51 to 60 of 60 columns that match, out of 126.');
+    await expect(rows).toHaveCount(10);
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Column 007');
+    await expect(count).toHaveText('Showing 1 of 126 columns.');
+    await expect(rows).toHaveCount(1);
+
+    // Rows per page changes how many rows each page shows; All shows every row on one page.
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('');
+    const rowsPerPage = pages.getByRole('combobox', { name: 'Rows per page' });
+    await rowsPerPage.selectOption({ label: 'All' });
+    await expect(count).toHaveText('Showing all 126 columns.');
+    await expect(rows).toHaveCount(126);
+    await rowsPerPage.selectOption('25');
+    await expect(count).toHaveText('Showing 1 to 25 of 126 columns.');
+    await expect(rows).toHaveCount(25);
+    await expect(pages.getByRole('button', { name: 'Show page 5' })).toBeVisible();
+
+    // Sorting by a column heading sorts every matching row, not only the rows on the open page.
+    await rowsPerPage.selectOption('50');
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Column ');
+    await expect(count).toHaveText('Showing 1 to 50 of 120 columns that match, out of 126.');
+    const heading = grid.getByRole('columnheader', { name: 'Title' });
+    await heading.focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press(' ');
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect(rows.first()).toContainText('Column 120');
+    await expect(currentPage).toHaveText('1');
+    await expectNoAxeViolations(page);
+});
+
+test('shows no paging controls under tables with 50 rows or fewer', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Documents', 'Columns');
+    await expect(detail.getByRole('grid', { name: 'Columns of Documents' }).locator('.tabulator-row')).toHaveCount(12);
+    await expect(detail.locator('.tabulator-footer, .sna-table-pages')).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: 'Next page' })).toHaveCount(0);
+    await expect(detail.getByRole('combobox', { name: 'Rows per page' })).toHaveCount(0);
+});
+
+test('prints every row of a table that is split into pages and filtered on screen', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: MANY_COLUMNS_ANSWERS });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Visit note');
+    await detail.getByRole('button', { name: 'Next page' }).click();
+    await expect(detail.locator('.sna-table-count')).toHaveText('Showing 51 to 60 of 60 columns that match, out of 126.');
+
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page);
+    await expect(printed.getByRole('table', { name: 'Columns of Study Visits', exact: true }).locator('tbody tr')).toHaveCount(126);
+    await expect(printed.locator('.tabulator, .sna-table-pages, input, button, select')).toHaveCount(0);
+});
+
+test('lets keyboard users scroll a table sideways only while its columns are wider than the screen', async function({ page }) {
+    await page.setViewportSize({ width: 320, height: 800 });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    const detail = await openListDetail(page, 'Documents', 'Columns');
+    const box = detail.locator('.sna-table-wrap');
+    // The columns don't fit, so the box around the table scrolls; the table itself never scrolls inside the grid.
+    await expect(box).toHaveAttribute('tabindex', '0');
+    await expect(box).toHaveAttribute('role', 'region');
+    await expect(detail.getByRole('region', { name: 'Columns of Documents (scroll sideways to see more)' })).toBeVisible();
+    expect(await box.evaluate(function(el) { return el.scrollWidth > el.clientWidth; })).toBe(true);
+    expect(await detail.locator('.tabulator-tableholder').evaluate(function(el) { return el.hasAttribute('tabindex'); })).toBe(false);
+    expect(await page.evaluate(function() { return document.documentElement.scrollWidth; })).toBeLessThanOrEqual(320);
+    await box.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(function() { return box.evaluate(function(el) { return el.scrollLeft; }); }).toBeGreaterThan(0);
+    await expectNoAxeViolations(page);
+
+    // On a screen wide enough for every column, the box is not a separate stop for the Tab key.
+    await page.setViewportSize({ width: 2560, height: 800 });
+    await expect(box).not.toHaveAttribute('tabindex');
+    await expect(box).not.toHaveAttribute('role');
+});
+
 test('keeps the Contents filter while items open and close', async function({ page }) {
     await openPretendSite(page);
     await extractSiteInformation(page);
@@ -1129,7 +1260,7 @@ test('lists who has access by person or group', async function({ page }) {
     const ownFinding = site.locator('.sna-finding');
     await expect(ownFinding.getByRole('heading', { level: 4 })).toHaveText('1 list or library has its own permissions');
     await expect(ownFinding.getByRole('link')).toHaveAttribute('href', '#sna/permissions/own');
-    await expect(site.getByRole('table', { name: 'Site permissions' }).getByRole('row', { name: /Test Site Visitors/ })).toContainText('Read');
+    await expect(site.getByRole('grid', { name: 'Site permissions' }).getByRole('row', { name: /Test Site Visitors/ })).toContainText('Read');
     await expect(site.locator('.sna-callout').getByRole('heading', { level: 4 })).toHaveText('About Limited Access');
     await expect(site.locator('.sna-callout')).toContainText('Limited Access isn\'t access to the whole site.');
     await expect(site).toContainText('Test Admin');
@@ -1160,6 +1291,117 @@ test('lists who has access by person or group', async function({ page }) {
     expect(record.consoleErrors).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
     expect(record.otherOriginRequests).toEqual([]);
+});
+
+test('filters People and groups by name and sorts the cards', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const access = await openPermissionPart(page, 'People and groups (7)');
+    const count = access.locator('#sna-people-count');
+    function shownNames() {
+        return access.locator('.sna-principal-block:visible').evaluateAll(function(blocks) {
+            return blocks.map(function(block) { return block.getAttribute('data-person'); });
+        });
+    }
+    const defaultOrder = await shownNames();
+    expect(defaultOrder.length).toBe(7);
+    await expect(count).toHaveText('Showing all 7 people and groups.');
+
+    // Sort by puts the cards in another order, and Whole-site access first goes back to the first order.
+    const sortBy = access.getByRole('combobox', { name: 'Sort by' });
+    await expect(sortBy).toHaveValue('access');
+    await sortBy.selectOption({ label: 'Name' });
+    expect(await shownNames()).toEqual(defaultOrder.slice().sort(function(a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); }));
+    await sortBy.selectOption({ label: 'Type' });
+    const kinds = await access.locator('.sna-principal-block').evaluateAll(function(blocks) {
+        return blocks.map(function(block) { return block.getAttribute('data-kind'); });
+    });
+    expect(kinds).toEqual(kinds.slice().sort(function(a, b) { return a.localeCompare(b); }));
+    await sortBy.selectOption({ label: 'Whole-site access first' });
+    expect(await shownNames()).toEqual(defaultOrder);
+
+    // The filter hides cards whose names don't contain the text, and the count says how many are shown.
+    const filter = access.getByRole('searchbox', { name: 'Filter by name' });
+    await filter.fill('site visitors');
+    expect(await shownNames()).toEqual(['Test Site Visitors']);
+    await expect(count).toHaveText('Showing 1 of 7 people and groups.');
+    await filter.fill('no such name');
+    expect(await shownNames()).toEqual([]);
+    await expect(count).toHaveText('No names match the filter.');
+
+    // The filter and the order are kept when the view opens again.
+    await filter.fill('test');
+    await sortBy.selectOption({ label: 'Name' });
+    const filtered = await shownNames();
+    await gotoSection(page, 'Overview');
+    await openPermissionPart(page, 'People and groups (7)');
+    await expect(access.getByRole('searchbox', { name: 'Filter by name' })).toHaveValue('test');
+    await expect(access.getByRole('combobox', { name: 'Sort by' })).toHaveValue('name');
+    expect(await shownNames()).toEqual(filtered);
+    await expectNoAxeViolations(page);
+
+    // The printed report lists everyone, with no filter or Sort by box.
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    const printed = printFrameDocument(page);
+    await expect(printed.locator('.sna-principal-block')).toHaveCount(7);
+    await expect(printed.locator('.sna-people-controls, #sna-people-filter, #sna-people-sort')).toHaveCount(0);
+});
+
+test('sorts, filters, and splits into pages a long site permissions table, with people\'s emails shown', async function({ page }) {
+    // 60 people with Read access, each named with an email address, which is shown because it names a person.
+    const assignments = [{ Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 },
+        RoleDefinitionBindings: [{ Id: 1073741829, Name: 'Full Control', Hidden: false, RoleTypeKind: 5 }] }];
+    for (let i = 1; i <= 60; i++) {
+        const email = 'reader' + String(i).padStart(2, '0') + '@example.org';
+        assignments.push({ Member: { Id: 100 + i, Title: email, LoginName: 'i:0#.f|membership|' + email, PrincipalType: 1 },
+            RoleDefinitionBindings: [{ Id: 1073741826, Name: 'Read', Hidden: false, RoleTypeKind: 2 }] });
+    }
+    await openPretendSite(page, { answerOverrides: [{ pattern: /^\/_api\/web\/roleassignments$/, body: { value: assignments } }] });
+    await extractSiteInformation(page);
+    const site = await openPermissionPart(page, 'Site permissions');
+    const grid = site.getByRole('grid', { name: 'Site permissions' });
+    const count = site.locator('.sna-table-count');
+    await expect(count).toHaveText('Showing 1 to 50 of 61 people and groups.');
+    await expect(grid.locator('.tabulator-row')).toHaveCount(50);
+    await expect(grid.getByRole('row', { name: /reader01@example\.org/ })).toContainText('Read');
+    await expect(site.getByRole('group', { name: 'Pages of Site permissions' }).getByRole('button', { name: 'Next page' })).toBeVisible();
+
+    // A person's email can be found with the filter, because it is shown.
+    await site.getByRole('searchbox', { name: 'Filter people and groups' }).fill('reader42@example.org');
+    await expect(count).toHaveText('Showing 1 of 61 people and groups.');
+    await expect(grid.locator('.tabulator-row')).toHaveText([/reader42@example\.org/]);
+
+    // The headings sort the table from the keyboard.
+    await site.getByRole('searchbox', { name: 'Filter people and groups' }).fill('');
+    const heading = grid.getByRole('columnheader', { name: 'Person or group' });
+    await heading.focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press(' ');
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect(grid.locator('.tabulator-row').first()).toContainText('Test Site Owners');
+    await expectNoAxeViolations(page);
+});
+
+test('builds a new result table each time a person\'s access is checked', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    await openPermissionPart(page, 'Check a person\'s access');
+    const input = page.getByLabel('Email address or sign-in name');
+    for (let i = 0; i < 2; i++) {
+        await input.fill('test.coordinator@example.org');
+        await page.getByRole('button', { name: 'Check access' }).click();
+        await expect(page.locator('#sna-user-access-status')).toHaveText('Finished checking access for Test Coordinator.');
+        await expect(page.getByRole('grid', { name: 'Access for Test Coordinator' })).toHaveCount(1);
+        await expect(page.locator('#sna-tbl-person .tabulator-row')).toHaveCount(2);
+    }
+    // An empty check removes the result table.
+    await input.fill('');
+    await page.getByRole('button', { name: 'Check access' }).click();
+    await expect(page.locator('#sna-tbl-person')).toHaveCount(0);
+    expect(record.consoleErrors).toEqual([]);
+    expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
 });
 
 test('says what it could not check instead of saying no guests have access', async function({ page }) {
@@ -1201,11 +1443,25 @@ test('shows cleanup findings, the largest lists, and what the report could read 
     await expect(rows.nth(2)).toContainText('Description is missing');
     await expect(rows.nth(2)).toContainText('Documents');
     await expect(rows.nth(2)).toContainText('Add a description.');
-    const largest = results.getByRole('table', { name: 'Largest lists and libraries' });
-    await expect(largest.getByRole('row')).toHaveText([/Name/, /Study Visits.*12/, /Documents.*3/]);
+    const largest = results.getByRole('grid', { name: 'Largest lists and libraries' });
+    await expect(largest.locator('.tabulator-row')).toHaveText([/Study Visits.*12/, /Documents.*3/]);
     const coverage = results.locator('.sna-coverage-table');
     await expect(coverage.getByRole('row', { name: /Term store/ })).toContainText('Read');
     await expect(coverage.getByRole('row', { name: /Sharing links/ })).toContainText('Read');
+
+    // Both tables sort from their column headings.
+    await largest.getByRole('columnheader', { name: 'Items' }).click();
+    await expect(largest.locator('.tabulator-row')).toHaveText([/Documents.*3/, /Study Visits.*12/]);
+    const status = results.getByRole('grid', { name: 'Report coverage' }).getByRole('columnheader', { name: 'Status' });
+    await status.focus();
+    await page.keyboard.press('Enter');
+    await expect(status).toHaveAttribute('aria-sort', 'ascending');
+    // Tabulator can mark the heading as sorted before it redraws the rows, so the test waits for the order.
+    await expect.poll(async function() {
+        const statuses = await coverage.locator('.tabulator-row [tabulator-field="status"]').allInnerTexts();
+        return statuses.join('|') === statuses.slice().sort(function(a, b) { return a.localeCompare(b); }).join('|');
+    }).toBe(true);
+    await expectNoAxeViolations(page);
 
     // A finding opens its list or library in Contents.
     await rows.nth(2).getByRole('link', { name: 'Documents' }).click();
@@ -1224,7 +1480,8 @@ test('checks one person\'s access when Enter is pressed, and keeps the result', 
     await input.press('Enter');
 
     await expect(page.locator('#sna-user-access-status')).toHaveText('Finished checking access for Test Coordinator.');
-    const results = page.getByRole('table', { name: 'Access for Test Coordinator' });
+    await expect(tool.getByRole('heading', { level: 4, name: 'Access for Test Coordinator' })).toBeVisible();
+    const results = page.getByRole('grid', { name: 'Access for Test Coordinator' });
     await expect(results.getByRole('row', { name: /Whole site/ })).toContainText('Can view items');
     await expect(results.getByRole('row', { name: /Study Visits/ })).toContainText('Can edit items');
     await expect(results).not.toContainText('Documents');
@@ -1234,7 +1491,7 @@ test('checks one person\'s access when Enter is pressed, and keeps the result', 
     // The result is still there after opening another section and coming back.
     await gotoSection(page, 'Overview');
     await openPermissionPart(page, 'Check a person\'s access');
-    await expect(page.getByRole('table', { name: 'Access for Test Coordinator' })).toBeVisible();
+    await expect(page.getByRole('grid', { name: 'Access for Test Coordinator' })).toBeVisible();
     await expect(page.getByLabel('Email address or sign-in name')).toHaveValue('test.coordinator@example.org');
     expect(record.consoleErrors).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
@@ -2428,12 +2685,13 @@ test('lists the columns that use a term set and links to their Columns tab', asy
     const termSet = page.locator('#sna-taxonomy-section');
     await expect(termSet.getByRole('heading', { level: 4, name: 'Columns that use this term set (3)' })).toBeVisible();
     const usage = termSet.locator('.sna-term-usage-table');
-    await expect(termSet.getByRole('table', { name: 'Columns that use Study Arms' })).toBeVisible();
+    await expect(termSet.getByRole('grid', { name: 'Columns that use Study Arms' })).toBeVisible();
     await expect(usage.getByRole('columnheader')).toHaveText(['List or library', 'Column', 'Starts at term', 'Allows several values']);
-    await expect(usage.locator('tbody tr').nth(0).locator('td')).toHaveText(['Study Visits (Arm Detail column)', 'Arm Detail', 'Treatment', 'Yes']);
-    await expect(usage.locator('tbody tr').nth(1).locator('td')).toHaveText(['Study Visits (Arm Tag column)', 'Arm Tag', 'Whole term set', 'No']);
+    const usageCells = function(index) { return usage.locator('.tabulator-row').nth(index).locator('.tabulator-cell:visible'); };
+    await expect(usageCells(0)).toHaveText(['Study Visits (Arm Detail column)', 'Arm Detail', 'Treatment', 'Yes']);
+    await expect(usageCells(1)).toHaveText(['Study Visits (Arm Tag column)', 'Arm Tag', 'Whole term set', 'No']);
     // The site column that is also in Study Visits is listed once, and the site column of another term set isn't listed.
-    await expect(usage.locator('tbody tr').nth(2).locator('td')).toHaveText(['Site column (not in a list or library)', 'Unused Arm Column', 'Whole term set', 'No']);
+    await expect(usageCells(2)).toHaveText(['Site column (not in a list or library)', 'Unused Arm Column', 'Whole term set', 'No']);
     await expect(usage).not.toContainText('Other Set Column');
     expect(await new AxeBuilder({ page }).include('#sp-results').withTags(WCAG_TAGS).analyze().then(function(r) { return r.violations; })).toEqual([]);
 
@@ -3046,6 +3304,15 @@ test('clears a hidden value typed into a filter or search box when Show hidden v
     await hiddenSwitch.uncheck();
     await expect(page.locator('#sna-inventory-filter')).toHaveValue('');
     await expect(page.locator('#sna-contents-inventory')).toContainText('Visits [record number or ID hidden]');
+
+    // The People and groups name filter.
+    await hiddenSwitch.check();
+    await openPermissionPart(page, 'People and groups');
+    await page.locator('#sna-people-filter').fill('1234567');
+    await expect(page.locator('#sna-people-count')).toHaveText('No names match the filter.');
+    await hiddenSwitch.uncheck();
+    await expect(page.locator('#sna-people-filter')).toHaveValue('');
+    await expect(page.locator('#sna-people-count')).toHaveText(/^Showing all \d+ people and groups\.$/);
 
     // Search this report and the page address.
     await hiddenSwitch.check();

@@ -175,7 +175,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = '25e9f2f880b5';
+var SNA_ASSET_VERSION = '622b3a7a17b9';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
@@ -227,6 +227,24 @@ var SNA_ROUTE_PREFIX = '#sna/';
 
 // Tables with more rows than this get a filter box and a row count above them.
 var SNA_TABLE_FILTER_MIN_ROWS = 10;
+
+// Tables with more rows than this are split into pages, with paging controls under the table.
+var SNA_TABLE_PAGE_ROWS = 50;
+
+// Choices in a paged table's Rows per page box. true is Tabulator's name for showing every row on one page.
+var SNA_TABLE_PAGE_SIZES = [25, 50, 100, true];
+
+// Names for Tabulator's paging controls, which otherwise say "Prev" and "Page Size". page_size is both the
+// visible label of the Rows per page box and its spoken name.
+var SNA_TABLE_TEXT = {
+  default: {
+    pagination: {
+      page_size: 'Rows per page', page_title: 'Show page',
+      first: 'First', first_title: 'First page', last: 'Last', last_title: 'Last page',
+      prev: 'Previous', prev_title: 'Previous page', next: 'Next', next_title: 'Next page', all: 'All'
+    }
+  }
+};
 
 // Remembers the Show technical details switch in this browser. The value is '1' when it is on; no report data is stored.
 var SNA_TECHNICAL_DETAILS_KEY = 'sitenalyzer:technical-details';
@@ -314,6 +332,10 @@ var _snaTabInstances = {};
 var _snaTableFilters = {};
 var _snaTabMeta = {};             // The _snaTablesQueue entry each table was built from, by element id
 
+// Fields that hold a person's or group's name, email, or sign-in name, by table type. They are shown as they are
+// (see snaPersonHtml), so a table's filter compares them as they are too.
+var SNA_TABLE_PERSON_FIELDS = { perm: ['name'] };
+
 // Search state. Each entry describes one list, library, column, folder, page, or term in the report.
 var _snaSearchIndex = [];
 
@@ -324,9 +346,11 @@ var _snaRoute = null;             // The view on screen, such as { section: 'con
 var _snaRouteMode = SNA_ROUTE_MODE;
 var _snaPendingNav = null;        // Focus target for the address change that Sitenalyzer itself just made
 var _snaContentsFilter = '';      // Text in the Contents name filter
+var _snaPeopleFilter = '';        // Text in the People and groups name filter
+var _snaPeopleSort = 'access';    // Order of People and groups; one of the keys of SNA_PEOPLE_SORTS
 var _snaLastInventoryId = '';     // Contents item whose details were open last, so Back to results can return to it
 var _snaTechnicalDetails = false;
-var _snaUserCheckResult = null;   // The finished person check { input, status, html }, shown again when Permissions reopens
+var _snaUserCheckResult = null;   // The finished person check { input, status, check }, shown again when Permissions reopens; see snaRenderUserCheckResult
 var _snaDrafts = {};              // Descriptions being edited, by edit key; see renderAdminDescWrap
 var _snaEditFocus = {};           // The newest redraw of each description, by edit key; see snaRedrawDescription
 var _snaSiteDialogOpener = null;  // The button that opened Choose a site, which gets focus back when the dialog closes
@@ -514,7 +538,120 @@ function snaTableColumnSettings(type, tbl) {
       { title: 'Address', field: 'url', sorter: 'string', widthGrow: 3, formatter: idFormatter }
     ];
   }
+  function listLinkFormatter(cell) {
+    var row = cell.getRow().getData();
+    return '<span aria-hidden="true">' + (row.isLib ? '📄 ' : '📋 ') + '</span>' + snaLinkHtml(row.url, cell.getValue());
+  }
+  if (type === 'perm') {
+    return [
+      {
+        title: 'Person or group', field: 'name', sorter: 'string', widthGrow: 2, minWidth: 160,
+        formatter: function(cell) { return snaPersonHtml(cell.getValue()); }
+      },
+      { title: 'Type', field: 'kind', sorter: 'string', widthGrow: 1, minWidth: 120 },
+      { title: 'Permission level', field: 'levels', sorter: 'string', widthGrow: 2, minWidth: 160 }
+    ];
+  }
+  if (type === 'ownperms') {
+    return [
+      { title: 'List or library', field: 'title', sorter: 'string', widthGrow: 2, minWidth: 160, formatter: listLinkFormatter },
+      { title: 'Type', field: 'typeText', sorter: 'string', width: 110 },
+      {
+        title: 'Permissions', field: 'permText', sorter: 'string', widthGrow: 2, minWidth: 160,
+        formatter: function(cell) {
+          var row = cell.getRow().getData();
+          if (!row.rolesRead) { return snaEscapeHtml(cell.getValue()); }
+          return '<a href="' + snaEscapeHtml(row.route) + '">' + snaEscapeHtml(cell.getValue()) +
+            '<span class="sna-visually-hidden"> for ' + snaEscapeHtml(row.title) + '</span></a>';
+        }
+      }
+    ];
+  }
+  if (type === 'sharing') {
+    return [
+      {
+        title: 'Shared item', field: 'itemText', sorter: 'string', widthGrow: 3, minWidth: 180,
+        formatter: function(cell) {
+          var row = cell.getRow().getData();
+          if (!row.name) { return '<span class="sna-muted">' + snaEscapeHtml(cell.getValue()) + '</span>'; }
+          return snaLinkHtml(row.url, row.name) + (row.itemType === 'folder' ? ' (folder)' : '');
+        }
+      },
+      {
+        title: 'People who can use it', field: 'kindText', sorter: 'string', widthGrow: 2, minWidth: 150,
+        formatter: function(cell) {
+          var text = snaEscapeHtml(cell.getValue());
+          return cell.getRow().getData().kind === 'anyone' ? '<span class="sna-risk-reason">' + text + '</span>' : text;
+        }
+      },
+      { title: 'Access', field: 'access', sorter: 'string', width: 110 }
+    ];
+  }
+  if (type === 'personcheck') {
+    return [
+      {
+        title: 'Site, list, or library', field: 'title', sorter: 'string', widthGrow: 3, minWidth: 160,
+        formatter: function(cell) { return cell.getRow().getData().isSite ? snaEscapeHtml(cell.getValue()) : listLinkFormatter(cell); }
+      },
+      { title: 'Access', field: 'level', sorter: 'string', widthGrow: 2, minWidth: 140 }
+    ];
+  }
+  if (type === 'termuse') {
+    return [
+      {
+        title: 'List or library', field: 'listTitle', sorter: 'string', widthGrow: 2, minWidth: 150,
+        formatter: function(cell) {
+          var row = cell.getRow().getData();
+          if (row.isSiteColumn) { return '<span class="sna-muted">' + snaEscapeHtml(cell.getValue()) + '</span>'; }
+          return '<a href="' + snaEscapeHtml(row.route) + '"' +
+            (row.filterTable ? ' data-filter-table="' + snaEscapeHtml(row.filterTable) + '" data-filter-text="' + snaEscapeHtml(row.columnTitle) + '"' : '') + '>' +
+            snaEscapeHtml(cell.getValue()) + '<span class="sna-visually-hidden"> (' + snaEscapeHtml(row.columnTitle) + ' column)</span></a>';
+        }
+      },
+      { title: 'Column', field: 'columnTitle', sorter: 'string', widthGrow: 2, minWidth: 130 },
+      { title: 'Internal name', field: 'internalName', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter },
+      {
+        title: 'Starts at term', field: 'anchorText', sorter: 'string', widthGrow: 2, minWidth: 130, visible: !!tbl.hasAnchor,
+        formatter: function(cell) {
+          var text = snaEscapeHtml(cell.getValue());
+          return cell.getRow().getData().anchorTermId ? text : '<span class="sna-muted">' + text + '</span>';
+        }
+      },
+      {
+        title: 'Allows several values', field: 'allowsSeveral', sorter: 'boolean', width: 140,
+        formatter: function(cell) { return cell.getValue() ? 'Yes' : 'No'; }
+      }
+    ];
+  }
+  if (type === 'largest') {
+    return [
+      {
+        title: 'Name', field: 'title', sorter: 'string', widthGrow: 3, minWidth: 140,
+        formatter: function(cell) {
+          return '<a href="' + snaEscapeHtml(cell.getRow().getData().route) + '" data-nav-focus="detail">' + snaEscapeHtml(cell.getValue()) + '</a>';
+        }
+      },
+      { title: 'Type', field: 'typeText', sorter: 'string', width: 110 },
+      {
+        title: 'Items', field: 'items', sorter: 'number', width: 110, hozAlign: 'right',
+        formatter: function(cell) { return snaEscapeHtml(Number(cell.getValue()).toLocaleString('en-US')); }
+      }
+    ];
+  }
+  if (type === 'coverage') {
+    return [
+      { title: 'Part of the report', field: 'area', sorter: 'string', widthGrow: 2, minWidth: 150 },
+      { title: 'Status', field: 'status', sorter: 'string', width: 130 },
+      { title: 'Notes', field: 'note', sorter: 'string', widthGrow: 4, minWidth: 180, formatter: 'textarea' }
+    ];
+  }
   return [];
+}
+
+// Queues a table for initSnaTabulators and returns the element it is built in. entry is a _snaTablesQueue entry.
+function snaQueueTableHtml(entry, className) {
+  _snaTablesQueue.push(entry);
+  return '<div id="' + snaEscapeHtml(entry.id) + '"' + (className ? ' class="' + className + '"' : '') + '></div>';
 }
 
 // Returns the description key of a row in a columns or terms table, the same key snaSaveDescription takes, or ''.
@@ -525,15 +662,19 @@ function snaRowEditKey(type, tbl, row) {
 }
 
 // Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
-// compared as they are shown, so a hidden value can't be found by typing it.
-function snaApplyTableFilter(table, text) {
+// compared as they are shown, so a hidden value can't be found by typing it. personFields lists the fields that hold
+// people's and groups' names, which are shown as they are, so they are compared as they are.
+function snaApplyTableFilter(table, text, personFields) {
   var val = String(text || '').trim().toLowerCase();
   if (!val) { table.clearFilter(); return; }
+  var asShown = personFields || [];
   table.setFilter(function(data) {
     var keys = Object.keys(data);
     for (var k = 0; k < keys.length; k++) {
       var v = data[keys[k]];
-      if (v && typeof v !== 'object' && snaMaskText(v).toLowerCase().indexOf(val) > -1) { return true; }
+      if (!v || typeof v === 'object') { continue; }
+      var shown = asShown.indexOf(keys[k]) > -1 ? String(v) : snaMaskText(v);
+      if (shown.toLowerCase().indexOf(val) > -1) { return true; }
     }
     return false;
   });
@@ -547,7 +688,61 @@ function snaUpdateTableCount(countEl, shown, total, label) {
     : 'Showing ' + shown + ' of ' + total + ' ' + label + '.';
 }
 
+// Writes the row count of a table split into pages, naming the rows on the open page, such as
+// "Showing 51 to 100 of 340 columns." When a filter is in use and the matching rows fill more than one page,
+// the count names both totals: "Showing 51 to 100 of 120 columns that match, out of 340."
+function snaUpdatePagedTableCount(table, countEl, total, label) {
+  if (!countEl) { return; }
+  var matching = table.getDataCount('active');
+  var size = table.getPageSize();
+  if (size === true || !(size > 0) || matching <= size) { snaUpdateTableCount(countEl, matching, total, label); return; }
+  var first = (table.getPage() - 1) * size + 1;
+  var last = Math.min(first + size - 1, matching);
+  countEl.textContent = 'Showing ' + first + ' to ' + last + ' of ' + matching + ' ' + label +
+    (matching === total ? '.' : ' that match, out of ' + total + '.');
+}
+
+// Marks the button of the open page with aria-current, so screen readers say which page is open.
+function snaMarkCurrentPage(pagesEl) {
+  pagesEl.querySelectorAll('.tabulator-page[data-page]').forEach(function(button) {
+    if (button.classList.contains('active')) { button.setAttribute('aria-current', 'page'); }
+    else { button.removeAttribute('aria-current'); }
+  });
+}
+
+// Tabulator fits the columns to the table's width. When they can't fit, such as on a narrow screen, this makes the
+// table wide enough for them, and the box around the table scrolls sideways instead, with the headings and paging
+// controls. While the box scrolls, it is a labeled region that keyboard users can focus and scroll with the arrow
+// keys. The box is outside the table because the grid role allows only rows inside it, and Tabulator's own scroll
+// area inside the grid is never focusable for the same reason.
+function snaFitTableWidth(table, el, wrap) {
+  var holder = el.querySelector('.tabulator-tableholder');
+  if (holder) {
+    holder.removeAttribute('tabindex');
+    var extra = holder.scrollWidth - holder.clientWidth;
+    var tries = Number(el.getAttribute('data-sna-widened')) || 0;
+    // Each redraw below draws the table again, which runs this again; three tries keep that from repeating for ever.
+    if (extra > 1 && holder.clientWidth > 0 && tries < 3) {
+      el.setAttribute('data-sna-widened', String(tries + 1));
+      el.style.minWidth = (el.offsetWidth + extra) + 'px';
+      table.redraw(true);
+      return;
+    }
+    if (extra <= 1) { el.removeAttribute('data-sna-widened'); }
+  }
+  if (wrap.scrollWidth > wrap.clientWidth + 1) {
+    wrap.setAttribute('role', 'region');
+    wrap.setAttribute('tabindex', '0');
+    wrap.setAttribute('aria-label', el.getAttribute('aria-label') + ' (scroll sideways to see more)');
+  } else {
+    wrap.removeAttribute('role');
+    wrap.removeAttribute('tabindex');
+    wrap.removeAttribute('aria-label');
+  }
+}
+
 // Builds every table in _snaTablesQueue whose element is on the page, then empties the queue.
+// Each entry is { id, type, data, searchLabel, label }; label is the table's name for screen readers.
 function initSnaTabulators() {
   if (!Tabulator) { _snaTablesQueue = []; return; }
 
@@ -559,6 +754,8 @@ function initSnaTabulators() {
     var filterInput = null;
     var countEl = null;
     var total = tbl.data.length;
+    var paged = total > SNA_TABLE_PAGE_ROWS;
+    var countLabel = snaMaskText(tbl.searchLabel);
     if (total > SNA_TABLE_FILTER_MIN_ROWS) {
       var filterWrap = document.createElement('div');
       filterWrap.className = 'sna-table-filter hide-on-print';
@@ -579,53 +776,85 @@ function initSnaTabulators() {
       el.parentNode.insertBefore(filterWrap, el);
     }
 
-    // Long tables scroll inside a labeled region that keyboard users can focus and scroll.
-    // The region is outside the table because the table's grid role allows only rows inside it.
-    if (total > 7) {
-      var scrollRegion = document.createElement('div');
-      scrollRegion.className = 'sna-table-scroll';
-      scrollRegion.setAttribute('tabindex', '0');
-      scrollRegion.setAttribute('role', 'region');
-      scrollRegion.setAttribute('aria-label', 'Table of ' + snaMaskText(tbl.searchLabel));
-      el.parentNode.insertBefore(scrollRegion, el);
-      scrollRegion.appendChild(el);
-    }
+    // Tabulator gives this element the grid role, so this names the table for screen readers. The name is
+    // set here, after the markup's hidden values were hidden, so it is hidden separately.
+    // A label that names a person, such as "Access for <name>", is kept as it is, like other people's names.
+    el.setAttribute('aria-label', tbl.labelShowsPerson ? tbl.label : snaMaskText(tbl.label || tbl.searchLabel));
+    var personFields = SNA_TABLE_PERSON_FIELDS[tbl.type];
+    var wrap = document.createElement('div');
+    wrap.className = 'sna-table-wrap';
+    el.parentNode.insertBefore(wrap, el);
+    wrap.appendChild(el);
 
-    var table = new Tabulator(el, {
+    // Every table grows with its rows, so its headings and frame stay in view. Long tables are split into pages.
+    var options = {
       data: tbl.data,
       columns: snaTableColumns(tbl.type, tbl),
       layout: 'fitColumns',
-      renderType: 'basic',
+      renderVertical: 'basic',
       movableColumns: false,
-      selectable: false,
+      selectableRows: false,
       placeholder: '<em>No data found.</em>'
-    });
+    };
+    // The paging controls sit under the table, outside the grid, because the grid role allows only rows inside it.
+    // They are outside the sideways scroll box too, so they stay in view on a narrow screen.
+    if (paged) {
+      var pagesEl = document.createElement('div');
+      pagesEl.className = 'sna-table-pages hide-on-print';
+      pagesEl.setAttribute('role', 'group');
+      pagesEl.setAttribute('aria-label', 'Pages of ' + el.getAttribute('aria-label'));
+      wrap.parentNode.insertBefore(pagesEl, wrap.nextSibling);
+      options.paginationElement = pagesEl;
+      options.pagination = true;
+      options.paginationSize = SNA_TABLE_PAGE_ROWS;
+      options.paginationSizeSelector = SNA_TABLE_PAGE_SIZES;
+      options.langs = SNA_TABLE_TEXT;
+    }
+    var table = new Tabulator(el, options);
     _snaTabInstances[tbl.id] = table;
     _snaTabMeta[tbl.id] = tbl;
 
-    table.on('dataFiltered', function(filters, rows) { snaUpdateTableCount(countEl, rows.length, total, tbl.searchLabel); });
+    function updateCount(shown) {
+      if (paged) { snaUpdatePagedTableCount(table, countEl, total, countLabel); }
+      else { snaUpdateTableCount(countEl, shown, total, countLabel); }
+    }
+
+    var built = false;
+    table.on('dataFiltered', function(filters, rows) { if (!paged) { updateCount(rows.length); } });
+    table.on('renderComplete', function() {
+      if (!built) { return; }
+      snaFitTableWidth(table, el, wrap);
+      if (paged) { updateCount(); snaMarkCurrentPage(pagesEl); }
+    });
+    if (paged) {
+      table.on('pageLoaded', function() { updateCount(); snaMarkCurrentPage(pagesEl); });
+      table.on('pageSizeChanged', function() { updateCount(); });
+    }
 
     table.on('tableBuilt', function() {
-      // Tabulator makes its inner scroll area focusable, which puts a focus stop with no role inside the grid.
-      // The table does not scroll by itself here, so that focus stop is removed.
+      built = true;
       var holder = el.querySelector('.tabulator-tableholder');
       if (holder) { holder.removeAttribute('tabindex'); }
       snaMakeHeadingsSortableByKeyboard(table);
       if (filterInput) {
         var saved = _snaTableFilters[tbl.id] || '';
         filterInput.value = saved;
-        if (saved) { snaApplyTableFilter(table, saved); } else { snaUpdateTableCount(countEl, total, total, tbl.searchLabel); }
+        if (saved) { snaApplyTableFilter(table, saved, personFields); } else { updateCount(total); }
       }
+      if (paged) { snaMarkCurrentPage(pagesEl); }
       // A table in a column the browser has only just laid out can measure its width too early, so it redraws once.
       requestAnimationFrame(function() {
-        if (_snaTabInstances[tbl.id] === table) { table.redraw(true); }
+        if (_snaTabInstances[tbl.id] !== table) { return; }
+        table.redraw(true);
       });
     });
 
     if (filterInput) {
       filterInput.addEventListener('input', function() {
         _snaTableFilters[tbl.id] = filterInput.value;
-        snaApplyTableFilter(table, filterInput.value);
+        snaApplyTableFilter(table, filterInput.value, personFields);
+        // Tabulator keeps the open page number when the filter changes, so the matches start on the first page.
+        if (paged) { table.setPage(1); }
       });
     }
 
@@ -1351,6 +1580,25 @@ function renderPermissionsHtml(roleAssignments, caption) {
     return html + '</tbody></table>';
 }
 
+// Returns the screen version of renderPermissionsHtml: a sortable table of the same rows, built by initSnaTabulators.
+// tableId names its element, and label names the table for screen readers, such as "Site permissions".
+function snaRenderPermissionsTable(tableId, roleAssignments, label) {
+    if (!roleAssignments || roleAssignments.length === 0) {
+        return '<p class="perm-row">No people or groups have permissions here.</p>';
+    }
+    var rows = roleAssignments.map(function(ra) {
+        var member = ra.Member || {};
+        return {
+            name:   member.Title || member.LoginName || '',
+            kind:   SNA_PRINCIPAL_KIND_LABELS[snaPrincipalKind(member)],
+            levels: (ra.RoleDefinitionBindings || []).map(function(binding) {
+                return snaLevelText(binding.Name || '', snaIsLimitedAccessRole(binding));
+            }).join(', ')
+        };
+    });
+    return snaQueueTableHtml({ id: tableId, type: 'perm', searchLabel: 'people and groups', label: label, data: rows });
+}
+
 // Clears the permission state. Called before a site is read and by Start over.
 function snaResetPermissionState() {
     _snaPermIndex       = {};
@@ -1456,10 +1704,13 @@ function renderPermissionsByPrincipal() {
     var coversText = inheritedCount === 0 ? '' : ' This also covers ' +
         snaCountText(inheritedCount, 'list or library that uses', 'lists and libraries that use') + ' the site\'s permissions.';
 
+    // The data attributes let the filter and Sort by in People and groups reorder and hide cards without drawing them
+    // again. data-person holds the name as it is shown, because people's and groups' names are never hidden.
     html += '<div class="sna-principal-grid">';
-    entries.forEach(function(p) {
+    entries.forEach(function(p, index) {
         var isGuest = snaIsGuestLogin(p.loginName, p.title);
-        html += '<div class="sna-principal-block">';
+        html += '<div class="sna-principal-block" data-order="' + index + '" data-person="' + snaEscapeHtml(p.title) + '"' +
+            ' data-kind="' + snaEscapeHtml(SNA_PRINCIPAL_KIND_LABELS[p.kind]) + '" data-lists="' + p.lists.length + '">';
         html += '<div class="sna-principal-name"><strong>' + snaPersonHtml(p.title) + '</strong> ' +
             '<span class="app-tag">' + SNA_PRINCIPAL_KIND_LABELS[p.kind] + '</span>' +
             (isGuest ? ' <span class="app-tag sna-guest-tag">Guest</span>' : '') + '</div>';
@@ -1510,6 +1761,66 @@ function renderPermissionsByPrincipal() {
             ' that SharePoint creates by itself for sharing links and Limited Access. The sharing links section lists the links.</p>';
     }
     return html;
+}
+
+// Choices in the Sort by box of People and groups. 'access' is the order renderPermissionsByPrincipal draws.
+var SNA_PEOPLE_SORTS = {
+    access: 'Whole-site access first',
+    name:   'Name',
+    type:   'Type',
+    lists:  'Most lists and libraries with their own permissions'
+};
+
+// Returns the Filter by name box, the Sort by box, and the count line above the People and groups cards.
+function snaPeopleControlsHtml() {
+    return '<div class="sna-people-controls hide-on-print">' +
+        '<div class="sna-people-control">' +
+            '<label for="sna-people-filter">Filter by name</label>' +
+            '<input type="search" id="sna-people-filter" class="sna-table-search" autocomplete="off" value="' + snaEscapeHtml(_snaPeopleFilter) + '">' +
+        '</div>' +
+        '<div class="sna-people-control">' +
+            '<label for="sna-people-sort">Sort by</label>' +
+            '<select id="sna-people-sort" class="sna-people-sort">' + Object.keys(SNA_PEOPLE_SORTS).map(function(key) {
+                return '<option value="' + key + '"' + (key === _snaPeopleSort ? ' selected' : '') + '>' + snaEscapeHtml(SNA_PEOPLE_SORTS[key]) + '</option>';
+            }).join('') + '</select>' +
+        '</div>' +
+        '<p id="sna-people-count" class="sna-table-count" role="status"></p>' +
+    '</div>';
+}
+
+// Puts the People and groups cards in the order chosen in Sort by. Ties keep the default order.
+function snaSortPeopleBlocks() {
+    var grid = document.querySelector('#sp-results .sna-principal-grid');
+    if (!grid) { return; }
+    function number(block, name) { return Number(block.getAttribute(name)) || 0; }
+    function byName(a, b) { return a.getAttribute('data-person').localeCompare(b.getAttribute('data-person'), undefined, { sensitivity: 'base' }); }
+    var compare = {
+        access: function() { return 0; },
+        name:   byName,
+        type:   function(a, b) { return a.getAttribute('data-kind').localeCompare(b.getAttribute('data-kind')) || byName(a, b); },
+        lists:  function(a, b) { return number(b, 'data-lists') - number(a, 'data-lists'); }
+    }[_snaPeopleSort] || function() { return 0; };
+    Array.prototype.slice.call(grid.querySelectorAll(':scope > .sna-principal-block')).sort(function(a, b) {
+        return compare(a, b) || number(a, 'data-order') - number(b, 'data-order');
+    }).forEach(function(block) { grid.appendChild(block); });
+}
+
+// Hides the People and groups cards whose names don't contain the filter text, and says how many are shown.
+function snaApplyPeopleFilter() {
+    var grid = document.querySelector('#sp-results .sna-principal-grid');
+    var countEl = document.getElementById('sna-people-count');
+    if (!grid || !countEl) { return; }
+    var text = _snaPeopleFilter.trim().toLowerCase();
+    var blocks = grid.querySelectorAll(':scope > .sna-principal-block');
+    var shown = 0;
+    blocks.forEach(function(block) {
+        var matches = !text || block.getAttribute('data-person').toLowerCase().indexOf(text) > -1;
+        block.hidden = !matches;
+        if (matches) { shown++; }
+    });
+    var total = blocks.length;
+    countEl.textContent = shown === 0 ? 'No names match the filter.'
+        : (shown === total ? 'Showing all ' + total + ' people and groups.' : 'Showing ' + shown + ' of ' + total + ' people and groups.');
 }
 
 // Reads the members of every SharePoint group in the access list, a few groups at a time.
@@ -1587,9 +1898,43 @@ function snaRenderUserAccessTool() {
             '<div id="sna-user-access-hint" class="sna-muted">Such as user@med.umich.edu</div>' +
         '</div>' +
         '<div id="sna-user-access-status" class="sna-access-status" role="status">' + (done ? snaPersonHtml(done.status) : '') + '</div>' +
-        // done.html was built by snaCheckUserAccess with every SharePoint value escaped.
-        '<div id="sna-user-access-results">' + (done ? done.html : '') + '</div>' +
+        '<div id="sna-user-access-results">' + (done ? snaRenderUserCheckResult(done.check) : '') + '</div>' +
     '</div>';
+}
+
+// Returns the result of a person check: a table of the whole site and each list and library the person can open, and
+// notes about what was left out. check is { personTitle, personLogin, personFound, siteLevel, rows, noAccessCount },
+// where rows are { title, url, isLib, level } and a level of null means Sitenalyzer could not check it. The table is
+// sortable on screen, and a plain table when forPrint is true. Returns '' when check is null.
+function snaRenderUserCheckResult(check, forPrint) {
+    if (!check) { return ''; }
+    var rows = [{ isSite: true, title: 'Whole site', url: '', isLib: false, level: check.siteLevel || 'Could not check' }].concat(check.rows.map(function(r) {
+        return { isSite: false, title: r.title, url: r.url, isLib: r.isLib, level: r.level || 'Could not check' };
+    }));
+    var html;
+    if (forPrint) {
+        html = '<table class="sna-perm-list-table"><caption>Access for ' + snaPersonHtml(check.personTitle) + '</caption>' +
+            '<thead><tr><th scope="col">Site, list, or library</th><th scope="col">Access</th></tr></thead><tbody>';
+        rows.forEach(function(r) {
+            html += '<tr><td>' + (r.isSite ? snaEscapeHtml(r.title)
+                : '<span aria-hidden="true">' + (r.isLib ? '📄 ' : '📋 ') + '</span>' + snaLinkHtml(r.url, r.title)) + '</td>' +
+                '<td>' + snaEscapeHtml(r.level) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+    } else {
+        html = '<h4 class="sna-subsection-title">Access for ' + snaPersonHtml(check.personTitle) + '</h4>' +
+            snaQueueTableHtml({ id: 'sna-tbl-person', type: 'personcheck', searchLabel: 'places', label: 'Access for ' + check.personTitle,
+                labelShowsPerson: true, data: rows });
+    }
+    if (check.noAccessCount > 0) {
+        html += '<p class="sna-note">Left out ' + snaCountText(check.noAccessCount, 'list or library', 'lists and libraries') +
+            ' this person can\'t open.</p>';
+    }
+    if (!check.personFound) {
+        html += '<p class="sna-note">Sitenalyzer didn\'t find this email address among the site\'s users, so it checked the sign-in name ' +
+            snaPersonHtml(check.personLogin) + '. If the results say No access, check the spelling.</p>';
+    }
+    return html;
 }
 
 // Checks what one person can do on the site and in every list and library, and shows the result.
@@ -1601,14 +1946,20 @@ async function snaCheckUserAccess() {
     if (!input || !status || !out || _snaUserCheckRunning) { return; }
 
     var text = input.value.trim();
+    // Removes the result table of an earlier check, and its filter text, before the result area is replaced.
+    var clearResult = function(area) {
+        snaDisposeViewTables(area);
+        delete _snaTableFilters['sna-tbl-person'];
+        area.innerHTML = '';
+    };
     if (!text) {
-        out.innerHTML = '';
+        clearResult(out);
         status.textContent = 'Enter an email address or sign-in name, such as user@med.umich.edu.';
         input.focus();
         return;
     }
     if (text.length > SNA_PERSON_CHECK_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) {
-        out.innerHTML = '';
+        clearResult(out);
         status.textContent = 'Enter one email address or sign-in name, such as user@med.umich.edu.';
         input.focus();
         return;
@@ -1618,12 +1969,16 @@ async function snaCheckUserAccess() {
     var token = _snaCollectionToken;
     var isCurrent = function() { return token === _snaCollectionToken; };
     // The person may open another view while the check runs; results then go to the section shown when Permissions reopens.
-    var showResult = function(statusText, html) {
+    var showResult = function(statusText, check) {
         if (!isCurrent()) { return; }
-        _snaUserCheckResult = { input: text, status: statusText, html: html };
+        _snaUserCheckResult = { input: text, status: statusText, check: check };
         var liveStatus = document.getElementById('sna-user-access-status');
         var liveOut = document.getElementById('sna-user-access-results');
-        if (liveOut) { liveOut.innerHTML = snaMaskHtml(html); }
+        if (liveOut) {
+            clearResult(liveOut);
+            liveOut.innerHTML = snaMaskHtml(snaRenderUserCheckResult(check));
+            initSnaTabulators();
+        }
         // The status is fixed text with the checked person's name, which stays visible like other people's names.
         if (liveStatus) { liveStatus.textContent = statusText; }
     };
@@ -1631,7 +1986,7 @@ async function snaCheckUserAccess() {
     _snaUserCheckRunning = true;
     _snaUserCheckResult = null;
     if (button) { button.disabled = true; }
-    out.innerHTML = '';
+    clearResult(out);
     status.textContent = 'Checking access...';
 
     // Kept from the start, because Start over and Change site replace these while the check runs.
@@ -1667,28 +2022,15 @@ async function snaCheckUserAccess() {
         var noAccessCount = listRows.length - shownRows.length;
         var uncheckedCount = listRows.filter(function(r) { return r.level === null; }).length + (siteLevel === null ? 1 : 0);
 
-        var html = '<table class="sna-perm-list-table"><caption>Access for ' + snaPersonHtml(person.title) + '</caption>' +
-            '<thead><tr><th scope="col">Site, list, or library</th><th scope="col">Access</th></tr></thead><tbody>' +
-            '<tr><td>Whole site</td><td>' + snaEscapeHtml(siteLevel || 'Could not check') + '</td></tr>';
-        shownRows.forEach(function(r) {
-            html += '<tr><td><span aria-hidden="true">' + (r.isLib ? '📄 ' : '📋 ') + '</span>' + snaLinkHtml(r.url, r.title) + '</td>' +
-                '<td>' + snaEscapeHtml(r.level || 'Could not check') + '</td></tr>';
-        });
-        html += '</tbody></table>';
-        if (noAccessCount > 0) {
-            html += '<p class="sna-note">Left out ' + snaCountText(noAccessCount, 'list or library', 'lists and libraries') +
-                ' this person can\'t open.</p>';
-        }
-        if (!person.found) {
-            html += '<p class="sna-note">Sitenalyzer didn\'t find this email address among the site\'s users, so it checked the sign-in name ' +
-                snaPersonHtml(person.login) + '. If the results say No access, check the spelling.</p>';
-        }
         showResult('Finished checking access for ' + person.title + '.' + (uncheckedCount > 0
             ? ' Sitenalyzer could not check ' + snaCountText(uncheckedCount, 'place', 'places') + '. You need to be a site owner to check them.'
-            : ''), html);
+            : ''), {
+                personTitle: person.title, personLogin: person.login, personFound: person.found,
+                siteLevel: siteLevel, rows: shownRows, noAccessCount: noAccessCount
+            });
     } catch(e) {
         console.warn('Sitenalyzer: access check failed:', e);
-        showResult('Sitenalyzer could not check this person\'s access. Refresh the page and try again.', '');
+        showResult('Sitenalyzer could not check this person\'s access. Refresh the page and try again.', null);
     } finally {
         _snaUserCheckRunning = false;
         var liveButton = document.querySelector('#sp-results [data-action="check-user-access"]');
@@ -1837,7 +2179,7 @@ function snaRenderPermissionLevels(levels) {
 }
 
 // Renders the lists and libraries that have their own permissions instead of using the site's permissions.
-function snaRenderInheritanceReport(listsRead) {
+function snaRenderInheritanceReport(listsRead, forPrint) {
     if (listsRead === false) {
         return '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so it could not check which have their own permissions. Refresh the report to try again.</p>';
     }
@@ -1849,6 +2191,16 @@ function snaRenderInheritanceReport(listsRead) {
     var html = '<p class="sna-note">' + unique.length + ' of ' + snaCountText(total, 'list or library', 'lists and libraries') + ' ' +
         (unique.length === 1 ? 'has its' : 'have their') + ' own permissions.' +
         (unique.length < total ? ' The rest use the site\'s permissions.' : '') + '</p>';
+    if (!forPrint) {
+        return html + snaQueueTableHtml({ id: 'sna-tbl-own', type: 'ownperms', searchLabel: 'lists and libraries',
+            label: 'Lists and libraries with their own permissions', data: unique.map(function(u) {
+                return {
+                    title: u.title, url: u.url, isLib: u.isLib, typeText: u.isLib ? 'Library' : 'List', rolesRead: u.rolesRead,
+                    permText: u.rolesRead ? 'See its permissions' : 'Sitenalyzer could not read them',
+                    route: snaRouteHash({ section: 'contents', id: snaCleanListId(u.id), tab: 'permissions' })
+                };
+            }) });
+    }
     html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Lists and libraries with their own permissions</caption>' +
         '<thead><tr><th scope="col">List or library</th><th scope="col">Type</th><th scope="col">Permissions</th></tr></thead><tbody>';
     unique.forEach(function(u) {
@@ -1971,8 +2323,9 @@ function snaSharingGroupsNote(result) {
     return '';
 }
 
-// Renders the sharing links section, with links that anyone can use listed first.
-function snaRenderSharingLinks(result) {
+// Renders the sharing links section, with links that anyone can use listed first. The table is sortable on screen,
+// and a plain table when forPrint is true.
+function snaRenderSharingLinks(result, forPrint) {
     if (result.failed) {
         return '<div class="perm-row">Sitenalyzer could not read the sharing links. You need to be a site owner to see them.</div>';
     }
@@ -1991,12 +2344,25 @@ function snaRenderSharingLinks(result) {
         SNA_SHARING_LINK_LABELS.anyone + ': ' + countKind('anyone') + '. ' +
         SNA_SHARING_LINK_LABELS.organization + ': ' + countKind('organization') + '. ' +
         SNA_SHARING_LINK_LABELS.specific + ': ' + countKind('specific') + '.</p>';
-    html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Sharing links</caption>' +
-        '<thead><tr><th scope="col">Shared item</th><th scope="col">People who can use it</th><th scope="col">Access</th></tr></thead><tbody>';
-    links.slice().sort(function(a, b) {
+    var sorted = links.slice().sort(function(a, b) {
         var order = kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind);
         return order !== 0 ? order : snaByTitle(a, b);
-    }).forEach(function(l) {
+    });
+    var notes = (result.lookupsCapped ? '<p class="sna-note">Sitenalyzer looked up names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' shared items only.</p>' : '') +
+        (groupsNote ? '<p class="sna-note">' + groupsNote + '</p>' : '');
+    if (!forPrint) {
+        return html + snaQueueTableHtml({ id: 'sna-tbl-sharing', type: 'sharing', searchLabel: 'sharing links', label: 'Sharing links',
+            data: sorted.map(function(l) {
+                return {
+                    name: l.name, url: l.url, itemType: l.itemType, kind: l.kind, kindText: SNA_SHARING_LINK_LABELS[l.kind], access: l.access,
+                    itemText: l.name ? l.name + (l.itemType === 'folder' ? ' (folder)' : '')
+                        : 'No name found. It may be a list item or a deleted file. Item ID: ' + l.itemId
+                };
+            }) }) + notes;
+    }
+    html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Sharing links</caption>' +
+        '<thead><tr><th scope="col">Shared item</th><th scope="col">People who can use it</th><th scope="col">Access</th></tr></thead><tbody>';
+    sorted.forEach(function(l) {
         var itemCell = l.name
             ? snaLinkHtml(l.url, l.name) + (l.itemType === 'folder' ? ' (folder)' : '')
             : '<span class="sna-muted">No name found. It may be a list item or a deleted file. Item ID: ' + snaEscapeHtml(l.itemId) + '</span>';
@@ -2004,12 +2370,7 @@ function snaRenderSharingLinks(result) {
         var kindCell = l.kind === 'anyone' ? '<span class="sna-risk-reason">' + kindText + '</span>' : kindText;
         html += '<tr><td>' + itemCell + '</td><td>' + kindCell + '</td><td>' + snaEscapeHtml(l.access) + '</td></tr>';
     });
-    html += '</tbody></table>';
-    if (result.lookupsCapped) {
-        html += '<p class="sna-note">Sitenalyzer looked up names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' shared items only.</p>';
-    }
-    if (groupsNote) { html += '<p class="sna-note">' + groupsNote + '</p>'; }
-    return html;
+    return html + '</tbody></table>' + notes;
 }
 
 // Returns one row per list or library per cleanup finding, from the list details already read: not changed in the last
@@ -2048,17 +2409,25 @@ function snaRenderReviewFindings(report, level, tableId) {
     var html = '<h' + level + ' class="sna-subsection-title">Lists and libraries to review (' + rows.length + ')</h' + level + '>' +
         '<p>Use these findings to decide what to review. Some older content may still need to be kept. Sitenalyzer changes nothing from this page.</p>';
     if (rows.length === 0) { return html + '<p class="sna-muted">Sitenalyzer found nothing to review in the lists and libraries.</p>'; }
-    _snaTablesQueue.push({ id: tableId, type: 'findings', searchLabel: 'findings', data: rows });
+    _snaTablesQueue.push({ id: tableId, type: 'findings', searchLabel: 'findings', label: 'Lists and libraries to review', data: rows });
     return html + '<div id="' + tableId + '"></div>';
 }
 
 // Returns the five lists and libraries with the most items, under a heading of the given level. System lists are left
-// out, because the User Information List can hold most of an organization.
-function snaRenderLargestLists(report, level) {
+// out, because the User Information List can hold most of an organization. The table is sortable on screen, and a
+// plain table when forPrint is true.
+function snaRenderLargestLists(report, level, forPrint) {
     var largest = snaUserLists(report).filter(function(l) { return (Number(l.itemCount) || 0) > 0; })
         .sort(function(a, b) { return (Number(b.itemCount) || 0) - (Number(a.itemCount) || 0); }).slice(0, 5);
     var html = '<h' + level + ' class="sna-subsection-title">Largest lists and libraries</h' + level + '>';
     if (largest.length === 0) { return html + '<p class="sna-muted">Every list and library is empty.</p>'; }
+    if (!forPrint) {
+        return html + snaQueueTableHtml({ id: 'sna-tbl-largest', type: 'largest', searchLabel: 'lists and libraries',
+            label: 'Largest lists and libraries', data: largest.map(function(l) {
+                return { title: l.title, route: snaRouteHash({ section: 'contents', id: l.routeId }), typeText: l.isLib ? 'Library' : 'List',
+                    items: Number(l.itemCount) || 0 };
+            }) });
+    }
     html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Largest lists and libraries</caption>' +
         '<thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Items</th></tr></thead><tbody>';
     largest.forEach(function(l) {
@@ -2858,6 +3227,8 @@ function snaClearReport() {
     _snaRoute            = null;
     _snaPendingNav       = null;
     _snaContentsFilter   = '';
+    _snaPeopleFilter     = '';
+    _snaPeopleSort       = 'access';
     _snaLastInventoryId  = '';
     _snaUserCheckResult  = null;
     _snaDrafts           = {};
@@ -4095,7 +4466,7 @@ function snaRenderSitePagesSection(sitePages) {
         html += '<p class="sna-note">Sitenalyzer stopped reading Site Pages because SharePoint sent a link to a different site. The pages below may be incomplete.</p>';
     }
     if (pages.length > 0) {
-        _snaTablesQueue.push({ id: 'sna-tbl-pages', type: 'pages', searchLabel: 'pages', data: pages });
+        _snaTablesQueue.push({ id: 'sna-tbl-pages', type: 'pages', searchLabel: 'pages', label: 'Site pages', data: pages });
         html += '<div id="sna-tbl-pages"></div>';
     } else {
         html += '<p>No site pages found.</p>';
@@ -4675,7 +5046,7 @@ function snaNumbersInText(text) {
     }).filter(function(digits) { return digits.length > 0; });
 }
 
-// Clears the text a person typed into the table filter boxes, the Contents name filter, and Search this report when
+// Clears the text a person typed into the table filter boxes, the Contents and People and groups name filters, and Search this report when
 // it shows a hidden value, so that turning Show hidden values off doesn't leave the value on screen. These boxes show
 // the text as typed, not hidden. The boxes on screen are cleared too, because redrawing a view saves their text again.
 function snaClearTypedHiddenValues() {
@@ -4684,6 +5055,7 @@ function snaClearTypedHiddenValues() {
         if (snaTypedTextShowsHiddenValue(_snaTableFilters[id], hiddenValues)) { _snaTableFilters[id] = ''; }
     });
     if (snaTypedTextShowsHiddenValue(_snaContentsFilter, hiddenValues)) { _snaContentsFilter = ''; }
+    if (snaTypedTextShowsHiddenValue(_snaPeopleFilter, hiddenValues)) { _snaPeopleFilter = ''; }
     document.querySelectorAll('#sp-info-app .sna-table-search, #sna-report-search').forEach(function(input) {
         if (snaTypedTextShowsHiddenValue(input.value, hiddenValues)) { input.value = ''; }
     });
@@ -4892,6 +5264,7 @@ function renderApp(route, options) {
     }
     initSnaTabulators();
     if (route.section === 'contents') { snaApplyInventoryFilter(); }
+    if (route.section === 'permissions') { snaSortPeopleBlocks(); snaApplyPeopleFilter(); }
     if (route.section === 'contents' && route.id === 'pages' && route.page) {
         var page = snaFindPage(_snaReport, route.page);
         if (page) { snaLoadPageImage(page); }
@@ -5338,20 +5711,20 @@ function snaRenderListTab(list, tab) {
         if (list.columnsStatus === 'failed') { return '<p class="sna-error-text">Sitenalyzer could not read the columns. Refresh the report to try again.</p>'; }
         if (list.columns.length === 0) { return '<p class="sna-muted">No visible columns found.</p>'; }
         var columnsId = 'sna-tbl-f-' + list.routeId;
-        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', data: list.columns });
+        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', label: 'Columns of ' + list.title, data: list.columns });
         return '<div id="' + columnsId + '" class="sna-fields-table"></div>';
     }
     if (tab === 'folders') {
         if (list.foldersStatus === 'failed') { return '<p class="sna-error-text">Sitenalyzer could not read the folders. Refresh the report to try again.</p>'; }
         if (list.folders.length === 0) { return '<p class="sna-muted">No top-level folders found.</p>'; }
         var foldersId = 'sna-tbl-d-' + list.routeId;
-        _snaTablesQueue.push({ id: foldersId, type: 'folders', searchLabel: 'folders', data: list.folders });
+        _snaTablesQueue.push({ id: foldersId, type: 'folders', searchLabel: 'folders', label: 'Top-level folders in ' + list.title, data: list.folders });
         return '<div id="' + foldersId + '"></div>';
     }
     if (tab === 'permissions') {
         if (list.permissions.inherits) { return '<div class="perm-row">Uses the site\'s permissions.</div>'; }
         if (!list.permissions.rolesRead) { return '<div class="perm-row">Sitenalyzer could not read these permissions. You need to be a site owner to see them.</div>'; }
-        return renderPermissionsHtml(list.permissions.roleAssignments, list.title + ' permissions');
+        return snaRenderPermissionsTable('sna-tbl-p-' + list.routeId, list.permissions.roleAssignments, list.title + ' permissions');
     }
     var changed = snaFormatDate(list.lastModified);
     return '<dl class="sna-facts">' +
@@ -5397,7 +5770,7 @@ function snaRenderContentsSummary(report) {
     function table(title, lists, tableId, label) {
         var block = '<h4 class="sna-summary-heading">' + snaEscapeHtml(title) + ' (' + lists.length + ')</h4>';
         if (lists.length === 0) { return block + '<p class="sna-muted">None found.</p>'; }
-        _snaTablesQueue.push({ id: tableId, type: 'lists', searchLabel: label, data: lists.slice().sort(snaByTitle).map(function(l) {
+        _snaTablesQueue.push({ id: tableId, type: 'lists', searchLabel: label, label: title, data: lists.slice().sort(snaByTitle).map(function(l) {
             return {
                 title: l.title, route: snaRouteHash({ section: 'contents', id: l.routeId }), description: l.description,
                 items: Number(l.itemCount) || 0, columns: l.columns.length, lastChanged: l.lastModified,
@@ -5596,6 +5969,8 @@ function snaRenderPermissionPart(part, report) {
             (groupsWithMembers > 1 ? snaExpandCollapseHtml() : '') +
             '<div class="sna-callout"><p>Sitenalyzer lists the members of SharePoint groups. It can\'t list the members of Microsoft 365 groups ' +
                 'and security groups, because Microsoft Entra ID manages them.</p></div>' +
+            // The controls are added here, not in renderPermissionsByPrincipal, which the print document uses too.
+            (snaAccessPrincipals(report).length > 1 ? snaPeopleControlsHtml() : '') +
             renderPermissionsByPrincipal();
     }
     if (part === 'person') { return snaPartTitleHtml('Check a person\'s access', '') + snaRenderUserAccessTool(); }
@@ -5609,8 +5984,9 @@ function snaRenderPermissionPart(part, report) {
         snaRenderSitePermissionsHtml(report);
 }
 
-// Returns the site's permission table, the site collection administrators, and the permission levels.
-function snaRenderSitePermissionsHtml(report) {
+// Returns the site's permission table, the site collection administrators, and the permission levels. The table is
+// sortable on screen, and a plain table when forPrint is true.
+function snaRenderSitePermissionsHtml(report, forPrint) {
     var perms = report.permissions;
     var html = '';
     if (perms.siteRolesRead) {
@@ -5621,7 +5997,8 @@ function snaRenderSitePermissionsHtml(report) {
         });
         var leftOut = perms.siteRoleAssignments.length - shownAssignments.length;
         html += '<p>These permission levels apply to the site and to every list and library that uses the site\'s permissions.</p>' +
-            renderPermissionsHtml(shownAssignments, 'Site permissions') +
+            (forPrint ? renderPermissionsHtml(shownAssignments, 'Site permissions')
+                : snaRenderPermissionsTable('sna-tbl-siteperms', shownAssignments, 'Site permissions')) +
             (leftOut > 0 ? '<p class="sna-note">Left out ' + snaCountText(leftOut, 'group', 'groups') +
                 ' that SharePoint creates by itself for sharing links and Limited Access. The permissions workbook lists them.</p>' : '');
         var hasLimited = perms.siteRoleAssignments.some(function(ra) { return (ra.RoleDefinitionBindings || []).some(snaIsLimitedAccessRole); });
@@ -5637,11 +6014,13 @@ function snaRenderSitePermissionsHtml(report) {
         snaRenderPermissionLevels(perms.roleDefinitions);
 }
 
-// Returns the apps that have their own permissions on the site.
-function snaRenderAppsHtml(report) {
+// Returns the apps that have their own permissions on the site, in a sortable table on screen, or a plain table
+// when forPrint is true.
+function snaRenderAppsHtml(report, forPrint) {
     var perms = report.permissions;
     var inner = perms.appAssignments.length > 0
-        ? renderPermissionsHtml(perms.appAssignments, 'Apps with access to this site')
+        ? (forPrint ? renderPermissionsHtml(perms.appAssignments, 'Apps with access to this site')
+            : snaRenderPermissionsTable('sna-tbl-apps', perms.appAssignments, 'Apps with access to this site'))
         : '<div class="perm-row">' + (perms.siteRolesRead ? 'No apps have their own permissions on this site.' : 'Sitenalyzer could not read the site\'s permissions.') + '</div>';
     return '<p class="sna-note">Apps given access in Microsoft Entra ID, such as through Sites.Selected, don\'t appear here. Ask your Microsoft 365 admin for that list.</p>' + inner;
 }
@@ -5729,7 +6108,7 @@ function snaRenderTermSet(group, set, report) {
             html += '<p class="sna-note">Sitenalyzer could not read which term every term sits under, so a term shown as Top level may sit under another term. Refresh the report to try again.</p>';
         }
         var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
-        _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', setId: set.setId, parentsHidden: parentsHidden });
+        _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', label: 'Terms in ' + set.setName, setId: set.setId, parentsHidden: parentsHidden });
         html += '<div id="' + tblId + '"></div>';
     }
     return html + snaRenderTermSetUsage(set, report);
@@ -5745,7 +6124,6 @@ function snaTermNameInSet(set, termId) {
 // Returns the "Columns that use this term set" part of a term set: each list or library and column that uses it, with a
 // link to that list's Columns tab, and each site column that uses it but isn't in any list or library.
 function snaRenderTermSetUsage(set, report) {
-    var technical = snaTechnicalDetailsOn();
     var usage = report.taxonomy.usage || { bySet: {}, status: 'failed' };
     var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
     var html = '<h4 class="sna-subsection-title">Columns that use this term set (' + rows.length + ')</h4>';
@@ -5759,27 +6137,22 @@ function snaRenderTermSetUsage(set, report) {
         return html + (usage.status === 'partial' ? '' : '<p class="sna-muted">No column on this site uses this term set.</p>');
     }
 
+    // The Starts at term column is shown only when a column starts below the top of the term set.
     var hasAnchor = rows.some(function(r) { return r.anchorTermId; });
-    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Columns that use ' + snaEscapeHtml(set.setName) + '</caption>' +
-        '<thead><tr><th scope="col">List or library</th><th scope="col">Column</th>' +
-        (technical ? '<th scope="col">Internal name</th>' : '') +
-        (hasAnchor ? '<th scope="col">Starts at term</th>' : '') +
-        '<th scope="col">Allows several values</th></tr></thead><tbody>';
-    rows.forEach(function(r) {
-        var listCell = r.isSiteColumn
-            ? '<span class="sna-muted">Site column (not in a list or library)</span>'
-            : '<a href="' + snaEscapeHtml(snaRouteHash({ section: 'contents', id: r.listRouteId, tab: 'columns' })) + '"' +
-                (r.filterTable ? ' data-filter-table="' + snaEscapeHtml(r.filterTable) + '" data-filter-text="' + snaEscapeHtml(r.columnTitle) + '"' : '') + '>' +
-                snaEscapeHtml(r.listTitle) + '<span class="sna-visually-hidden"> (' + snaEscapeHtml(r.columnTitle) + ' column)</span></a>';
-        var anchorName = r.anchorTermId ? snaTermNameInSet(set, r.anchorTermId) : '';
-        var anchorCell = !r.anchorTermId ? '<span class="sna-muted">Whole term set</span>'
-            : (anchorName ? snaEscapeHtml(anchorName) : 'A term not in this report (term ID ' + snaEscapeHtml(r.anchorTermId) + ')');
-        html += '<tr><td>' + listCell + '</td><td>' + snaEscapeHtml(r.columnTitle) + '</td>' +
-            (technical ? '<td><span class="list-id-text">' + snaEscapeHtml(r.internalName) + '</span></td>' : '') +
-            (hasAnchor ? '<td>' + anchorCell + '</td>' : '') +
-            '<td>' + (r.allowsSeveral ? 'Yes' : 'No') + '</td></tr>';
-    });
-    return html + '</tbody></table>';
+    return html + snaQueueTableHtml({
+        id: 'sna-usage-' + String(set.setId).replace(/[^0-9a-z]/gi, ''), type: 'termuse', searchLabel: 'columns',
+        label: 'Columns that use ' + set.setName, hasAnchor: hasAnchor, data: rows.map(function(r) {
+            var anchorName = r.anchorTermId ? snaTermNameInSet(set, r.anchorTermId) : '';
+            return {
+                isSiteColumn: r.isSiteColumn, filterTable: r.filterTable, columnTitle: r.columnTitle, internalName: r.internalName,
+                listTitle: r.isSiteColumn ? 'Site column (not in a list or library)' : r.listTitle,
+                route: r.isSiteColumn ? '' : snaRouteHash({ section: 'contents', id: r.listRouteId, tab: 'columns' }),
+                anchorTermId: r.anchorTermId,
+                anchorText: !r.anchorTermId ? 'Whole term set' : (anchorName || 'A term not in this report (term ID ' + r.anchorTermId + ')'),
+                allowsSeveral: !!r.allowsSeveral
+            };
+        })
+    }, 'sna-term-usage-table');
 }
 
 // Draws Site review: one table of cleanup findings, the largest lists and libraries, and what this report could read.
@@ -5794,9 +6167,15 @@ function snaRenderReview(route, report) {
     return html + '<h3 class="sna-subsection-title">Report coverage</h3>' + snaRenderCoverageTable(report.coverage);
 }
 
-// Returns the coverage table: one row per part of the report, saying whether Sitenalyzer could read it.
-function snaRenderCoverageTable(coverage) {
+// Returns the coverage table: one row per part of the report, saying whether Sitenalyzer could read it. The table is
+// sortable on screen, and a plain table when forPrint is true.
+function snaRenderCoverageTable(coverage, forPrint) {
     var labels = { read: 'Read', partial: 'Partly read', failed: 'Not read' };
+    if (!forPrint) {
+        return snaQueueTableHtml({ id: 'sna-tbl-coverage', type: 'coverage', searchLabel: 'parts of the report', label: 'Report coverage',
+            data: coverage.map(function(row) { return { area: row.area, status: labels[row.status] || row.status, note: row.note }; }) },
+            'sna-coverage-table');
+    }
     var html = '<table class="sna-perm-list-table sna-coverage-table"><caption class="sna-visually-hidden">Report coverage</caption>' +
         '<thead><tr><th scope="col">Part of the report</th><th scope="col">Status</th><th scope="col">Notes</th></tr></thead><tbody>';
     coverage.forEach(function(row) {
@@ -5990,14 +6369,13 @@ function snaBuildPrintDocument(report) {
     var check = _snaUserCheckResult;
     html += '<section class="sna-print-section"><h2>Permissions</h2>' +
         '<h3>Access findings</h3>' + snaRenderRiskFlags() + snaRenderOwnPermissionsFinding(report) +
-        '<h3>Site permissions</h3>' + snaRenderSitePermissionsHtml(report) +
+        '<h3>Site permissions</h3>' + snaRenderSitePermissionsHtml(report, true) +
         '<h3>People and groups</h3>' + renderPermissionsByPrincipal() +
         '<h3>Check a person\'s access</h3>' +
-            // check.html was built by snaCheckUserAccess with every SharePoint value escaped.
-            (check ? '<p>' + snaPersonHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
-        '<h3>Lists and libraries with their own permissions</h3>' + snaRenderInheritanceReport(report.listsRead) +
-        '<h3>Sharing links</h3>' + snaRenderSharingLinks(perms.sharingLinks) +
-        '<h3>Apps with access to this site</h3>' + snaRenderAppsHtml(report) + '</section>';
+            (check ? '<p>' + snaPersonHtml(check.status) + '</p>' + snaRenderUserCheckResult(check.check, true) : '<p>No one\'s access was checked for this report.</p>') +
+        '<h3>Lists and libraries with their own permissions</h3>' + snaRenderInheritanceReport(report.listsRead, true) +
+        '<h3>Sharing links</h3>' + snaRenderSharingLinks(perms.sharingLinks, true) +
+        '<h3>Apps with access to this site</h3>' + snaRenderAppsHtml(report, true) + '</section>';
 
     var taxonomy = report.taxonomy;
     html += '<section class="sna-print-section"><h2>Taxonomy</h2>';
@@ -6037,11 +6415,11 @@ function snaBuildPrintDocument(report) {
             snaPrintTableHtml('Lists and libraries to review', ['Finding', 'List or library', 'Detail', 'Next step'],
                 findings.map(function(f) { return [f.finding, f.title, f.detail, f.nextStep]; }),
                 'Sitenalyzer found nothing to review in the lists and libraries.') +
-            snaRenderLargestLists(report, 3);
+            snaRenderLargestLists(report, 3, true);
     } else {
         html += '<p>Sitenalyzer could not read the lists and libraries, so it could not look for cleanup findings.</p>';
     }
-    html += '<h3>Report coverage</h3>' + snaRenderCoverageTable(report.coverage) + '</section>';
+    html += '<h3>Report coverage</h3>' + snaRenderCoverageTable(report.coverage, true) + '</section>';
 
     return html + '<p class="sna-print-footer">Copyright &copy; 2026 The Regents of the University of Michigan | ' +
         'Eisenberg Family Depression Center (https://depressioncenter.org)</p>';
@@ -6288,10 +6666,19 @@ function startApplication() {
             if (e.target && e.target.id === 'sna-inventory-filter') {
                 _snaContentsFilter = e.target.value;
                 snaApplyInventoryFilter();
+            } else if (e.target && e.target.id === 'sna-people-filter') {
+                _snaPeopleFilter = e.target.value;
+                snaApplyPeopleFilter();
             } else if (e.target && e.target.id === 'sna-site-find') {
                 snaRenderSiteChoices();
             } else if (e.target && e.target.classList && e.target.classList.contains('sna-editor-field')) {
                 snaKeepDraftText(e.target);
+            }
+        });
+        app.addEventListener('change', function(e) {
+            if (e.target && e.target.id === 'sna-people-sort' && SNA_PEOPLE_SORTS[e.target.value]) {
+                _snaPeopleSort = e.target.value;
+                snaSortPeopleBlocks();
             }
         });
         // Double-clicking a description is a shortcut for its Edit description button.

@@ -147,6 +147,12 @@ messages, help, and documentation. For example, "participant", not "subject" or
   number, shown as `[phone number hidden]`. The switch is **Show hidden values**. Not "masked" or "redacted".
 - **Sign-in name:** the account name SharePoint uses, such as
   `i:0#.f|membership|user@med.umich.edu`. Not "login" or "claims".
+- **Page (of a table):** one set of rows of a table with more than 50 rows, moved
+  between with **Previous** and **Next**. The size box is **Rows per page**. Not
+  "pagination" or "page size" in anything a person reads.
+- **Filter box:** the box above a table, or above Contents or People and groups,
+  that shows only what contains the typed text. Not "search" for these boxes;
+  **Search this report** is the only search.
 
 ### Project skills
 
