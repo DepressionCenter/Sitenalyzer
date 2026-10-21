@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/architecture.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: How Sitenalyzer's files fit together, how it starts on a SharePoint page, and why it is built this way.
 Notes: See README file for documentation and full license information.
 
@@ -67,7 +67,7 @@ The diagram shows these steps:
 
 Every request is a read made with the signed-in person's own permissions. The only writes are the description edits that site owners make on purpose. The `$batch` requests for shared item names are sent as POST requests, but they hold only reads and change nothing on the site.
 
-| Request | Why |
+| Request | Reason |
 | --- | --- |
 | `/_api/web`, `/_api/web/currentUser` | Site name, address, and ID; who is exporting. |
 | `/_api/web/effectivebasePermissions` | Whether the person can manage the site (the ManageWeb permission). Only then are the description edit buttons shown. |
@@ -79,7 +79,7 @@ Every request is a read made with the signed-in person's own permissions. The on
 | `/_api/web/roledefinitions`, `/_api/web/siteusers?$filter=IsSiteAdmin eq true` | Permission levels and site collection administrators, for the permissions workbook. |
 | `/_api/web/lists?$filter=BaseTemplate eq 119` and its `items` | The Site Pages library and its pages. |
 | `/_api/web/lists(guid'...')/items(<ID>)?$select=BannerImageUrl` | The image chosen for one site page, read only when its details open. |
-| `/_api/web/siteusers?$filter=Email eq '…'` and `getUserEffectivePermissions(@u)` | Only when someone uses **Check one person's access**. |
+| `/_api/web/siteusers?$filter=Email eq '…'` and `getUserEffectivePermissions(@u)` | Only when someone uses **Check a person's access**. |
 | Fields, root folders, and the term store (`/_api/v2.1/sites/…/termStore`) | Columns, top-level folders, and terms for the data dictionary. |
 | `…/termStore/sets/<ID>/terms?$expand=children`, and `…/terms/<ID>/children` when needed | Which term each term sits under. See [Parent terms and term set use](#parent-terms-and-term-set-use). |
 | `/_api/web/lists(guid'…')/fields` and `/_api/web/fields`, each filtered to managed metadata columns, with `SchemaXml` | Which columns use each term set. A list sends this request only when it has a managed metadata column. |
@@ -111,7 +111,7 @@ The term set of a managed metadata column isn't returned by the columns request.
 
 ### Permission rows
 
-Sitenalyzer keeps one permission row for each scope, person or group, and permission level. A scope is the whole site or one list or library that has its own permissions. The **Who has access** section and the Permissions sheet of the workbook are both built from these rows, so they always agree.
+Sitenalyzer keeps one permission row for each scope, person or group, and permission level. A scope is the whole site or one list or library that has its own permissions. The **People and groups** part of Permissions and the Permissions sheet of the workbook are both built from these rows, so they always agree.
 
 - A permission level on the whole site also covers every list and library that uses the site's permissions. Sitenalyzer says so next to each person or group.
 - Limited Access is the exception. SharePoint adds it by itself when someone shares a single item, and it gives no access to other lists. Sitenalyzer recognizes it by its `RoleTypeKind` of 1, or by the level being hidden, so it works on sites in any language. It is never counted as access to the site's lists.
@@ -187,9 +187,9 @@ The switch is never saved, so each visit starts with values hidden. It appears o
 
 Sitenalyzer saves two things in the browser's local storage. Neither holds any report data. **Show hidden values** is never saved.
 
-| Key | What it holds |
+| Key | Contents |
 | --- | --- |
-| `sitenalyzer:sites-cache` | The list of sites the person can open, so the **Site URL** list appears quickly next time. It is kept for up to 30 days. The **Refresh sites list** button next to the box clears it. It holds site names as SharePoint gives them, even names that Sitenalyzer hides on screen. |
+| `sitenalyzer:sites-cache` | The list of sites the person can open, so the **Site address** list appears quickly next time. It is kept for up to 30 days. The **Refresh sites list** button next to the box clears it. It holds site names as SharePoint gives them, even names that Sitenalyzer hides on screen. |
 | `sitenalyzer:technical-details` | `1` while **Show technical details** is on. Sitenalyzer writes it only when someone turns the switch on, and removes it when they turn it off. |
 
 Other apps on the same SharePoint host share that storage, so every Sitenalyzer key starts with `sitenalyzer:`. When the browser blocks storage, both settings last only until the page closes. Sitenalyzer does not use IndexedDB or session storage.

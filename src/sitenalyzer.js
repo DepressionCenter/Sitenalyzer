@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -1552,7 +1552,7 @@ async function snaCheckUserAccess() {
         var uncheckedCount = listRows.filter(function(r) { return r.level === null; }).length + (siteLevel === null ? 1 : 0);
 
         var html = '<table class="sna-perm-list-table"><caption>Access for ' + snaPersonHtml(person.title) + '</caption>' +
-            '<thead><tr><th scope="col">Site, list, or library</th><th scope="col">What they can do</th></tr></thead><tbody>' +
+            '<thead><tr><th scope="col">Site, list, or library</th><th scope="col">Access</th></tr></thead><tbody>' +
             '<tr><td>Whole site</td><td>' + snaEscapeHtml(siteLevel || 'Could not check') + '</td></tr>';
         shownRows.forEach(function(r) {
             html += '<tr><td><span aria-hidden="true">' + (r.isLib ? '📄 ' : '📋 ') + '</span>' + snaLinkHtml(r.url, r.title) + '</td>' +
@@ -1651,24 +1651,25 @@ function snaRenderRiskFlags() {
 
     if (flags.length === 0 && anyoneLinkCount === 0) {
         if (!_snaSiteRolesRead) {
-            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">Sitenalyzer could not check for guests</h4>' +
-                '<p class="sna-risk-row">It could not read the site\'s permissions. Ask a site owner to run Sitenalyzer on this site.</p></div>';
+            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">Guests and organization-wide access</h4>' +
+                '<p class="sna-risk-row">Sitenalyzer could not check for guests, because it could not read the site\'s permissions. ' +
+                'Ask a site owner to run Sitenalyzer on this site.</p></div>';
         }
         if (gaps.length > 0) {
-            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">No guests or organization-wide groups found in the permissions Sitenalyzer could read</h4>' +
-                '<p class="sna-risk-row">' + gapText + '</p></div>';
+            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">Guests and organization-wide access</h4>' +
+                '<p class="sna-risk-row">Sitenalyzer found no guests or organization-wide groups in the permissions it could read. ' + gapText + '</p></div>';
         }
         if (gapText) {
-            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">No guests or organization-wide groups have access</h4>' +
-                '<p class="sna-risk-row">Sitenalyzer found no sharing links that anyone can use. ' + gapText + '</p></div>';
+            return '<div class="sna-risk-panel sna-risk-unknown"><h4 class="sna-risk-title">Guests and organization-wide access</h4>' +
+                '<p class="sna-risk-row">No guests or organization-wide groups have access, and Sitenalyzer found no sharing links that anyone can use. ' +
+                gapText + '</p></div>';
         }
-        return '<div class="sna-risk-panel sna-risk-clear"><h4 class="sna-risk-title"><span aria-hidden="true">&#10003; </span>' +
-            'No guests or organization-wide groups have access</h4>' +
-            '<p class="sna-risk-row">Sitenalyzer also found no sharing links that anyone can use.</p></div>';
+        return '<div class="sna-risk-panel sna-risk-clear"><h4 class="sna-risk-title"><span aria-hidden="true">&#10003; </span>Guests and organization-wide access</h4>' +
+            '<p class="sna-risk-row">No guests or organization-wide groups have access, and Sitenalyzer found no sharing links that anyone can use.</p></div>';
     }
 
-    var html = '<div class="sna-risk-panel"><h4 class="sna-risk-title"><span aria-hidden="true">&#9888; </span>Review guest and organization-wide access</h4>' +
-        '<ul class="sna-risk-list">';
+    var html = '<div class="sna-risk-panel"><h4 class="sna-risk-title"><span aria-hidden="true">&#9888; </span>Guests and organization-wide access</h4>' +
+        '<p class="sna-risk-row">Check whether each of these still needs access.</p><ul class="sna-risk-list">';
     flags.forEach(function(f) {
         html += '<li class="sna-risk-row"><strong>' + snaPersonHtml(f.title) + '</strong>: <span class="sna-risk-reason">' +
             snaEscapeHtml(f.reason) + '</span>' + (f.where ? ' (' + snaEscapeHtml(f.where) + ')' : '') +
@@ -1714,7 +1715,7 @@ function snaRenderPermissionLevels(levels) {
     var shown = (levels || []).filter(function(l) { return !l.Hidden; })
         .sort(function(a, b) { return (Number(a.Order) || 0) - (Number(b.Order) || 0); });
     if (shown.length === 0) { return ''; }
-    return '<details class="permissions-section"><summary>Permission levels explained</summary><dl class="sna-facts">' +
+    return '<details class="permissions-section"><summary>Permission levels on this site</summary><dl class="sna-facts">' +
         shown.map(function(l) { return '<dt>' + snaEscapeHtml(l.Name || '') + '</dt><dd>' + snaEscapeHtml(l.Description || 'No description.') + '</dd>'; }).join('') +
         '</dl></details>';
 }
@@ -1875,7 +1876,7 @@ function snaRenderSharingLinks(result) {
         SNA_SHARING_LINK_LABELS.organization + ': ' + countKind('organization') + '. ' +
         SNA_SHARING_LINK_LABELS.specific + ': ' + countKind('specific') + '.</p>';
     html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Sharing links</caption>' +
-        '<thead><tr><th scope="col">Shared item</th><th scope="col">Who can use the link</th><th scope="col">Access</th></tr></thead><tbody>';
+        '<thead><tr><th scope="col">Shared item</th><th scope="col">People who can use it</th><th scope="col">Access</th></tr></thead><tbody>';
     links.slice().sort(function(a, b) {
         var order = kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind);
         return order !== 0 ? order : snaByTitle(a, b);
@@ -1927,7 +1928,7 @@ function snaReviewFindings(report) {
 // Returns the cleanup findings table under a heading of the given level, such as 3 for <h3>. tableId names its table.
 function snaRenderReviewFindings(report, level, tableId) {
     var rows = snaReviewFindings(report);
-    var html = '<h' + level + ' class="sna-subsection-title">Lists and libraries to review for cleanup (' + rows.length + ')</h' + level + '>' +
+    var html = '<h' + level + ' class="sna-subsection-title">Lists and libraries to clean up (' + rows.length + ')</h' + level + '>' +
         '<p>Use these findings to decide what to review. Some older content may still need to be kept. Sitenalyzer changes nothing from this page.</p>';
     if (rows.length === 0) { return html + '<p class="sna-muted">Sitenalyzer found nothing to review in the lists and libraries.</p>'; }
     _snaTablesQueue.push({ id: tableId, type: 'findings', searchLabel: 'findings', data: rows });
@@ -2694,7 +2695,7 @@ function snaClearReport() {
     _snaHiddenSeen       = {};
 }
 
-// Clears the report and returns to the start screen. Change site keeps the last address in the Site URL box so it can be
+// Clears the report and returns to the start screen. Change site keeps the last address in the Site address box so it can be
 // corrected; Start over puts back this page's own site address.
 function startOver(keepAddress) {
     snaClearReport();
@@ -2729,7 +2730,7 @@ function snaSetProgress(text) {
     if (loader) { loader.textContent = text || ''; }
 }
 
-// Shows an error under the Site URL box, or clears it when message is ''. detail is an optional second sentence.
+// Shows an error under the Site address box, or clears it when message is ''. detail is an optional second sentence.
 function snaShowEntryMessage(message, detail) {
     var box = document.getElementById('sna-entry-message');
     if (!box) { return; }
@@ -3186,7 +3187,7 @@ function snaBuildCoverage(report) {
     return rows;
 }
 
-// Reads the site in the Site URL box and shows its report. options.keepRoute reopens the view that was on screen,
+// Reads the site in the Site address box and shows its report. options.keepRoute reopens the view that was on screen,
 // for Refresh report. Otherwise the report opens the view in the address, such as #sna/taxonomy, or Overview.
 // options.focusProgress moves focus to the progress message while the site is read, as keepRoute does.
 async function gatherSiteInformation(options) {
@@ -3201,7 +3202,7 @@ async function gatherSiteInformation(options) {
     snaShowEntryMessage('');
     var targetUrl = siteUrlInput.value.trim();
     if (targetUrl.length === 0) {
-        snaShowEntryMessage('Enter or select a site URL, then select Extract site information.');
+        snaShowEntryMessage('Type a site address or choose one from the list, then select Extract site information.');
         siteUrlInput.focus();
         return;
     }
@@ -3232,7 +3233,7 @@ async function gatherSiteInformation(options) {
         var errorMsg = error.message ? error.message : 'Unknown error occurred';
         console.warn('Error fetching data:', errorMsg);
         snaShowEntryMessage('Sitenalyzer could not read this site.',
-            'Check the site URL and make sure you can open the site. To see all of its information, you need to be a site owner.');
+            'Check the site address and make sure you can open the site. To see all of its information, you need to be a site owner.');
     } finally {
         if (token === _snaCollectionToken) {
             btn.disabled = false;
@@ -4832,7 +4833,7 @@ function snaFindList(report, routeId) {
     return null;
 }
 
-// Returns the people and groups in Who has access, by person or group, leaving out groups SharePoint creates by itself.
+// Returns the people and groups in People and groups, leaving out groups SharePoint creates by itself.
 function snaAccessPrincipals(report) {
     var index = report.permissions.index;
     return Object.keys(index).map(function(key) { return index[key]; }).filter(function(p) { return !p.isSystemGroup; });
@@ -4871,7 +4872,7 @@ function snaRenderOverview(route, report) {
     report.taxonomy.groups.forEach(function(g) { termSets += (g.termSets || []).length; });
     var NOT_READ = 'Not read';
 
-    var html = snaSectionTitleHtml('Overview', 'A summary of what this site holds and who can open it.');
+    var html = snaSectionTitleHtml('Overview', 'Counts of this site\'s lists, libraries, pages, term sets, and sharing links.');
     html += snaStatsHtml([
         { value: report.listsRead ? libraries.length : NOT_READ, singular: 'Document library', plural: 'Document libraries', href: '#sna/contents' },
         { value: report.listsRead ? plainLists.length : NOT_READ, singular: 'List', plural: 'Lists', href: '#sna/contents' },
@@ -4911,17 +4912,17 @@ function snaRenderOverview(route, report) {
 
     html += '<div class="sna-cards">' +
         card('folder', 'Contents', contentsText, [['Contents summary', '#sna/contents'], ['Browse site pages', '#sna/contents/pages']]) +
-        card('shield', 'Permissions', 'Who can open what on this site.', [
-            ['View site permissions', '#sna/permissions/site'],
-            ['Who has access, by person or group (' + peopleCount + ')', '#sna/permissions/people'],
-            ['Check one person\'s access', '#sna/permissions/person'],
+        card('shield', 'Permissions', 'Access to this site.', [
+            ['Site permissions', '#sna/permissions/site'],
+            ['People and groups (' + peopleCount + ')', '#sna/permissions/people'],
+            ['Check a person\'s access', '#sna/permissions/person'],
             ['Lists and libraries with their own permissions (' + snaOwnPermissionsCount(report) + ')', '#sna/permissions/own'],
             ['Sharing links (' + sharingCount + ')', '#sna/permissions/sharing'],
             ['Apps with access to this site (' + appsCount + ')', '#sna/permissions/apps']
         ], true) +
         card('tag', 'Taxonomy', taxonomyText, [['Browse term groups and sets', '#sna/taxonomy']]) +
-        card('check', 'Site review', 'Older content, version history settings, the largest lists and libraries, and report coverage.',
-            [['Lists and libraries to review for cleanup', '#sna/review']]) +
+        card('check', 'Site review', 'Lists and libraries to clean up, the largest ones, and what Sitenalyzer could and couldn\'t read.',
+            [['Lists and libraries to clean up', '#sna/review']]) +
     '</div>';
     return html;
 }
@@ -4931,7 +4932,7 @@ function snaRenderOverview(route, report) {
 // Draws Contents: the list of document libraries, lists, and Site pages beside the details of the selected one.
 // On narrow screens the two stack, and the details offer Back to results.
 function snaRenderContents(route, report) {
-    return snaSectionTitleHtml('Site contents', 'The site\'s document libraries, lists, and pages. Select a name to see its details.') +
+    return snaSectionTitleHtml('Contents', 'The site\'s document libraries, lists, and pages. Select a name to see its details.') +
         '<div id="sna-contents" class="sna-contents' + (route.id ? ' sna-contents-detail-open' : '') + '">' +
             '<div id="sna-contents-inventory" class="sna-inventory">' + snaRenderInventory(route, report) + '</div>' +
             '<div id="sna-contents-detail" class="sna-detail">' + snaRenderContentsDetail(route, report) + '</div>' +
@@ -5285,7 +5286,7 @@ function snaRenderPermissions(route, report) {
     var nav = snaSubnavHtml('Permissions', [{ title: 'Explore access', items: parts.map(function(item) {
         return { href: snaRouteHash({ section: 'permissions', anchor: item[0] }), text: item[1], current: item[0] === part };
     }) }]);
-    return snaSectionTitleHtml('Permissions', 'Who can open what on this site, its lists, and its libraries.') +
+    return snaSectionTitleHtml('Permissions', 'Access to this site, its lists, and its libraries.') +
         '<div class="sna-split">' + nav + '<div class="sna-split-body">' + snaRenderPermissionPart(part, report) + '</div></div>';
 }
 
@@ -5294,7 +5295,7 @@ function snaRenderPermissionPart(part, report) {
     var perms = report.permissions;
     if (part === 'people') {
         var groupsWithMembers = snaAccessPrincipals(report).filter(function(p) { return p.members && p.members.length > 0; }).length;
-        return snaPartTitleHtml('People and groups', 'Who has access, where it applies, and the members of each SharePoint group.') +
+        return snaPartTitleHtml('People and groups', 'Each person and group with access, where it applies, and the members of each SharePoint group.') +
             (groupsWithMembers > 1 ? snaExpandCollapseHtml() : '') +
             '<div class="sna-callout"><p>Sitenalyzer lists the members of SharePoint groups. It can\'t list the members of Microsoft 365 groups ' +
                 'and security groups, because Microsoft Entra ID manages them.</p></div>' +
@@ -5328,8 +5329,9 @@ function snaRenderSitePermissionsHtml(report) {
                 ' that SharePoint creates by itself for sharing links and Limited Access. The permissions workbook lists them.</p>' : '');
         var hasLimited = perms.siteRoleAssignments.some(function(ra) { return (ra.RoleDefinitionBindings || []).some(snaIsLimitedAccessRole); });
         if (hasLimited) {
-            html += '<div class="sna-callout"><h4 class="sna-callout-title">Limited Access is not access to the whole site</h4>' +
-                '<p>SharePoint adds Limited Access when someone is given access to one item, file, or folder. It lets them open only what was shared with them.</p></div>';
+            html += '<div class="sna-callout"><h4 class="sna-callout-title">About Limited Access</h4>' +
+                '<p>Limited Access isn\'t access to the whole site. SharePoint adds it when someone is given access to one item, file, or folder, ' +
+                'and it lets them open only what was shared with them.</p></div>';
         }
     } else {
         html += '<p class="perm-row">Sitenalyzer could not read the site\'s permissions. You need to be a site owner to see them.</p>';
@@ -5351,7 +5353,7 @@ function snaRenderAppsHtml(report) {
 // or beside a summary of the term groups. A term store with no term groups and one that could not be read say different things.
 function snaRenderTaxonomy(route, report) {
     var taxonomy = report.taxonomy;
-    var html = snaSectionTitleHtml('Taxonomy and term store', 'The term groups, term sets, and terms this site collection can use to tag content.');
+    var html = snaSectionTitleHtml('Taxonomy', 'The term groups, term sets, and terms this site collection can use to tag content.');
     if (taxonomy.groups.length === 0) {
         return html + (taxonomy.read === false
             ? '<p class="sna-note">Sitenalyzer could not read the term store. Refresh the report to try again. If that does not work, ask your site owner whether you can open the term store.</p>'
@@ -5461,7 +5463,7 @@ function snaRenderTermSetUsage(set, report) {
     }
 
     var hasAnchor = rows.some(function(r) { return r.anchorTermId; });
-    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Columns that use ' + snaEscapeHtml(set.setName) + '</caption>' +
+    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Lists and libraries using ' + snaEscapeHtml(set.setName) + '</caption>' +
         '<thead><tr><th scope="col">List or library</th><th scope="col">Column</th>' +
         (technical ? '<th scope="col">Internal name</th>' : '') +
         (hasAnchor ? '<th scope="col">Starts at term</th>' : '') +
@@ -5485,9 +5487,9 @@ function snaRenderTermSetUsage(set, report) {
 
 // Draws Site review: one table of cleanup findings, the largest lists and libraries, and what this report could read.
 function snaRenderReview(route, report) {
-    var html = snaSectionTitleHtml('Site review', 'Older content, version history settings, the largest lists and libraries, and what this report could read.');
+    var html = snaSectionTitleHtml('Site review', 'Lists and libraries to clean up, the largest ones, and what Sitenalyzer could and couldn\'t read.');
     if (!report.listsRead) {
-        html += '<h3 class="sna-subsection-title">Lists and libraries to review for cleanup</h3>' +
+        html += '<h3 class="sna-subsection-title">Lists and libraries to clean up</h3>' +
             '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so it could not look for cleanup findings. Refresh the report to try again.</p>';
     } else {
         html += snaRenderReviewFindings(report, 3, 'sna-tbl-review') + snaRenderLargestLists(report, 3);
@@ -5530,7 +5532,7 @@ function snaRenderSearch(route, report) {
     html += '<p class="sna-lead">' + snaCountText(total, 'result', 'results') + ' for "' + snaEscapeHtml(q) + '" in ' + snaEscapeHtml(report.site.title) + '.</p>';
     if (groups.length > 1) { html += snaExpandCollapseHtml(); }
     html += '<p class="sna-muted">Search looks at names, internal names, IDs, data types, and where each item is. ' +
-        'Use * between words, or put a phrase in quotes to find it exactly. Column matches come first.</p>';
+        'Use * between words, or put a phrase in quotes to find it exactly. Columns come first.</p>';
     groups.forEach(function(group) {
         html += '<details class="sna-search-group" open><summary>' + snaEscapeHtml(group.title) + ' (' + group.items.length + ')</summary><ul class="sna-search-list">';
         group.items.forEach(function(item) {
@@ -5692,7 +5694,7 @@ function snaBuildPrintDocument(report) {
         '<h3>Apps with access to this site</h3>' + snaRenderAppsHtml(report) + '</section>';
 
     var taxonomy = report.taxonomy;
-    html += '<section class="sna-print-section"><h2>Taxonomy and term store</h2>';
+    html += '<section class="sna-print-section"><h2>Taxonomy</h2>';
     if (taxonomy.groups.length === 0) {
         html += taxonomy.read === false ? '<p>Sitenalyzer could not read the term store.</p>' : '<p>This site collection has no term groups of its own.</p>';
     } else {
@@ -5725,8 +5727,8 @@ function snaBuildPrintDocument(report) {
     html += '<section class="sna-print-section"><h2>Site review</h2>';
     if (report.listsRead) {
         var findings = snaReviewFindings(report);
-        html += '<h3>Lists and libraries to review for cleanup (' + findings.length + ')</h3>' +
-            snaPrintTableHtml('Lists and libraries to review for cleanup', ['Finding', 'List or library', 'Detail', 'Next step'],
+        html += '<h3>Lists and libraries to clean up (' + findings.length + ')</h3>' +
+            snaPrintTableHtml('Lists and libraries to clean up', ['Finding', 'List or library', 'Detail', 'Next step'],
                 findings.map(function(f) { return [f.finding, f.title, f.detail, f.nextStep]; }),
                 'Sitenalyzer found nothing to review in the lists and libraries.') +
             snaRenderLargestLists(report, 3);
@@ -6146,10 +6148,10 @@ function startApplication() {
     // Loads accessible sites from localStorage cache or SharePoint search, refreshing stale cache in the background.
     async function fetchAccessibleSites() {
         var helperMessage = document.getElementById('site-url-helper-message');
-        var helperDefault = 'Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.';
+        var helperDefault = 'Type a site address or choose one from the list. To see every permission, you need to be a site owner.';
 
         if (helperMessage) {
-            helperMessage.innerHTML = '<div class="helper-spinner"></div> Loading accessible sites...';
+            helperMessage.innerHTML = '<div class="helper-spinner"></div> Loading the sites you can open...';
         }
 
         var cacheStale = true;

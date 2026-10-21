@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -80,7 +80,7 @@ The tests check that:
 - The Overview shows five counts that link to their sections, and counts that could not be read say **Not read**. The Contents summary shows the other totals and a table of every list and library.
 - The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.
 - **Back to results** on a narrow screen returns focus to the item, and nothing scrolls sideways at 320 pixels wide.
-- Each part of **Permissions** opens from its navigation with its own address. **People and groups** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. **Site permissions** shows the guest finding with links, the own permissions finding, the site collection administrators, and the permission levels, and says what it couldn't check instead of saying no guests have access.
+- Each part of **Permissions** opens from its navigation with its own address. **People and groups** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. **Site permissions** shows the guest finding with links, the own permissions finding, the site collection administrators, and the permission levels, and says what it couldn't check instead of saying no guests have access. The guest finding has the same heading, **Guests and organization-wide access**, whether it found guests, found no one, or couldn't check, and says the result in a sentence under it.
 - Sharing links are found in site groups read 5,000 at a time. When a later request fails, Site permissions, Sharing links, and Report coverage say some sharing links may be missing.
 - Shared files and folders are named from `$batch` requests of at most 20 lookups, files first and then folders, with no failed requests in the console. An item that is neither says "No name found". A lookup that SharePoint throttles inside a batch is sent again on its own. When the batch or the request digest fails, the links are shown without names. Batch answers with LF line endings, a boundary in quotes, or a failed part are read correctly.
 - **Site review** shows one row per list or library per cleanup finding, the largest lists and libraries, and the coverage table.
@@ -110,7 +110,7 @@ The tests check that:
 
 The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresses, and IDs are made up. `openPretendSite(page, options)` takes these options:
 
-| Option | What it does |
+| Option | Effect |
 | --- | --- |
 | `missingFiles` | Answers these Site Assets file names with 404 Not Found. |
 | `extraHeadHtml` | Adds markup to the page head, such as an inline script that CSP must block. |

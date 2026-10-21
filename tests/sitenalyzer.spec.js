@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: Browser tests for Sitenalyzer. Each test opens the built app from dist/ on a pretend SharePoint
          site (see pretend-sharepoint.js) that blocks inline scripts the way SharePoint Online does.
 Notes: See README file for documentation and full license information.
@@ -187,7 +187,7 @@ test('shows the app inside the page with no errors', async function({ page }) {
     const record = await openPretendSite(page);
 
     await expect(page.locator('#sna-entry h1')).toContainText('Sitenalyzer');
-    await expect(page.getByLabel('Site URL:')).toHaveValue(SITE_URL);
+    await expect(page.getByLabel('Site address', { exact: true })).toHaveValue(SITE_URL);
     // The accessible sites list loads in the background after startup.
     await expect(page.locator('#site-url-helper-message')).not.toContainText('Loading');
     await expect(page.locator('#sna-report')).toBeHidden();
@@ -811,9 +811,9 @@ test('shows counts that link to their sections on the Overview', async function(
     await expect(counts.getByRole('link', { name: 'Term set 1' })).toHaveAttribute('href', '#sna/taxonomy');
     await expect(counts.getByRole('link', { name: 'Sharing link 1' })).toBeVisible();
     // The Permissions card shortcuts show the people and apps counts. The people count includes Test Study Team,
-    // which has access only to a list with its own permissions, the same as Who has access, by person or group.
+    // which has access only to a list with its own permissions, the same as People and groups.
     const cards = page.locator('.sna-cards');
-    await expect(cards.getByRole('link', { name: 'Who has access, by person or group (7)' })).toHaveAttribute('href', '#sna/permissions/people');
+    await expect(cards.getByRole('link', { name: 'People and groups (7)' })).toHaveAttribute('href', '#sna/permissions/people');
     await expect(cards.getByRole('link', { name: 'Apps with access to this site (1)' })).toBeVisible();
     // Findings belong in Permissions and Site review, so the Overview has none.
     await expect(page.locator('#sp-results .sna-risk-panel')).toHaveCount(0);
@@ -842,7 +842,7 @@ test('says Not read on the Overview for counts it could not read', async functio
     await expect(counts.getByRole('link', { name: 'Site pages Not read' })).toBeVisible();
     await expect(counts.getByRole('link', { name: 'List 1' })).toBeVisible();
     const cards = page.locator('.sna-cards');
-    await expect(cards.getByRole('link', { name: 'Who has access, by person or group (could not read)' })).toBeVisible();
+    await expect(cards.getByRole('link', { name: 'People and groups (could not read)' })).toBeVisible();
     await expect(cards.getByRole('link', { name: 'Apps with access to this site (could not read)' })).toBeVisible();
 
     await gotoSection(page, 'Site review');
@@ -985,7 +985,8 @@ test('lists who has access by person or group', async function({ page }) {
     // Guests, including guests inside groups, and organization-wide groups are the first finding in Site permissions.
     const site = await openPermissionPart(page, 'Site permissions');
     const risks = site.locator('.sna-risk-panel');
-    await expect(risks.getByRole('heading', { level: 4 })).toHaveText(/Review guest and organization-wide access/);
+    await expect(risks.getByRole('heading', { level: 4 })).toHaveText(/^\W*Guests and organization-wide access$/);
+    await expect(risks).toContainText('Check whether each of these still needs access.');
     await expect(risks).toContainText('Visiting Guest');
     await expect(risks).toContainText('member of Test Site Visitors');
     await expect(risks).toContainText('Everyone except external users: Everyone in your organization');
@@ -994,9 +995,10 @@ test('lists who has access by person or group', async function({ page }) {
     await expect(ownFinding.getByRole('heading', { level: 4 })).toHaveText('1 list or library has its own permissions');
     await expect(ownFinding.getByRole('link')).toHaveAttribute('href', '#sna/permissions/own');
     await expect(site.getByRole('table', { name: 'Site permissions' }).getByRole('row', { name: /Test Site Visitors/ })).toContainText('Read');
-    await expect(site.locator('.sna-callout')).toContainText('Limited Access is not access to the whole site');
+    await expect(site.locator('.sna-callout').getByRole('heading', { level: 4 })).toHaveText('About Limited Access');
+    await expect(site.locator('.sna-callout')).toContainText('Limited Access isn\'t access to the whole site.');
     await expect(site).toContainText('Test Admin');
-    await site.locator('summary', { hasText: 'Permission levels explained' }).click();
+    await site.locator('summary', { hasText: 'Permission levels on this site' }).click();
     await expect(site).toContainText('Custom level made for the tests.');
 
     // Lists with their own permissions link to that list's Permissions tab.
@@ -1042,7 +1044,8 @@ test('says what it could not check instead of saying no guests have access', asy
     const site = await openPermissionPart(page, 'Site permissions');
     const risks = site.locator('.sna-risk-panel');
     await expect(risks).not.toContainText('No guests or organization-wide groups have access');
-    await expect(risks.getByRole('heading', { level: 4 })).toHaveText('No guests or organization-wide groups found in the permissions Sitenalyzer could read');
+    await expect(risks.getByRole('heading', { level: 4 })).toHaveText('Guests and organization-wide access');
+    await expect(risks).toContainText('Sitenalyzer found no guests or organization-wide groups in the permissions it could read.');
     await expect(risks).toContainText('Sitenalyzer could not read the members of 2 groups, so this check may be missing some people or links.');
 });
 
@@ -1053,7 +1056,7 @@ test('shows cleanup findings, the largest lists, and what the report could read 
 
     const results = page.locator('#sp-results');
     // Study Visits was last changed in 2024 and keeps every version; Documents has no description.
-    await expect(results.getByRole('heading', { level: 3, name: 'Lists and libraries to review for cleanup (3)' })).toBeVisible();
+    await expect(results.getByRole('heading', { level: 3, name: 'Lists and libraries to clean up (3)' })).toBeVisible();
     const rows = results.locator('#sna-tbl-review .tabulator-row');
     await expect(rows).toHaveCount(3);
     await expect(rows.nth(0)).toContainText('Not changed in the last 12 months');
@@ -1293,12 +1296,40 @@ test('says some sharing links may be missing when a later page of site groups fa
     await extractSiteInformation(page);
 
     const risks = (await openPermissionPart(page, 'Site permissions')).locator('.sna-risk-panel');
-    await expect(risks.getByRole('heading', { level: 4 })).toHaveText('No guests or organization-wide groups have access');
-    await expect(risks).not.toContainText('Sitenalyzer also found no sharing links');
+    await expect(risks.getByRole('heading', { level: 4 })).toHaveText('Guests and organization-wide access');
+    await expect(risks).toContainText('No guests or organization-wide groups have access, and Sitenalyzer found no sharing links that anyone can use.');
+    // Some sharing links may be missing, so the panel isn't marked as clear.
+    await expect(risks).not.toHaveClass(/sna-risk-clear/);
     await expect(risks).toContainText('Sitenalyzer could not read all of the site\'s groups, so some sharing links may be missing. Select Refresh report to try again.');
     await expect(await openPermissionPart(page, 'Sharing links')).toContainText('some sharing links may be missing');
     await gotoSection(page, 'Site review');
     await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Sharing links/ })).toContainText('Partly read');
+});
+
+test('says under the guest check heading when no guests, organization-wide groups, or open links were found', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: OWNERS_ONLY_ANSWERS.concat([{ pattern: /^\/_api\/web\/sitegroups$/, body: { value: [] } }])
+    });
+    await extractSiteInformation(page);
+    const clear = (await openPermissionPart(page, 'Site permissions')).locator('.sna-risk-panel');
+    await expect(clear).toHaveClass(/sna-risk-clear/);
+    await expect(clear.getByRole('heading', { level: 4 })).toHaveText(/^\W*Guests and organization-wide access$/);
+    await expect(clear).toContainText('No guests or organization-wide groups have access, and Sitenalyzer found no sharing links that anyone can use.');
+});
+
+test('says under the guest check heading when it could not read the site permissions', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: /^\/_api\/web\/roleassignments$/, body: reply(403, { error: 'Access denied' }) },
+            { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/roleassignments$/, body: { value: [] } },
+            { pattern: /^\/_api\/web\/sitegroups$/, body: { value: [] } }
+        ]
+    });
+    await extractSiteInformation(page);
+    const unknown = (await openPermissionPart(page, 'Site permissions')).locator('.sna-risk-panel');
+    await expect(unknown).toHaveClass(/sna-risk-unknown/);
+    await expect(unknown.getByRole('heading', { level: 4 })).toHaveText('Guests and organization-wide access');
+    await expect(unknown).toContainText('Sitenalyzer could not check for guests, because it could not read the site\'s permissions.');
 });
 
 test('says it could not read groups and sharing links instead of saying there are none', async function({ page }) {
@@ -1655,7 +1686,7 @@ test('prints a full report with every section', async function({ page }) {
     await page.emulateMedia({ media: 'print' });
     const printed = printFrameDocument(page);
     await expect(printed.getByRole('heading', { level: 1 })).toHaveText('Test Research Site');
-    for (const heading of ['Contents', 'Document libraries', 'Lists', 'Site pages', 'Permissions', 'Taxonomy and term store', 'Site review']) {
+    for (const heading of ['Contents', 'Document libraries', 'Lists', 'Site pages', 'Permissions', 'Taxonomy', 'Site review']) {
         await expect(printed.getByRole('heading', { level: 2, name: heading, exact: true })).toHaveCount(1);
     }
     await expect(printed.getByRole('table', { name: 'Columns of Study Visits', exact: true }).locator('tbody tr')).toHaveCount(9);
@@ -1759,10 +1790,10 @@ test('keeps the open section in the address so Back and Forward work', async fun
     expect(hashOf(page)).toBe('#sna/contents');
 
     await page.goBack();
-    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
+    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy');
     await expect(page.locator('#sna-section-title')).toBeFocused();
     await page.goForward();
-    await expect(page.locator('#sna-section-title')).toHaveText('Site contents');
+    await expect(page.locator('#sna-section-title')).toHaveText('Contents');
     expect(record.consoleErrors).toEqual([]);
 });
 
@@ -1782,7 +1813,7 @@ test('shows the last of two quick section changes and keeps using the address', 
     expect(hashOf(page)).toBe('#sna/review');
     expect(warnings.filter(function(text) { return text.indexOf('changed the address') > -1; })).toEqual([]);
     await page.goBack();
-    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
+    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy');
 });
 
 test('keeps views in memory when the page rewrites the address', async function({ page }) {
@@ -1798,16 +1829,16 @@ test('keeps views in memory when the page rewrites the address', async function(
     await extractSiteInformation(page);
 
     await page.locator('.sna-nav').getByRole('link', { name: 'Taxonomy', exact: true }).click();
-    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
+    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy');
     await page.locator('.sna-nav').getByRole('link', { name: 'Contents', exact: true }).click();
-    await expect(page.locator('#sna-section-title')).toHaveText('Site contents');
+    await expect(page.locator('#sna-section-title')).toHaveText('Contents');
     await expect(page.locator('#sna-section-title')).toBeFocused();
     expect(warnings.filter(function(text) { return text.indexOf('changed the address') > -1; }).length).toBe(1);
 });
 
 test('opens the view in a site link address after reading the site', async function({ page }) {
     await openPretendSite(page, { addressSuffix: '?siteUrl=' + encodeURIComponent(SITE_URL) + '#sna/taxonomy' });
-    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
+    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy');
     await expect(page.locator('#sna-taxonomy-section')).toContainText('Test Term Group');
     expect(hashOf(page)).toBe('#sna/taxonomy');
 });
@@ -1820,7 +1851,7 @@ test('opens the Overview for addresses it does not know and ignores other page a
     // Addresses that are not Sitenalyzer's, such as #top, leave the view alone.
     await page.evaluate(function() { window.location.hash = '#top'; });
     await page.waitForTimeout(100);
-    await expect(page.locator('#sna-section-title')).toHaveText('Site contents');
+    await expect(page.locator('#sna-section-title')).toHaveText('Contents');
 
     await page.evaluate(function() { window.location.hash = '#sna/contents/not-a-guid/columns'; });
     await expect(page.locator('#sna-section-title')).toHaveText('Overview');
@@ -1837,13 +1868,13 @@ test('Start over clears the report and the address; Refresh report keeps the vie
     function siteReads() { return apiUrls(record).filter(function(u) { return u.pathname === SITE_PATH + '/_api/web'; }).length; }
     expect(siteReads()).toBe(1);
     await page.getByRole('button', { name: 'Refresh report' }).click();
-    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
+    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy');
     expect(siteReads()).toBe(2);
     expect(hashOf(page)).toBe('#sna/taxonomy');
 
     await page.getByRole('button', { name: 'Start over' }).click();
     await expect(page.locator('#sna-report')).toBeHidden();
-    await expect(page.getByLabel('Site URL:')).toBeFocused();
+    await expect(page.getByLabel('Site address', { exact: true })).toBeFocused();
     expect(hashOf(page)).toBe('');
     await expect(page.locator('#sp-results')).toBeEmpty();
 });
@@ -1891,7 +1922,7 @@ test('Change site opens a dialog that finds a site, and returns focus when it cl
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
     await expect(changeSite).toBeFocused();
-    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy and term store');
+    await expect(page.locator('#sna-section-title')).toHaveText('Taxonomy');
 
     // An address on another host is refused with an example; the Close button closes the dialog too.
     await changeSite.click();
@@ -1922,7 +1953,7 @@ test('Change site with a typed address reads that site', async function({ page }
     await dialog.getByLabel('Or enter a site address').fill('  ' + SITE_URL + '  ');
     await dialog.getByLabel('Or enter a site address').press('Enter');
     await expect(page.locator('#sna-section-title')).toHaveText('Overview');
-    await expect(page.getByLabel('Site URL:', { exact: true })).toHaveValue(SITE_URL);
+    await expect(page.getByLabel('Site address', { exact: true })).toHaveValue(SITE_URL);
 });
 
 // ### Technical Details ###
@@ -2815,7 +2846,7 @@ test('has no automatically detectable accessibility problems on the start screen
     } },
     { name: 'Site permissions', open: async function(page) {
         await openPermissionPart(page, 'Site permissions');
-        await page.locator('summary', { hasText: 'Permission levels explained' }).click();
+        await page.locator('summary', { hasText: 'Permission levels on this site' }).click();
     } },
     { name: 'People and groups', open: async function(page) {
         await openPermissionPart(page, 'People and groups');

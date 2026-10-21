@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/usage.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: How to install, update, and use Sitenalyzer on a SharePoint Online site.
 Notes: See README file for documentation and full license information.
 
@@ -30,7 +30,7 @@ This page explains how to add Sitenalyzer to a SharePoint Online site, how to up
 
 ### Files you copy to SharePoint
 
-| File in this repository | Where it goes in SharePoint | What it does |
+| File in this repository | Location in SharePoint | Purpose |
 | --- | --- | --- |
 | `dist/SiteAssets/scripts/sitenalyzer.js` | `SiteAssets/scripts` | The Sitenalyzer app. |
 | `dist/SiteAssets/scripts/xlsx.full.min.js` | `SiteAssets/scripts` | SheetJS, which saves the data dictionary as an Excel file. |
@@ -57,7 +57,7 @@ This page explains how to add Sitenalyzer to a SharePoint Online site, how to up
    ```
 
 9. Select **Save** in the code editor. Then select **Save** on the page to leave edit mode.
-10. Refresh the page. You should see the Sitenalyzer heading and a **Site URL** box. Sitenalyzer waits up to 10 seconds for SharePoint to show the web part.
+10. Refresh the page. You should see the Sitenalyzer heading and a **Site address** box. Sitenalyzer waits up to 10 seconds for SharePoint to show the web part.
 
 Sitenalyzer fills the width of its web part, so the tables have more room in a wider page section. Paragraphs stay at a comfortable reading width.
 
@@ -66,7 +66,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 ### Use Sitenalyzer
 
 1. Open the `sitenalyzer` page.
-2. Keep the current site's address in the **Site URL** box, or type or pick another site. The list shows sites you can open.
+2. Keep the current site's address in the **Site address** box, or type another site's address or choose one from the list. The list shows sites you can open.
 3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, and permissions, and says what it is reading, such as "Reading lists and libraries: 3 of 12". Large sites can take a minute.
 4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. See [Report sections](#report-sections).
 5. To find a list, library, column, folder, page, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
@@ -74,10 +74,10 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 7. Values that look like personal information, such as phone numbers, are hidden at first. When Sitenalyzer hid some, **Show hidden values** appears next to **Show technical details**. Turn it on to see them. See [Hidden values](#hidden-values).
 8. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
 9. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
-9. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
-10. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
-11. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. To close the box without changing the site, press Escape or select **Close**.
-12. To go back to the first screen, select **Start over**. It puts back the address of the site the page is on.
+10. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
+11. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
+12. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. To close the box without changing the site, press Escape or select **Close**.
+13. To go back to the first screen, select **Start over**. It puts back the address of the site the page is on.
 
 Both workbooks and the printed report always include the whole report, whatever section is open or filter is set.
 
@@ -93,13 +93,13 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 
 ### Report sections
 
-| Section | What it shows |
+| Section | Description |
 | --- | --- |
 | **Overview** | Counts of document libraries, lists, site pages, term sets, and sharing links, each linked to the section that lists them. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
 | **Contents** | Document libraries, lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
-| **Permissions** | Who can open what on the site. See [Permissions](#permissions). |
+| **Permissions** | Access to the site, its lists, and its libraries. See [Permissions](#permissions). |
 | **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
-| **Site review** | Lists and libraries to review for cleanup, the largest ones, and what Sitenalyzer could and could not read. See [Site review](#site-review). |
+| **Site review** | Lists and libraries to clean up, the largest ones, and what Sitenalyzer could and couldn't read. See [Site review](#site-review). |
 
 #### Contents summary
 
@@ -171,9 +171,9 @@ Pattern matching finds only text shaped like the examples above, so it doesn't f
 
 The **Permissions** section lists its parts on the left. Select one to open it.
 
-| Part | What it shows |
+| Part | Description |
 | --- | --- |
-| **Site permissions** | First, guests from outside your organization, groups that include everyone in your organization, and sharing links that anyone can use, including guests inside SharePoint groups. Then how many lists and libraries have their own permissions. Then each person or group with permissions on the whole site, the site collection administrators, and **Permission levels explained**. |
+| **Site permissions** | First, **Guests and organization-wide access**: guests from outside your organization, groups that include everyone in your organization, and sharing links that anyone can use, including guests inside SharePoint groups. Then how many lists and libraries have their own permissions. Then each person or group with permissions on the whole site, the site collection administrators, and **Permission levels on this site**. |
 | **People and groups** | For each person or group: what they can do on the whole site, and the lists and libraries that have their own permissions. Open **Members** under a SharePoint group to see who is in it. |
 | **Check a person's access** | What one person can do on the site and in each list and library. See below. |
 | **Own permissions** | The lists and libraries that don't use the site's permissions. |
@@ -188,11 +188,11 @@ Sitenalyzer says no guests or organization-wide groups have access only when it 
 
 SharePoint adds the Limited Access permission level by itself when someone shares a single item, file, or folder. A person with Limited Access on the site can open only what was shared with them. It does not let them open lists and libraries that use the site's permissions, so Sitenalyzer never counts it as access to those lists.
 
-SharePoint also creates a hidden group for each sharing link. Sitenalyzer leaves these groups out of **Who has access** and lists the links under **Sharing links** instead.
+SharePoint also creates a hidden group for each sharing link. Sitenalyzer leaves these groups out of **People and groups** and lists the links under **Sharing links** instead.
 
 When Sitenalyzer can't read something, such as a group's members, it says so. It never shows "none found" for something it could not read.
 
-#### Check one person's access
+#### Check a person's access
 
 1. In **Permissions**, select **Check a person's access**.
 2. Type the person's email address, such as `user@med.umich.edu`, in **Email address or sign-in name**.
@@ -206,7 +206,7 @@ The result appears when the check finishes. It stays in **Permissions** while yo
 
 ### Site review
 
-**Site review** has a table of lists and libraries to review for cleanup. It has one row for each list or library and each finding:
+**Site review** starts with **Lists and libraries to clean up**, a table with one row for each list or library and each finding:
 
 - **Not changed in the last 12 months**
 - **Version history turned off**, for document libraries
@@ -252,7 +252,7 @@ The printed report is built from everything Sitenalyzer read, not from what is o
 3. **Document libraries** and **Lists**: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, and descriptions, and one with internal names, IDs, and other technical details.
 4. **Site pages**.
 5. **Permissions**: the access findings, site permissions, people and groups with their members, the result of **Check a person's access** if you ran one, lists and libraries with their own permissions, sharing links, and apps.
-6. **Taxonomy and term store**: every term group, term set, and term, with their IDs, each term's parent term, and the columns that use each term set.
+6. **Taxonomy**: every term group, term set, and term, with their IDs, each term's parent term, and the columns that use each term set.
 7. **Site review**: the cleanup findings, the largest lists and libraries, and **Report coverage**.
 
 Technical details are always printed, even when **Show technical details** is off. Hidden values stay hidden in the printout unless **Show hidden values** is on. See [Hidden values](#hidden-values). The printout leaves out buttons, search boxes, the section links, and the SharePoint page around Sitenalyzer. Table headings repeat at the top of each page. Page images aren't printed.
@@ -261,7 +261,7 @@ Technical details are always printed, even when **Show technical details** is of
 
 The **Permissions workbook (.xlsx)** button saves an Excel workbook named like `TestResearchSite_Permissions_2026-10-14.xlsx`. It holds what Sitenalyzer read, so it matches the screen. Every sheet has filter buttons on its header row.
 
-| Sheet | One row for each | What it is for |
+| Sheet | One row for each | Purpose |
 | --- | --- | --- |
 | About | fact about the export | The site, who exported it and when (in UTC), row counts, and what the workbook leaves out. |
 | Permissions | permission level a person or group has on the site or on one list or library | The full permission list for an audit, or for setting the same permissions up again. **Added by SharePoint** is **Yes** for Limited Access. |
