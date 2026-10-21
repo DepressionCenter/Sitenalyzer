@@ -68,7 +68,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 1. Open the `sitenalyzer` page.
 2. Keep the current site's address in the **Site address** box, or type another site's address or choose one from the list. The list shows sites you can open.
 3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, and permissions, and says what it is reading, such as "Reading lists and libraries: 3 of 12". Large sites can take a minute.
-4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. See [Report sections](#report-sections).
+4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. When you open a section, the page scrolls so the section links are at the top of the window. **Back to top**, at the bottom left of each section, scrolls back to them. See [Report sections](#report-sections).
 5. To find a list, library, column, folder, page, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
 6. To see internal names, IDs, and other values that developers need, turn on **Show technical details** at the right end of the section links. See [Technical details](#technical-details).
 7. Values that look like personal information, such as phone numbers, are hidden at first. When Sitenalyzer hid some, **Show hidden values** appears next to **Show technical details**. Turn it on to see them. See [Hidden values](#hidden-values).
@@ -95,15 +95,19 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 
 | Section | Description |
 | --- | --- |
-| **Overview** | Counts of document libraries, lists, site pages, term sets, and sharing links, each linked to the section that lists them. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
-| **Contents** | Document libraries, lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
+| **Overview** | Counts of document libraries, lists, system lists, site pages, term sets, and sharing links, each linked to the section that lists them. The document library, list, and system list counts also say how many items they hold. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
+| **Contents** | Document libraries, lists, system lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
 | **Permissions** | Access to the site, its lists, and its libraries. See [Permissions](#permissions). |
 | **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
 | **Site review** | Lists and libraries to review, the largest ones, and what Sitenalyzer could and couldn't read. See [Site review](#site-review). |
 
 #### Contents summary
 
-The **Contents summary** shows the number of items in all lists and libraries, the number of columns and top-level folders, and how many lists and libraries have their own permissions. It also says where and when the most recent change happened: the last time an item, file, or page was added, changed, or deleted in any list or library. Under that are tables of every document library and list, with each one's description, number of items and columns, last change, and whether it has its own permissions. Select a name to open its details. **Contents summary** at the top of the list brings the summary back.
+The **Contents summary** shows the number of items in all lists and libraries, not counting system lists, the number of columns and top-level folders, and how many lists and libraries have their own permissions. It also says where and when the most recent change happened: the last time an item, file, or page was added, changed, or deleted in any list or library. Under that are tables of every document library and list, with each one's description, number of items and columns, last change, and whether it has its own permissions. Select a name to open its details. **Contents summary** at the top of the list brings the summary back.
+
+#### System lists
+
+SharePoint keeps some lists for the site itself. Sitenalyzer reads two of them: the **User Information List**, which lists everyone who has visited the site, and **Events**, when it is made from SharePoint's events template. A list that someone made from another template and named Events counts as an ordinary list. The User Information List can hold most of your organization, so Sitenalyzer counts system lists and their items apart from the lists and libraries people made. They have their own count on the **Overview**, their own group in **Contents**, and, when the site has any, their own table and item count in the **Contents summary**. **Site review** leaves them out.
 
 #### List and library details
 
@@ -126,9 +130,10 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 **Search this report** looks through everything Sitenalyzer read from the site, including sections you haven't opened. It searches names, internal names, IDs, data types, and where each item is. It does not search the rest of SharePoint.
 
-- Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, and **Terms**. Columns whose names match come first.
+- Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, and **Terms**. Columns whose names match come first. A system list is labeled **System list**.
 - Use `*` between words, such as `visit*date`, or put a phrase in quotes, such as `"Visit Date"`, to find it exactly.
 - Select a result to open it. A column opens on its list's **Columns** tab, with the table filtered to that column when the table has a filter box. A term opens its term set in **Taxonomy** in the same way.
+- While **Show hidden values** is off, Sitenalyzer doesn't search for a hidden value or part of one, such as `555-0100`. This includes a search that has such text among other words, such as `notes 555-0100`. It clears the search, says why, and keeps the text out of the page address. See [Hidden values](#hidden-values).
 
 ### Technical details
 
@@ -161,7 +166,7 @@ Sitenalyzer checks the names and descriptions of the site, lists, libraries, col
 - IDs, internal names, and addresses, so links and IDs keep working. A page or folder address can still hold a value that is hidden in its name.
 - The image chosen for a site page.
 
-To see the hidden values, turn on **Show hidden values**. The printed report and both workbooks then include them too, and the switch's tip reminds you to turn it off before you share, print, or download. Sitenalyzer never remembers the switch, so values are hidden again the next time you open the page. When you turn the switch off, Sitenalyzer clears any filter or search text that shows a hidden value or part of one.
+To see the hidden values, turn on **Show hidden values**. The printed report and both workbooks then include them too, and the switch's tip reminds you to turn it off before you share, print, or download. Sitenalyzer never remembers the switch, so values are hidden again the next time you open the page. When you turn the switch off, Sitenalyzer clears any filter or search text that shows a hidden value or part of one. While it is off, Sitenalyzer doesn't search for such text.
 
 When you edit a description, the description box shows the real text, and Sitenalyzer saves the text you typed.
 
@@ -213,7 +218,7 @@ The result appears when the check finishes. It stays in **Permissions** while yo
 - **Version history with no limit**
 - **Description is missing**
 
-Each row says what was found and what to do next. Select a name to open its details in **Contents**. Sitenalyzer changes nothing from this page; some older content may still need to be kept. Under the table are the five lists and libraries with the most items.
+Each row says what was found and what to do next. Select a name to open its details in **Contents**. Sitenalyzer changes nothing from this page; some older content may still need to be kept. Under the table are the five lists and libraries with the most items. System lists are left out of both, because SharePoint manages them.
 
 At the bottom, **Report coverage** lists each part of the report, such as **Sharing links** or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
 
@@ -249,7 +254,7 @@ The printed report is built from everything Sitenalyzer read, not from what is o
 
 1. The site's name, address, description, ID, when the report was collected, and who collected it.
 2. **Contents**: a table of every list and library.
-3. **Document libraries** and **Lists**: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, and descriptions, and one with internal names, IDs, and other technical details.
+3. **Document libraries**, **Lists**, and **System lists**, when the site has any: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, and descriptions, and one with internal names, IDs, and other technical details.
 4. **Site pages**.
 5. **Permissions**: the access findings, site permissions, people and groups with their members, the result of **Check a person's access** if you ran one, lists and libraries with their own permissions, sharing links, and apps.
 6. **Taxonomy**: every term group, term set, and term, with their IDs, each term's parent term, and the columns that use each term set.

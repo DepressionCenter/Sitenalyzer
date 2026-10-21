@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.css
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: Styles for the Sitenalyzer app. The build copies this file to dist/SiteAssets/styles/,
          and sitenalyzer.js adds it to the page from the site's Site Assets library.
          Every rule starts with the app's own elements, so the rest of the SharePoint page is unchanged.
@@ -390,7 +390,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .sna-hint { margin: 6px 0 0 0; font-size: 13px; color: var(--sna-text-2); }
 
 .sna-view { padding: 20px 24px 24px; }
-.sna-back-to-top { text-align: right; padding: 0 24px 12px; margin: 0; }
+/* A view is at least as tall as the window, so a short view, such as Taxonomy with one term group, can still be scrolled
+   until the section links are at the top, the same as longer views. */
+@media screen { .sna-view { min-height: 100vh; box-sizing: border-box; } }
+/* Back to top sits on the left, where buttons that SharePoint places over the bottom right of the page, such as
+   Copilot, don't cover it. */
+.sna-back-to-top { text-align: left; padding: 0 24px 12px; margin: 0; }
 
 /* ### Footer ###
    Copyright on the left and the code and apps links on the right. They wrap in reading order on narrow screens. */
@@ -442,10 +447,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     margin: 0 0 20px 0;
     padding: 0;
 }
+/* Screen readers read the label before the number; the number shows on top. */
 .sna-stat-link {
     display: flex;
-    flex-direction: column-reverse;
-    justify-content: flex-end;
+    flex-direction: column;
+    justify-content: flex-start;
     height: 100%;
     padding: 10px 14px 12px;
     background: var(--sna-panel);
@@ -456,7 +462,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 #sp-info-app a.sna-stat-link .sna-stat-label { text-decoration: underline; color: var(--sna-link); }
 #sp-info-app a.sna-stat-link:hover { background: #dceaf5; }
 .sna-stat-value { font-size: 1.6em; font-weight: 700; color: var(--um-dark-blue); line-height: 1.2; }
+.sna-stat-value { order: -1; }
 .sna-stat-label { font-size: 14px; color: var(--sna-text-2); }
+.sna-stat-detail { font-size: 13px; color: var(--sna-text-2); }
 
 /* Overview cards: Contents, Taxonomy, and Site review stack on the left; Permissions fills the right. */
 .sna-cards { display: grid; grid-template-columns: 1fr; gap: 14px; }

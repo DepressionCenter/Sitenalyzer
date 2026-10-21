@@ -101,6 +101,14 @@ var SNA_SHARING_GROUPS_MAX = 50000;
 // Longest text accepted in the person check. 320 characters is the longest possible email address.
 var SNA_PERSON_CHECK_MAX_LENGTH = 320;
 
+// Lists that SharePoint keeps for the site itself, which Sitenalyzer reads on purpose but counts apart from the lists
+// people made. The User Information List holds everyone who has visited the site, and can hold most of an organization.
+// Each is matched by its list template number, and by its title when one is given: template 112 is the User Information
+// List, and template 106 is an events list, which only counts as a system list when it is the one titled Events. A list
+// someone made from another template and named Events stays an ordinary list.
+var SNA_SYSTEM_LISTS = [{ template: 112, title: '' }, { template: 106, title: 'Events' }];
+var SNA_SYSTEM_LISTS_NOTE = 'SharePoint keeps these lists for the site itself, such as the User Information List of everyone who has visited the site. Their items aren\'t counted with the other lists and libraries.';
+
 // ### Interface Settings ###
 
 // How the report remembers which section is open. 'hash' keeps it in the address after #sna/, so Back, Forward,
@@ -1903,7 +1911,8 @@ function snaReviewFindings(report) {
     var now = new Date();
     var cutoff = new Date(now.getFullYear(), now.getMonth() - 12, now.getDate());
     var rows = [];
-    report.lists.forEach(function(l) {
+    // System lists are left out, because SharePoint manages them.
+    snaUserLists(report).forEach(function(l) {
         var route = snaRouteHash({ section: 'contents', id: l.routeId });
         function add(order, finding, detail, nextStep) {
             rows.push({ order: order, finding: finding, title: l.title, route: route, detail: detail, nextStep: nextStep });
@@ -1935,9 +1944,10 @@ function snaRenderReviewFindings(report, level, tableId) {
     return html + '<div id="' + tableId + '"></div>';
 }
 
-// Returns the five lists and libraries with the most items, under a heading of the given level.
+// Returns the five lists and libraries with the most items, under a heading of the given level. System lists are left
+// out, because the User Information List can hold most of an organization.
 function snaRenderLargestLists(report, level) {
-    var largest = report.lists.filter(function(l) { return (Number(l.itemCount) || 0) > 0; })
+    var largest = snaUserLists(report).filter(function(l) { return (Number(l.itemCount) || 0) > 0; })
         .sort(function(a, b) { return (Number(b.itemCount) || 0) - (Number(a.itemCount) || 0); }).slice(0, 5);
     var html = '<h' + level + ' class="sna-subsection-title">Largest lists and libraries</h' + level + '>';
     if (largest.length === 0) { return html + '<p class="sna-muted">Every list and library is empty.</p>'; }
@@ -2597,10 +2607,7 @@ function snaHandleAppClick(e) {
     else if (action === 'refresh-sites') { snaRefreshSiteChoices(); }
     else if (action === 'start-over') { if (snaConfirmDiscardDrafts('Start over')) { startOver(false); } }
     else if (action === 'refresh-report') { snaRefreshReport(); }
-    else if (action === 'scroll-top') {
-        var el = document.getElementById('sp-info-app');
-        if (el) { el.scrollIntoView({ behavior: snaScrollBehavior(), block: 'start' }); }
-    }
+    else if (action === 'scroll-top') { snaScrollToNav(); }
     else if (action === 'copy-show-id') {
         snaCopyAndShowId(
             target.getAttribute('data-id'),
@@ -2623,9 +2630,64 @@ function snaHandleAppClick(e) {
     }
 }
 
-// Smooth scrolling, unless the person asked their system to reduce motion.
-function snaScrollBehavior() {
-    return (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) ? 'auto' : 'smooth';
+// Returns the row with the section navigation and the switches, at the top of every view.
+function snaNavRow() {
+    return document.querySelector('#sna-report .sna-nav-row');
+}
+
+// Back to top: scrolls to the section navigation, not the site's name above it, and puts focus on the open section's
+// link, so the keyboard continues from the top of the view.
+function snaScrollToNav() {
+    var navRow = snaNavRow();
+    if (!navRow) { return; }
+    // Search results have no section link of their own, so focus goes to the first section link instead.
+    var current = navRow.querySelector('.sna-nav a[aria-current="page"]') || navRow.querySelector('.sna-nav a');
+    if (current) { try { current.focus({ preventScroll: true }); } catch(e) { current.focus(); } }
+    snaScrollNavRowToTop(navRow);
+}
+
+// Most CSS pixels a bar of the host page may cover at the top of the window. Anything taller isn't treated as a bar.
+var SNA_HOST_BAR_MAX_HEIGHT = 200;
+
+// Scrolls until the section navigation is at the top of the window, below any bar of the host page that stays over the
+// top of the page. SharePoint shows its page bar, with Edit, again when the page scrolls up, and the bar can appear a
+// moment after the scroll, so Sitenalyzer checks again after SNA_HOST_BAR_DELAY_MS.
+var SNA_HOST_BAR_DELAY_MS = 400;
+function snaScrollNavRowToTop(navRow) {
+    navRow.scrollIntoView({ block: 'start' });
+    snaUncoverNavRow(navRow);
+    setTimeout(function() { snaUncoverNavRow(navRow); }, SNA_HOST_BAR_DELAY_MS);
+}
+
+// When an element of the host page that is fixed or sticky covers the top of the section navigation, scrolls up by
+// the height it covers. Elements of Sitenalyzer itself are never treated as covering it.
+function snaUncoverNavRow(navRow) {
+    var rect = navRow.getBoundingClientRect();
+    // The top can be a fraction of a pixel above the window after scrolling, such as -0.3.
+    if (rect.height === 0 || rect.top < -1) { return; }
+    var top = Math.max(0, rect.top);
+    var hit = document.elementFromPoint(rect.left + Math.min(20, rect.width / 2), top + 1);
+    var app = document.getElementById('sp-info-app');
+    if (!hit || (app && app.contains(hit))) { return; }
+    var cover = null;
+    for (var el = hit; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+        var position = window.getComputedStyle(el).position;
+        if (position === 'fixed' || position === 'sticky') { cover = el; break; }
+    }
+    if (!cover) { return; }
+    var overlap = cover.getBoundingClientRect().bottom - top;
+    if (overlap <= 0 || overlap > SNA_HOST_BAR_MAX_HEIGHT) { return; }
+    snaScrollParent(navRow).scrollBy(0, -overlap);
+}
+
+// Returns the element that scrolls el into view: its closest ancestor that scrolls up and down, such as the part of a
+// SharePoint page that holds the web parts, or the page itself.
+function snaScrollParent(el) {
+    for (var node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+        var overflowY = window.getComputedStyle(node).overflowY;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight) { return node; }
+    }
+    return document.scrollingElement || document.documentElement;
 }
 
 // Copy ID to clipboard and temporarily reveal it as small text next to the button.
@@ -2880,9 +2942,41 @@ async function collectReport(targetUrl, onProgress, token) {
     return report;
 }
 
+// True when list, as SharePoint returns it, is one that SharePoint keeps for the site itself, per SNA_SYSTEM_LISTS.
+function snaIsSystemList(list) {
+    return SNA_SYSTEM_LISTS.some(function(system) {
+        return list.BaseTemplate === system.template && (!system.title || list.Title === system.title);
+    });
+}
+
+// Returns the document libraries, lists, or system lists of report, for kind 'libraries', 'lists', or 'system'.
+// Every list or library is in exactly one of the three.
+function snaListsOfKind(report, kind) {
+    return report.lists.filter(function(l) {
+        if (kind === 'system') { return !!l.isSystem; }
+        return !l.isSystem && (kind === 'libraries' ? l.isLib : !l.isLib);
+    });
+}
+
+// Returns the lists and libraries people made, without the system lists.
+function snaUserLists(report) {
+    return report.lists.filter(function(l) { return !l.isSystem; });
+}
+
+// Returns the short type of a list for tables: 'Library', 'List', or 'System list'.
+function snaListTypeText(list) {
+    if (list.isSystem) { return 'System list'; }
+    return list.isLib ? 'Library' : 'List';
+}
+
+// Returns the total number of items in lists.
+function snaItemTotal(lists) {
+    return lists.reduce(function(total, l) { return total + (Number(l.itemCount) || 0); }, 0);
+}
+
 // Reads one list or library: its permissions when it has its own, its columns, and, for document libraries, its
 // top-level folders. Adds its columns to globalExportedData and its permissions to the access list.
-// Returns { id, routeId, title, internalName, description, itemCount, isLib, baseTemplate, url, lastModified,
+// Returns { id, routeId, title, internalName, description, itemCount, isLib, isSystem, baseTemplate, url, lastModified,
 // versioning { enabled, minor, majorLimit }, raw, permissions { inherits, rolesRead, roleAssignments },
 // columns [], columnsStatus 'read'|'empty'|'failed', termSetsStatus 'read'|'failed'|'' (no managed metadata column),
 // folders [], foldersStatus 'read'|'empty'|'failed'|'' (lists) }. A managed metadata column also has termSetId and
@@ -2899,6 +2993,7 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
         description:   list.Description || '',
         itemCount:     list.ItemCount,
         isLib:         isDocLib,
+        isSystem:      snaIsSystemList(list),
         baseTemplate:  list.BaseTemplate,
         url:           listUrl,
         lastModified:  list.LastItemModifiedDate || '',
@@ -3227,7 +3322,7 @@ async function gatherSiteInformation(options) {
         renderFrame(report);
         if (entry) { entry.hidden = true; }
         if (reportEl) { reportEl.hidden = false; }
-        snaNavigate(startRoute || { section: 'overview' }, { replace: true, focus: 'heading', scroll: true });
+        snaNavigate(startRoute || { section: 'overview' }, { replace: true, focus: 'heading', scroll: 'report' });
     } catch (error) {
         if (token !== _snaCollectionToken || (error && error.snaCancelled)) { return; }
         var errorMsg = error.message ? error.message : 'Unknown error occurred';
@@ -3262,11 +3357,11 @@ function buildSearchIndex() {
     if (!_snaReport) { return; }
 
     _snaReport.lists.forEach(function(list) {
-        var section = list.isLib ? 'Document libraries' : 'Lists';
+        var section = list.isSystem ? 'System lists' : (list.isLib ? 'Document libraries' : 'Lists');
         _snaSearchIndex.push({
             kind:          'list',
             icon:          list.isLib ? '📁' : '📋',
-            type:          list.isLib ? 'Library' : 'List',
+            type:          snaListTypeText(list),
             label:         list.title,
             sublabel:      list.internalName + ' • ' + list.id,
             breadcrumb:    section,
@@ -3532,7 +3627,8 @@ async function snaFetchAllPages(firstUrl, targetUrl, max) {
 // It first asks for every term with its children ($expand=children). When SharePoint doesn't answer that way, it asks
 // for the children of each term instead, at most SNA_MAX_PARALLEL_REQUESTS at a time, while budget.remaining lasts.
 // Terms found only as children are added to the set, so a set whose terms request lists only top-level terms is complete.
-// Returns 'read', 'partial' (some children could not be read), or 'failed' (none could).
+// Returns 'read', 'partial' (some children could not be read, or a read stopped at a next-batch link to another
+// site), or 'failed' (none could).
 async function snaReadTermParents(termBase, setObj, targetUrl, budget) {
     var setUrl = termBase + '/sets/' + setObj.setId;
     var byId = {};
@@ -3574,12 +3670,13 @@ async function snaReadTermParents(termBase, setObj, targetUrl, budget) {
 
     var asked = 0;
     var failed = 0;
+    var stopped = 0;
     while (pending.length > 0 && budget.remaining > 0) {
         var round = pending.splice(0, budget.remaining);
         budget.remaining -= round.length;
         var answers = await snaMapWithLimit(round, SNA_MAX_PARALLEL_REQUESTS, async function(term) {
             try {
-                return (await snaFetchAllPages(setUrl + '/terms/' + term.termId + '/children', targetUrl, SNA_TERMS_PER_SET_MAX)).items;
+                return await snaFetchAllPages(setUrl + '/terms/' + term.termId + '/children', targetUrl, SNA_TERMS_PER_SET_MAX);
             } catch(e) {
                 return null;
             }
@@ -3588,13 +3685,15 @@ async function snaReadTermParents(termBase, setObj, targetUrl, budget) {
         round.forEach(function(term, index) {
             asked++;
             if (answers[index] === null) { failed++; return; }
-            answers[index].forEach(function(child) { addChild(term, child); });
+            if (answers[index].stoppedAtOtherSite) { stopped++; }
+            answers[index].items.forEach(function(child) { addChild(term, child); });
         });
     }
     // Without children from $expand, a set whose terms were never asked about, because earlier sets used up the
     // budget, has no parent information at all, the same as a set whose every request failed.
     if (!expanded && failed === asked) { return 'failed'; }
-    return (failed > 0 || pending.length > 0 || (expanded && expanded.truncated)) ? 'partial' : 'read';
+    var expandedShort = expanded && (expanded.truncated || expanded.stoppedAtOtherSite);
+    return (failed > 0 || stopped > 0 || pending.length > 0 || expandedShort) ? 'partial' : 'read';
 }
 
 // Puts the terms of setObj in the order of the term tree: each term right after the term it sits under, and terms
@@ -4395,23 +4494,38 @@ function snaSetShowHiddenValues(isOn) {
     if (!_snaReport) { return; }
     renderFrame(_snaReport);
     if (!_snaRoute) { return; }
-    var opts = { focus: 'hidden-values-switch', full: true };
-    // A search for a hidden value is replaced, so the search box and the page address no longer hold the value.
-    if (!_snaShowHiddenValues && _snaRoute.section === 'search' && snaTypedTextShowsHiddenValue(_snaRoute.q, snaHiddenValueSet(_snaReport))) {
-        snaNavigate(Object.assign({}, _snaRoute, { q: '' }), Object.assign({ replace: true }, opts));
-        return;
-    }
-    renderApp(_snaRoute, opts);
+    // renderApp replaces a search for a hidden value, so the search box and the page address no longer hold it.
+    renderApp(_snaRoute, { focus: 'hidden-values-switch', full: true });
 }
 
-// True when text a person typed shows a hidden value or part of one, such as "555-0100" from "(734) 555-0100".
+// Returns route without its search text when Show hidden values is off and the text shows a hidden value or part of
+// one, such as "555-0100". The returned route has hiddenSearch set, so the results page says why it searched for
+// nothing. Any other route is returned as it is.
+function snaRouteWithoutHiddenSearch(route) {
+    if (!route || route.section !== 'search' || _snaShowHiddenValues || !_snaReport) { return route; }
+    if (!snaTypedTextShowsHiddenValue(route.q, snaHiddenValueSet(_snaReport))) { return route; }
+    return Object.assign({}, route, { q: '', hiddenSearch: true });
+}
+
+// True when text a person typed shows a hidden value or part of one, such as "555-0100" from "(734) 555-0100", on its
+// own or among other words, such as "notes 555-0100". Among other words, a word counts only when it has a digit or @,
+// because those are the parts of a hidden value that identify someone, so a search such as "visit notes" still runs.
 // Text shorter than 3 characters, such as "a", is too short to show part of a value.
 function snaTypedTextShowsHiddenValue(text, hiddenValues) {
     var typed = String(text || '').trim().toLowerCase();
     if (!typed) { return false; }
     if (snaFindHiddenValues(typed).length > 0) { return true; }
-    if (typed.length < 3) { return false; }
-    return Object.keys(hiddenValues).some(function(value) { return value.indexOf(typed) > -1; });
+    var values = Object.keys(hiddenValues);
+    function inHiddenValue(part) {
+        return part.length >= 3 && values.some(function(value) { return value.indexOf(part) > -1; });
+    }
+    if (inHiddenValue(typed)) { return true; }
+    // Words are split at every character other than a letter, digit, or a character inside an email or a number, such as
+    // @ . - _ +, and lose those characters at their ends, so "(555-0100)" and "phone:555-0100." both give "555-0100".
+    return typed.split(/[^a-z0-9@._+\-]+/).some(function(word) {
+        word = word.replace(/^[._+\-]+|[._+\-]+$/g, '');
+        return /[0-9@]/.test(word) && inHiddenValue(word);
+    });
 }
 
 // Clears the text a person typed into the table filter boxes, the Contents name filter, and Search this report when
@@ -4550,11 +4664,14 @@ function snaRemoveRouteFromAddress() {
 }
 
 // Opens a view. options: { replace, focus, scroll }. replace changes the address without a history step.
+// scroll: 'report' scrolls to the top of the report, with the site's name, when the report is first shown.
 // focus is where keyboard focus goes: 'heading' (the default), 'tab', 'detail', 'inventory', 'subnav', 'switch', or 'none'.
 // In hash mode the address changes and the hashchange listener draws the view, so Back and Forward work too.
 function snaNavigate(route, options) {
     var opts = options || {};
     var target = snaParseRoute(snaRouteHash(route)) || snaMakeRoute('overview');
+    // A search for a hidden value never reaches the page address or the browser's history.
+    if (route && route.section === 'search') { target = snaRouteWithoutHiddenSearch(target); }
     var hash = snaRouteHash(target);
 
     if (_snaRouteMode !== 'hash') { renderApp(target, opts); return; }
@@ -4565,7 +4682,7 @@ function snaNavigate(route, options) {
     }
     if (window.location.hash === hash) { renderApp(target, opts); return; }
 
-    _snaPendingNav = { hash: hash, options: opts };
+    _snaPendingNav = { hash: hash, options: opts, route: target };
     window.location.hash = hash;
     // Some pages rewrite the address right after it changes. Sitenalyzer then keeps views in memory instead.
     // A newer view change by Sitenalyzer, or Back and Forward to another report address, is not a rewrite.
@@ -4592,7 +4709,9 @@ function snaHandleHashChange() {
         try { window.history.replaceState(window.history.state, '', hash); } catch(e) { /* The view still opens. */ }
     }
     if (_snaRoute && snaRouteHash(_snaRoute) === hash) { return; }
-    renderApp(route, (pending && pending.hash === hash) ? pending.options : { focus: 'heading' });
+    // The pending route keeps what the address can't hold, such as the hiddenSearch of a search that was replaced.
+    if (pending && pending.hash === hash) { renderApp(pending.route || route, pending.options); return; }
+    renderApp(route, { focus: 'heading' });
 }
 
 // ### Draw the Report Screen ###
@@ -4605,6 +4724,15 @@ function renderApp(route, options) {
     if (!main || !_snaReport) { return; }
     var previous = _snaRoute;
     var detail = document.getElementById('sna-contents-detail');
+    // An address that holds a search for a hidden value, such as a link or Back, is replaced with an empty search.
+    var safeRoute = snaRouteWithoutHiddenSearch(route);
+    if (safeRoute !== route) {
+        route = safeRoute;
+        if (_snaRouteMode === 'hash' && window.location.hash.indexOf(SNA_ROUTE_PREFIX) === 0) {
+            try { window.history.replaceState(window.history.state, '', snaRouteHash(route)); }
+            catch(e) { /* The view still opens with an empty search. */ }
+        }
+    }
     _snaRoute = route;
 
     if (!opts.full && previous && previous.section === 'contents' && route.section === 'contents' && detail) {
@@ -4636,8 +4764,8 @@ function snaUpdateNav(route) {
     });
 }
 
-// Moves keyboard focus after a view is drawn, so focus never drops to the page itself. Scrolls the report into view
-// only when the section changed.
+// Moves keyboard focus after a view is drawn, so focus never drops to the page itself. When the section changed, it
+// scrolls to the section navigation, so the site's name and details above it are seen only when the report opens.
 function snaFocusAfterRender(route, previous, opts) {
     var focus = opts.focus || 'heading';
     if (focus === 'none') { return; }
@@ -4666,9 +4794,12 @@ function snaFocusAfterRender(route, previous, opts) {
     var sectionChanged = !previous || previous.section !== route.section;
     if (isAnchor) {
         target.scrollIntoView({ block: 'start' });
-    } else if (sectionChanged || opts.scroll) {
+    } else if (opts.scroll === 'report') {
         var reportEl = document.getElementById('sna-report');
         if (reportEl) { reportEl.scrollIntoView({ block: 'start' }); }
+    } else if (sectionChanged) {
+        var navRow = snaNavRow();
+        if (navRow) { snaScrollNavRowToTop(navRow); }
     } else {
         target.scrollIntoView({ block: 'nearest' });
     }
@@ -4854,7 +4985,8 @@ function snaStatsHtml(items) {
         var isNumber = typeof item.value === 'number';
         var label = (isNumber && item.value === 1) ? item.singular : item.plural;
         var inner = '<span class="sna-stat-label">' + snaEscapeHtml(label) + '</span>' +
-            '<span class="sna-stat-value">' + snaEscapeHtml(isNumber ? item.value.toLocaleString('en-US') : item.value) + '</span>';
+            '<span class="sna-stat-value">' + snaEscapeHtml(isNumber ? item.value.toLocaleString('en-US') : item.value) + '</span>' +
+            (item.detail ? '<span class="sna-stat-detail">' + snaEscapeHtml(item.detail) + '</span>' : '');
         return '<li class="sna-stat">' + (item.href
             ? '<a class="sna-stat-link" href="' + snaEscapeHtml(item.href) + '">' + inner + '</a>'
             : '<div class="sna-stat-link">' + inner + '</div>') + '</li>';
@@ -4865,8 +4997,14 @@ function snaStatsHtml(items) {
 // A count that could not be read says Not read instead of 0.
 function snaRenderOverview(route, report) {
     var perms = report.permissions;
-    var libraries = report.lists.filter(function(l) { return l.isLib; });
-    var plainLists = report.lists.filter(function(l) { return !l.isLib; });
+    var libraries = snaListsOfKind(report, 'libraries');
+    var plainLists = snaListsOfKind(report, 'lists');
+    var systemLists = snaListsOfKind(report, 'system');
+    function itemsText(lists) {
+        if (!report.listsRead) { return ''; }
+        var total = snaItemTotal(lists);
+        return total.toLocaleString('en-US') + (total === 1 ? ' item' : ' items');
+    }
     var pagesNotRead = report.pages.failed && report.pages.pages.length === 0;
     var termSets = 0;
     report.taxonomy.groups.forEach(function(g) { termSets += (g.termSets || []).length; });
@@ -4874,8 +5012,9 @@ function snaRenderOverview(route, report) {
 
     var html = snaSectionTitleHtml('Overview', 'Counts of this site\'s lists, libraries, pages, term sets, and sharing links.');
     html += snaStatsHtml([
-        { value: report.listsRead ? libraries.length : NOT_READ, singular: 'Document library', plural: 'Document libraries', href: '#sna/contents' },
-        { value: report.listsRead ? plainLists.length : NOT_READ, singular: 'List', plural: 'Lists', href: '#sna/contents' },
+        { value: report.listsRead ? libraries.length : NOT_READ, singular: 'Document library', plural: 'Document libraries', href: '#sna/contents', detail: itemsText(libraries) },
+        { value: report.listsRead ? plainLists.length : NOT_READ, singular: 'List', plural: 'Lists', href: '#sna/contents', detail: itemsText(plainLists) },
+        { value: report.listsRead ? systemLists.length : NOT_READ, singular: 'System list', plural: 'System lists', href: '#sna/contents', detail: itemsText(systemLists) },
         { value: pagesNotRead ? NOT_READ : report.pages.pages.length, singular: 'Site page', plural: 'Site pages', href: '#sna/contents/pages' },
         { value: (report.taxonomy.read || termSets > 0) ? termSets : NOT_READ, singular: 'Term set', plural: 'Term sets', href: '#sna/taxonomy' },
         { value: perms.sharingLinks.failed ? NOT_READ : perms.sharingLinks.links.length, singular: 'Sharing link', plural: 'Sharing links', href: '#sna/permissions/sharing' }
@@ -4891,14 +5030,14 @@ function snaRenderOverview(route, report) {
     }
 
     var largest = null;
-    report.lists.forEach(function(l) {
+    snaUserLists(report).forEach(function(l) {
         if (!largest || (Number(l.itemCount) || 0) > (Number(largest.itemCount) || 0)) { largest = l; }
     });
     var contentsText;
     if (!report.listsRead) {
         contentsText = 'Sitenalyzer could not read the lists and libraries.';
     } else if (!largest) {
-        contentsText = 'This site has no lists or libraries.';
+        contentsText = systemLists.length ? 'This site has only system lists.' : 'This site has no lists or libraries.';
     } else {
         contentsText = 'The largest is ' + snaEscapeHtml(largest.title) + ', with ' + snaCountText(Number(largest.itemCount) || 0, 'item', 'items') + '.';
     }
@@ -4939,7 +5078,8 @@ function snaRenderContents(route, report) {
         '</div>';
 }
 
-// Returns the Contents list, grouped into Document libraries, Lists, and Site pages, with a name filter above it.
+// Returns the Contents list, grouped into Document libraries, Lists, System lists, and Site pages, with a name filter
+// above it.
 function snaRenderInventory(route, report) {
     function item(routeId, href, icon, name, meta) {
         return '<li data-name="' + snaEscapeHtml(String(name).toLowerCase()) + '">' +
@@ -4974,8 +5114,9 @@ function snaRenderInventory(route, report) {
     if (!report.listsRead) {
         html += '<p class="sna-note">Sitenalyzer could not read the lists and libraries. Refresh the report to try again.</p>';
     } else {
-        html += group('Document libraries', report.lists.filter(function(l) { return l.isLib; }), 'No document libraries found.');
-        html += group('Lists', report.lists.filter(function(l) { return !l.isLib; }), 'No lists found.');
+        html += group('Document libraries', snaListsOfKind(report, 'libraries'), 'No document libraries found.');
+        html += group('Lists', snaListsOfKind(report, 'lists'), 'No lists found.');
+        html += group('System lists', snaListsOfKind(report, 'system'), 'No system lists found.');
     }
     var pageCount = report.pages.pages.length;
     html += '<div class="sna-inventory-group"><h3 class="sna-inventory-heading">Site pages</h3><ul class="sna-inventory-list">' +
@@ -5068,6 +5209,7 @@ function snaRenderListTab(list, tab) {
     var changed = snaFormatDate(list.lastModified);
     return '<dl class="sna-facts">' +
         '<dt>Description</dt><dd>' + renderAdminDescWrap(list.description, 'list:' + list.id, list.title) + '</dd>' +
+        (list.isSystem ? '<dt>Type</dt><dd>System list. ' + snaEscapeHtml(SNA_SYSTEM_LISTS_NOTE) + '</dd>' : '') +
         '<dt>Items</dt><dd>' + snaEscapeHtml(snaCountText(Number(list.itemCount) || 0, 'item', 'items')) + '</dd>' +
         '<dt>Last changed</dt><dd>' + snaEscapeHtml(changed || 'Not reported.') + '</dd>' +
         '<dt>Version history</dt><dd>' + snaEscapeHtml(snaVersioningText(list.versioning)) + '</dd>' +
@@ -5078,9 +5220,10 @@ function snaRenderListTab(list, tab) {
 // Returns the counts and the table of every list and library that Contents shows before anything is selected.
 // LastItemModifiedDate changes when an item, file, or page is added, changed, or deleted in that list or library.
 function snaRenderContentsSummary(report) {
-    var items = 0, columns = 0, folders = 0, newest = null;
+    var items = snaItemTotal(snaUserLists(report));
+    var systemLists = snaListsOfKind(report, 'system');
+    var columns = 0, folders = 0, newest = null;
     report.lists.forEach(function(l) {
-        items += Number(l.itemCount) || 0;
         columns += l.columns.length;
         folders += l.folders.length;
         var changed = new Date(l.lastModified);
@@ -5090,12 +5233,15 @@ function snaRenderContentsSummary(report) {
     var read = report.listsRead;
     var html = '<h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1">Contents summary</h3>' +
         snaStatsHtml([
-            { value: read ? items : NOT_READ, singular: 'Item in lists and libraries', plural: 'Items in lists and libraries' },
+            { value: read ? items : NOT_READ, singular: 'Item in lists and libraries', plural: 'Items in lists and libraries' }
+        ].concat(systemLists.length ? [
+            { value: snaItemTotal(systemLists), singular: 'Item in system lists', plural: 'Items in system lists' }
+        ] : []).concat([
             { value: read ? columns : NOT_READ, singular: 'Column', plural: 'Columns' },
             { value: read ? folders : NOT_READ, singular: 'Top-level folder', plural: 'Top-level folders' },
             { value: read ? report.permissions.uniqueLists.length : NOT_READ, singular: 'List or library with its own permissions',
                 plural: 'Lists and libraries with their own permissions', href: '#sna/permissions/own' }
-        ]);
+        ]));
     if (newest) {
         html += '<p class="sna-summary-note">The most recent change was in ' + snaEscapeHtml(newest.title) + ', on ' +
             snaEscapeHtml(snaFormatDateTime(newest.lastModified)) + '. That is the last time an item, file, or page was added, changed, or deleted in any list or library.</p>';
@@ -5116,8 +5262,12 @@ function snaRenderContentsSummary(report) {
     if (!read) {
         return html + '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so this summary has no tables. Refresh the report to try again.</p>';
     }
-    html += table('Document libraries', report.lists.filter(function(l) { return l.isLib; }), 'sna-tbl-libs', 'document libraries');
-    html += table('Lists', report.lists.filter(function(l) { return !l.isLib; }), 'sna-tbl-lists', 'lists');
+    html += table('Document libraries', snaListsOfKind(report, 'libraries'), 'sna-tbl-libs', 'document libraries');
+    html += table('Lists', snaListsOfKind(report, 'lists'), 'sna-tbl-lists', 'lists');
+    if (systemLists.length) {
+        html += table('System lists', systemLists, 'sna-tbl-system', 'system lists') +
+            '<p class="sna-muted">' + snaEscapeHtml(SNA_SYSTEM_LISTS_NOTE) + '</p>';
+    }
     return html;
 }
 
@@ -5516,6 +5666,10 @@ function snaRenderCoverageTable(coverage) {
 function snaRenderSearch(route, report) {
     var q = route.q || '';
     var html = snaSectionTitleHtml('Search results', '');
+    if (route.hiddenSearch) {
+        return html + '<p>Sitenalyzer hides values that look like personal information, so it doesn\'t search for them. ' +
+            'To search for this text, turn on Show hidden values.</p>';
+    }
     if (q.trim().length < 2) {
         return html + '<p>Enter at least 2 letters or numbers in Search this report, such as part of a list or column name.</p>';
     }
@@ -5591,7 +5745,7 @@ function snaPrintFactsHtml(pairs) {
 // Returns the part of the print document for one list or library: its details, top-level folders, columns, and permissions.
 function snaPrintListHtml(list) {
     var html = '<section class="sna-print-item"><h3>' + snaEscapeHtml(list.title) + '</h3>' + snaPrintFactsHtml([
-        ['Type', list.isLib ? 'Document library' : 'List'],
+        ['Type', list.isSystem ? 'System list' : (list.isLib ? 'Document library' : 'List')],
         ['Description', list.description || 'No description.'],
         ['Items', snaCountText(Number(list.itemCount) || 0, 'item', 'items')],
         ['Last changed', snaFormatDate(list.lastModified) || 'Not reported.'],
@@ -5656,12 +5810,13 @@ function snaBuildPrintDocument(report) {
         ]);
 
     // Contents: a table of every list and library, then each one in full.
-    var libraries = report.lists.filter(function(l) { return l.isLib; }).sort(snaByTitle);
-    var plainLists = report.lists.filter(function(l) { return !l.isLib; }).sort(snaByTitle);
+    var libraries = snaListsOfKind(report, 'libraries').sort(snaByTitle);
+    var plainLists = snaListsOfKind(report, 'lists').sort(snaByTitle);
+    var systemLists = snaListsOfKind(report, 'system').sort(snaByTitle);
     html += '<section class="sna-print-section"><h2>Contents</h2>' + (report.listsRead
         ? snaPrintTableHtml('Lists and libraries', ['Name', 'Type', 'Items', 'Columns', 'Last changed', 'Permissions'],
-            libraries.concat(plainLists).map(function(l) {
-                return [l.title, l.isLib ? 'Library' : 'List', String(Number(l.itemCount) || 0), String(l.columns.length),
+            libraries.concat(plainLists, systemLists).map(function(l) {
+                return [l.title, snaListTypeText(l), String(Number(l.itemCount) || 0), String(l.columns.length),
                     snaFormatDate(l.lastModified), l.permissions.inherits ? 'Site\'s permissions' : 'Own permissions'];
             }), 'Sitenalyzer found no lists or libraries on this site.')
         : '<p>Sitenalyzer could not read the lists and libraries.</p>') + '</section>';
@@ -5669,6 +5824,10 @@ function snaBuildPrintDocument(report) {
         (libraries.length ? libraries.map(snaPrintListHtml).join('') : '<p>No document libraries found.</p>') + '</section>';
     html += '<section class="sna-print-section"><h2>Lists</h2>' +
         (plainLists.length ? plainLists.map(snaPrintListHtml).join('') : '<p>No lists found.</p>') + '</section>';
+    if (systemLists.length) {
+        html += '<section class="sna-print-section"><h2>System lists</h2><p>' + snaEscapeHtml(SNA_SYSTEM_LISTS_NOTE) + '</p>' +
+            systemLists.map(snaPrintListHtml).join('') + '</section>';
+    }
 
     var pages = report.pages;
     var pageNotes = [];
