@@ -892,19 +892,26 @@ function navRowTop(page) {
 }
 
 test('scrolls to the section navigation, not the site name, after a section opens or Back to top', async function({ page }) {
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.setViewportSize({ width: 1024, height: 400 });
+    // A tall window, so the Taxonomy view of the pretend site is shorter than the window.
+    await page.setViewportSize({ width: 1280, height: 900 });
     await openPretendSite(page);
     await extractSiteInformation(page);
     // The report opens at the top, with the site's name.
     await expect(page.locator('#sna-site-header h1')).toBeInViewport();
 
-    await gotoSection(page, 'Permissions');
-    await expect.poll(function() { return navRowTop(page); }).toBe(0);
-    await expect(page.locator('#sna-site-header h1')).not.toBeInViewport();
+    for (const name of ['Contents', 'Taxonomy', 'Site review', 'Overview', 'Permissions']) {
+        await gotoSection(page, name);
+        await expect.poll(function() { return navRowTop(page); }, { message: name }).toBe(0);
+        await expect(page.locator('#sna-site-header h1')).not.toBeInViewport();
+    }
 
+    // Back to top scrolls smoothly, and only one click is needed. It sits on the left, away from buttons that
+    // SharePoint places over the bottom right of the page.
     await page.evaluate(function() { window.scrollTo(0, document.documentElement.scrollHeight); });
-    await page.getByRole('button', { name: 'Back to top' }).click();
+    const backToTop = page.getByRole('button', { name: 'Back to top' });
+    const box = await backToTop.boundingBox();
+    expect(box.x + box.width).toBeLessThan(1280 / 2);
+    await backToTop.click();
     await expect.poll(function() { return navRowTop(page); }).toBe(0);
     await expect(page.locator('.sna-nav a[aria-current="page"]')).toBeFocused();
     await expect(page.locator('.sna-nav a[aria-current="page"]')).toHaveText('Permissions');

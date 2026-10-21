@@ -390,7 +390,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 .sna-hint { margin: 6px 0 0 0; font-size: 13px; color: var(--sna-text-2); }
 
 .sna-view { padding: 20px 24px 24px; }
-.sna-back-to-top { text-align: right; padding: 0 24px 12px; margin: 0; }
+/* A view is at least as tall as the window, so a short view, such as Taxonomy with one term group, can still be scrolled
+   until the section links are at the top, the same as longer views. */
+@media screen { .sna-view { min-height: 100vh; box-sizing: border-box; } }
+/* Back to top sits on the left, where buttons that SharePoint places over the bottom right of the page, such as
+   Copilot, don't cover it. */
+.sna-back-to-top { text-align: left; padding: 0 24px 12px; margin: 0; }
 
 /* ### Footer ###
    Copyright on the left and the code and apps links on the right. They wrap in reading order on narrow screens. */

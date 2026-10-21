@@ -175,7 +175,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = 'd11660a22d54';
+var SNA_ASSET_VERSION = '25e9f2f880b5';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
@@ -2743,14 +2743,15 @@ function snaNavRow() {
     return document.querySelector('#sna-report .sna-nav-row');
 }
 
-// Back to top: scrolls to the section navigation, not the site's name above it, and puts focus on the open section's
-// link, so the keyboard continues from the top of the view.
+// Back to top: puts focus on the open section's link, so the keyboard continues from the top of the view, then scrolls
+// to the section navigation, not the site's name above it. Focus moves first, because moving focus during a smooth
+// scroll stops the scroll partway on some SharePoint pages.
 function snaScrollToNav() {
     var navRow = snaNavRow();
     if (!navRow) { return; }
-    navRow.scrollIntoView({ behavior: snaScrollBehavior(), block: 'start' });
     var current = navRow.querySelector('.sna-nav a[aria-current="page"]');
     if (current) { try { current.focus({ preventScroll: true }); } catch(e) { current.focus(); } }
+    navRow.scrollIntoView({ behavior: snaScrollBehavior(), block: 'start' });
 }
 
 // Smooth scrolling, unless the person asked their system to reduce motion.
