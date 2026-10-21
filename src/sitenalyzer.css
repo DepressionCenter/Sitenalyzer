@@ -334,16 +334,34 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 #sp-info-app .sna-switch input[role="switch"]:checked::before { background: var(--um-dark-blue); transform: translateX(20px); }
 .sna-switch label { cursor: pointer; }
 .sna-switches { display: flex; flex-wrap: wrap; align-items: center; gap: 0 24px; }
-/* Says how many values that look like personal information are hidden or shown, under the search and report actions. */
-.sna-hidden-values-note {
-    margin: 0;
-    padding: 10px 24px;
-    background: var(--sna-panel);
-    border-bottom: 1px solid var(--sna-rule);
+.sna-switch[hidden] { display: none; }
+/* The tooltip of Show hidden values: how many values are hidden or shown. It shows while the pointer is over the
+   switch or the tooltip, or the switch has focus, and Escape closes it (see startApplication). Dark blue text on white is 13.4:1. */
+.sna-switch-tip { position: relative; }
+.sna-tooltip {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 20;
+    width: max-content;
+    max-width: min(18rem, calc(100vw - 32px));
+    padding: 6px 10px;
+    border: 1px solid var(--sna-rule);
+    border-radius: 4px;
+    background: #ffffff;
     color: var(--sna-text);
-    font-size: 15px;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.4;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
-.sna-hidden-values-note[hidden] { display: none; }
+.sna-switch-tip:hover .sna-tooltip,
+.sna-switch-tip:focus-within .sna-tooltip { display: block; }
+.sna-switch-tip.sna-tip-closed .sna-tooltip { display: none; }
+@media (max-width: 47.99rem) {
+    .sna-tooltip { right: auto; left: 0; }
+}
 
 .sna-toolbar {
     display: flex;
@@ -531,7 +549,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     display: block; max-width: 100%; max-height: 18rem; height: auto; object-fit: contain;
     border: 1px solid var(--sna-rule); border-radius: 4px; background: #ffffff;
 }
-.sna-page-figure figcaption { margin: 6px 0 0 0; font-size: 14px; color: var(--sna-text-2); }
 .sna-break-anywhere { overflow-wrap: anywhere; }
 
 /* ### Permission Reports ###

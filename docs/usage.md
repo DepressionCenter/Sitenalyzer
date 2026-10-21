@@ -71,7 +71,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. See [Report sections](#report-sections).
 5. To find a list, library, column, folder, page, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
 6. To see internal names, IDs, and other values that developers need, turn on **Show technical details** at the right end of the section links. See [Technical details](#technical-details).
-7. Values that look like personal information, such as phone numbers, are hidden at first. To see them, turn on **Show hidden values** next to **Show technical details**. See [Hidden values](#hidden-values).
+7. Values that look like personal information, such as phone numbers, are hidden at first. When Sitenalyzer hid some, **Show hidden values** appears next to **Show technical details**. Turn it on to see them. See [Hidden values](#hidden-values).
 8. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
 9. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
 9. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
@@ -138,7 +138,7 @@ Sitenalyzer remembers the setting in this browser. See [How Sitenalyzer works](a
 
 ### Hidden values
 
-A research site's names and descriptions sometimes hold personal or health information, such as a participant's phone number in a folder name. So Sitenalyzer hides text that looks like personal information everywhere it shows the report: on screen, in search, in the printed report, and in both workbooks. Each hidden value shows what kind of value it is, such as `[phone number hidden]`. A line under the search box and the download buttons says how many values Sitenalyzer hid.
+A research site's names and descriptions sometimes hold personal or health information, such as a participant's phone number in a folder name. So Sitenalyzer hides text that looks like personal information everywhere it shows the report: on screen, in search, in the printed report, and in both workbooks. Each hidden value shows what kind of value it is, such as `[phone number hidden]`. When Sitenalyzer hid at least one value, a **Show hidden values** switch appears next to **Show technical details**. Point to it or move keyboard focus to it to see how many values it hid. Press Escape to close that tip.
 
 Sitenalyzer looks for these kinds of values:
 
@@ -161,7 +161,7 @@ Sitenalyzer checks the names and descriptions of the site, lists, libraries, col
 - IDs, internal names, and addresses, so links and IDs keep working. A page or folder address can still hold a value that is hidden in its name.
 - The image chosen for a site page.
 
-To see the hidden values, turn on **Show hidden values**. The printed report and both workbooks then include them too, and the line under the search box reminds you to turn the switch off before you share your screen, print, or download. Sitenalyzer never remembers the switch, so values are hidden again the next time you open the page.
+To see the hidden values, turn on **Show hidden values**. The printed report and both workbooks then include them too, and the switch's tip reminds you to turn it off before you share, print, or download. Sitenalyzer never remembers the switch, so values are hidden again the next time you open the page.
 
 When you edit a description, the description box shows the real text, and Sitenalyzer saves the text you typed.
 
@@ -222,9 +222,9 @@ At the bottom, **Report coverage** lists each part of the report, such as **Shar
 When you select a term set in **Taxonomy**, Sitenalyzer shows two tables.
 
 - **Terms** lists every term in the set. **Parent term** names the term each one sits under, or says **Top level**. A term that sits under two terms, such as a term pinned in two places, shows both names, such as "Arm A; Arm B". Each term comes right after the term it sits under.
-- **Where this term set is used** lists each managed metadata column that takes its values from the set. A managed metadata column is a SharePoint column whose values come from a term set. The table shows the list or library, the column, and whether the column allows several values. When a column offers only the terms under one term, **Starts at term** names that term. Select a list or library to open its **Columns** tab with the table filtered to that column. A site column that uses the set but isn't added to any list or library says **Site column (not in a list or library)**.
+- **Lists and libraries using this term set** lists each managed metadata column that takes its values from the set. A managed metadata column is a SharePoint column whose values come from a term set. The table shows the list or library, the column, and whether the column allows several values. When a column offers only the terms under one term, **Starts at term** names that term. Select a list or library to open its **Columns** tab with the table filtered to that column. A site column that uses the set but isn't added to any list or library says **Site column (not in a list or library)**.
 
-If Sitenalyzer could not read this information, the term set says so instead of showing an empty table, and **Report coverage** in **Site review** has a **Parent terms** or **Where term sets are used** row that says **Partly read** or **Not read**.
+If Sitenalyzer could not read this information, the term set says so instead of showing an empty table, and **Report coverage** in **Site review** has a **Parent terms** or **Lists and libraries using term sets** row that says **Partly read** or **Not read**.
 
 ### Site pages
 

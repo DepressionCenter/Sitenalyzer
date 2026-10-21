@@ -799,20 +799,21 @@ function snaCountHiddenValues(report) {
     return Object.keys(found).length;
 }
 
-// Returns the sentence about hidden values for the report screen and the print document, or '' when Sitenalyzer
-// found none, such as "Sitenalyzer hid 3 values that look like personal information, such as phone numbers or email
-// addresses." forPrint leaves out the switch, which isn't in a printout.
+// Returns the sentence about hidden values for the tooltip of Show hidden values, or for the print document when
+// forPrint is true, such as "Hid 3 values that look like personal information, such as phone numbers." Returns ''
+// when Sitenalyzer found none.
 function snaHiddenValuesText(report, forPrint) {
     var count = snaCountHiddenValues(report);
     if (count === 0) { return ''; }
     var values = count === 1 ? '1 value that looks' : count + ' values that look';
-    if (_snaShowHiddenValues) {
-        return forPrint
+    if (forPrint) {
+        return _snaShowHiddenValues
             ? 'This printout includes ' + values + ' like personal information.'
-            : 'Sitenalyzer is showing ' + values + ' like personal information. Turn off Show hidden values before you share your screen, print, or download.';
+            : 'Sitenalyzer hid ' + values + ' like personal information, such as phone numbers or email addresses.';
     }
-    return 'Sitenalyzer hid ' + values + ' like personal information, such as phone numbers or email addresses.' +
-        (forPrint ? '' : ' To see ' + (count === 1 ? 'it' : 'them') + ', turn on Show hidden values.');
+    return _snaShowHiddenValues
+        ? 'Showing ' + values + ' like personal information. Turn this off before you share, print, or download.'
+        : 'Hid ' + values + ' like personal information, such as ' + (count === 1 ? 'a phone number.' : 'phone numbers.');
 }
 
 // Returns the sentence about hidden values for the About and Export_Info sheets of the workbooks.
@@ -2190,12 +2191,15 @@ function exportToXLSX() {
     var valueSetsRows     = [];
     var relationshipsRows = [];
 
-    // Each term set in the report is one value set. A managed metadata column names its term set's value set,
-    // so its ID is given out the first time either the column or the term set needs it.
+    // Each term set with terms is one value set. A managed metadata column names its term set's value set, so its ID
+    // is given out the first time either the column or the term set needs it. A term set with no terms has no
+    // Value_Sets rows, so a column that uses it has no value_set_id.
     var termSetVsIds = {};
     var reportTermSetIds = {};
     (_snaTaxonomyData || []).forEach(function(g) {
-        (g.termSets || []).forEach(function(set) { reportTermSetIds[String(set.setId).toLowerCase()] = true; });
+        (g.termSets || []).forEach(function(set) {
+            if ((set.terms || []).length > 0) { reportTermSetIds[String(set.setId).toLowerCase()] = true; }
+        });
     });
     function termSetVsId(setId) {
         var key = String(setId || '').toLowerCase();
@@ -2400,7 +2404,7 @@ function exportPermissionsToXLSX() {
         if (p.isLimited) { notes.push(LIMITED_NOTE); }
         if (p.isSystemGroup) { notes.push('SharePoint creates this group by itself, such as for a sharing link.'); }
         return [p.scope, snaMaskText(p.listTitle), p.listId, p.listUrl, p.listType, p.memberName, p.memberId, p.loginName, p.email,
-            SNA_PRINCIPAL_KIND_LABELS[p.memberKind], p.level, p.levelId, p.isLimited ? YES : NO, notes.join(' ')];
+            SNA_PRINCIPAL_KIND_LABELS[p.memberKind], snaMaskText(p.level), p.levelId, p.isLimited ? YES : NO, notes.join(' ')];
     });
 
     // Lists sheet. Grain: one row per list or library.
@@ -2436,7 +2440,8 @@ function exportPermissionsToXLSX() {
     _snaPermissionRows.forEach(function(p) { usedLevelIds[String(p.levelId)] = true; });
     var levelRows = (_snaRoleDefinitions || []).slice().sort(function(a, b) { return (a.Order || 0) - (b.Order || 0); }).map(function(d) {
         var mask = d.BasePermissions || {};
-        return [d.Name, d.Id, d.Description, mask.High, mask.Low, snaPermissionNames(mask),
+        // Custom permission levels have names and descriptions that people write, so they can hold hidden values.
+        return [snaMaskText(d.Name), d.Id, snaMaskText(d.Description), mask.High, mask.Low, snaPermissionNames(mask),
             d.Hidden ? YES : NO, d.RoleTypeKind ? YES : NO, usedLevelIds[String(d.Id)] ? YES : NO];
     });
     if (_snaRoleDefinitions === null) {
@@ -3147,7 +3152,7 @@ function snaBuildCoverage(report) {
             if (usage.siteColumnsFailed) { usageNotes.push('Sitenalyzer could not read the site\'s own managed metadata columns.'); }
             usageNotes.push('Taxonomy may not show every column that uses a term set. Refresh the report to try again.');
         }
-        add('Where term sets are used', usage.status, usageNotes.join(' '));
+        add('Lists and libraries using term sets', usage.status, usageNotes.join(' '));
     }
     return rows;
 }
@@ -3556,7 +3561,9 @@ async function snaReadTermParents(termBase, setObj, targetUrl, budget) {
             answers[index].forEach(function(child) { addChild(term, child); });
         });
     }
-    if (!expanded && asked > 0 && failed === asked) { return 'failed'; }
+    // Without children from $expand, a set whose terms were never asked about, because earlier sets used up the
+    // budget, has no parent information at all, the same as a set whose every request failed.
+    if (!expanded && failed === asked) { return 'failed'; }
     return (failed > 0 || pending.length > 0 || (expanded && expanded.truncated)) ? 'partial' : 'read';
 }
 
@@ -4336,16 +4343,16 @@ function snaSetTechnicalDetails(isOn) {
     }
 }
 
-// Shows the switch setting on Show hidden values, and says how many values are hidden or shown.
+// Shows the switch setting on Show hidden values, and puts how many values are hidden or shown in its tooltip.
+// The switch appears only when the report has values to hide.
 function snaSyncHiddenValuesSwitch() {
     var hiddenSwitch = document.getElementById('sna-hidden-values-switch');
     if (hiddenSwitch) { hiddenSwitch.checked = _snaShowHiddenValues; }
-    var note = document.getElementById('sna-hidden-values-note');
-    if (note) {
-        var text = _snaReport ? snaHiddenValuesText(_snaReport, false) : '';
-        note.textContent = text;
-        note.hidden = !text;
-    }
+    var text = _snaReport ? snaHiddenValuesText(_snaReport, false) : '';
+    var control = document.getElementById('sna-hidden-values-control');
+    if (control) { control.hidden = !text; }
+    var tip = document.getElementById('sna-hidden-values-tip');
+    if (tip) { tip.textContent = text; }
 }
 
 // Shows or hides the values that look like personal information, and redraws the site header and the view with
@@ -5139,8 +5146,7 @@ function snaPageImageHtml(page) {
     var image = page.image || { status: 'loading' };
     if (image.status === 'image') {
         // The image repeats what the page's title already says, so it has no alternative text of its own.
-        return '<figure class="sna-page-figure"><img class="sna-page-image" src="' + snaEscapeHtml(image.url) + '" alt="">' +
-            '<figcaption>The image chosen for this page.</figcaption></figure>';
+        return '<figure class="sna-page-figure"><img class="sna-page-image" src="' + snaEscapeHtml(image.url) + '" alt=""></figure>';
     }
     var messages = {
         loading:   'Looking for the image chosen for this page.',
@@ -5376,13 +5382,13 @@ function snaTermNameInSet(set, termId) {
     return found ? found.termName : '';
 }
 
-// Returns the "Where this term set is used" part of a term set: each list or library and column that uses it, with a
+// Returns the "Lists and libraries using this term set" part of a term set: each list or library and column that uses it, with a
 // link to that list's Columns tab, and each site column that uses it but isn't in any list or library.
 function snaRenderTermSetUsage(set, report) {
     var technical = snaTechnicalDetailsOn();
     var usage = report.taxonomy.usage || { bySet: {}, status: 'failed' };
     var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
-    var html = '<h4 class="sna-subsection-title">Where this term set is used (' + rows.length + ')</h4>';
+    var html = '<h4 class="sna-subsection-title">Lists and libraries using this term set (' + rows.length + ')</h4>';
     if (usage.status === 'failed') {
         return html + '<p class="sna-note">Sitenalyzer could not read which columns use this term set. Refresh the report to try again.</p>';
     }
@@ -5502,7 +5508,7 @@ function snaPrintTermSetUsageHtml(set, taxonomy) {
     if (usage.status === 'failed') { return '<p>Sitenalyzer could not read which columns use this term set.</p>'; }
     var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
     return (usage.status === 'partial' ? '<p>Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns.</p>' : '') +
-        snaPrintTableHtml('Where ' + set.setName + ' is used', ['List or library', 'Column', 'Internal name', 'Starts at term', 'Allows several values'],
+        snaPrintTableHtml('Lists and libraries using ' + set.setName, ['List or library', 'Column', 'Internal name', 'Starts at term', 'Allows several values'],
             rows.map(function(r) {
                 var anchor = r.anchorTermId ? (snaTermNameInSet(set, r.anchorTermId) || r.anchorTermId) : 'Whole term set';
                 return [r.isSiteColumn ? 'Site column (not in a list or library)' : r.listTitle, r.columnTitle, r.internalName, anchor, r.allowsSeveral ? 'Yes' : 'No'];
@@ -5973,6 +5979,17 @@ function startApplication() {
     var hiddenValuesSwitch = document.getElementById('sna-hidden-values-switch');
     if (hiddenValuesSwitch) {
         hiddenValuesSwitch.addEventListener('change', function() { snaSetShowHiddenValues(hiddenValuesSwitch.checked); });
+    }
+    // The tooltip of Show hidden values shows while the pointer is over it or the switch has focus. Escape closes it
+    // until the pointer or focus leaves, so it never has to be moved away to read what is under it.
+    var hiddenValuesControl = document.getElementById('sna-hidden-values-control');
+    if (hiddenValuesControl) {
+        hiddenValuesControl.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') { hiddenValuesControl.classList.add('sna-tip-closed'); }
+        });
+        ['mouseleave', 'focusout'].forEach(function(eventName) {
+            hiddenValuesControl.addEventListener(eventName, function() { hiddenValuesControl.classList.remove('sna-tip-closed'); });
+        });
     }
 
     var technicalSwitch = document.getElementById('sna-technical-switch');

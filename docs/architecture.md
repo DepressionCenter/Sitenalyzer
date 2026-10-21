@@ -181,7 +181,7 @@ Sitenalyzer hides values that look like personal information unless **Show hidde
 - The workbooks hide values in their free-text columns only: the site's name and description, list titles and descriptions, column titles, descriptions, choices, default values, and formulas, and term names and descriptions. The download file names hide them too. The **About** and **Export_Info** sheets say whether values were hidden.
 - The report itself always holds the real text. So a description editor opens with it, and a save never writes a hidden-value label over a description.
 
-The switch is never saved, so each visit starts with values hidden. `snaSetShowHiddenValues` redraws the site header and the view and returns focus to the switch. Descriptions being edited are kept because they are drawn from `_snaDrafts`. Hiding values by pattern finds only the shapes of text in the patterns, so it doesn't de-identify a report.
+The switch is never saved, so each visit starts with values hidden. It appears only when `snaCountHiddenValues` finds at least one value, and its tooltip (`#sna-hidden-values-tip`, also its accessible description) says how many. `snaSetShowHiddenValues` redraws the site header and the view and returns focus to the switch. Descriptions being edited are kept because they are drawn from `_snaDrafts`. Hiding values by pattern finds only the shapes of text in the patterns, so it doesn't de-identify a report.
 
 ### Browser storage
 
