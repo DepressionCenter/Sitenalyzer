@@ -2951,6 +2951,12 @@ test('keeps a search for a hidden value out of the page address, from the search
     await searchReport(page, 'visits 1234567');
     await expect(page.locator('#sp-results')).toContainText(notice);
     expect(hashOf(page)).toBe('#sna/search?q=');
+    // Punctuation around or next to the fragment doesn't hide it from the check.
+    for (const text of ['notes (1234567)', 'record:1234567.', '"visits" [1234567]']) {
+        await searchReport(page, text);
+        await expect(page.locator('#sp-results'), text).toContainText(notice);
+        expect(hashOf(page), text).toBe('#sna/search?q=');
+    }
     // Other words with digits are still searched for.
     await searchReport(page, 'visits 2026');
     await expect(page.locator('#sp-results')).not.toContainText(notice);

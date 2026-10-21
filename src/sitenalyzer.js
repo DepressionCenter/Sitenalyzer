@@ -4520,7 +4520,12 @@ function snaTypedTextShowsHiddenValue(text, hiddenValues) {
         return part.length >= 3 && values.some(function(value) { return value.indexOf(part) > -1; });
     }
     if (inHiddenValue(typed)) { return true; }
-    return typed.split(/[\s,;"*]+/).some(function(word) { return /[0-9@]/.test(word) && inHiddenValue(word); });
+    // Words are split at every character other than a letter, digit, or a character inside an email or a number, such as
+    // @ . - _ +, and lose those characters at their ends, so "(555-0100)" and "phone:555-0100." both give "555-0100".
+    return typed.split(/[^a-z0-9@._+\-]+/).some(function(word) {
+        word = word.replace(/^[._+\-]+|[._+\-]+$/g, '');
+        return /[0-9@]/.test(word) && inHiddenValue(word);
+    });
 }
 
 // Clears the text a person typed into the table filter boxes, the Contents name filter, and Search this report when
