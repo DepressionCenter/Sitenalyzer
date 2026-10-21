@@ -99,7 +99,7 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 | **Contents** | Document libraries, lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
 | **Permissions** | Access to the site, its lists, and its libraries. See [Permissions](#permissions). |
 | **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
-| **Site review** | Lists and libraries to clean up, the largest ones, and what Sitenalyzer could and couldn't read. See [Site review](#site-review). |
+| **Site review** | Lists and libraries to review, the largest ones, and what Sitenalyzer could and couldn't read. See [Site review](#site-review). |
 
 #### Contents summary
 
@@ -206,7 +206,7 @@ The result appears when the check finishes. It stays in **Permissions** while yo
 
 ### Site review
 
-**Site review** starts with **Lists and libraries to clean up**, a table with one row for each list or library and each finding:
+**Site review** starts with **Lists and libraries to review**, a table with one row for each list or library and each finding:
 
 - **Not changed in the last 12 months**
 - **Version history turned off**, for document libraries

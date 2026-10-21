@@ -1928,7 +1928,7 @@ function snaReviewFindings(report) {
 // Returns the cleanup findings table under a heading of the given level, such as 3 for <h3>. tableId names its table.
 function snaRenderReviewFindings(report, level, tableId) {
     var rows = snaReviewFindings(report);
-    var html = '<h' + level + ' class="sna-subsection-title">Lists and libraries to clean up (' + rows.length + ')</h' + level + '>' +
+    var html = '<h' + level + ' class="sna-subsection-title">Lists and libraries to review (' + rows.length + ')</h' + level + '>' +
         '<p>Use these findings to decide what to review. Some older content may still need to be kept. Sitenalyzer changes nothing from this page.</p>';
     if (rows.length === 0) { return html + '<p class="sna-muted">Sitenalyzer found nothing to review in the lists and libraries.</p>'; }
     _snaTablesQueue.push({ id: tableId, type: 'findings', searchLabel: 'findings', data: rows });
@@ -4921,8 +4921,8 @@ function snaRenderOverview(route, report) {
             ['Apps with access to this site (' + appsCount + ')', '#sna/permissions/apps']
         ], true) +
         card('tag', 'Taxonomy', taxonomyText, [['Browse term groups and sets', '#sna/taxonomy']]) +
-        card('check', 'Site review', 'Lists and libraries to clean up, the largest ones, and what Sitenalyzer could and couldn\'t read.',
-            [['Lists and libraries to clean up', '#sna/review']]) +
+        card('check', 'Site review', 'Lists and libraries to review, the largest ones, and what Sitenalyzer could and couldn\'t read.',
+            [['Lists and libraries to review', '#sna/review']]) +
     '</div>';
     return html;
 }
@@ -5487,9 +5487,9 @@ function snaRenderTermSetUsage(set, report) {
 
 // Draws Site review: one table of cleanup findings, the largest lists and libraries, and what this report could read.
 function snaRenderReview(route, report) {
-    var html = snaSectionTitleHtml('Site review', 'Lists and libraries to clean up, the largest ones, and what Sitenalyzer could and couldn\'t read.');
+    var html = snaSectionTitleHtml('Site review', 'Lists and libraries to review, the largest ones, and what Sitenalyzer could and couldn\'t read.');
     if (!report.listsRead) {
-        html += '<h3 class="sna-subsection-title">Lists and libraries to clean up</h3>' +
+        html += '<h3 class="sna-subsection-title">Lists and libraries to review</h3>' +
             '<p class="sna-note">Sitenalyzer could not read the lists and libraries, so it could not look for cleanup findings. Refresh the report to try again.</p>';
     } else {
         html += snaRenderReviewFindings(report, 3, 'sna-tbl-review') + snaRenderLargestLists(report, 3);
@@ -5727,8 +5727,8 @@ function snaBuildPrintDocument(report) {
     html += '<section class="sna-print-section"><h2>Site review</h2>';
     if (report.listsRead) {
         var findings = snaReviewFindings(report);
-        html += '<h3>Lists and libraries to clean up (' + findings.length + ')</h3>' +
-            snaPrintTableHtml('Lists and libraries to clean up', ['Finding', 'List or library', 'Detail', 'Next step'],
+        html += '<h3>Lists and libraries to review (' + findings.length + ')</h3>' +
+            snaPrintTableHtml('Lists and libraries to review', ['Finding', 'List or library', 'Detail', 'Next step'],
                 findings.map(function(f) { return [f.finding, f.title, f.detail, f.nextStep]; }),
                 'Sitenalyzer found nothing to review in the lists and libraries.') +
             snaRenderLargestLists(report, 3);

@@ -1056,7 +1056,7 @@ test('shows cleanup findings, the largest lists, and what the report could read 
 
     const results = page.locator('#sp-results');
     // Study Visits was last changed in 2024 and keeps every version; Documents has no description.
-    await expect(results.getByRole('heading', { level: 3, name: 'Lists and libraries to clean up (3)' })).toBeVisible();
+    await expect(results.getByRole('heading', { level: 3, name: 'Lists and libraries to review (3)' })).toBeVisible();
     const rows = results.locator('#sna-tbl-review .tabulator-row');
     await expect(rows).toHaveCount(3);
     await expect(rows.nth(0)).toContainText('Not changed in the last 12 months');

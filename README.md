@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 README.md - Main README file with overview, quick start guide and license information.
 Author(s): Gabriel Mongefranco
 Created: 2026-04-20
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: Provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -33,7 +33,7 @@ With Sitenalyzer, you can:
 + Review every list and library, with its columns, descriptions, and item counts, and every site page.
 + Check permissions for the site and for each list or library, including apps that have access.
 + See who can open what, by person or group, with the members of each SharePoint group, and check what one person can do.
-+ Spot guests, organization-wide access, and sharing links that anyone can use, and find lists and libraries to clean up.
++ Spot guests, organization-wide access, and sharing links that anyone can use, and find lists and libraries to review.
 + Save a data dictionary or a permissions workbook as an Excel file, or print the whole report or save it as a PDF.
 + Move between an Overview, Contents, Permissions, Taxonomy, and Site review, and search the whole report, with results grouped by kind.
 + Edit site, list, column, and term descriptions, if you own the site.
