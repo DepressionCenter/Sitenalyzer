@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.html
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: Markup for the Sitenalyzer app: the start screen, and the frame of the report screen (site header,
          section navigation, search, report actions, and footer), and the Choose a site dialog. The build puts this markup inside sitenalyzer.js,
          which places it in the page's <div id="sitenalyzer-app"></div> at startup. It holds no site data;
@@ -30,15 +30,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 	<div id="sp-info-app" data-technical="false">
 		<div id="sna-entry" class="sna-entry">
 			<h1 class="sna-entry-title"><svg class="sna-symbol sna-entry-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="sna-symbol-site" x="3.5" y="3.5" width="11" height="9" rx="2"/><path class="sna-symbol-branch" d="M9 12.5V25.5H15M9 17.5H15"/><rect class="sna-symbol-list" x="15.5" y="14.1" width="13" height="6.8" rx="2"/><rect class="sna-symbol-list" x="15.5" y="22.1" width="13" height="6.8" rx="2"/></svg><span class="sna-wordmark">Sitenalyzer</span></h1>
-			<p class="sna-tagline">Data dictionary and security information extraction for SharePoint sites.</p>
+			<p class="sna-tagline">Data dictionary and security report for SharePoint sites: lists, libraries, term sets, and permissions.</p>
 			<div id="sna-url-section">
-				<label for="site-url-input" class="sna-field-label">Site URL:</label>
+				<label for="site-url-input" class="sna-field-label">Site address</label>
 				<div class="sna-url-row">
-					<input type="text" id="site-url-input" placeholder="Enter or select a SharePoint site URL" autocomplete="off" spellcheck="false">
+					<input type="text" id="site-url-input" placeholder="https://your-tenant.sharepoint.com/sites/your-site" autocomplete="off" spellcheck="false">
 					<button type="button" id="sna-sites-refresh-btn" class="hide-on-print" title="Refresh sites list" aria-label="Refresh sites list">&#8635;</button>
 				</div>
 				<ul id="site-suggestions"></ul>
-				<div class="site-url-helper" id="site-url-helper-message">Type or select a site from the list. You must be an administrator of the selected site to view all permissions information.</div>
+				<div class="site-url-helper" id="site-url-helper-message">Type a site address or choose one from the list. To see every permission, you need to be a site owner.</div>
 				<button type="button" id="sp-btn-gather" class="sna-btn sna-btn-primary">Extract site information</button>
 			</div>
 			<div id="sna-entry-message" class="sna-entry-message" role="alert" hidden></div>

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/troubleshooting.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: Problems people can run into when installing or using Sitenalyzer, with causes and fixes.
 Notes: See README file for documentation and full license information.
 
@@ -24,7 +24,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### Sitenalyzer says it could not load a file
 
-**What you see:** A red message such as "Sitenalyzer could not load tabulator.min.js from the scripts folder in this site's Site Assets library."
+**Problem:** A red message such as "Sitenalyzer could not load tabulator.min.js from the scripts folder in this site's Site Assets library."
 
 **Cause:** The file named in the message is missing from Site Assets, has a different name, or is in the wrong folder.
 
@@ -59,7 +59,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### The console says Sitenalyzer could not find the app box
 
-**What you see:** The page is blank, and the browser console says "Sitenalyzer could not find `<div id="sitenalyzer-app"></div>` on this page."
+**Problem:** The page is blank, and the browser console says "Sitenalyzer could not find `<div id="sitenalyzer-app"></div>` on this page."
 
 **Cause:** Sitenalyzer waited 10 seconds for the web part's `<div>` and didn't find it. The web part code is missing the `<div>` line, or the `id` was changed.
 
@@ -67,7 +67,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### Permission sections say "could not read"
 
-**What you see:** Messages such as "Sitenalyzer could not read this group's members" or **Sharing links (could not read)**, or counts on the Overview that say **Not read**. **Site review** lists every part of the report that could not be read.
+**Problem:** Messages such as "Sitenalyzer could not read this group's members" or **Sharing links (could not read)**, or counts on the Overview that say **Not read**. **Site review** lists every part of the report that could not be read.
 
 **Cause:** SharePoint refused the request because your account can't see that information. Site members and visitors can open a site but can't see its groups, sharing links, or permissions. Sitenalyzer says "could not read" instead of "none found" so you don't mistake missing information for an empty list.
 
@@ -75,7 +75,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### Back and Forward don't change Sitenalyzer's section
 
-**What you see:** The browser's Back and Forward buttons leave Sitenalyzer on the same section, and the browser console says "this page changed the address after Sitenalyzer set it."
+**Problem:** The browser's Back and Forward buttons leave Sitenalyzer on the same section, and the browser console says "this page changed the address after Sitenalyzer set it."
 
 **Cause:** Another script or web part on the page rewrote the page address right after Sitenalyzer changed it. Sitenalyzer then keeps track of the open section itself, so the section links still work.
 
@@ -89,7 +89,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### A description won't save
 
-**What you see:** "Sitenalyzer could not save the description" under the description box, with your text still in the box.
+**Problem:** "Sitenalyzer could not save the description" under the description box, with your text still in the box.
 
 **Cause:** SharePoint refused the change. You need to be a site owner to edit descriptions. Some tenants also block term store changes from pages; then the message says to use the Term Store Management page.
 
@@ -97,7 +97,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### A value I need shows as hidden
 
-**What you see:** Text such as `[phone number hidden]` or `[record number or ID hidden]` in a name, description, printout, or workbook.
+**Problem:** Text such as `[phone number hidden]` or `[record number or ID hidden]` in a name, description, printout, or workbook.
 
 **Cause:** Sitenalyzer hides text that looks like personal information, such as a phone number or a labeled record number. Some ordinary text has the same shape, such as a 10-digit study code.
 
@@ -111,7 +111,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### An old version still shows after an update
 
-**What you see:** The old Sitenalyzer screen, or the new screen with no colors or layout and a very large site logo.
+**Problem:** The old Sitenalyzer screen, or the new screen with no colors or layout and a very large site logo.
 
 **Cause:** The browser kept a saved copy of the old files. Versions from before October 2026 load their style sheets without a version in the address, so the browser can pair a new `sitenalyzer.js` with an old `sitenalyzer.css`.
 
@@ -119,7 +119,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### The print window says "Print preview failed" or never finishes loading
 
-**What you see:** After you select **Print full report / PDF**, the print window in Chrome says "Print preview failed". In Microsoft Edge, the preview keeps loading.
+**Problem:** After you select **Print full report / PDF**, the print window in Chrome says "Print preview failed". In Microsoft Edge, the preview keeps loading.
 
 **Cause:** Something outside Sitenalyzer stops the browser from drawing the preview, such as a browser extension that manages printing or the selected printer. To check, print another SharePoint page. If that page fails too, Sitenalyzer isn't the cause.
 

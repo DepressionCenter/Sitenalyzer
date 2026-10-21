@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -80,7 +80,7 @@ The tests check that:
 - The Overview shows five counts that link to their sections, and counts that could not be read say **Not read**. The Contents summary shows the other totals and a table of every list and library.
 - The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.
 - **Back to results** on a narrow screen returns focus to the item, and nothing scrolls sideways at 320 pixels wide.
-- Each part of **Permissions** opens from its navigation with its own address. **People and groups** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. **Site permissions** shows the guest finding with links, the own permissions finding, the site collection administrators, and the permission levels, and says what it couldn't check instead of saying no guests have access.
+- Each part of **Permissions** opens from its navigation with its own address. **People and groups** labels each kind of person or group, explains Limited Access, and leaves out sharing link groups. **Site permissions** shows the guest finding with links, the own permissions finding, the site collection administrators, and the permission levels, and says what it couldn't check instead of saying no guests have access. The guest finding has the same heading, **Guests and organization-wide access**, whether it found guests, found no one, or couldn't check, and says the result in a sentence under it.
 - Sharing links are found in site groups read 5,000 at a time. When a later request fails, Site permissions, Sharing links, and Report coverage say some sharing links may be missing.
 - Shared files and folders are named from `$batch` requests of at most 20 lookups, files first and then folders, with no failed requests in the console. An item that is neither says "No name found". A lookup that SharePoint throttles inside a batch is sent again on its own. When the batch or the request digest fails, the links are shown without names. Batch answers with LF line endings, a boundary in quotes, or a failed part are read correctly.
 - **Site review** shows one row per list or library per cleanup finding, the largest lists and libraries, and the coverage table.
@@ -101,7 +101,7 @@ The tests check that:
 - **Change site** opens **Choose a site** with focus in **Find a site**. It filters the sites, refuses an address on another host, closes with Escape or **Close** and returns focus to **Change site**, and reads the chosen or typed site.
 - Taxonomy lists its term sets, opens one from its address or a search result, and says when a term set in the address is not in the report.
 - A term set shows each term's parent term in tree order, including a term pinned under two terms, whether SharePoint returns children with `$expand=children` or one term at a time. When parents can't be read, the **Parent term** column is left out and Report coverage says **Not read**. Term requests follow next-batch links only to the same site.
-- **Lists and libraries using this term set** lists the list and site columns that use a term set, read from `SchemaXml`, with the term a column starts at. Its links open the list's Columns tab filtered to the column. The print document and the data dictionary include them, and a failed read says so instead of showing an empty table.
+- **Columns that use this term set** lists the list and site columns that use a term set, read from `SchemaXml`, with the term a column starts at. Its links open the list's Columns tab filtered to the column. The print document and the data dictionary include them, and a failed read says so instead of showing an empty table.
 - Values that look like personal information are hidden in every view, search, the print document and its title, every workbook cell, and the download file names. People's emails stay visible where the report shows who has access, but the same email in a list description is hidden. Search doesn't find a page by a hidden value in its file name. Turning the switch off clears a filter box, the Contents name filter, or a search that shows a hidden value or part of one, and keeps other filter text. Search and filters don't find hidden values. **Show hidden values** shows them on screen, in print, and in the workbooks, returns focus to the switch, and is off again after the page reloads. The switch appears only when values were hidden, including values only in a custom permission level or in **Choose a site**, and its tooltip shows on hover and focus, closes with Escape, and says 1 value or 3 values correctly. The description editor opens with the real text and saves it. Each pattern has a value it hides and a close value it keeps, and IDs, dates, and labels without digits stay visible. axe passes with the switch on and off.
 - **Show technical details** is off at first, shows internal names and IDs when on, including the site ID under the site's address, returns focus to the switch, and is remembered under `sitenalyzer:technical-details`.
 - Search results are grouped by kind with columns first, quoted phrases and too-short searches work, internal names are found but shown only with technical details on, and a column result opens its Columns tab.
@@ -110,7 +110,7 @@ The tests check that:
 
 The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresses, and IDs are made up. `openPretendSite(page, options)` takes these options:
 
-| Option | What it does |
+| Option | Effect |
 | --- | --- |
 | `missingFiles` | Answers these Site Assets file names with 404 Not Found. |
 | `extraHeadHtml` | Adds markup to the page head, such as an inline script that CSP must block. |
