@@ -133,7 +133,7 @@ The page address changes as you move around the report, such as `.../SitePages/s
 - Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, and **Terms**. Columns whose names match come first. A system list is labeled **System list**.
 - Use `*` between words, such as `visit*date`, or put a phrase in quotes, such as `"Visit Date"`, to find it exactly.
 - Select a result to open it. A column opens on its list's **Columns** tab, with the table filtered to that column when the table has a filter box. A term opens its term set in **Taxonomy** in the same way.
-- While **Show hidden values** is off, Sitenalyzer doesn't search for a hidden value or part of one, such as `555-0100`. This includes a search that has such text among other words, such as `notes 555-0100`. It clears the search, says why, and keeps the text out of the page address. See [Hidden values](#hidden-values).
+- While **Show hidden values** is off, Sitenalyzer doesn't search for a hidden value or part of one, such as `555-0100`. This includes a search that has such text among other words, such as `notes 555-0100`, and the same number written with other spaces or punctuation, such as `555.0100` or `5550100`. A number counts when it has 4 digits in a row from a hidden value, so a search such as `visits 2026` still runs. It clears the search, says why, and keeps the text out of the page address. See [Hidden values](#hidden-values).
 
 ### Technical details
 
