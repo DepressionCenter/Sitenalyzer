@@ -651,6 +651,12 @@ details.permissions-section {
 .sna-plain-list li { margin: 2px 0; }
 
 /* People and groups, one card each. */
+/* Filter by name, Sort by, and the count line above the People and groups cards. */
+.sna-people-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin: 12px 0 0 0; }
+.sna-people-control { flex: 1 1 14rem; min-width: 0; }
+.sna-people-control label { display: block; font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+#sp-info-app .sna-people-sort { width: 100%; min-height: 34px; padding: 6px 8px; font: inherit; font-size: 14px; border: 1px solid #767676; border-radius: 4px; background: #ffffff; color: #323130; }
+.sna-people-controls .sna-table-count { flex: 1 1 100%; }
 .sna-principal-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 12px 0; }
 @media (min-width: 60rem) {
     .sna-principal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -238,6 +238,8 @@ var _snaRoute = null;             // The view on screen, such as { section: 'con
 var _snaRouteMode = SNA_ROUTE_MODE;
 var _snaPendingNav = null;        // Focus target for the address change that Sitenalyzer itself just made
 var _snaContentsFilter = '';      // Text in the Contents name filter
+var _snaPeopleFilter = '';        // Text in the People and groups name filter
+var _snaPeopleSort = 'access';    // Order of People and groups; one of the keys of SNA_PEOPLE_SORTS
 var _snaLastInventoryId = '';     // Contents item whose details were open last, so Back to results can return to it
 var _snaTechnicalDetails = false;
 var _snaUserCheckResult = null;   // The finished person check { input, status, check }, shown again when Permissions reopens; see snaRenderUserCheckResult
@@ -1572,10 +1574,13 @@ function renderPermissionsByPrincipal() {
     var coversText = inheritedCount === 0 ? '' : ' This also covers ' +
         snaCountText(inheritedCount, 'list or library that uses', 'lists and libraries that use') + ' the site\'s permissions.';
 
+    // The data attributes let the filter and Sort by in People and groups reorder and hide cards without drawing them
+    // again. data-person holds the name as it is shown, because people's and groups' names are never hidden.
     html += '<div class="sna-principal-grid">';
-    entries.forEach(function(p) {
+    entries.forEach(function(p, index) {
         var isGuest = snaIsGuestLogin(p.loginName, p.title);
-        html += '<div class="sna-principal-block">';
+        html += '<div class="sna-principal-block" data-order="' + index + '" data-person="' + snaEscapeHtml(p.title) + '"' +
+            ' data-kind="' + snaEscapeHtml(SNA_PRINCIPAL_KIND_LABELS[p.kind]) + '" data-lists="' + p.lists.length + '">';
         html += '<div class="sna-principal-name"><strong>' + snaPersonHtml(p.title) + '</strong> ' +
             '<span class="app-tag">' + SNA_PRINCIPAL_KIND_LABELS[p.kind] + '</span>' +
             (isGuest ? ' <span class="app-tag sna-guest-tag">Guest</span>' : '') + '</div>';
@@ -1626,6 +1631,66 @@ function renderPermissionsByPrincipal() {
             ' that SharePoint creates by itself for sharing links and Limited Access. The sharing links section lists the links.</p>';
     }
     return html;
+}
+
+// Choices in the Sort by box of People and groups. 'access' is the order renderPermissionsByPrincipal draws.
+var SNA_PEOPLE_SORTS = {
+    access: 'Whole-site access first',
+    name:   'Name',
+    type:   'Type',
+    lists:  'Most lists and libraries with their own permissions'
+};
+
+// Returns the Filter by name box, the Sort by box, and the count line above the People and groups cards.
+function snaPeopleControlsHtml() {
+    return '<div class="sna-people-controls hide-on-print">' +
+        '<div class="sna-people-control">' +
+            '<label for="sna-people-filter">Filter by name</label>' +
+            '<input type="search" id="sna-people-filter" class="sna-table-search" autocomplete="off" value="' + snaEscapeHtml(_snaPeopleFilter) + '">' +
+        '</div>' +
+        '<div class="sna-people-control">' +
+            '<label for="sna-people-sort">Sort by</label>' +
+            '<select id="sna-people-sort" class="sna-people-sort">' + Object.keys(SNA_PEOPLE_SORTS).map(function(key) {
+                return '<option value="' + key + '"' + (key === _snaPeopleSort ? ' selected' : '') + '>' + snaEscapeHtml(SNA_PEOPLE_SORTS[key]) + '</option>';
+            }).join('') + '</select>' +
+        '</div>' +
+        '<p id="sna-people-count" class="sna-table-count" role="status"></p>' +
+    '</div>';
+}
+
+// Puts the People and groups cards in the order chosen in Sort by. Ties keep the default order.
+function snaSortPeopleBlocks() {
+    var grid = document.querySelector('#sp-results .sna-principal-grid');
+    if (!grid) { return; }
+    function number(block, name) { return Number(block.getAttribute(name)) || 0; }
+    function byName(a, b) { return a.getAttribute('data-person').localeCompare(b.getAttribute('data-person'), undefined, { sensitivity: 'base' }); }
+    var compare = {
+        access: function() { return 0; },
+        name:   byName,
+        type:   function(a, b) { return a.getAttribute('data-kind').localeCompare(b.getAttribute('data-kind')) || byName(a, b); },
+        lists:  function(a, b) { return number(b, 'data-lists') - number(a, 'data-lists'); }
+    }[_snaPeopleSort] || function() { return 0; };
+    Array.prototype.slice.call(grid.querySelectorAll(':scope > .sna-principal-block')).sort(function(a, b) {
+        return compare(a, b) || number(a, 'data-order') - number(b, 'data-order');
+    }).forEach(function(block) { grid.appendChild(block); });
+}
+
+// Hides the People and groups cards whose names don't contain the filter text, and says how many are shown.
+function snaApplyPeopleFilter() {
+    var grid = document.querySelector('#sp-results .sna-principal-grid');
+    var countEl = document.getElementById('sna-people-count');
+    if (!grid || !countEl) { return; }
+    var text = _snaPeopleFilter.trim().toLowerCase();
+    var blocks = grid.querySelectorAll(':scope > .sna-principal-block');
+    var shown = 0;
+    blocks.forEach(function(block) {
+        var matches = !text || block.getAttribute('data-person').toLowerCase().indexOf(text) > -1;
+        block.hidden = !matches;
+        if (matches) { shown++; }
+    });
+    var total = blocks.length;
+    countEl.textContent = shown === 0 ? 'No names match the filter.'
+        : (shown === total ? 'Showing all ' + total + ' people and groups.' : 'Showing ' + shown + ' of ' + total + ' people and groups.');
 }
 
 // Reads the members of every SharePoint group in the access list, a few groups at a time.
@@ -3024,6 +3089,8 @@ function snaClearReport() {
     _snaRoute            = null;
     _snaPendingNav       = null;
     _snaContentsFilter   = '';
+    _snaPeopleFilter     = '';
+    _snaPeopleSort       = 'access';
     _snaLastInventoryId  = '';
     _snaUserCheckResult  = null;
     _snaDrafts           = {};
@@ -4841,7 +4908,7 @@ function snaNumbersInText(text) {
     }).filter(function(digits) { return digits.length > 0; });
 }
 
-// Clears the text a person typed into the table filter boxes, the Contents name filter, and Search this report when
+// Clears the text a person typed into the table filter boxes, the Contents and People and groups name filters, and Search this report when
 // it shows a hidden value, so that turning Show hidden values off doesn't leave the value on screen. These boxes show
 // the text as typed, not hidden. The boxes on screen are cleared too, because redrawing a view saves their text again.
 function snaClearTypedHiddenValues() {
@@ -4850,6 +4917,7 @@ function snaClearTypedHiddenValues() {
         if (snaTypedTextShowsHiddenValue(_snaTableFilters[id], hiddenValues)) { _snaTableFilters[id] = ''; }
     });
     if (snaTypedTextShowsHiddenValue(_snaContentsFilter, hiddenValues)) { _snaContentsFilter = ''; }
+    if (snaTypedTextShowsHiddenValue(_snaPeopleFilter, hiddenValues)) { _snaPeopleFilter = ''; }
     document.querySelectorAll('#sp-info-app .sna-table-search, #sna-report-search').forEach(function(input) {
         if (snaTypedTextShowsHiddenValue(input.value, hiddenValues)) { input.value = ''; }
     });
@@ -5058,6 +5126,7 @@ function renderApp(route, options) {
     }
     initSnaTabulators();
     if (route.section === 'contents') { snaApplyInventoryFilter(); }
+    if (route.section === 'permissions') { snaSortPeopleBlocks(); snaApplyPeopleFilter(); }
     if (route.section === 'contents' && route.id === 'pages' && route.page) {
         var page = snaFindPage(_snaReport, route.page);
         if (page) { snaLoadPageImage(page); }
@@ -5762,6 +5831,8 @@ function snaRenderPermissionPart(part, report) {
             (groupsWithMembers > 1 ? snaExpandCollapseHtml() : '') +
             '<div class="sna-callout"><p>Sitenalyzer lists the members of SharePoint groups. It can\'t list the members of Microsoft 365 groups ' +
                 'and security groups, because Microsoft Entra ID manages them.</p></div>' +
+            // The controls are added here, not in renderPermissionsByPrincipal, which the print document uses too.
+            (snaAccessPrincipals(report).length > 1 ? snaPeopleControlsHtml() : '') +
             renderPermissionsByPrincipal();
     }
     if (part === 'person') { return snaPartTitleHtml('Check a person\'s access', '') + snaRenderUserAccessTool(); }
@@ -6451,10 +6522,19 @@ function startApplication() {
             if (e.target && e.target.id === 'sna-inventory-filter') {
                 _snaContentsFilter = e.target.value;
                 snaApplyInventoryFilter();
+            } else if (e.target && e.target.id === 'sna-people-filter') {
+                _snaPeopleFilter = e.target.value;
+                snaApplyPeopleFilter();
             } else if (e.target && e.target.id === 'sna-site-find') {
                 snaRenderSiteChoices();
             } else if (e.target && e.target.classList && e.target.classList.contains('sna-editor-field')) {
                 snaKeepDraftText(e.target);
+            }
+        });
+        app.addEventListener('change', function(e) {
+            if (e.target && e.target.id === 'sna-people-sort' && SNA_PEOPLE_SORTS[e.target.value]) {
+                _snaPeopleSort = e.target.value;
+                snaSortPeopleBlocks();
             }
         });
         // Double-clicking a description is a shortcut for its Edit description button.

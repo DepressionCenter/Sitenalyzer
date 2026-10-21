@@ -1293,6 +1293,62 @@ test('lists who has access by person or group', async function({ page }) {
     expect(record.otherOriginRequests).toEqual([]);
 });
 
+test('filters People and groups by name and sorts the cards', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const access = await openPermissionPart(page, 'People and groups (7)');
+    const count = access.locator('#sna-people-count');
+    function shownNames() {
+        return access.locator('.sna-principal-block:visible').evaluateAll(function(blocks) {
+            return blocks.map(function(block) { return block.getAttribute('data-person'); });
+        });
+    }
+    const defaultOrder = await shownNames();
+    expect(defaultOrder.length).toBe(7);
+    await expect(count).toHaveText('Showing all 7 people and groups.');
+
+    // Sort by puts the cards in another order, and Whole-site access first goes back to the first order.
+    const sortBy = access.getByRole('combobox', { name: 'Sort by' });
+    await expect(sortBy).toHaveValue('access');
+    await sortBy.selectOption({ label: 'Name' });
+    expect(await shownNames()).toEqual(defaultOrder.slice().sort(function(a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); }));
+    await sortBy.selectOption({ label: 'Type' });
+    const kinds = await access.locator('.sna-principal-block').evaluateAll(function(blocks) {
+        return blocks.map(function(block) { return block.getAttribute('data-kind'); });
+    });
+    expect(kinds).toEqual(kinds.slice().sort(function(a, b) { return a.localeCompare(b); }));
+    await sortBy.selectOption({ label: 'Whole-site access first' });
+    expect(await shownNames()).toEqual(defaultOrder);
+
+    // The filter hides cards whose names don't contain the text, and the count says how many are shown.
+    const filter = access.getByRole('searchbox', { name: 'Filter by name' });
+    await filter.fill('site visitors');
+    expect(await shownNames()).toEqual(['Test Site Visitors']);
+    await expect(count).toHaveText('Showing 1 of 7 people and groups.');
+    await filter.fill('no such name');
+    expect(await shownNames()).toEqual([]);
+    await expect(count).toHaveText('No names match the filter.');
+
+    // The filter and the order are kept when the view opens again.
+    await filter.fill('test');
+    await sortBy.selectOption({ label: 'Name' });
+    const filtered = await shownNames();
+    await gotoSection(page, 'Overview');
+    await openPermissionPart(page, 'People and groups (7)');
+    await expect(access.getByRole('searchbox', { name: 'Filter by name' })).toHaveValue('test');
+    await expect(access.getByRole('combobox', { name: 'Sort by' })).toHaveValue('name');
+    expect(await shownNames()).toEqual(filtered);
+    await expectNoAxeViolations(page);
+
+    // The printed report lists everyone, with no filter or Sort by box.
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    const printed = printFrameDocument(page);
+    await expect(printed.locator('.sna-principal-block')).toHaveCount(7);
+    await expect(printed.locator('.sna-people-controls, #sna-people-filter, #sna-people-sort')).toHaveCount(0);
+});
+
 test('sorts, filters, and splits into pages a long site permissions table, with people\'s emails shown', async function({ page }) {
     // 60 people with Read access, each named with an email address, which is shown because it names a person.
     const assignments = [{ Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 },
@@ -3234,6 +3290,15 @@ test('clears a hidden value typed into a filter or search box when Show hidden v
     await hiddenSwitch.uncheck();
     await expect(page.locator('#sna-inventory-filter')).toHaveValue('');
     await expect(page.locator('#sna-contents-inventory')).toContainText('Visits [record number or ID hidden]');
+
+    // The People and groups name filter.
+    await hiddenSwitch.check();
+    await openPermissionPart(page, 'People and groups');
+    await page.locator('#sna-people-filter').fill('1234567');
+    await expect(page.locator('#sna-people-count')).toHaveText('No names match the filter.');
+    await hiddenSwitch.uncheck();
+    await expect(page.locator('#sna-people-filter')).toHaveValue('');
+    await expect(page.locator('#sna-people-count')).toHaveText(/^Showing all \d+ people and groups\.$/);
 
     // Search this report and the page address.
     await hiddenSwitch.check();
