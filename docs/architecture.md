@@ -72,7 +72,7 @@ Every request is a read made with the signed-in person's own permissions. The on
 | `/_api/web`, `/_api/web/currentUser` | Site name, address, and ID; who is exporting. |
 | `/_api/web/effectivebasePermissions` | Whether the person can manage the site (the ManageWeb permission). Only then are the description edit buttons shown. |
 | `/_api/web/roleassignments`, `/_api/web/lists(guid'…')/roleassignments` | Who has which permission level on the site, and on each list or library that has its own permissions. |
-| `/_api/web/lists` | Lists and libraries, with version history settings and last-changed dates for the cleanup suggestions. The request also asks for the User Information List and Events, which Sitenalyzer counts as system lists (`SNA_SYSTEM_LIST_TITLES`), apart from the other lists and libraries. |
+| `/_api/web/lists` | Lists and libraries, with version history settings and last-changed dates for the cleanup suggestions. The request also asks for the User Information List and Events, which Sitenalyzer counts as system lists, apart from the other lists and libraries. `SNA_SYSTEM_LISTS` matches them by list template: 112 for the User Information List, and 106, the events template, for the list titled Events. A list made from another template and named Events stays an ordinary list. |
 | `/_api/web/sitegroups(<ID>)/users` | Members of each SharePoint group in the permission list. |
 | `/_api/web/sitegroups` | Sharing links, read from the hidden `SharingLinks.*` groups. |
 | `/_api/contextinfo` and `/_api/$batch`, holding `GetFileById('…')` and then `GetFolderById('…')` | The names and addresses of up to 60 shared files and folders. See [Shared item names](#shared-item-names). |

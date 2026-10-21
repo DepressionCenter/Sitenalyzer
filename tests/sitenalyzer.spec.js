@@ -915,6 +915,21 @@ test('scrolls to the section navigation, not the site name, after a section open
     await expect.poll(function() { return navRowTop(page); }).toBe(0);
     await expect(page.locator('.sna-nav a[aria-current="page"]')).toBeFocused();
     await expect(page.locator('.sna-nav a[aria-current="page"]')).toHaveText('Permissions');
+
+    // Search results have no section link of their own, so Back to top puts focus on the first one.
+    await searchReport(page, 'Visit');
+    await page.getByRole('button', { name: 'Back to top' }).click();
+    await expect.poll(function() { return navRowTop(page); }).toBe(0);
+    await expect(page.locator('.sna-nav').getByRole('link', { name: 'Overview', exact: true })).toBeFocused();
+});
+
+test('counts a list named Events as an ordinary list when it is not made from the events template', async function({ page }) {
+    const madeByPeople = Object.assign({}, SYSTEM_LISTS[1], { Id: 'aaaaaaaa-0000-4000-8000-000000000053', BaseTemplate: 100, ItemCount: 7 });
+    await openPretendSite(page, { extraLists: [SYSTEM_LISTS[0], madeByPeople] });
+    await extractSiteInformation(page);
+    const counts = page.locator('#sp-results .sna-stats');
+    await expect(counts.getByRole('link', { name: 'Lists 2 19 items', exact: true })).toBeVisible();
+    await expect(counts.getByRole('link', { name: 'System list 1 5,000 items', exact: true })).toBeVisible();
 });
 
 test('says Not read on the Overview for counts it could not read', async function({ page }) {
@@ -2902,9 +2917,16 @@ test('keeps a search for a hidden value out of the page address, from the search
     expect(hashOf(page)).toBe('#sna/search?q=');
     expect(await page.evaluate(function() { return window.history.length; })).toBe(historyBefore + 1);
 
-    // Part of a hidden value, such as the end of a phone number, is replaced too.
+    // Part of a hidden value, such as the end of a phone number, is replaced too, also among other words.
     await searchReport(page, '4567');
     await expect(page.locator('#sp-results')).toContainText(notice);
+    await searchReport(page, 'visits 1234567');
+    await expect(page.locator('#sp-results')).toContainText(notice);
+    expect(hashOf(page)).toBe('#sna/search?q=');
+    // Other words with digits are still searched for.
+    await searchReport(page, 'visits 2026');
+    await expect(page.locator('#sp-results')).not.toContainText(notice);
+    expect(decodeURIComponent(hashOf(page))).toBe('#sna/search?q=visits 2026');
 
     // From a link or Back: the address is replaced with an empty search.
     await page.evaluate(function() { window.location.hash = '#sna/search?q=MRN%201234567'; });

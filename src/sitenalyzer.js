@@ -103,10 +103,10 @@ var SNA_PERSON_CHECK_MAX_LENGTH = 320;
 
 // Lists that SharePoint keeps for the site itself, which Sitenalyzer reads on purpose but counts apart from the lists
 // people made. The User Information List holds everyone who has visited the site, and can hold most of an organization.
-// Sitenalyzer matches them by title, the same as in the request that reads the lists, or by the User Information List's
-// list template number.
-var SNA_SYSTEM_LIST_TITLES = ['User Information List', 'Events'];
-var SNA_USER_INFORMATION_LIST_TEMPLATE = 112;
+// Each is matched by its list template number, and by its title when one is given: template 112 is the User Information
+// List, and template 106 is an events list, which only counts as a system list when it is the one titled Events. A list
+// someone made from another template and named Events stays an ordinary list.
+var SNA_SYSTEM_LISTS = [{ template: 112, title: '' }, { template: 106, title: 'Events' }];
 var SNA_SYSTEM_LISTS_NOTE = 'SharePoint keeps these lists for the site itself, such as the User Information List of everyone who has visited the site. Their items aren\'t counted with the other lists and libraries.';
 
 // ### Interface Settings ###
@@ -2641,7 +2641,8 @@ function snaNavRow() {
 function snaScrollToNav() {
     var navRow = snaNavRow();
     if (!navRow) { return; }
-    var current = navRow.querySelector('.sna-nav a[aria-current="page"]');
+    // Search results have no section link of their own, so focus goes to the first section link instead.
+    var current = navRow.querySelector('.sna-nav a[aria-current="page"]') || navRow.querySelector('.sna-nav a');
     if (current) { try { current.focus({ preventScroll: true }); } catch(e) { current.focus(); } }
     navRow.scrollIntoView({ behavior: snaScrollBehavior(), block: 'start' });
 }
@@ -2903,10 +2904,11 @@ async function collectReport(targetUrl, onProgress, token) {
     return report;
 }
 
-// True when list, as SharePoint returns it, is one that SharePoint keeps for the site itself, per SNA_SYSTEM_LIST_TITLES.
+// True when list, as SharePoint returns it, is one that SharePoint keeps for the site itself, per SNA_SYSTEM_LISTS.
 function snaIsSystemList(list) {
-    if (list.BaseTemplate === SNA_USER_INFORMATION_LIST_TEMPLATE) { return true; }
-    return SNA_SYSTEM_LIST_TITLES.indexOf(list.Title || '') > -1;
+    return SNA_SYSTEM_LISTS.some(function(system) {
+        return list.BaseTemplate === system.template && (!system.title || list.Title === system.title);
+    });
 }
 
 // Returns the document libraries, lists, or system lists of report, for kind 'libraries', 'lists', or 'system'.
@@ -4467,14 +4469,20 @@ function snaRouteWithoutHiddenSearch(route) {
     return Object.assign({}, route, { q: '', hiddenSearch: true });
 }
 
-// True when text a person typed shows a hidden value or part of one, such as "555-0100" from "(734) 555-0100".
+// True when text a person typed shows a hidden value or part of one, such as "555-0100" from "(734) 555-0100", on its
+// own or among other words, such as "notes 555-0100". Among other words, a word counts only when it has a digit or @,
+// because those are the parts of a hidden value that identify someone, so a search such as "visit notes" still runs.
 // Text shorter than 3 characters, such as "a", is too short to show part of a value.
 function snaTypedTextShowsHiddenValue(text, hiddenValues) {
     var typed = String(text || '').trim().toLowerCase();
     if (!typed) { return false; }
     if (snaFindHiddenValues(typed).length > 0) { return true; }
-    if (typed.length < 3) { return false; }
-    return Object.keys(hiddenValues).some(function(value) { return value.indexOf(typed) > -1; });
+    var values = Object.keys(hiddenValues);
+    function inHiddenValue(part) {
+        return part.length >= 3 && values.some(function(value) { return value.indexOf(part) > -1; });
+    }
+    if (inHiddenValue(typed)) { return true; }
+    return typed.split(/[\s,;"*]+/).some(function(word) { return /[0-9@]/.test(word) && inHiddenValue(word); });
 }
 
 // Clears the text a person typed into the table filter boxes, the Contents name filter, and Search this report when

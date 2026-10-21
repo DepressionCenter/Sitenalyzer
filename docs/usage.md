@@ -107,7 +107,7 @@ The **Contents summary** shows the number of items in all lists and libraries, n
 
 #### System lists
 
-SharePoint keeps some lists for the site itself. Sitenalyzer reads two of them: the **User Information List**, which lists everyone who has visited the site, and **Events**. The User Information List can hold most of your organization, so Sitenalyzer counts system lists and their items apart from the lists and libraries people made. They have their own count on the **Overview**, their own group in **Contents**, and, when the site has any, their own table and item count in the **Contents summary**. **Site review** leaves them out.
+SharePoint keeps some lists for the site itself. Sitenalyzer reads two of them: the **User Information List**, which lists everyone who has visited the site, and **Events**, when it is made from SharePoint's events template. A list that someone made from another template and named Events counts as an ordinary list. The User Information List can hold most of your organization, so Sitenalyzer counts system lists and their items apart from the lists and libraries people made. They have their own count on the **Overview**, their own group in **Contents**, and, when the site has any, their own table and item count in the **Contents summary**. **Site review** leaves them out.
 
 #### List and library details
 
@@ -133,7 +133,7 @@ The page address changes as you move around the report, such as `.../SitePages/s
 - Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, and **Terms**. Columns whose names match come first. A system list is labeled **System list**.
 - Use `*` between words, such as `visit*date`, or put a phrase in quotes, such as `"Visit Date"`, to find it exactly.
 - Select a result to open it. A column opens on its list's **Columns** tab, with the table filtered to that column when the table has a filter box. A term opens its term set in **Taxonomy** in the same way.
-- While **Show hidden values** is off, Sitenalyzer doesn't search for a hidden value or part of one, such as `555-0100`. It clears the search, says why, and keeps the text out of the page address. See [Hidden values](#hidden-values).
+- While **Show hidden values** is off, Sitenalyzer doesn't search for a hidden value or part of one, such as `555-0100`. This includes a search that has such text among other words, such as `notes 555-0100`. It clears the search, says why, and keeps the text out of the page address. See [Hidden values](#hidden-values).
 
 ### Technical details
 
