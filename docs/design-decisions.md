@@ -52,7 +52,7 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 
 ### Tables
 
-- **Tabulator for every table on screen.** It was already bundled and tested in SharePoint. The permission tables, sharing links, the person check result, the columns that use a term set, and the Site review tables all use it, so every table sorts and filters the same way. The printed report keeps plain tables.
+- **Tabulator for every table on screen.** It was already bundled and tested in SharePoint. The permission tables, sharing links, the person check result, the columns that use a term set, and the Site review tables all use it, so every table sorts and filters the same way. The printed report keeps plain tables. The short table of lists and libraries inside each People and groups card stays a plain table, because it is part of the card and lists only that person's or group's lists and libraries, which the filter and **Sort by** hide and move along with the card. Each list's **Permissions** tab shows the same access in a sortable table.
 - **Sort with the column headings.** Tabulator headings can't be reached with the keyboard, so Sitenalyzer adds each sortable heading to the Tab order. Enter or Space sorts it.
 - **No separate Sort by control for tables.** The headings stay visible at every width, and a table whose columns don't fit scrolls sideways, with its headings. A second control for the same action would add clutter. People and groups is the exception, because it is a set of cards with no headings to select, so it has a **Sort by** box.
 - **A filter box only for long tables.** Tables with more than 10 rows get a filter box with a row count. A filter changes only that table, never a workbook or the printed report.

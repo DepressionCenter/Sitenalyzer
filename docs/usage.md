@@ -122,7 +122,7 @@ Above the tabs are the **ID**, **Open**, and **Permissions** buttons. **ID** cop
 
 #### Tables in the report
 
-Every table in the report works the same way, including the permission tables, the sharing links, the person check result, and the tables in **Site review**.
+Every table in the report works the same way, including the permission tables, the sharing links, the person check result, and the tables in **Site review**. The one exception is the short list of lists and libraries inside each card in **People and groups**, which keeps a plain table. To sort or filter the people and groups who can use one list or library, open its **Permissions** tab.
 
 - **Sort.** Select a column heading, or move to it with the Tab key and press Enter or Space. Select it again to sort the other way. Sorting sorts every row, not only the rows on the page you're looking at.
 - **Filter.** Tables with more than 10 rows have a filter box above them. It shows only the rows that contain what you type, with a row count under it.
