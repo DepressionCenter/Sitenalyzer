@@ -306,7 +306,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 }
 .sna-switch { display: inline-flex; align-items: center; gap: 8px; padding: 8px 0; color: #ffffff; font-weight: 600; font-size: 15px; }
 /* A switch drawn from the checkbox itself, so it keeps the checkbox's keyboard behavior and screen reader role. */
-#sp-info-app #sna-technical-switch {
+#sp-info-app .sna-switch input[role="switch"] {
     appearance: none;
     -webkit-appearance: none;
     width: 44px;
@@ -319,7 +319,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     cursor: pointer;
     flex-shrink: 0;
 }
-#sp-info-app #sna-technical-switch::before {
+#sp-info-app .sna-switch input[role="switch"]::before {
     content: '';
     position: absolute;
     top: 2px;
@@ -330,9 +330,38 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     background: #ffffff;
     transition: transform 0.15s;
 }
-#sp-info-app #sna-technical-switch:checked { background: var(--um-maize); border-color: var(--um-maize); }
-#sp-info-app #sna-technical-switch:checked::before { background: var(--um-dark-blue); transform: translateX(20px); }
+#sp-info-app .sna-switch input[role="switch"]:checked { background: var(--um-maize); border-color: var(--um-maize); }
+#sp-info-app .sna-switch input[role="switch"]:checked::before { background: var(--um-dark-blue); transform: translateX(20px); }
 .sna-switch label { cursor: pointer; }
+.sna-switches { display: flex; flex-wrap: wrap; align-items: center; gap: 0 24px; }
+.sna-switch[hidden] { display: none; }
+/* The tooltip of Show hidden values: how many values are hidden or shown. It shows while the pointer is over the
+   switch or the tooltip, or the switch has focus, and Escape closes it (see startApplication). Dark blue text on white is 13.4:1. */
+.sna-switch-tip { position: relative; }
+.sna-tooltip {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 20;
+    width: max-content;
+    max-width: min(18rem, calc(100vw - 32px));
+    padding: 6px 10px;
+    border: 1px solid var(--sna-rule);
+    border-radius: 4px;
+    background: #ffffff;
+    color: var(--sna-text);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.4;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+.sna-switch-tip:hover .sna-tooltip,
+.sna-switch-tip:focus-within .sna-tooltip { display: block; }
+.sna-switch-tip.sna-tip-closed .sna-tooltip { display: none; }
+@media (max-width: 47.99rem) {
+    .sna-tooltip { right: auto; left: 0; }
+}
 
 .sna-toolbar {
     display: flex;
@@ -520,7 +549,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     display: block; max-width: 100%; max-height: 18rem; height: auto; object-fit: contain;
     border: 1px solid var(--sna-rule); border-radius: 4px; background: #ffffff;
 }
-.sna-page-figure figcaption { margin: 6px 0 0 0; font-size: 14px; color: var(--sna-text-2); }
 .sna-break-anywhere { overflow-wrap: anywhere; }
 
 /* ### Permission Reports ###
@@ -883,10 +911,10 @@ details.permissions-section {
 
 /* ### Forced Colors and Reduced Motion ### */
 @media (forced-colors: active) {
-    #sp-info-app #sna-technical-switch { border-color: ButtonText; }
-    #sp-info-app #sna-technical-switch::before { background: ButtonText; }
-    #sp-info-app #sna-technical-switch:checked { background: Highlight; border-color: Highlight; }
-    #sp-info-app #sna-technical-switch:checked::before { background: HighlightText; }
+    #sp-info-app .sna-switch input[role="switch"] { border-color: ButtonText; }
+    #sp-info-app .sna-switch input[role="switch"]::before { background: ButtonText; }
+    #sp-info-app .sna-switch input[role="switch"]:checked { background: Highlight; border-color: Highlight; }
+    #sp-info-app .sna-switch input[role="switch"]:checked::before { background: HighlightText; }
     #sp-info-app .sna-nav a[aria-current="page"],
     #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
     #sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: Highlight; }

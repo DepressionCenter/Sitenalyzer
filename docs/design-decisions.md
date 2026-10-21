@@ -20,7 +20,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 [Back to README](../README.md)
 
-This page explains why the Sitenalyzer report screen looks and works the way it does. It is for developers and designers who change the interface and want to keep what already works. Each decision says what Sitenalyzer does and why. [Installing and using Sitenalyzer](usage.md) describes each screen in detail, and [How Sitenalyzer works](architecture.md) explains the code behind it.
+This page explains why the Sitenalyzer report screen looks and works the way it does. It is for developers and designers who change the interface and want to keep what already works. Each decision says what Sitenalyzer does and why. [Installing and using Sitenalyzer](usage.md) describes each screen in detail, and [Sitenalyzer architecture](architecture.md) explains the code behind it.
 
 ### Goals
 
@@ -48,7 +48,7 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 - **A list beside the details.** Contents shows the lists and libraries on the left and the details of the selected one on the right. On a narrow screen the details replace the list, and **Back to results** returns to it. Before anything is selected, the **Contents summary** shows the totals.
 - **The same layout in Permissions and Taxonomy.** Their parts or term sets are on the left, and the one you selected is on the right.
 - **No About this site card.** With technical details on, the site ID and a **Copy** button appear under the site's address in the header.
-- **Known gaps.** Taxonomy has no parent term column and doesn't show which columns use a term set, because Sitenalyzer doesn't read that information yet. [Issue #14](https://github.com/DepressionCenter/Sitenalyzer/issues/14) tracks it.
+- **Parent terms and term set use.** A term set shows each term's parent term in a column, and the terms are listed in tree order, with each term right after the term it sits under. The terms aren't indented, so the table still sorts and filters like the others. Below the terms, **Lists and libraries using this term set** lists the columns that use the set and links to their **Columns** tab.
 
 ### Tables
 
@@ -58,6 +58,8 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 - **A filter box only for long tables.** Tables with more than 10 rows get a filter box with a row count. A filter changes only that table, never a workbook or the printed report.
 
 ### Technical details
+
+A second switch, **Show hidden values**, sits next to it, but only when Sitenalyzer hid at least one value, so a report with nothing hidden has one switch. Its tooltip says how many values are hidden or shown, which keeps the screen free of another notice. It is off every time the page opens, so a report shown on a shared screen or printed hides values that look like personal information unless someone turns it on. Each hidden value says what kind it was, such as `[phone number hidden]`, so the person knows what is missing and screen readers read it clearly. People's names and emails stay visible, because the permission views exist to review them.
 
 One switch, **Show technical details**, adds internal names, IDs, lookup targets, and other technical values to the tables that are already on screen. Sitenalyzer adds columns to the same table rather than drawing a second technical table. Search finds these values even while the switch is off, and the workbooks and the printed report always include them. The browser remembers the switch under `sitenalyzer:technical-details`. After the switch redraws the report, keyboard focus goes back to the switch.
 
@@ -96,10 +98,9 @@ You now know what the report screen is meant to do and why each part works the w
 ### Additional resources
 
 - [Installing and using Sitenalyzer](usage.md)
-- [How Sitenalyzer works](architecture.md)
+- [Sitenalyzer architecture](architecture.md)
 - [Branding](branding.md)
 - [Building and testing Sitenalyzer](development.md)
-- [Issue #14: Show parent terms and where each term set is used in Taxonomy](https://github.com/DepressionCenter/Sitenalyzer/issues/14)
 - [WCAG 2.2](https://www.w3.org/TR/WCAG22/)
 - [GNU Free Documentation License](https://www.gnu.org/licenses/fdl-1.3.html)
 

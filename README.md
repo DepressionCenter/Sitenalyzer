@@ -38,6 +38,7 @@ With Sitenalyzer, you can:
 + Move between an Overview, Contents, Permissions, Taxonomy, and Site review, and search the whole report, with results grouped by kind.
 + Edit site, list, column, and term descriptions, if you own the site.
 + Turn on technical details to see internal names, and copy the site, list, and library IDs needed for Microsoft Graph and Microsoft Entra apps.
++ Hide values that look like personal information, such as phone numbers, on screen, in printouts, and in workbooks, until you choose to show them.
 
 
 ## Quick Start Guide
@@ -56,7 +57,7 @@ To install a newer version, copy the files from `dist/SiteAssets` again and repl
 
 
 ## Documentation
-+ **Complete documentation:** See the [`/docs`](./docs) folder in this repository: [installing and using Sitenalyzer](docs/usage.md), [troubleshooting](docs/troubleshooting.md), [how it works](docs/architecture.md), and [building and testing](docs/development.md).
++ **Complete documentation:** See the [`/docs`](./docs) folder in this repository: [installing and using Sitenalyzer](docs/usage.md), [troubleshooting](docs/troubleshooting.md), [architecture](docs/architecture.md), and [building and testing](docs/development.md).
 + **Overview for researchers and developers:** Visit the [Health Research Resource Library](https://michmed.org/efdc-kb) for a high-level summary, key features, and important assumptions.
 + **Project instructions for contributors and AI coding tools:** See [AGENTS.md](AGENTS.md) and the [skills index](SKILLS.md).
 

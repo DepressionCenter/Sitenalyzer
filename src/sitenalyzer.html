@@ -65,10 +65,17 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 						<li><a href="#sna/review" data-section="review"><span data-icon="check"></span>Site review</a></li>
 					</ul>
 				</nav>
-				<span class="sna-switch">
-					<input type="checkbox" role="switch" id="sna-technical-switch">
-					<label for="sna-technical-switch">Show technical details</label>
-				</span>
+				<div class="sna-switches">
+					<span id="sna-hidden-values-control" class="sna-switch sna-switch-tip" hidden>
+						<input type="checkbox" role="switch" id="sna-hidden-values-switch" aria-describedby="sna-hidden-values-tip">
+						<label for="sna-hidden-values-switch">Show hidden values</label>
+						<span id="sna-hidden-values-tip" class="sna-tooltip" role="tooltip"></span>
+					</span>
+					<span class="sna-switch">
+						<input type="checkbox" role="switch" id="sna-technical-switch">
+						<label for="sna-technical-switch">Show technical details</label>
+					</span>
+				</div>
 			</div>
 			<div class="sna-toolbar hide-on-print">
 				<form id="sna-search-form" class="sna-search-form" role="search" aria-label="Search this report">
@@ -80,12 +87,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 				</form>
 				<div class="sna-report-actions">
 					<p id="sna-report-actions-label" class="sna-visually-hidden">Download or print the full site report</p>
-					<div class="sna-report-buttons" role="group" aria-labelledby="sna-report-actions-label" aria-describedby="sna-report-actions-hint">
+					<div class="sna-report-buttons" role="group" aria-labelledby="sna-report-actions-label">
 						<button type="button" class="sna-btn sna-btn-primary" data-action="export-xlsx"><span data-icon="download"></span>Data dictionary (.xlsx)</button>
 						<button type="button" class="sna-btn sna-btn-outline" data-action="export-permissions"><span data-icon="download"></span>Permissions workbook (.xlsx)</button>
 						<button type="button" class="sna-btn sna-btn-outline" data-action="print-report"><span data-icon="print"></span>Print full report / PDF</button>
 					</div>
-					<p id="sna-report-actions-hint" class="sna-hint">Downloads and the printed report always include everything, even when a filter is set.</p>
 				</div>
 			</div>
 			<div id="sp-results" class="sna-view"></div>

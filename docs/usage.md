@@ -22,7 +22,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 This page explains how to add Sitenalyzer to a SharePoint Online site, how to update it, and how to use it. It is for site owners who set it up and for anyone who uses it to look at a site. You need to be able to add files to the site's Site Assets library and create pages.
 
-### What you need
+### Requirements
 
 - A SharePoint Online site where you can create pages and add files to the Site Assets library.
 - The Modern Script Editor web part. If it isn't available on your site, ask your site administrator to install it.
@@ -71,8 +71,9 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. See [Report sections](#report-sections).
 5. To find a list, library, column, folder, page, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
 6. To see internal names, IDs, and other values that developers need, turn on **Show technical details** at the right end of the section links. See [Technical details](#technical-details).
-7. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
-8. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
+7. Values that look like personal information, such as phone numbers, are hidden at first. When Sitenalyzer hid some, **Show hidden values** appears next to **Show technical details**. Turn it on to see them. See [Hidden values](#hidden-values).
+8. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
+9. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
 9. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
 10. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
 11. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. To close the box without changing the site, press Escape or select **Close**.
@@ -96,8 +97,8 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 | --- | --- |
 | **Overview** | Counts of document libraries, lists, site pages, term sets, and sharing links, each linked to the section that lists them. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
 | **Contents** | Document libraries, lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
-| **Permissions** | Who can open what on the site. See [Who can open what](#who-can-open-what). |
-| **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. |
+| **Permissions** | Who can open what on the site. See [Permissions](#permissions). |
+| **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
 | **Site review** | Lists and libraries to review for cleanup, the largest ones, and what Sitenalyzer could and could not read. See [Site review](#site-review). |
 
 #### Contents summary
@@ -133,9 +134,40 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 **Show technical details** is off at first. When you turn it on, every section adds the values developers need: internal names, list, library, column, folder, term, term set, term group, and term store IDs, lookup targets, default values, maximum lengths, indexed columns, and calculation formulas. The site ID appears under the site's address, with a **Copy** button. Search finds these values even when the switch is off, and the workbooks and the printed report always include them.
 
-Sitenalyzer remembers the setting in this browser. See [How Sitenalyzer works](architecture.md#browser-storage).
+Sitenalyzer remembers the setting in this browser. See [Browser storage](architecture.md#browser-storage).
 
-### Who can open what
+### Hidden values
+
+A research site's names and descriptions sometimes hold personal or health information, such as a participant's phone number in a folder name. So Sitenalyzer hides text that looks like personal information everywhere it shows the report: on screen, in search, in the printed report, and in both workbooks. Each hidden value shows what kind of value it is, such as `[phone number hidden]`. When Sitenalyzer hid at least one value, a **Show hidden values** switch appears next to **Show technical details**. Point to it or move keyboard focus to it to see how many values it hid. Press Escape to close that tip.
+
+Sitenalyzer looks for these kinds of values:
+
+| Kind | Example that is hidden | Example that stays visible |
+| --- | --- | --- |
+| Email address | `participant@example.org` | `participant at example dot org` |
+| Date of birth or visit date, after a label such as DOB or Visit date | `DOB: 01/02/1980` | `Visit 01/02/1980` |
+| Record number or ID with a digit, after a label such as MRN or Patient ID | `MRN: 12345678` | `MRN Source`, `Patient ID Number` |
+| Card number that passes the card number check | `4111 1111 1111 1111` | `4111 1111 1111 1112` |
+| Social Security number | `123-45-6789` | `000-12-3456` |
+| ZIP+4 code | `48109-1234` | `48109` |
+| Phone number with an area code | `(734) 555-0100` | `555-0100` |
+| IP address | `192.168.10.20` | `version 1.2.3` |
+| Street address | `1500 Main Street` | `Main Street` |
+| Age over 89 | `aged 93` | `aged 45` |
+
+Sitenalyzer checks the names and descriptions of the site, lists, libraries, columns, folders, site pages, shared items, permission levels, term groups, term sets, and terms, and column choices, default values, and formulas. These stay visible:
+
+- Names, email addresses, and sign-in names of people and groups where Sitenalyzer shows who has access, because you need them to review it. The same email or phone number in other text, such as a list description, is hidden.
+- IDs, internal names, and addresses, so links and IDs keep working. A page or folder address can still hold a value that is hidden in its name.
+- The image chosen for a site page.
+
+To see the hidden values, turn on **Show hidden values**. The printed report and both workbooks then include them too, and the switch's tip reminds you to turn it off before you share, print, or download. Sitenalyzer never remembers the switch, so values are hidden again the next time you open the page. When you turn the switch off, Sitenalyzer clears any filter or search text that shows a hidden value or part of one.
+
+When you edit a description, the description box shows the real text, and Sitenalyzer saves the text you typed.
+
+Pattern matching finds only text shaped like the examples above, so it doesn't find all personal information, such as a participant's name. Hidden values don't make a report safe to share or de-identify it. Check a printout or workbook before you share it, and store it the way you would other personal data.
+
+### Permissions
 
 The **Permissions** section lists its parts on the left. Select one to open it.
 
@@ -145,7 +177,7 @@ The **Permissions** section lists its parts on the left. Select one to open it.
 | **People and groups** | For each person or group: what they can do on the whole site, and the lists and libraries that have their own permissions. Open **Members** under a SharePoint group to see who is in it. |
 | **Check a person's access** | What one person can do on the site and in each list and library. See below. |
 | **Own permissions** | The lists and libraries that don't use the site's permissions. |
-| **Sharing links** | Each sharing link, the file it opens, and who can use it: **Anyone with the link**, **People in your organization**, or **Specific people**. |
+| **Sharing links** | Each sharing link, the file or folder it opens, and who can use it: **Anyone with the link**, **People in your organization**, or **Specific people**. A link to a list item, or to a file deleted after it was shared, says "No name found" and shows the item's ID. |
 | **Apps with access** | Apps that were given permissions in SharePoint. Apps given access in Microsoft Entra ID, such as through Sites.Selected, aren't listed. |
 
 A permission level is a named set of permissions, such as Read or Contribute. In **People and groups**, **Expand all details** and **Collapse all details** open and close every group's member list at once. The Overview links straight to each part.
@@ -185,6 +217,15 @@ Each row says what was found and what to do next. Select a name to open its deta
 
 At the bottom, **Report coverage** lists each part of the report, such as **Sharing links** or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
 
+### Term sets
+
+When you select a term set in **Taxonomy**, Sitenalyzer shows two tables.
+
+- **Terms** lists every term in the set. **Parent term** names the term each one sits under, or says **Top level**. A term that sits under two terms, such as a term pinned in two places, shows both names, such as "Arm A; Arm B". Each term comes right after the term it sits under.
+- **Lists and libraries using this term set** lists each managed metadata column that takes its values from the set. A managed metadata column is a SharePoint column whose values come from a term set. The table shows the list or library, the column, and whether the column allows several values. When a column offers only the terms under one term, **Starts at term** names that term. Select a list or library to open its **Columns** tab with the table filtered to that column. A site column that uses the set but isn't added to any list or library says **Site column (not in a list or library)**.
+
+If Sitenalyzer could not read this information, the term set says so instead of showing an empty table, and **Report coverage** in **Site review** has a **Parent terms** or **Lists and libraries using term sets** row that says **Partly read** or **Not read**.
+
 ### Site pages
 
 **Site pages** in **Contents** lists the pages in the site's Site Pages library, sorted by name, with each page's file name, last change, and address. Folders and files that aren't pages are left out.
@@ -211,10 +252,10 @@ The printed report is built from everything Sitenalyzer read, not from what is o
 3. **Document libraries** and **Lists**: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, and descriptions, and one with internal names, IDs, and other technical details.
 4. **Site pages**.
 5. **Permissions**: the access findings, site permissions, people and groups with their members, the result of **Check a person's access** if you ran one, lists and libraries with their own permissions, sharing links, and apps.
-6. **Taxonomy and term store**: every term group, term set, and term, with their IDs.
+6. **Taxonomy and term store**: every term group, term set, and term, with their IDs, each term's parent term, and the columns that use each term set.
 7. **Site review**: the cleanup findings, the largest lists and libraries, and **Report coverage**.
 
-Technical details are always printed, even when **Show technical details** is off. The printout leaves out buttons, search boxes, the section links, and the SharePoint page around Sitenalyzer. Table headings repeat at the top of each page. Page images aren't printed.
+Technical details are always printed, even when **Show technical details** is off. Hidden values stay hidden in the printout unless **Show hidden values** is on. See [Hidden values](#hidden-values). The printout leaves out buttons, search boxes, the section links, and the SharePoint page around Sitenalyzer. Table headings repeat at the top of each page. Page images aren't printed.
 
 ### The permissions workbook
 
@@ -231,7 +272,7 @@ The **Permissions workbook (.xlsx)** button saves an Excel workbook named like `
 
 The workbook doesn't include permissions on single files, folders, or items, or the members of security and Microsoft 365 groups.
 
-**Privacy:** the workbook lists people's names and email addresses, and list names may describe a study. Store and share it the way you would other personal data. Don't attach it to a public issue or email it outside your team.
+**Privacy:** the workbook lists people's names and email addresses, and list names may describe a study. Store and share it the way you would other personal data. Don't attach it to a public issue or email it outside your team. Unless **Show hidden values** is on, the workbook hides values that look like personal information in list names, and the **About** sheet says whether they were hidden.
 
 ### Update to a newer version
 
@@ -248,7 +289,7 @@ You can now install Sitenalyzer on a site, use it to document the site and its p
 ### Additional resources
 
 - [Troubleshooting](troubleshooting.md)
-- [How Sitenalyzer works](architecture.md)
+- [Sitenalyzer architecture](architecture.md)
 - [Modern Script Editor web part](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor)
 - [Understanding permission levels in SharePoint](https://learn.microsoft.com/en-us/sharepoint/understanding-permission-levels)
 - [How to Connect to SharePoint from Scripts, Workflows or Data Pipelines](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/ArticleDet?ID=15245) (UM login required)

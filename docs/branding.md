@@ -107,6 +107,6 @@ You can now choose the right symbol or logo file for a dark or light background 
 - [Images folder](../images) and its [license](../images/LICENSE.txt)
 - [U-M colors in `styles/um-style.css`](../styles/um-style.css)
 - [U-M brand guidelines](https://brand.umich.edu/)
-- [How Sitenalyzer works](architecture.md)
+- [Sitenalyzer architecture](architecture.md)
 
 [Back to README](../README.md)

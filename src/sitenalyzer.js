@@ -80,11 +80,18 @@ var SNA_SCRIPTS_FOLDER = snaFindScriptsFolder();
 var SNA_SITE_PAGES_MAX = 10000;
 var SNA_SITE_PAGES_BATCH_SIZE = 2000;
 
+// Most terms read from each term set, and the most requests for one term's child terms in each report. Child terms
+// are read one term at a time only when SharePoint doesn't return each term's children with the term set's terms.
+var SNA_TERMS_PER_SET_MAX = 10000;
+var SNA_TERM_CHILD_LOOKUPS = 1000;
+
 // Most requests that run at the same time, such as group member lookups. Keeps large sites from being throttled.
 var SNA_MAX_PARALLEL_REQUESTS = 6;
 
-// Most files whose names are looked up for the sharing links section.
+// Most shared files and folders whose names are looked up for the sharing links section, and how many
+// lookups go in each $batch request. SharePoint answers each batch with one status for each lookup inside it.
 var SNA_SHARING_LINK_NAME_LOOKUPS = 60;
+var SNA_SHARING_LINK_BATCH_SIZE = 20;
 
 // Site groups read in each request when looking for sharing links, and the most read in all.
 // SharePoint creates one group for each sharing link, so a site with many links has many groups.
@@ -237,9 +244,25 @@ var _snaUserCheckRunning = false;
 
 // ### Tables ###
 
-// Returns the Tabulator column settings for one table. tbl is a _snaTablesQueue entry: { id, type, data, searchLabel, setId }.
-// Technical columns belong to the same table and are shown only while Show technical details is on.
+// Returns the Tabulator column settings for one table, with hidden values hidden in every cell (see snaMaskHtml).
+// tbl is a _snaTablesQueue entry: { id, type, data, searchLabel, setId, parentsHidden }.
 function snaTableColumns(type, tbl) {
+  return snaTableColumnSettings(type, tbl).map(function(column) {
+    var formatter = column.formatter;
+    var masked = Object.assign({}, column);
+    masked.formatter = function(cell, params, onRendered) {
+      if (typeof formatter === 'function') { return snaMaskHtml(formatter(cell, params, onRendered)); }
+      // Tabulator's textarea formatter keeps line breaks; the plain formatter doesn't.
+      if (formatter === 'textarea') { cell.getElement().style.whiteSpace = 'pre-wrap'; }
+      return snaMaskHtml(snaEscapeHtml(cell.getValue()));
+    };
+    return masked;
+  });
+}
+
+// Returns the Tabulator column settings for one table, before hidden values are hidden.
+// Technical columns belong to the same table and are shown only while Show technical details is on.
+function snaTableColumnSettings(type, tbl) {
   var technical = snaTechnicalDetailsOn();
   function idFormatter(cell) { return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>'; }
   function yesFormatter(cell) { return cell.getValue() ? 'Yes' : ''; }
@@ -284,6 +307,10 @@ function snaTableColumns(type, tbl) {
         formatter: function(cell) {
           return '<span class="sna-type-icon" aria-hidden="true">&#127991;</span>' + snaEscapeHtml(cell.getValue());
         }
+      },
+      {
+        title: 'Parent term', field: 'parentNames', sorter: 'string', widthGrow: 2, visible: !tbl.parentsHidden,
+        formatter: function(cell) { return cell.getValue() ? snaEscapeHtml(cell.getValue()) : '<span class="sna-muted">Top level</span>'; }
       },
       { title: 'Term ID', field: 'termId', sorter: 'string', widthGrow: 2, visible: technical, formatter: idFormatter },
       {
@@ -381,7 +408,8 @@ function snaRowEditKey(type, tbl, row) {
   return '';
 }
 
-// Shows only the rows that contain text in any value, including values in hidden technical columns.
+// Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
+// compared as they are shown, so a hidden value can't be found by typing it.
 function snaApplyTableFilter(table, text) {
   var val = String(text || '').trim().toLowerCase();
   if (!val) { table.clearFilter(); return; }
@@ -389,7 +417,7 @@ function snaApplyTableFilter(table, text) {
     var keys = Object.keys(data);
     for (var k = 0; k < keys.length; k++) {
       var v = data[keys[k]];
-      if (v && String(v).toLowerCase().indexOf(val) > -1) { return true; }
+      if (v && typeof v !== 'object' && snaMaskText(v).toLowerCase().indexOf(val) > -1) { return true; }
     }
     return false;
   });
@@ -420,7 +448,7 @@ function initSnaTabulators() {
       filterWrap.className = 'sna-table-filter hide-on-print';
       var filterLabel = document.createElement('label');
       filterLabel.setAttribute('for', tbl.id + '-s');
-      filterLabel.textContent = 'Filter ' + tbl.searchLabel;
+      filterLabel.textContent = 'Filter ' + snaMaskText(tbl.searchLabel);
       filterInput = document.createElement('input');
       filterInput.type = 'search';
       filterInput.id = tbl.id + '-s';
@@ -442,7 +470,7 @@ function initSnaTabulators() {
       scrollRegion.className = 'sna-table-scroll';
       scrollRegion.setAttribute('tabindex', '0');
       scrollRegion.setAttribute('role', 'region');
-      scrollRegion.setAttribute('aria-label', 'Table of ' + tbl.searchLabel);
+      scrollRegion.setAttribute('aria-label', 'Table of ' + snaMaskText(tbl.searchLabel));
       el.parentNode.insertBefore(scrollRegion, el);
       scrollRegion.appendChild(el);
     }
@@ -611,6 +639,201 @@ function snaEscapeHtml(value) {
     return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function(character) {
         return entities[character];
     });
+}
+
+// ### Hidden Values ###
+
+// Kinds of text that look like personal or health information. While Show hidden values is off, Sitenalyzer shows
+// each match as "[<label> hidden]" on screen, in search, in the print document, and in both workbooks. Pattern
+// matching finds only these shapes of text, so it does not find all personal information and is not de-identification.
+// Patterns are tried in this order, so a labeled record number is hidden whole before its digits look like a phone number.
+// None uses lookbehind, because one regular expression a browser can't read would stop this whole file from loading.
+// Adapted from the sharing checks in agentprise (https://github.com/DepressionCenter/agentprise), which take their
+// first patterns from FieldStationAI (https://github.com/DepressionCenter/FieldStationAI). The rule that a labeled ID
+// must contain a digit, and the Social Security number ranges, come from extractium's phi_lint.py
+// (https://github.com/DepressionCenter/extractium).
+var SNA_HIDDEN_VALUE_PATTERNS = [
+    { label: 'email address', re: /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b/g },
+    { label: 'date of birth or visit date', re: /\b(?:dob|date of birth|birth ?date|born(?: on)?|admitted(?: on)?|discharged(?: on)?|died(?: on)?|(?:admission|discharge|death|visit|service) date|date of (?:admission|discharge|death|visit|service))\b\s*[:#]?\s*(?:(?:0?[1-9]|1[0-2])[\/-](?:0?[1-9]|[12]\d|3[01])[\/-](?:19|20)?\d{2}|(?:19|20)\d{2}-(?:0?[1-9]|1[0-2])-(?:0?[1-9]|[12]\d|3[01])|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2},? (?:19|20)\d{2})/gi },
+    // A label followed by a value that has a digit, so a column title such as "Patient ID Number" stays visible.
+    { label: 'record number or ID', re: /\b(?:mrn|medical record(?: number)?|patient id|member id|account number|ssn)\b\s*[:#]?\s*(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{3,}/gi },
+    { label: 'card number', re: /\b(?:\d[ -]?){12,18}\d\b/g, isMatch: snaPassesLuhnCheck },
+    { label: 'Social Security number', re: /\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b/g },
+    { label: 'ZIP+4 code', re: /\b\d{5}-\d{4}\b/g },
+    { label: 'phone number', re: /(?:\+?\b1[-.\s]?)?(?:\(\d{3}\)\s?|\b\d{3}[-.\s]?)\d{3}[-.\s]?\d{4}\b/g },
+    { label: 'IP address', re: /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g },
+    { label: 'street address', re: /\b\d{1,6}\s+(?:[A-Za-z0-9.'-]+\s+){1,4}(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|court|ct|way|place|pl)\b\.?/gi },
+    { label: 'age over 89', re: /\b(?:(?:9\d|1[0-2]\d)[- ]?(?:years?[- ]old|y\/?o)|aged?\s*:?\s*(?:9\d|1[0-2]\d))\b/gi }
+];
+
+// Attributes of Sitenalyzer's own markup that people read or that filters compare, so hidden values are hidden there
+// too. Every other attribute, such as href or data-sna-orig (a description's saved text, for its editor), is kept.
+var SNA_HIDDEN_VALUE_ATTRIBUTES = /(\s(?:aria-label|title|alt|data-name|data-filter-text)=")([^"]*)(")/g;
+
+var _snaShowHiddenValues = false; // True while Show hidden values is on. Never saved, so every visit starts with values hidden.
+var _snaHiddenSeen = {};          // Every value hidden while drawing or saving this report, in lowercase
+var _snaHiddenSyncQueued = false; // True while an update of Show hidden values is waiting to run
+
+// True when the digits in text pass the Luhn check that card numbers use, so most other long numbers stay visible.
+function snaPassesLuhnCheck(text) {
+    var digits = String(text).replace(/\D/g, '');
+    if (digits.length < 13 || digits.length > 19) { return false; }
+    var sum = 0;
+    for (var i = 0; i < digits.length; i++) {
+        var digit = Number(digits.charAt(digits.length - 1 - i));
+        if (i % 2 === 1) { digit *= 2; if (digit > 9) { digit -= 9; } }
+        sum += digit;
+    }
+    return sum % 10 === 0;
+}
+
+// True while Show hidden values is on.
+function snaShowingHiddenValues() {
+    return _snaShowHiddenValues;
+}
+
+// GUIDs inside text, such as "Item ID: <GUID>". They are IDs, never personal information, and their digits must not
+// be read as a card or phone number.
+var SNA_GUID_IN_TEXT = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
+// Calls replace(match, pattern) for each match of SNA_HIDDEN_VALUE_PATTERNS in text, outside GUIDs, and returns the
+// text with each match replaced by what replace returns.
+function snaReplaceHiddenValues(text, replace) {
+    var parts = String(text === null || text === undefined ? '' : text).split(SNA_GUID_IN_TEXT);
+    for (var i = 0; i < parts.length; i += 2) {
+        if (!parts[i]) { continue; }
+        SNA_HIDDEN_VALUE_PATTERNS.forEach(function(pattern) {
+            parts[i] = parts[i].replace(pattern.re, function(match) {
+                if (pattern.isMatch && !pattern.isMatch(match)) { return match; }
+                return replace(match, pattern);
+            });
+        });
+    }
+    return parts.join('');
+}
+
+// Returns every match of SNA_HIDDEN_VALUE_PATTERNS in text, in lowercase.
+function snaFindHiddenValues(text) {
+    var found = [];
+    snaReplaceHiddenValues(text, function(match) { found.push(match.toLowerCase()); return ''; });
+    return found;
+}
+
+// Returns a person's or group's name, email, or sign-in name as markup that snaMaskHtml keeps visible, because
+// reviewing who has access needs them. The same value elsewhere, such as in a list's description, is still hidden.
+function snaPersonHtml(text) {
+    return '<span class="sna-person">' + snaEscapeHtml(text) + '</span>';
+}
+
+// Returns text with each value that looks like personal information replaced by "[<label> hidden]", such as
+// "[phone number hidden]", unless Show hidden values is on.
+function snaMaskText(value) {
+    var text = String(value === null || value === undefined ? '' : value);
+    if (_snaShowHiddenValues || !text) { return text; }
+    return snaReplaceHiddenValues(text, function(match, pattern) {
+        snaNoteHiddenValue(match);
+        return '[' + pattern.label + ' hidden]';
+    });
+}
+
+// Records a value that was just hidden. The first time a value is hidden, Show hidden values is updated after the
+// current drawing finishes, so the switch appears whenever anything is hidden, even text snaCountHiddenValues doesn't check.
+function snaNoteHiddenValue(match) {
+    var key = String(match).toLowerCase();
+    if (_snaHiddenSeen[key]) { return; }
+    _snaHiddenSeen[key] = true;
+    if (_snaHiddenSyncQueued) { return; }
+    _snaHiddenSyncQueued = true;
+    Promise.resolve().then(function() {
+        _snaHiddenSyncQueued = false;
+        snaSyncHiddenValuesSwitch();
+    });
+}
+
+// Hides values in markup that Sitenalyzer built, unless Show hidden values is on: in the text between tags and in the
+// attributes in SNA_HIDDEN_VALUE_ATTRIBUTES. Kept as they are: the text of a <textarea>, which is a description being
+// edited, of elements with the class list-id-text or sna-code, which show IDs and internal names, and of elements with
+// the class sna-person, which show people's and groups' names, emails, and sign-in names (see snaPersonHtml).
+// Values in the markup are already escaped; the hidden-value labels have no characters that need escaping.
+function snaMaskHtml(html) {
+    if (typeof html !== 'string') { return html; }
+    if (_snaShowHiddenValues || !html) { return html; }
+    var keepTag = '';
+    var keepDepth = 0;
+    return html.split(/(<[^>]*>)/).map(function(part) {
+        if (part.charAt(0) !== '<') { return keepDepth > 0 ? part : snaMaskText(part); }
+        var tag = /^<(\/?)([a-zA-Z][a-zA-Z0-9-]*)/.exec(part);
+        if (!tag) { return part; }
+        var name = tag[2].toLowerCase();
+        var isEnd = tag[1] === '/';
+        var isVoid = /\/>$/.test(part) || /^(?:br|img|input|hr|meta|link|col|source|wbr)$/.test(name);
+        if (keepDepth > 0) {
+            if (name === keepTag && !isVoid) { keepDepth += isEnd ? -1 : 1; }
+        } else if (!isEnd && !isVoid && (name === 'textarea' || /\sclass="[^"]*\b(?:list-id-text|sna-code|sna-person)\b[^"]*"/.test(part))) {
+            keepTag = name;
+            keepDepth = 1;
+        }
+        if (isEnd) { return part; }
+        return part.replace(SNA_HIDDEN_VALUE_ATTRIBUTES, function(all, start, value, end) { return start + snaMaskText(value) + end; });
+    }).join('');
+}
+
+// Returns how many different values in the report's free text look like personal information: names and
+// descriptions of the site, lists, libraries, columns, folders, pages, shared items, permission levels, and terms,
+// and column choices, default values, and formulas. Values hidden anywhere else while the report was drawn or saved
+// are counted too. People's and groups' own fields are never hidden, so they aren't checked.
+function snaCountHiddenValues(report) {
+    return Object.keys(snaHiddenValueSet(report)).length;
+}
+
+// Returns the values snaCountHiddenValues counts, as an object whose keys are the values in lowercase.
+function snaHiddenValueSet(report) {
+    if (!report) { return {}; }
+    var found = {};
+    function check(value) { snaFindHiddenValues(value).forEach(function(match) { found[match] = true; }); }
+    [report.site.title, report.site.description].forEach(check);
+    report.lists.forEach(function(list) {
+        [list.title, list.description].forEach(check);
+        list.columns.forEach(function(c) { [c.title, c.description, c.choices, c.defaultValue, c.formula].forEach(check); });
+        list.folders.forEach(function(f) { check(f.name); });
+    });
+    (report.pages.pages || []).forEach(function(page) { [page.name, page.fileName].forEach(check); });
+    (report.permissions.sharingLinks.links || []).forEach(function(l) { check(l.name); });
+    (report.permissions.roleDefinitions || []).forEach(function(d) { [d.Name, d.Description].forEach(check); });
+    (report.permissions.rows || []).forEach(function(row) { check(row.level); });
+    report.taxonomy.groups.forEach(function(group) {
+        [group.groupName, group.groupDescription].forEach(check);
+        (group.termSets || []).forEach(function(set) {
+            [set.setName, set.setDescription].forEach(check);
+            (set.terms || []).forEach(function(t) { [t.termName, t.termDescription].forEach(check); });
+        });
+    });
+    Object.keys(_snaHiddenSeen).forEach(function(key) { found[key] = true; });
+    return found;
+}
+
+// Returns the sentence about hidden values for the tooltip of Show hidden values, or for the print document when
+// forPrint is true, such as "Hid 3 values that look like personal information, such as phone numbers." Returns ''
+// when Sitenalyzer found none.
+function snaHiddenValuesText(report, forPrint) {
+    var count = snaCountHiddenValues(report);
+    if (count === 0) { return ''; }
+    var values = count === 1 ? '1 value that looks' : count + ' values that look';
+    if (forPrint) {
+        return _snaShowHiddenValues
+            ? 'This printout includes ' + values + ' like personal information.'
+            : 'Sitenalyzer hid ' + values + ' like personal information, such as phone numbers or email addresses.';
+    }
+    return _snaShowHiddenValues
+        ? 'Showing ' + values + ' like personal information. Turn this off before you share, print, or download.'
+        : 'Hid ' + values + ' like personal information, such as ' + (count === 1 ? 'a phone number.' : 'phone numbers.');
+}
+
+// Returns the sentence about hidden values for the About and Export_Info sheets of the workbooks.
+function snaWorkbookHiddenValuesText() {
+    return _snaShowHiddenValues
+        ? 'Included. Show hidden values was on, so values that look like personal information, such as phone numbers, are in this workbook.'
+        : 'Hidden. Values that look like personal information, such as phone numbers, show as [phone number hidden] and so on. Names, emails, and sign-in names of people and groups are not hidden.';
 }
 
 // Returns "1 list" or "3 lists", so messages built from counts read correctly.
@@ -794,6 +1017,123 @@ async function snaMapWithLimit(items, limit, worker) {
     return results;
 }
 
+// Returns byteCount random bytes from the browser's secure random number generator, as lowercase hex.
+function snaRandomHex(byteCount) {
+    var bytes = new Uint8Array(byteCount);
+    window.crypto.getRandomValues(bytes);
+    var hex = '';
+    for (var i = 0; i < bytes.length; i++) { hex += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16); }
+    return hex;
+}
+
+// Builds the body of a SharePoint $batch request that holds only GET requests, one part for each address,
+// in the multipart/mixed format SharePoint expects, with CRLF line endings.
+function snaBuildBatchBody(boundary, urls) {
+    var body = '';
+    urls.forEach(function(url) {
+        body += '--' + boundary + '\r\n' +
+            'Content-Type: application/http\r\n' +
+            'Content-Transfer-Encoding: binary\r\n\r\n' +
+            'GET ' + url + ' HTTP/1.1\r\n' +
+            'Accept: application/json;odata=nometadata\r\n\r\n';
+    });
+    return body + '--' + boundary + '--\r\n';
+}
+
+// Reads the answer to a $batch request. text is the answer's body and contentType its Content-Type header,
+// which names the boundary between parts; without one, the boundary is read from the first line of text.
+// Returns one { status, body, retryAfter } for each part, in the order the requests were sent. status is the part's
+// HTTP status, such as 200 or 404, or 0 when the part has none; body is the part's JSON, or null; and retryAfter is
+// the part's Retry-After header in seconds, or 0. Accepts CRLF and LF line endings.
+function snaParseBatchResponse(text, contentType) {
+    var source = String(text || '');
+    var headerMatch = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(String(contentType || ''));
+    var boundary = headerMatch ? (headerMatch[1] || headerMatch[2]) : '';
+    if (!boundary) {
+        var firstLine = /^\s*--(\S+)/.exec(source);
+        boundary = firstLine ? firstLine[1] : '';
+    }
+    if (!boundary) { return []; }
+
+    var results = [];
+    var parts = source.split('--' + boundary);
+    // parts[0] is any text before the first boundary; a part that starts with "--" follows the closing boundary.
+    for (var i = 1; i < parts.length; i++) {
+        var part = parts[i];
+        if (part.indexOf('--') === 0) { break; }
+        var statusMatch = /HTTP\/\d(?:\.\d)?\s+(\d{3})/.exec(part);
+        if (!statusMatch) { results.push({ status: 0, body: null }); continue; }
+        var afterStatus = part.substring(statusMatch.index);
+        var blankLine = /\r?\n\r?\n/.exec(afterStatus);
+        var bodyText = blankLine ? afterStatus.substring(blankLine.index + blankLine[0].length).trim() : '';
+        var retryAfter = /^retry-after:\s*(\d+)/im.exec(blankLine ? afterStatus.substring(0, blankLine.index) : afterStatus);
+        var body = null;
+        if (bodyText) {
+            try { body = JSON.parse(bodyText); } catch(e) { body = null; }
+        }
+        results.push({ status: parseInt(statusMatch[1], 10), body: body, retryAfter: retryAfter ? parseInt(retryAfter[1], 10) : 0 });
+    }
+    return results;
+}
+
+// Sends GET requests to the site in one $batch request and returns snaParseBatchResponse's result for them.
+// Every address must be on the site's own REST API, because SharePoint answers a batch only for one site.
+// A batch is a POST, so it needs a request digest, but it holds only reads and changes nothing on the site.
+// Throws when the batch itself fails or doesn't answer every request. Retries 429 responses like spFetch, both for the
+// whole batch and for single requests inside a batch that SharePoint answered with 200 OK.
+async function snaBatchGet(targetUrl, urls, throttleRetries) {
+    if (typeof throttleRetries === 'undefined') { throttleRetries = 5; }
+    var apiRoot = targetUrl + '/_api/';
+    urls.forEach(function(url) {
+        if (String(url).indexOf(apiRoot) !== 0 || /[\s]/.test(url)) {
+            throw new Error('Sitenalyzer sends only requests to this site\'s REST API in a batch.');
+        }
+    });
+    var boundary = 'batch_' + snaRandomHex(16);
+    var digest = await getRequestDigest(targetUrl);
+    var res = await fetch(targetUrl + '/_api/$batch', {
+        method: 'POST',
+        headers: {
+            'Accept': 'multipart/mixed',
+            'Content-Type': 'multipart/mixed; boundary=' + boundary,
+            'X-RequestDigest': digest
+        },
+        credentials: 'include',
+        body: snaBuildBatchBody(boundary, urls)
+    });
+
+    if (res.status === 429 && throttleRetries > 0) {
+        var retryAfterStr = res.headers.get('Retry-After');
+        var retryAfter = retryAfterStr ? parseInt(retryAfterStr, 10) : 10;
+        if (!(retryAfter >= 2)) { retryAfter = 2; }
+        await new Promise(function(r) { setTimeout(r, retryAfter * 1000); });
+        return snaBatchGet(targetUrl, urls, throttleRetries - 1);
+    }
+    if (!res.ok) { throw new Error('HTTP ' + res.status + ' — ' + targetUrl + '/_api/$batch'); }
+
+    var parts = snaParseBatchResponse(await res.text(), res.headers.get('Content-Type'));
+    if (parts.length !== urls.length) {
+        throw new Error('The $batch answer had ' + parts.length + ' parts for ' + urls.length + ' requests.');
+    }
+
+    // SharePoint can answer the batch with 200 OK and still throttle single requests inside it. Those are sent again,
+    // in a batch of their own, after the longest wait their parts ask for. If that batch fails, they stay throttled.
+    var throttled = [];
+    parts.forEach(function(part, index) { if (part.status === 429) { throttled.push(index); } });
+    if (throttled.length > 0 && throttleRetries > 0) {
+        var partWait = 0;
+        throttled.forEach(function(index) { partWait = Math.max(partWait, parts[index].retryAfter || 0); });
+        await new Promise(function(r) { setTimeout(r, Math.max(partWait || 10, 2) * 1000); });
+        try {
+            var retried = await snaBatchGet(targetUrl, throttled.map(function(index) { return urls[index]; }), throttleRetries - 1);
+            throttled.forEach(function(index, k) { parts[index] = retried[k]; });
+        } catch(e) {
+            console.warn('Sitenalyzer: a batch of throttled requests failed again, so they are left out.', e);
+        }
+    }
+    return parts;
+}
+
 // Returns the absolute URL of the current SharePoint site based on page context info or the URL path.
 function getBaseUrl() {
     if (window._spPageContextInfo && window._spPageContextInfo.webAbsoluteUrl) {
@@ -851,7 +1191,9 @@ function getOutputTypeName(outputType) {
 
 // ### Permissions ###
 
-// File IDs in sharing link group names must look like this before Sitenalyzer asks SharePoint about them.
+// The column types of managed metadata columns, which take their values from a term set.
+var SNA_TAXONOMY_FIELD_TYPES = ['TaxonomyFieldType', 'TaxonomyFieldTypeMulti'];
+// IDs from SharePoint, such as item IDs in sharing link group names, must look like this before Sitenalyzer uses them.
 var SNA_GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var SNA_PAGE_KEY_PATTERN = /^\d{1,10}(-\d{1,3})?$/;
 
@@ -888,7 +1230,7 @@ function renderPermissionsHtml(roleAssignments, caption) {
         var levels = (ra.RoleDefinitionBindings || []).map(function(binding) {
             return snaEscapeHtml(snaLevelText(binding.Name || '', snaIsLimitedAccessRole(binding)));
         }).join(', ');
-        html += '<tr><td>' + snaEscapeHtml(memberName) + '</td><td>' + SNA_PRINCIPAL_KIND_LABELS[snaPrincipalKind(member)] + '</td><td>' + levels + '</td></tr>';
+        html += '<tr><td>' + snaPersonHtml(memberName) + '</td><td>' + SNA_PRINCIPAL_KIND_LABELS[snaPrincipalKind(member)] + '</td><td>' + levels + '</td></tr>';
     });
     return html + '</tbody></table>';
 }
@@ -1002,7 +1344,7 @@ function renderPermissionsByPrincipal() {
     entries.forEach(function(p) {
         var isGuest = snaIsGuestLogin(p.loginName, p.title);
         html += '<div class="sna-principal-block">';
-        html += '<div class="sna-principal-name"><strong>' + snaEscapeHtml(p.title) + '</strong> ' +
+        html += '<div class="sna-principal-name"><strong>' + snaPersonHtml(p.title) + '</strong> ' +
             '<span class="app-tag">' + SNA_PRINCIPAL_KIND_LABELS[p.kind] + '</span>' +
             (isGuest ? ' <span class="app-tag sna-guest-tag">Guest</span>' : '') + '</div>';
 
@@ -1016,7 +1358,7 @@ function renderPermissionsByPrincipal() {
 
         if (p.lists.length > 0) {
             html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Lists and libraries with their own permissions for ' +
-                snaEscapeHtml(p.title) + '</caption><thead><tr><th scope="col">List or library with its own permissions</th>' +
+                snaPersonHtml(p.title) + '</caption><thead><tr><th scope="col">List or library with its own permissions</th>' +
                 '<th scope="col">Permission level</th></tr></thead><tbody>';
             p.lists.slice().sort(snaByTitle).forEach(function(l) {
                 var levelText = l.limited ? snaLevelText('Limited Access', true) : l.levels.join(', ');
@@ -1034,8 +1376,8 @@ function renderPermissionsByPrincipal() {
             } else if (p.members) {
                 html += '<details class="sna-members"><summary>Members (' + p.members.length + ')</summary><ul class="sna-members-list">';
                 p.members.slice().sort(snaByTitle).forEach(function(m) {
-                    html += '<li>' + snaEscapeHtml(m.title) +
-                        (m.email ? ' <span class="sna-muted">(' + snaEscapeHtml(m.email) + ')</span>' : '') +
+                    html += '<li>' + snaPersonHtml(m.title) +
+                        (m.email ? ' <span class="sna-muted">(' + snaPersonHtml(m.email) + ')</span>' : '') +
                         (m.isGuest ? ' <span class="app-tag sna-guest-tag">Guest</span>' : '') + '</li>';
                 });
                 html += '</ul></details>';
@@ -1128,7 +1470,7 @@ function snaRenderUserAccessTool() {
             '</div>' +
             '<div id="sna-user-access-hint" class="sna-muted">Such as user@med.umich.edu</div>' +
         '</div>' +
-        '<div id="sna-user-access-status" class="sna-access-status" role="status">' + (done ? snaEscapeHtml(done.status) : '') + '</div>' +
+        '<div id="sna-user-access-status" class="sna-access-status" role="status">' + (done ? snaPersonHtml(done.status) : '') + '</div>' +
         // done.html was built by snaCheckUserAccess with every SharePoint value escaped.
         '<div id="sna-user-access-results">' + (done ? done.html : '') + '</div>' +
     '</div>';
@@ -1165,7 +1507,8 @@ async function snaCheckUserAccess() {
         _snaUserCheckResult = { input: text, status: statusText, html: html };
         var liveStatus = document.getElementById('sna-user-access-status');
         var liveOut = document.getElementById('sna-user-access-results');
-        if (liveOut) { liveOut.innerHTML = html; }
+        if (liveOut) { liveOut.innerHTML = snaMaskHtml(html); }
+        // The status is fixed text with the checked person's name, which stays visible like other people's names.
         if (liveStatus) { liveStatus.textContent = statusText; }
     };
 
@@ -1208,7 +1551,7 @@ async function snaCheckUserAccess() {
         var noAccessCount = listRows.length - shownRows.length;
         var uncheckedCount = listRows.filter(function(r) { return r.level === null; }).length + (siteLevel === null ? 1 : 0);
 
-        var html = '<table class="sna-perm-list-table"><caption>Access for ' + snaEscapeHtml(person.title) + '</caption>' +
+        var html = '<table class="sna-perm-list-table"><caption>Access for ' + snaPersonHtml(person.title) + '</caption>' +
             '<thead><tr><th scope="col">Site, list, or library</th><th scope="col">What they can do</th></tr></thead><tbody>' +
             '<tr><td>Whole site</td><td>' + snaEscapeHtml(siteLevel || 'Could not check') + '</td></tr>';
         shownRows.forEach(function(r) {
@@ -1222,7 +1565,7 @@ async function snaCheckUserAccess() {
         }
         if (!person.found) {
             html += '<p class="sna-note">Sitenalyzer didn\'t find this email address among the site\'s users, so it checked the sign-in name ' +
-                snaEscapeHtml(person.login) + '. If the results say No access, check the spelling.</p>';
+                snaPersonHtml(person.login) + '. If the results say No access, check the spelling.</p>';
         }
         showResult('Finished checking access for ' + person.title + '.' + (uncheckedCount > 0
             ? ' Sitenalyzer could not check ' + snaCountText(uncheckedCount, 'place', 'places') + '. You need to be a site owner to check them.'
@@ -1267,7 +1610,7 @@ function snaComputeRiskFlags() {
             flags.push({ title: p.title, reason: reason, where: where.join('; ') });
         }
         (p.members || []).forEach(function(m) {
-            if (m.isGuest) { flags.push({ title: m.title, reason: 'Guest from outside your organization', where: 'member of ' + p.title }); }
+            if (m.isGuest) { flags.push({ title: m.title, reason: 'Guest from outside your organization', where: '', group: p.title }); }
         });
     });
     flags.sort(function(a, b) {
@@ -1327,8 +1670,9 @@ function snaRenderRiskFlags() {
     var html = '<div class="sna-risk-panel"><h4 class="sna-risk-title"><span aria-hidden="true">&#9888; </span>Review guest and organization-wide access</h4>' +
         '<ul class="sna-risk-list">';
     flags.forEach(function(f) {
-        html += '<li class="sna-risk-row"><strong>' + snaEscapeHtml(f.title) + '</strong>: <span class="sna-risk-reason">' +
-            snaEscapeHtml(f.reason) + '</span>' + (f.where ? ' (' + snaEscapeHtml(f.where) + ')' : '') + '</li>';
+        html += '<li class="sna-risk-row"><strong>' + snaPersonHtml(f.title) + '</strong>: <span class="sna-risk-reason">' +
+            snaEscapeHtml(f.reason) + '</span>' + (f.where ? ' (' + snaEscapeHtml(f.where) + ')' : '') +
+            (f.group ? ' (member of ' + snaPersonHtml(f.group) + ')' : '') + '</li>';
     });
     if (anyoneLinkCount > 0) {
         html += '<li class="sna-risk-row"><span class="sna-risk-reason">' +
@@ -1361,7 +1705,7 @@ function snaRenderSiteAdmins(admins) {
     if (admins.length === 0) { return '<p class="perm-row">Sitenalyzer found no site collection administrators.</p>'; }
     return '<p>These people have full control of every site in the site collection.</p><ul class="sna-plain-list">' +
         admins.slice().sort(snaByTitle).map(function(a) {
-            return '<li>' + snaEscapeHtml(a.Title || a.LoginName || '') + (a.Email ? ' <span class="sna-muted">(' + snaEscapeHtml(a.Email) + ')</span>' : '') + '</li>';
+            return '<li>' + snaPersonHtml(a.Title || a.LoginName || '') + (a.Email ? ' <span class="sna-muted">(' + snaPersonHtml(a.Email) + ')</span>' : '') + '</li>';
         }).join('') + '</ul>';
 }
 
@@ -1445,32 +1789,57 @@ async function snaFetchSharingLinks(targetUrl) {
         else if (/organization/i.test(linkType)) { kind = 'organization'; }
         else if (/flexible/i.test(linkType)) { kind = 'specific'; }
         var access = /edit/i.test(linkType) ? 'Can edit' : (/view/i.test(linkType) ? 'Can view' : '');
-        result.links.push({ fileId: parts[1], kind: kind, access: access, name: '', url: '' });
+        result.links.push({ itemId: parts[1], kind: kind, access: access, name: '', url: '', itemType: '' });
     });
 
-    // Only IDs shaped like a GUID are sent to SharePoint; anything else is shown without a file name.
-    var fileIds = [];
+    // Only IDs shaped like a GUID are sent to SharePoint; anything else is shown without a name.
+    var itemIds = [];
     result.links.forEach(function(l) {
-        var id = l.fileId.toLowerCase();
-        if (SNA_GUID_PATTERN.test(id) && fileIds.indexOf(id) === -1) { fileIds.push(id); }
+        var id = l.itemId.toLowerCase();
+        if (SNA_GUID_PATTERN.test(id) && itemIds.indexOf(id) === -1) { itemIds.push(id); }
     });
-    result.lookupsCapped = fileIds.length > SNA_SHARING_LINK_NAME_LOOKUPS;
+    result.lookupsCapped = itemIds.length > SNA_SHARING_LINK_NAME_LOOKUPS;
 
-    var files = {};
-    await snaMapWithLimit(fileIds.slice(0, SNA_SHARING_LINK_NAME_LOOKUPS), SNA_MAX_PARALLEL_REQUESTS, async function(fileId) {
-        try {
-            var file = await spFetch(targetUrl + "/_api/web/GetFileById('" + fileId + "')?$select=Name,ServerRelativeUrl");
-            if (file && file.Name) {
-                var fileUrl = snaOrigin(targetUrl) + encodeURI(file.ServerRelativeUrl || '');
-                files[fileId] = { name: file.Name, url: snaIsSameSiteUrl(fileUrl, targetUrl) ? fileUrl : '' };
-            }
-        } catch(e) { /* The link is shown without a file name. */ }
-    });
+    // A shared item can be a file, a folder, a list item, or a file deleted after it was shared. Files are looked up
+    // first; the IDs SharePoint doesn't find as files are looked up as folders. The rest are shown without a name.
+    var items = {};
+    var notFiles = await snaLookUpSharedItems(targetUrl, itemIds.slice(0, SNA_SHARING_LINK_NAME_LOOKUPS), 'GetFileById', 'file', items);
+    await snaLookUpSharedItems(targetUrl, notFiles, 'GetFolderById', 'folder', items);
     result.links.forEach(function(l) {
-        var file = files[l.fileId.toLowerCase()];
-        if (file) { l.name = file.name; l.url = file.url; }
+        var item = items[l.itemId.toLowerCase()];
+        if (item) { l.name = item.name; l.url = item.url; l.itemType = item.itemType; }
     });
     return result;
+}
+
+// Looks up the name and address of shared items with $batch requests to method, such as GetFileById, at most
+// SNA_SHARING_LINK_BATCH_SIZE in each. Adds each item found to found, keyed by its ID, as { name, url, itemType },
+// with url empty when the item isn't on this site. Returns the IDs SharePoint answered 404 Not Found for.
+// If a batch fails, the items not yet looked up are shown without a name.
+async function snaLookUpSharedItems(targetUrl, itemIds, method, itemType, found) {
+    var notFound = [];
+    for (var start = 0; start < itemIds.length; start += SNA_SHARING_LINK_BATCH_SIZE) {
+        var batchIds = itemIds.slice(start, start + SNA_SHARING_LINK_BATCH_SIZE);
+        var parts;
+        try {
+            parts = await snaBatchGet(targetUrl, batchIds.map(function(id) {
+                return targetUrl + '/_api/web/' + method + "('" + id + "')?$select=Name,ServerRelativeUrl";
+            }));
+        } catch(e) {
+            console.warn('Sitenalyzer: could not look up the names of some shared items, so they are shown without names.', e);
+            return notFound;
+        }
+        parts.forEach(function(part, index) {
+            var id = batchIds[index];
+            if (part.status === 200 && part.body && part.body.Name) {
+                var itemUrl = snaOrigin(targetUrl) + encodeURI(part.body.ServerRelativeUrl || '');
+                found[id] = { name: String(part.body.Name), url: snaIsSameSiteUrl(itemUrl, targetUrl) ? itemUrl : '', itemType: itemType };
+            } else if (part.status === 404) {
+                notFound.push(id);
+            }
+        });
+    }
+    return notFound;
 }
 
 // Returns the sentence that says some sharing links may be missing, or '' when every site group was read.
@@ -1506,21 +1875,21 @@ function snaRenderSharingLinks(result) {
         SNA_SHARING_LINK_LABELS.organization + ': ' + countKind('organization') + '. ' +
         SNA_SHARING_LINK_LABELS.specific + ': ' + countKind('specific') + '.</p>';
     html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Sharing links</caption>' +
-        '<thead><tr><th scope="col">File</th><th scope="col">Who can use the link</th><th scope="col">Access</th></tr></thead><tbody>';
+        '<thead><tr><th scope="col">Shared item</th><th scope="col">Who can use the link</th><th scope="col">Access</th></tr></thead><tbody>';
     links.slice().sort(function(a, b) {
         var order = kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind);
         return order !== 0 ? order : snaByTitle(a, b);
     }).forEach(function(l) {
-        var fileCell = l.name
-            ? snaLinkHtml(l.url, l.name)
-            : '<span class="sna-muted">File name not available (file ID ' + snaEscapeHtml(l.fileId) + ')</span>';
+        var itemCell = l.name
+            ? snaLinkHtml(l.url, l.name) + (l.itemType === 'folder' ? ' (folder)' : '')
+            : '<span class="sna-muted">No name found. It may be a list item or a deleted file. Item ID: ' + snaEscapeHtml(l.itemId) + '</span>';
         var kindText = SNA_SHARING_LINK_LABELS[l.kind];
         var kindCell = l.kind === 'anyone' ? '<span class="sna-risk-reason">' + kindText + '</span>' : kindText;
-        html += '<tr><td>' + fileCell + '</td><td>' + kindCell + '</td><td>' + snaEscapeHtml(l.access) + '</td></tr>';
+        html += '<tr><td>' + itemCell + '</td><td>' + kindCell + '</td><td>' + snaEscapeHtml(l.access) + '</td></tr>';
     });
     html += '</tbody></table>';
     if (result.lookupsCapped) {
-        html += '<p class="sna-note">Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.</p>';
+        html += '<p class="sna-note">Sitenalyzer looked up names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' shared items only.</p>';
     }
     if (groupsNote) { html += '<p class="sna-note">' + groupsNote + '</p>'; }
     return html;
@@ -1761,7 +2130,8 @@ function exportToXLSX() {
         ['tool_version',   '1.0'],
         ['format_version', '1.0'],
         ['scope_notes',    'SharePoint site: ' + siteUrl],
-        ['contact_email',  exporterEmail]
+        ['contact_email',  exporterEmail],
+        ['hidden_values',  snaWorkbookHiddenValuesText()]
     ];
     var wsExportInfo = XLSX.utils.aoa_to_sheet(exportInfoData);
     wsExportInfo['!cols'] = [{ wch: 20 }, { wch: 60 }];
@@ -1851,6 +2221,23 @@ function exportToXLSX() {
     var valueSetsRows     = [];
     var relationshipsRows = [];
 
+    // Each term set with terms is one value set. A managed metadata column names its term set's value set, so its ID
+    // is given out the first time either the column or the term set needs it. A term set with no terms has no
+    // Value_Sets rows, so a column that uses it has no value_set_id.
+    var termSetVsIds = {};
+    var reportTermSetIds = {};
+    (_snaTaxonomyData || []).forEach(function(g) {
+        (g.termSets || []).forEach(function(set) {
+            if ((set.terms || []).length > 0) { reportTermSetIds[String(set.setId).toLowerCase()] = true; }
+        });
+    });
+    function termSetVsId(setId) {
+        var key = String(setId || '').toLowerCase();
+        if (!reportTermSetIds[key]) { return ''; }
+        if (!termSetVsIds[key]) { termSetVsIds[key] = xlsxNid(ec, 'VS_', 'vs'); }
+        return termSetVsIds[key];
+    }
+
     var listGuidToIdFieldGuid = {};
     for (i = 0; i < globalExportedData.length; i++) {
         if (globalExportedData[i].InternalName === 'ID' && globalExportedData[i].FieldId) {
@@ -1870,9 +2257,9 @@ function exportToXLSX() {
             nativeType = 'Calculated (' + f.ReturnType + ')';
         }
 
-        vsId    = '';
+        vsId    = f.TermSetId ? termSetVsId(f.TermSetId) : '';
         choices = Array.isArray(f.Choices) ? f.Choices : [];
-        if (choices.length > 0) {
+        if (!vsId && choices.length > 0) {
             vsId = xlsxNid(ec, 'VS_', 'vs');
             for (ci = 0; ci < choices.length; ci++) {
                 choice = choices[ci];
@@ -1934,7 +2321,7 @@ function exportToXLSX() {
             termSets = group.termSets || [];
             for (j = 0; j < termSets.length; j++) {
                 termSet = termSets[j];
-                vsId    = xlsxNid(ec, 'VS_', 'vs');
+                vsId    = termSetVsId(termSet.setId) || xlsxNid(ec, 'VS_', 'vs');
                 terms   = termSet.terms || [];
                 for (ti = 0; ti < terms.length; ti++) {
                     term = terms[ti];
@@ -1992,17 +2379,31 @@ function exportToXLSX() {
     var H_STW = ['steward_id','name','type','role_default','unit','email','phone','backup_steward_id','notes'];
 
     var wb = XLSX.utils.book_new();
+    // Free-text columns, where values that look like personal information are hidden unless Show hidden values is on.
+    // IDs, addresses, and internal names are never hidden.
+    var HIDDEN_VALUE_COLUMNS = ['source_name', 'database_or_site', 'description', 'asset_display_name', 'display_name',
+        'calculation_formula', 'default_value', 'value_set_name', 'value_code', 'value_label', 'value_definition'];
+    function hideValues(headers, rows) {
+        var columns = [];
+        headers.forEach(function(header, index) { if (HIDDEN_VALUE_COLUMNS.indexOf(header) > -1) { columns.push(index); } });
+        return rows.map(function(row) {
+            var copy = row.slice();
+            columns.forEach(function(index) { if (copy[index]) { copy[index] = snaMaskText(copy[index]); } });
+            return copy;
+        });
+    }
+
     XLSX.utils.book_append_sheet(wb, wsExportInfo,                          'Export_Info');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_SRC, sourcesRows),        'Sources');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_AST, assetsRows),         'Assets');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_FLD, fieldsRows),         'Fields');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_VS,  valueSetsRows),      'Value_Sets');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_REL, relationshipsRows),  'Relationships');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_SRC, hideValues(H_SRC, sourcesRows)),       'Sources');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_AST, hideValues(H_AST, assetsRows)),        'Assets');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_FLD, hideValues(H_FLD, fieldsRows)),        'Fields');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_VS,  hideValues(H_VS, valueSetsRows)),      'Value_Sets');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H_REL, hideValues(H_REL, relationshipsRows)), 'Relationships');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_DSH, []),                 'Dashboards');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_VIZ, []),                 'Visualizations');
     XLSX.utils.book_append_sheet(wb, buildSheet(H_STW, stewardsRows),        'Stewards');
 
-    snaDownloadWorkbook(wb, snaFileSafeSiteName(siteTitle) + '_Data_Dictionary_' + dateStr + '.xlsx');
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(siteTitle)) + '_Data_Dictionary_' + dateStr + '.xlsx');
 }
 
 // Saves the permissions workbook: every permission on the site and its lists, with group members,
@@ -2032,8 +2433,8 @@ function exportPermissionsToXLSX() {
         var notes = [];
         if (p.isLimited) { notes.push(LIMITED_NOTE); }
         if (p.isSystemGroup) { notes.push('SharePoint creates this group by itself, such as for a sharing link.'); }
-        return [p.scope, p.listTitle, p.listId, p.listUrl, p.listType, p.memberName, p.memberId, p.loginName, p.email,
-            SNA_PRINCIPAL_KIND_LABELS[p.memberKind], p.level, p.levelId, p.isLimited ? YES : NO, notes.join(' ')];
+        return [p.scope, snaMaskText(p.listTitle), p.listId, p.listUrl, p.listType, p.memberName, p.memberId, p.loginName, p.email,
+            SNA_PRINCIPAL_KIND_LABELS[p.memberKind], snaMaskText(p.level), p.levelId, p.isLimited ? YES : NO, notes.join(' ')];
     });
 
     // Lists sheet. Grain: one row per list or library.
@@ -2043,7 +2444,7 @@ function exportPermissionsToXLSX() {
         .map(function(item) {
             var l = item.l;
             var readText = item.own ? (l.rolesRead ? YES : 'No. Sitenalyzer could not read them.') : 'Uses the site\'s permissions';
-            return [l.title, l.id, l.url, l.isLib ? 'Library' : 'List', item.own ? YES : NO, readText];
+            return [snaMaskText(l.title), l.id, l.url, l.isLib ? 'Library' : 'List', item.own ? YES : NO, readText];
         });
 
     // Group_Members sheet. Grain: one row per SharePoint group per member; groups with no rows get one note row.
@@ -2069,7 +2470,8 @@ function exportPermissionsToXLSX() {
     _snaPermissionRows.forEach(function(p) { usedLevelIds[String(p.levelId)] = true; });
     var levelRows = (_snaRoleDefinitions || []).slice().sort(function(a, b) { return (a.Order || 0) - (b.Order || 0); }).map(function(d) {
         var mask = d.BasePermissions || {};
-        return [d.Name, d.Id, d.Description, mask.High, mask.Low, snaPermissionNames(mask),
+        // Custom permission levels have names and descriptions that people write, so they can hold hidden values.
+        return [snaMaskText(d.Name), d.Id, snaMaskText(d.Description), mask.High, mask.Low, snaPermissionNames(mask),
             d.Hidden ? YES : NO, d.RoleTypeKind ? YES : NO, usedLevelIds[String(d.Id)] ? YES : NO];
     });
     if (_snaRoleDefinitions === null) {
@@ -2086,7 +2488,7 @@ function exportPermissionsToXLSX() {
 
     var exporter = _snaCurrentUser ? (_snaCurrentUser.name || _snaCurrentUser.email || '') : '';
     var aboutRows = [
-        ['Site name', siteTitle],
+        ['Site name', snaMaskText(siteTitle)],
         ['Site address', siteUrl],
         ['Site ID', _snaSiteInfo.Id || ''],
         ['Exported by', exporter],
@@ -2101,7 +2503,8 @@ function exportPermissionsToXLSX() {
         ['About Limited Access', LIMITED_NOTE],
         ['About site collection administrators', 'They have full control of the whole site collection, but they are not listed on the Permissions sheet.'],
         ['Not included', 'Permissions on single files, folders, and items; members of security and Microsoft 365 groups, which Microsoft Entra ID manages.'],
-        ['Personal data', 'This workbook lists names and email addresses, and list names may describe a study. Store and share it the way you would other personal data.']
+        ['Personal data', 'This workbook lists names and email addresses, and list names may describe a study. Store and share it the way you would other personal data.'],
+        ['Hidden values', snaWorkbookHiddenValuesText()]
     ];
 
     var wb = XLSX.utils.book_new();
@@ -2118,7 +2521,7 @@ function exportPermissionsToXLSX() {
         'Used on this site'], textRows(levelRows)), 'Permission_Levels');
     XLSX.utils.book_append_sheet(wb, buildSheet(['Name', 'ID', 'Sign-in name', 'Email', 'Notes'], textRows(adminRows)), 'Site_Admins');
 
-    snaDownloadWorkbook(wb, snaFileSafeSiteName(siteTitle) + '_Permissions_' + snaDateStamp(now) + '.xlsx');
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(siteTitle)) + '_Permissions_' + snaDateStamp(now) + '.xlsx');
 }
 
 // Copies text to clipboard and shows a brief toast notification; falls back to execCommand if needed.
@@ -2288,6 +2691,7 @@ function snaClearReport() {
     _snaUserCheckResult  = null;
     _snaDrafts           = {};
     _snaEditFocus        = {};
+    _snaHiddenSeen       = {};
 }
 
 // Clears the report and returns to the start screen. Change site keeps the last address in the Site URL box so it can be
@@ -2352,7 +2756,7 @@ function snaCancelledError() {
 //
 // Report shape: { collectedAt (ISO 8601, UTC), siteUrl, site { title, url, id, description, logoUrl }, currentUser, isAdmin,
 // listsRead, lists [snaCollectList entries], pages (snaFetchSitePages result), taxonomy { groups, read, termStoreId,
-// siteCollectionId }, permissions { siteRolesRead, siteRoleAssignments, appAssignments, index, rows, inheritedLists,
+// siteCollectionId, usage (snaBuildTermSetUsage result) }, permissions { siteRolesRead, siteRoleAssignments, appAssignments, index, rows, inheritedLists,
 // uniqueLists, roleDefinitions, siteAdmins, sharingLinks }, coverage [{ area, status: 'read'|'partial'|'failed', note }] }.
 async function collectReport(targetUrl, onProgress, token) {
     var progress = typeof onProgress === 'function' ? onProgress : function() {};
@@ -2393,6 +2797,7 @@ async function collectReport(targetUrl, onProgress, token) {
     });
     var roleDefinitionsPromise = snaFetchRoleDefinitions(targetUrl);
     var siteAdminsPromise = snaFetchSiteAdmins(targetUrl);
+    var siteTaxonomyColumnsPromise = snaFetchSiteTaxonomyColumns(targetUrl);
 
     var allLists = null;
     try {
@@ -2427,6 +2832,7 @@ async function collectReport(targetUrl, onProgress, token) {
     var sharingLinks = await sharingPromise;
     var roleDefinitions = await roleDefinitionsPromise;
     var siteAdmins = await siteAdminsPromise;
+    var siteTaxonomyColumns = await siteTaxonomyColumnsPromise;
     stillWanted();
     _snaSharingLinks    = sharingLinks;
     _snaRoleDefinitions = roleDefinitions;
@@ -2468,6 +2874,7 @@ async function collectReport(targetUrl, onProgress, token) {
         },
         coverage: []
     };
+    report.taxonomy.usage = snaBuildTermSetUsage(report, siteTaxonomyColumns);
     report.coverage = snaBuildCoverage(report);
     return report;
 }
@@ -2476,7 +2883,9 @@ async function collectReport(targetUrl, onProgress, token) {
 // top-level folders. Adds its columns to globalExportedData and its permissions to the access list.
 // Returns { id, routeId, title, internalName, description, itemCount, isLib, baseTemplate, url, lastModified,
 // versioning { enabled, minor, majorLimit }, raw, permissions { inherits, rolesRead, roleAssignments },
-// columns [], columnsStatus 'read'|'empty'|'failed', folders [], foldersStatus 'read'|'empty'|'failed'|'' (lists) }.
+// columns [], columnsStatus 'read'|'empty'|'failed', termSetsStatus 'read'|'failed'|'' (no managed metadata column),
+// folders [], foldersStatus 'read'|'empty'|'failed'|'' (lists) }. A managed metadata column also has termSetId and
+// anchorTermId, lowercase GUIDs or '', and allowsSeveral.
 async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
     var isDocLib = list.BaseTemplate === 101;
     var listTypeLabel = isDocLib ? "Document Library" : "List";
@@ -2497,6 +2906,7 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
         permissions:   { inherits: list.HasUniqueRoleAssignments === false, rolesRead: true, roleAssignments: [] },
         columns:       [],
         columnsStatus: '',
+        termSetsStatus: '',
         folders:       [],
         foldersStatus: ''
     };
@@ -2559,7 +2969,11 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 maxLength:    maxLength,
                 indexed:      f.Indexed ? true : false,
                 formula:      f.Formula ? String(f.Formula) : '',
-                lookupTarget: f.LookupList ? String(f.LookupList) : ''
+                lookupTarget: f.LookupList ? String(f.LookupList) : '',
+                isTaxonomy:   SNA_TAXONOMY_FIELD_TYPES.indexOf(f.TypeAsString) > -1,
+                allowsSeveral: f.TypeAsString === 'TaxonomyFieldTypeMulti',
+                termSetId:    '',
+                anchorTermId: ''
             });
             globalExportedData.push({
                 ListTitle:    list.Title,
@@ -2580,12 +2994,38 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 MaxLength:    maxLength,
                 Choices:      choices,
                 LookupField:  f.LookupField ? f.LookupField : '',
-                Indexed:      f.Indexed ? true : false
+                Indexed:      f.Indexed ? true : false,
+                TermSetId:    ''
             });
         });
     } catch(e) {
         if (e && e.snaCancelled) { throw e; }
         entry.columnsStatus = 'failed';
+    }
+
+    // 2b. The term set each managed metadata column uses. The columns request can't return it, so lists with such
+    // a column send one more request, for those columns' definitions.
+    var taxonomyColumns = entry.columns.filter(function(c) { return c.isTaxonomy; });
+    if (taxonomyColumns.length > 0) {
+        try {
+            var schemas = await snaFetchTaxonomyColumns(targetUrl + "/_api/web/lists(guid'" + list.Id + "')/fields");
+            stillWanted();
+            var byFieldId = {};
+            schemas.forEach(function(schema) { byFieldId[schema.fieldId] = schema; });
+            taxonomyColumns.forEach(function(c) {
+                var schema = byFieldId[String(c.fieldId).toLowerCase()];
+                if (!schema) { return; }
+                c.termSetId = schema.termSetId;
+                c.anchorTermId = schema.anchorTermId;
+                globalExportedData.forEach(function(row) {
+                    if (row.ListGuid === list.Id && row.FieldId === c.fieldId) { row.TermSetId = schema.termSetId; }
+                });
+            });
+            entry.termSetsStatus = 'read';
+        } catch(e) {
+            if (e && e.snaCancelled) { throw e; }
+            entry.termSetsStatus = 'failed';
+        }
     }
 
     // 3. Top-level folders of document libraries. The Forms folder holds SharePoint's own forms, so it is left out.
@@ -2690,7 +3130,7 @@ function snaBuildCoverage(report) {
     var sharingNotes = [];
     var sharingGroupsNote = snaSharingGroupsNote(sharing);
     if (sharingGroupsNote) { sharingNotes.push(sharingGroupsNote); }
-    if (sharing.lookupsCapped) { sharingNotes.push('Sitenalyzer looked up file names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' files only.'); }
+    if (sharing.lookupsCapped) { sharingNotes.push('Sitenalyzer looked up names for the first ' + SNA_SHARING_LINK_NAME_LOOKUPS + ' shared items only.'); }
     add('Sharing links', sharing.failed ? 'failed' : (sharingNotes.length ? 'partial' : 'read'),
         sharing.failed ? 'Sitenalyzer could not read the sharing links. You need to be a site owner to see them.' : sharingNotes.join(' '));
 
@@ -2708,12 +3148,40 @@ function snaBuildCoverage(report) {
 
     // The term store can stop answering partway, after some term groups were read; Taxonomy shows those groups.
     var taxonomy = report.taxonomy;
+    var termSets = [];
+    taxonomy.groups.forEach(function(group) { termSets = termSets.concat(group.termSets || []); });
+    var shortSets = termSets.filter(function(set) { return set.termsTruncated || set.termsStoppedAtOtherSite; }).length;
     if (taxonomy.read) {
-        add('Term store', 'read');
+        add('Term store', shortSets === 0 ? 'read' : 'partial', shortSets === 0 ? '' :
+            'Sitenalyzer read only some of the terms of ' + snaCountText(shortSets, 'term set', 'term sets') + ', because it reached ' +
+            SNA_TERMS_PER_SET_MAX.toLocaleString('en-US') + ' terms or SharePoint sent a link to a different site.');
     } else if (taxonomy.groups.length > 0) {
         add('Term store', 'partial', 'Sitenalyzer could not read all of the term store, so some term groups or terms may be missing from Taxonomy. Refresh the report to try again.');
     } else {
         add('Term store', 'failed', 'Sitenalyzer could not read the term store, so Taxonomy is empty. Refresh the report to try again.');
+    }
+
+    // Parent terms and term set use matter only when there is a term set to show them for.
+    if (termSets.length > 0) {
+        var parentsFailed = termSets.filter(function(set) { return set.parentsStatus === 'failed'; }).length;
+        var parentsUnread = termSets.filter(function(set) { return set.parentsStatus !== 'read'; }).length;
+        add('Parent terms', parentsUnread === 0 ? 'read' : (parentsFailed === termSets.length ? 'failed' : 'partial'), parentsUnread === 0 ? '' :
+            'Sitenalyzer could not read which term each term sits under in ' + snaCountText(parentsUnread, 'term set', 'term sets') +
+            ', so a term shown as Top level may sit under another term. Refresh the report to try again.');
+
+        var usage = taxonomy.usage || { status: 'failed', unreadLists: 0, siteColumnsFailed: true };
+        var usageNotes = [];
+        if (usage.status === 'failed') {
+            usageNotes.push('Sitenalyzer could not read which columns use each term set, so Taxonomy doesn\'t show where term sets are used. Refresh the report to try again.');
+        } else if (usage.status === 'partial') {
+            if (!report.listsRead) { usageNotes.push('Sitenalyzer could not read the lists and libraries.'); }
+            if (usage.unreadLists > 0) {
+                usageNotes.push('Sitenalyzer could not read the managed metadata columns of ' + snaCountText(usage.unreadLists, 'list or library', 'lists and libraries') + '.');
+            }
+            if (usage.siteColumnsFailed) { usageNotes.push('Sitenalyzer could not read the site\'s own managed metadata columns.'); }
+            usageNotes.push('Taxonomy may not show every column that uses a term set. Refresh the report to try again.');
+        }
+        add('Lists and libraries using term sets', usage.status, usageNotes.join(' '));
     }
     return rows;
 }
@@ -2863,6 +3331,7 @@ function buildSearchIndex() {
             type:          'Page',
             label:         page.name,
             sublabel:      page.fileName,
+            sublabelIsName: true,
             breadcrumb:    'Site pages',
             route:         snaRouteHash({ section: 'contents', id: 'pages', page: page.key }),
             listTitle:     '',
@@ -2944,9 +3413,11 @@ function snaSearchQuery(query) {
         var dedupeKey = item.type + '|' + item.label + '|' + item.route + '|' + item.breadcrumb;
         if (seen[dedupeKey]) { return; }
 
-        var labelMatch      = fieldMatches(item.label);
-        var sublabelMatch   = fieldMatches(item.sublabel);
-        var breadcrumbMatch = fieldMatches(item.breadcrumb);
+        // Names are compared as they are shown, so a hidden value can't be found by searching for it.
+        // The sublabel holds internal names and IDs, which are never hidden, except a site page's file name.
+        var labelMatch      = fieldMatches(snaMaskText(item.label));
+        var sublabelMatch   = fieldMatches(item.sublabelIsName ? snaMaskText(item.sublabel) : item.sublabel);
+        var breadcrumbMatch = fieldMatches(snaMaskText(item.breadcrumb));
 
         if (!labelMatch && !sublabelMatch && !breadcrumbMatch) { return; }
 
@@ -3009,15 +3480,157 @@ async function getRequestDigest(targetUrl) {
         headers: { 'Accept': 'application/json;odata=nometadata', 'Content-Length': '0' },
         credentials: 'include'
     });
+    if (!res.ok) { throw new Error('HTTP ' + res.status + ' — ' + targetUrl + '/_api/contextinfo'); }
     var data = await res.json();
     _snaRequestDigest      = data.FormDigestValue;
     _snaRequestDigestExpiry = now + 25 * 60 * 1000;
     return _snaRequestDigest;
 }
 
+// Returns a term from the term store API as { termName, termId, termDescription }, named by its default label.
+function snaTermFromGraph(t) {
+    var defaultLabel = '';
+    if (t.labels && t.labels.length > 0) {
+        var found = null;
+        t.labels.forEach(function(l) { if (l.isDefault) { found = l; } });
+        defaultLabel = found ? found.name : t.labels[0].name;
+    }
+    return {
+        termName:        defaultLabel || '',
+        termId:          t.id || '',
+        termDescription: (t.descriptions && t.descriptions[0]) ? t.descriptions[0].description : ''
+    };
+}
+
+// Reads a term store list, such as the terms of a term set, following SharePoint's next-batch link (@odata.nextLink)
+// only while it points to this site's REST API, up to max items. Throws when a request fails.
+// Returns { items, truncated, stoppedAtOtherSite }: truncated means max was reached before the end of the list.
+async function snaFetchAllPages(firstUrl, targetUrl, max) {
+    var result = { items: [], truncated: false, stoppedAtOtherSite: false };
+    var nextUrl = firstUrl;
+    while (nextUrl) {
+        var json = await spFetch(nextUrl);
+        result.items = result.items.concat((json && json.value) ? json.value : []);
+        var nextLink = json ? (json['@odata.nextLink'] || json['odata.nextLink'] || '') : '';
+        nextUrl = '';
+        if (!nextLink) { break; }
+        if (result.items.length >= max) { result.truncated = true; break; }
+        if (!snaIsSameSiteApiUrl(nextLink, targetUrl)) {
+            console.warn('Sitenalyzer: stopped reading a term store list because the next-batch link points to another site.');
+            result.stoppedAtOtherSite = true;
+            break;
+        }
+        nextUrl = new URL(nextLink, xlsxStripSlash(targetUrl) + '/').href;
+    }
+    if (result.items.length > max) { result.items = result.items.slice(0, max); result.truncated = true; }
+    return result;
+}
+
+// Works out which term each term of setObj sits under, and gives each term parentIds: the IDs of the terms it sits
+// under, as a list because a reused or pinned term can sit under more than one, or an empty list for a top-level term.
+// It first asks for every term with its children ($expand=children). When SharePoint doesn't answer that way, it asks
+// for the children of each term instead, at most SNA_MAX_PARALLEL_REQUESTS at a time, while budget.remaining lasts.
+// Terms found only as children are added to the set, so a set whose terms request lists only top-level terms is complete.
+// Returns 'read', 'partial' (some children could not be read), or 'failed' (none could).
+async function snaReadTermParents(termBase, setObj, targetUrl, budget) {
+    var setUrl = termBase + '/sets/' + setObj.setId;
+    var byId = {};
+    setObj.terms.forEach(function(t) { t.parentIds = []; byId[String(t.termId).toLowerCase()] = t; });
+    if (setObj.terms.length === 0) { return 'read'; }
+
+    // Terms whose own children are not known yet.
+    var pending = [];
+    function addChild(parentTerm, child) {
+        var id = String((child && child.id) || '').toLowerCase();
+        if (!SNA_GUID_PATTERN.test(id)) { return; }
+        var term = byId[id];
+        if (!term) {
+            if (setObj.terms.length >= SNA_TERMS_PER_SET_MAX) { setObj.termsTruncated = true; return; }
+            term = snaTermFromGraph(child);
+            term.parentIds = [];
+            byId[id] = term;
+            setObj.terms.push(term);
+            pending.push(term);
+        }
+        if (term !== parentTerm && term.parentIds.indexOf(parentTerm.termId) === -1) { term.parentIds.push(parentTerm.termId); }
+    }
+
+    var expanded = null;
+    try {
+        expanded = await snaFetchAllPages(setUrl + '/terms?$expand=children', targetUrl, SNA_TERMS_PER_SET_MAX);
+        if (!expanded.items.every(function(t) { return Array.isArray(t.children); })) { expanded = null; }
+    } catch(e) {
+        expanded = null;
+    }
+    if (expanded) {
+        expanded.items.forEach(function(item) {
+            var parent = byId[String(item.id || '').toLowerCase()];
+            if (parent) { item.children.forEach(function(child) { addChild(parent, child); }); }
+        });
+    } else {
+        pending = setObj.terms.slice();
+    }
+
+    var asked = 0;
+    var failed = 0;
+    while (pending.length > 0 && budget.remaining > 0) {
+        var round = pending.splice(0, budget.remaining);
+        budget.remaining -= round.length;
+        var answers = await snaMapWithLimit(round, SNA_MAX_PARALLEL_REQUESTS, async function(term) {
+            try {
+                return (await snaFetchAllPages(setUrl + '/terms/' + term.termId + '/children', targetUrl, SNA_TERMS_PER_SET_MAX)).items;
+            } catch(e) {
+                return null;
+            }
+        });
+        // Children are added in the order the terms were asked for, not the order the answers came back in.
+        round.forEach(function(term, index) {
+            asked++;
+            if (answers[index] === null) { failed++; return; }
+            answers[index].forEach(function(child) { addChild(term, child); });
+        });
+    }
+    // Without children from $expand, a set whose terms were never asked about, because earlier sets used up the
+    // budget, has no parent information at all, the same as a set whose every request failed.
+    if (!expanded && failed === asked) { return 'failed'; }
+    return (failed > 0 || pending.length > 0 || (expanded && expanded.truncated)) ? 'partial' : 'read';
+}
+
+// Puts the terms of setObj in the order of the term tree: each term right after the term it sits under, and terms
+// that sit under the same term in the order SharePoint gave them. A term that sits under two terms comes after the
+// first one found. Adds parentNames to each term, such as 'Treatment', or 'Arm A; Arm B' in alphabetical order for
+// a term that sits under two terms, or '' for a top-level term.
+function snaOrderTermsAsTree(setObj) {
+    var byId = {};
+    var childrenOf = {};
+    setObj.terms.forEach(function(t) { byId[String(t.termId).toLowerCase()] = t; });
+    setObj.terms.forEach(function(t) {
+        var parents = (t.parentIds || []).filter(function(id) { return byId[String(id).toLowerCase()]; });
+        t.parentNames = parents.map(function(id) { return byId[String(id).toLowerCase()].termName; })
+            .sort(function(a, b) { return String(a).toLowerCase().localeCompare(String(b).toLowerCase()); }).join('; ');
+        var key = parents.length > 0 ? String(parents[0]).toLowerCase() : '';
+        (childrenOf[key] = childrenOf[key] || []).push(t);
+    });
+    var ordered = [];
+    var placed = {};
+    function place(term) {
+        var id = String(term.termId).toLowerCase();
+        if (placed[id]) { return; }
+        placed[id] = true;
+        ordered.push(term);
+        (childrenOf[id] || []).forEach(place);
+    }
+    (childrenOf[''] || []).forEach(place);
+    // Terms in a loop of parents, which SharePoint shouldn't allow, are kept at the end.
+    setObj.terms.forEach(place);
+    setObj.terms = ordered;
+}
+
 // Fetches site-collection-scoped taxonomy groups, term sets, and terms from the v2.1 term store API.
 // Returns { groups, read, siteCollectionId, termStoreId }. read is false when any request failed; groups then holds
 // what was read before the failure. Nothing is written to the report until the caller has the whole result.
+// Each term set also gets parentsStatus ('read', 'partial', or 'failed', from snaReadTermParents), and termsTruncated
+// and termsStoppedAtOtherSite when not all of its terms were read.
 async function fetchTaxonomy(targetUrl) {
     var result = { groups: [], read: false, siteCollectionId: '', termStoreId: '' };
     try {
@@ -3052,24 +3665,16 @@ async function fetchTaxonomy(targetUrl) {
                     setName:        setName,
                     setId:          set.id || '',
                     setDescription: set.description || '',
-                    terms:          []
+                    terms:          [],
+                    parentsStatus:  'failed',
+                    termsTruncated: false,
+                    termsStoppedAtOtherSite: false
                 };
 
-                var termsData = await spFetch(termBase + '/sets/' + set.id + '/terms');
-                var terms     = termsData.value || [];
-                setObj.terms  = terms.map(function(t) {
-                    var defaultLabel = '';
-                    if (t.labels && t.labels.length > 0) {
-                        var found = null;
-                        t.labels.forEach(function(l) { if (l.isDefault) { found = l; } });
-                        defaultLabel = found ? found.name : t.labels[0].name;
-                    }
-                    return {
-                        termName:        defaultLabel,
-                        termId:          t.id || '',
-                        termDescription: (t.descriptions && t.descriptions[0]) ? t.descriptions[0].description : ''
-                    };
-                });
+                var termsData = await snaFetchAllPages(termBase + '/sets/' + set.id + '/terms', targetUrl, SNA_TERMS_PER_SET_MAX);
+                setObj.terms  = termsData.items.map(snaTermFromGraph);
+                setObj.termsTruncated = termsData.truncated;
+                setObj.termsStoppedAtOtherSite = termsData.stoppedAtOtherSite;
 
                 groupObj.termSets.push(setObj);
             }
@@ -3079,7 +3684,125 @@ async function fetchTaxonomy(targetUrl) {
     } catch(e) {
         console.warn('Sitenalyzer: taxonomy fetch failed:', e);
     }
+
+    // Parents are read after every term set, so a failure here never hides the terms already read.
+    if (result.siteCollectionId) {
+        var parentsBase = targetUrl + '/_api/v2.1/sites/' + result.siteCollectionId + '/termStore';
+        var budget = { remaining: SNA_TERM_CHILD_LOOKUPS };
+        for (var pg = 0; pg < result.groups.length; pg++) {
+            for (var ps = 0; ps < result.groups[pg].termSets.length; ps++) {
+                var termSet = result.groups[pg].termSets[ps];
+                termSet.parentsStatus = await snaReadTermParents(parentsBase, termSet, targetUrl, budget);
+                snaOrderTermsAsTree(termSet);
+            }
+        }
+    }
     return result;
+}
+
+// Reads the term set of each managed metadata column from its SchemaXml, the column's definition in XML.
+// Returns { termSetId, anchorTermId, termStoreId }, each a lowercase GUID or ''. anchorTermId is the term the
+// column starts at, when the column offers only the terms under one term of the set.
+function snaReadTaxonomySchema(schemaXml) {
+    var result = { termSetId: '', anchorTermId: '', termStoreId: '' };
+    var text = String(schemaXml || '');
+    if (!text) { return result; }
+    var doc;
+    try { doc = new DOMParser().parseFromString(text, 'application/xml'); } catch(e) { return result; }
+    if (!doc || doc.getElementsByTagName('parsererror').length > 0) { return result; }
+    var names = { TermSetId: 'termSetId', AnchorId: 'anchorTermId', SspId: 'termStoreId' };
+    var elements = doc.getElementsByTagName('*');
+    for (var i = 0; i < elements.length; i++) {
+        if (elements[i].localName !== 'Property') { continue; }
+        var name = '';
+        var value = '';
+        for (var c = 0; c < elements[i].children.length; c++) {
+            var child = elements[i].children[c];
+            if (child.localName === 'Name') { name = child.textContent.trim(); }
+            if (child.localName === 'Value') { value = child.textContent.trim().toLowerCase(); }
+        }
+        // An all-zero ID means no value, such as a column with no anchor term.
+        if (names[name] && SNA_GUID_PATTERN.test(value) && !/^[0-]+$/.test(value)) { result[names[name]] = value; }
+    }
+    return result;
+}
+
+// Reads the managed metadata columns at fieldsUrl, such as a list's /fields or the site's /_api/web/fields, with the
+// term set each one uses. Throws when the request fails. Returns [{ fieldId, title, internalName, allowsSeveral,
+// termSetId, anchorTermId, termStoreId }], with IDs in lowercase.
+async function snaFetchTaxonomyColumns(fieldsUrl) {
+    var url = fieldsUrl + '?$select=Id,InternalName,Title,TypeAsString,SchemaXml' +
+        "&$filter=(TypeAsString eq 'TaxonomyFieldType' or TypeAsString eq 'TaxonomyFieldTypeMulti') and Hidden eq false";
+    var resp = await spFetch(url);
+    return ((resp && resp.value) ? resp.value : []).map(function(f) {
+        var schema = snaReadTaxonomySchema(f.SchemaXml);
+        return {
+            fieldId:       String(f.Id || '').toLowerCase(),
+            title:         f.Title || '',
+            internalName:  f.InternalName || '',
+            allowsSeveral: f.TypeAsString === 'TaxonomyFieldTypeMulti',
+            termSetId:     schema.termSetId,
+            anchorTermId:  schema.anchorTermId,
+            termStoreId:   schema.termStoreId
+        };
+    });
+}
+
+// Reads the site's own managed metadata columns, including those not added to any list or library.
+// Returns { columns, failed }.
+async function snaFetchSiteTaxonomyColumns(targetUrl) {
+    try {
+        return { columns: await snaFetchTaxonomyColumns(targetUrl + '/_api/web/fields'), failed: false };
+    } catch(e) {
+        console.warn('Sitenalyzer: could not read the site columns that use term sets:', e);
+        return { columns: [], failed: true };
+    }
+}
+
+// Lists, for each term set, the columns that use it. Grain: one row per list or library column that uses the set,
+// plus one row per site column that uses it and isn't in any list or library. A site column added to a list has the
+// same column ID there, so the list's row stands for it. Returns { bySet, status, unreadLists, siteColumnsFailed }:
+// bySet maps a lowercase term set ID to its rows, and status is 'read', 'partial', or 'failed' for Report coverage.
+function snaBuildTermSetUsage(report, siteColumns) {
+    var usage = { bySet: {}, status: 'read', unreadLists: 0, siteColumnsFailed: !!siteColumns.failed };
+    function add(setId, row) { (usage.bySet[setId] = usage.bySet[setId] || []).push(row); }
+    var listFieldIds = {};
+    report.lists.forEach(function(list) {
+        if (list.columnsStatus === 'failed' || list.termSetsStatus === 'failed') { usage.unreadLists++; }
+        list.columns.forEach(function(c) {
+            listFieldIds[String(c.fieldId).toLowerCase()] = true;
+            if (!c.termSetId) { return; }
+            add(c.termSetId, {
+                listTitle:     list.title,
+                listRouteId:   list.routeId,
+                // Matches the Columns tab's table, which has a filter box only when it has more than SNA_TABLE_FILTER_MIN_ROWS rows.
+                filterTable:   list.columns.length > SNA_TABLE_FILTER_MIN_ROWS ? 'sna-tbl-f-' + list.routeId : '',
+                columnTitle:   c.title,
+                internalName:  c.internalName,
+                anchorTermId:  c.anchorTermId,
+                allowsSeveral: c.allowsSeveral,
+                isSiteColumn:  false
+            });
+        });
+    });
+    (siteColumns.columns || []).forEach(function(c) {
+        if (!c.termSetId || listFieldIds[c.fieldId]) { return; }
+        add(c.termSetId, {
+            listTitle: '', listRouteId: '', filterTable: '', columnTitle: c.title, internalName: c.internalName,
+            anchorTermId: c.anchorTermId, allowsSeveral: c.allowsSeveral, isSiteColumn: true
+        });
+    });
+    Object.keys(usage.bySet).forEach(function(setId) {
+        usage.bySet[setId].sort(function(a, b) {
+            if (a.isSiteColumn !== b.isSiteColumn) { return a.isSiteColumn ? 1 : -1; }
+            var byList = String(a.listTitle).toLowerCase().localeCompare(String(b.listTitle).toLowerCase());
+            return byList !== 0 ? byList : String(a.columnTitle).toLowerCase().localeCompare(String(b.columnTitle).toLowerCase());
+        });
+    });
+    var listsUnknown = !report.listsRead || (report.lists.length > 0 && usage.unreadLists === report.lists.length);
+    if (listsUnknown && usage.siteColumnsFailed) { usage.status = 'failed'; }
+    else if (!report.listsRead || usage.unreadLists > 0 || usage.siteColumnsFailed) { usage.status = 'partial'; }
+    return usage;
 }
 
 // Reads the pages in the site's Site Pages library (template 119), whatever the library is called.
@@ -3441,8 +4164,8 @@ function snaRedrawDescription(editKey, text, focus, force) {
             });
         }
         var holder = document.createElement('span');
-        holder.innerHTML = renderAdminDescWrap(typeof text === 'string' ? text : (wrap.getAttribute('data-sna-orig') || ''),
-            editKey, wrap.getAttribute('data-edit-name') || '');
+        holder.innerHTML = snaMaskHtml(renderAdminDescWrap(typeof text === 'string' ? text : (wrap.getAttribute('data-sna-orig') || ''),
+            editKey, wrap.getAttribute('data-edit-name') || ''));
         if (wrap.parentNode) { wrap.parentNode.replaceChild(holder.firstChild, wrap); }
         return null;
     });
@@ -3649,6 +4372,61 @@ function snaSetTechnicalDetails(isOn) {
     }
 }
 
+// Shows the switch setting on Show hidden values, and puts how many values are hidden or shown in its tooltip.
+// The switch appears only when the report has values to hide, or something was hidden while it was drawn.
+function snaSyncHiddenValuesSwitch() {
+    var hiddenSwitch = document.getElementById('sna-hidden-values-switch');
+    if (hiddenSwitch) { hiddenSwitch.checked = _snaShowHiddenValues; }
+    var text = _snaReport ? snaHiddenValuesText(_snaReport, false) : '';
+    var control = document.getElementById('sna-hidden-values-control');
+    if (control) { control.hidden = !text; }
+    var tip = document.getElementById('sna-hidden-values-tip');
+    if (tip) { tip.textContent = text; }
+}
+
+// Shows or hides the values that look like personal information, and redraws the site header and the view with
+// focus on the switch. The choice is never saved, so every visit starts with the values hidden. Descriptions being
+// edited are kept, because they are drawn from _snaDrafts.
+function snaSetShowHiddenValues(isOn) {
+    _snaShowHiddenValues = !!isOn;
+    if (!_snaShowHiddenValues) { snaClearTypedHiddenValues(); }
+    snaSyncHiddenValuesSwitch();
+    if (!_snaReport) { return; }
+    renderFrame(_snaReport);
+    if (!_snaRoute) { return; }
+    var opts = { focus: 'hidden-values-switch', full: true };
+    // A search for a hidden value is replaced, so the search box and the page address no longer hold the value.
+    if (!_snaShowHiddenValues && _snaRoute.section === 'search' && snaTypedTextShowsHiddenValue(_snaRoute.q, snaHiddenValueSet(_snaReport))) {
+        snaNavigate(Object.assign({}, _snaRoute, { q: '' }), Object.assign({ replace: true }, opts));
+        return;
+    }
+    renderApp(_snaRoute, opts);
+}
+
+// True when text a person typed shows a hidden value or part of one, such as "555-0100" from "(734) 555-0100".
+// Text shorter than 3 characters, such as "a", is too short to show part of a value.
+function snaTypedTextShowsHiddenValue(text, hiddenValues) {
+    var typed = String(text || '').trim().toLowerCase();
+    if (!typed) { return false; }
+    if (snaFindHiddenValues(typed).length > 0) { return true; }
+    if (typed.length < 3) { return false; }
+    return Object.keys(hiddenValues).some(function(value) { return value.indexOf(typed) > -1; });
+}
+
+// Clears the text a person typed into the table filter boxes, the Contents name filter, and Search this report when
+// it shows a hidden value, so that turning Show hidden values off doesn't leave the value on screen. These boxes show
+// the text as typed, not hidden. The boxes on screen are cleared too, because redrawing a view saves their text again.
+function snaClearTypedHiddenValues() {
+    var hiddenValues = snaHiddenValueSet(_snaReport);
+    Object.keys(_snaTableFilters).forEach(function(id) {
+        if (snaTypedTextShowsHiddenValue(_snaTableFilters[id], hiddenValues)) { _snaTableFilters[id] = ''; }
+    });
+    if (snaTypedTextShowsHiddenValue(_snaContentsFilter, hiddenValues)) { _snaContentsFilter = ''; }
+    document.querySelectorAll('#sp-info-app .sna-table-search, #sna-report-search').forEach(function(input) {
+        if (snaTypedTextShowsHiddenValue(input.value, hiddenValues)) { input.value = ''; }
+    });
+}
+
 // ### Report Addresses ###
 
 // Tabs in a list or library's details, and the parts of Permissions, in the order of the Permissions navigation.
@@ -3830,11 +4608,11 @@ function renderApp(route, options) {
 
     if (!opts.full && previous && previous.section === 'contents' && route.section === 'contents' && detail) {
         snaDisposeViewTables(detail);
-        detail.innerHTML = snaRenderContentsDetail(route, _snaReport);
+        detail.innerHTML = snaMaskHtml(snaRenderContentsDetail(route, _snaReport));
         snaUpdateInventorySelection(route);
     } else {
         snaDisposeViewTables(main);
-        main.innerHTML = SNA_SECTIONS[route.section].render(route, _snaReport);
+        main.innerHTML = snaMaskHtml(SNA_SECTIONS[route.section].render(route, _snaReport));
     }
     initSnaTabulators();
     if (route.section === 'contents') { snaApplyInventoryFilter(); }
@@ -3865,6 +4643,7 @@ function snaFocusAfterRender(route, previous, opts) {
     var target = null;
     var isAnchor = false;
     if (focus === 'switch') { target = document.getElementById('sna-technical-switch'); }
+    else if (focus === 'hidden-values-switch') { target = document.getElementById('sna-hidden-values-switch'); }
     else if (focus === 'tab') { target = document.querySelector('#sna-contents-detail .sna-detail-tabs a[aria-current="page"]'); }
     else if (focus === 'detail') { target = document.getElementById('sna-detail-title'); }
     else if (focus === 'inventory') { target = document.getElementById('sna-inv-' + _snaLastInventoryId); }
@@ -4013,7 +4792,7 @@ function renderFrame(report) {
     var logoHtml = site.logoUrl
         ? '<img class="sna-site-logo" src="' + snaEscapeHtml(site.logoUrl) + '" alt="Site logo">'
         : '<span class="sna-site-logo sna-site-logo-placeholder" aria-hidden="true">' + snaEscapeHtml(snaInitials(site.title)) + '</span>';
-    header.innerHTML = logoHtml +
+    header.innerHTML = snaMaskHtml(logoHtml +
         '<div class="sna-site-text">' +
             '<h1 class="sna-site-title">' + snaEscapeHtml(site.title || 'Untitled site') + '</h1>' +
             '<p class="sna-site-desc">' + renderAdminDescWrap(site.description, 'site', site.title || 'this site') + '</p>' +
@@ -4023,7 +4802,7 @@ function renderFrame(report) {
         '<div class="sna-site-meta">' +
             '<span class="sna-tag">' + (report.isAdmin ? 'You can manage this site' : 'You can view this site') + '</span>' +
             '<span>Collected <time datetime="' + snaEscapeHtml(report.collectedAt) + '">' + snaEscapeHtml(snaFormatDateTime(report.collectedAt)) + '</time></span>' +
-        '</div>';
+        '</div>');
 
     var settingsLink = document.getElementById('sna-site-settings-link');
     if (settingsLink) {
@@ -4033,6 +4812,7 @@ function renderFrame(report) {
     }
     snaRenderSiteTech();
     snaSyncTechnicalSwitch();
+    snaSyncHiddenValuesSwitch();
 }
 
 // Shows the site ID, with a button that copies it, under the site's address while technical details are on.
@@ -4427,8 +5207,7 @@ function snaPageImageHtml(page) {
     var image = page.image || { status: 'loading' };
     if (image.status === 'image') {
         // The image repeats what the page's title already says, so it has no alternative text of its own.
-        return '<figure class="sna-page-figure"><img class="sna-page-image" src="' + snaEscapeHtml(image.url) + '" alt="">' +
-            '<figcaption>The image chosen for this page.</figcaption></figure>';
+        return '<figure class="sna-page-figure"><img class="sna-page-image" src="' + snaEscapeHtml(image.url) + '" alt=""></figure>';
     }
     var messages = {
         loading:   'Looking for the image chosen for this page.',
@@ -4445,7 +5224,7 @@ function snaPageImageHtml(page) {
 function snaShowPageImage(page) {
     var area = document.getElementById('sna-page-image-area');
     if (!area || area.getAttribute('data-page-key') !== page.key) { return; }
-    area.innerHTML = snaPageImageHtml(page);
+    area.innerHTML = snaMaskHtml(snaPageImageHtml(page));
     var img = area.querySelector('img');
     if (img) {
         img.addEventListener('error', function() {
@@ -4594,7 +5373,7 @@ function snaRenderTaxonomy(route, report) {
 
     var body = taxonomy.read === false ? '<p class="sna-note">Sitenalyzer could not read all of the term store, so some term groups or terms may be missing.</p>' : '';
     if (selected) {
-        body += snaRenderTermSet(selectedGroup, selected);
+        body += snaRenderTermSet(selectedGroup, selected, report);
     } else if (route.anchor) {
         body += snaPartTitleHtml('Term set not found', '') +
             '<p class="sna-note">Sitenalyzer did not find this term set in the report. The address may be from another site or an older report. Choose a term set from the list.</p>';
@@ -4627,17 +5406,81 @@ function snaRenderTermGroups(report) {
     return html;
 }
 
-// Returns one term set: its term group, description, IDs while technical details are on, and a table of its terms.
-function snaRenderTermSet(group, set) {
+// Returns one term set: its term group, description, IDs while technical details are on, a table of its terms with
+// the term each one sits under, and a table of the columns that use the set.
+function snaRenderTermSet(group, set, report) {
     var terms = set.terms || [];
     var html = '<p class="sna-breadcrumb">' + snaEscapeHtml(group.groupName) + ' / Term set</p>' + snaPartTitleHtml(set.setName, '') +
         '<p class="sna-taxonomy-desc">' + renderAdminDescWrap(set.setDescription, 'termset:' + set.setId, set.setName) + '</p>';
     if (snaTechnicalDetailsOn()) { html += snaIdLineHtml('Term set ID', set.setId) + snaIdLineHtml('Term group ID', group.groupId); }
     html += '<h4 class="sna-subsection-title">Terms (' + terms.length + ')</h4>';
-    if (terms.length === 0) { return html + '<p class="sna-muted">This term set has no terms.</p>'; }
-    var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
-    _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', setId: set.setId });
-    return html + '<div id="' + tblId + '"></div>';
+    if (set.termsTruncated) {
+        html += '<p class="sna-note">Sitenalyzer read the first ' + SNA_TERMS_PER_SET_MAX.toLocaleString('en-US') + ' terms of this term set only.</p>';
+    }
+    if (set.termsStoppedAtOtherSite) {
+        html += '<p class="sna-note">Sitenalyzer stopped reading the terms of this term set because SharePoint sent a link to a different site, so some terms may be missing.</p>';
+    }
+    if (terms.length === 0) {
+        html += '<p class="sna-muted">This term set has no terms.</p>';
+    } else {
+        var parentsHidden = set.parentsStatus === 'failed';
+        if (parentsHidden) {
+            html += '<p class="sna-note">Sitenalyzer could not read which term each term sits under, so the table has no Parent term column. Refresh the report to try again.</p>';
+        } else if (set.parentsStatus === 'partial') {
+            html += '<p class="sna-note">Sitenalyzer could not read which term every term sits under, so a term shown as Top level may sit under another term. Refresh the report to try again.</p>';
+        }
+        var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
+        _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', setId: set.setId, parentsHidden: parentsHidden });
+        html += '<div id="' + tblId + '"></div>';
+    }
+    return html + snaRenderTermSetUsage(set, report);
+}
+
+// Returns the name of the term with termId in set, or '' when the set has no such term.
+function snaTermNameInSet(set, termId) {
+    var id = String(termId || '').toLowerCase();
+    var found = (set.terms || []).filter(function(t) { return String(t.termId).toLowerCase() === id; })[0];
+    return found ? found.termName : '';
+}
+
+// Returns the "Lists and libraries using this term set" part of a term set: each list or library and column that uses it, with a
+// link to that list's Columns tab, and each site column that uses it but isn't in any list or library.
+function snaRenderTermSetUsage(set, report) {
+    var technical = snaTechnicalDetailsOn();
+    var usage = report.taxonomy.usage || { bySet: {}, status: 'failed' };
+    var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
+    var html = '<h4 class="sna-subsection-title">Lists and libraries using this term set (' + rows.length + ')</h4>';
+    if (usage.status === 'failed') {
+        return html + '<p class="sna-note">Sitenalyzer could not read which columns use this term set. Refresh the report to try again.</p>';
+    }
+    if (usage.status === 'partial') {
+        html += '<p class="sna-note">Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns. Site review lists what it could not read.</p>';
+    }
+    if (rows.length === 0) {
+        return html + (usage.status === 'partial' ? '' : '<p class="sna-muted">No column on this site uses this term set.</p>');
+    }
+
+    var hasAnchor = rows.some(function(r) { return r.anchorTermId; });
+    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Columns that use ' + snaEscapeHtml(set.setName) + '</caption>' +
+        '<thead><tr><th scope="col">List or library</th><th scope="col">Column</th>' +
+        (technical ? '<th scope="col">Internal name</th>' : '') +
+        (hasAnchor ? '<th scope="col">Starts at term</th>' : '') +
+        '<th scope="col">Allows several values</th></tr></thead><tbody>';
+    rows.forEach(function(r) {
+        var listCell = r.isSiteColumn
+            ? '<span class="sna-muted">Site column (not in a list or library)</span>'
+            : '<a href="' + snaEscapeHtml(snaRouteHash({ section: 'contents', id: r.listRouteId, tab: 'columns' })) + '"' +
+                (r.filterTable ? ' data-filter-table="' + snaEscapeHtml(r.filterTable) + '" data-filter-text="' + snaEscapeHtml(r.columnTitle) + '"' : '') + '>' +
+                snaEscapeHtml(r.listTitle) + '<span class="sna-visually-hidden"> (' + snaEscapeHtml(r.columnTitle) + ' column)</span></a>';
+        var anchorName = r.anchorTermId ? snaTermNameInSet(set, r.anchorTermId) : '';
+        var anchorCell = !r.anchorTermId ? '<span class="sna-muted">Whole term set</span>'
+            : (anchorName ? snaEscapeHtml(anchorName) : 'A term not in this report (term ID ' + snaEscapeHtml(r.anchorTermId) + ')');
+        html += '<tr><td>' + listCell + '</td><td>' + snaEscapeHtml(r.columnTitle) + '</td>' +
+            (technical ? '<td><span class="list-id-text">' + snaEscapeHtml(r.internalName) + '</span></td>' : '') +
+            (hasAnchor ? '<td>' + anchorCell + '</td>' : '') +
+            '<td>' + (r.allowsSeveral ? 'Yes' : 'No') + '</td></tr>';
+    });
+    return html + '</tbody></table>';
 }
 
 // Draws Site review: one table of cleanup findings, the largest lists and libraries, and what this report could read.
@@ -4720,11 +5563,26 @@ function snaPrintTableHtml(caption, headers, rows, emptyText) {
         }).join('') + '</tbody></table>';
 }
 
-// Returns a list of names and values for the print document. pairs is an array of [name, plain text value].
+// Returns the columns that use a term set, for the print document, or a sentence when none do or they could not be read.
+function snaPrintTermSetUsageHtml(set, taxonomy) {
+    var usage = taxonomy.usage || { bySet: {}, status: 'failed' };
+    if (usage.status === 'failed') { return '<p>Sitenalyzer could not read which columns use this term set.</p>'; }
+    var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
+    return (usage.status === 'partial' ? '<p>Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns.</p>' : '') +
+        snaPrintTableHtml('Lists and libraries using ' + set.setName, ['List or library', 'Column', 'Internal name', 'Starts at term', 'Allows several values'],
+            rows.map(function(r) {
+                var anchor = r.anchorTermId ? (snaTermNameInSet(set, r.anchorTermId) || r.anchorTermId) : 'Whole term set';
+                return [r.isSiteColumn ? 'Site column (not in a list or library)' : r.listTitle, r.columnTitle, r.internalName, anchor, r.allowsSeveral ? 'Yes' : 'No'];
+            }),
+            usage.status === 'partial' ? 'Sitenalyzer found no column that uses this term set.' : 'No column on this site uses this term set.');
+}
+
+// Returns a list of names and values for the print document. pairs is an array of [name, plain text value], with
+// true as a third item when the value is a person's name, email, or sign-in name, which stays visible.
 function snaPrintFactsHtml(pairs) {
     return '<dl class="sna-print-facts">' + pairs.map(function(pair) {
         var value = pair[1] === null || pair[1] === undefined || pair[1] === '' ? 'None.' : pair[1];
-        return '<dt>' + snaEscapeHtml(pair[0]) + '</dt><dd>' + snaEscapeHtml(value) + '</dd>';
+        return '<dt>' + snaEscapeHtml(pair[0]) + '</dt><dd>' + (pair[2] ? snaPersonHtml(value) : snaEscapeHtml(value)) + '</dd>';
     }).join('') + '</dl>';
 }
 
@@ -4785,12 +5643,13 @@ function snaBuildPrintDocument(report) {
     var user = report.currentUser;
     var html = '<h1>' + snaEscapeHtml(site.title || 'Untitled site') + '</h1>' +
         '<p>Sitenalyzer site report. It includes everything Sitenalyzer read for this report, even parts that were closed or filtered on screen.</p>' +
+        (snaHiddenValuesText(report, true) ? '<p>' + snaEscapeHtml(snaHiddenValuesText(report, true)) + '</p>' : '') +
         snaPrintFactsHtml([
             ['Site address', site.url],
             ['Description', site.description || 'No description.'],
             ['Site ID', site.id],
             ['Collected', snaFormatDateTime(report.collectedAt)],
-            ['Collected by', (user && (user.name || user.email || user.loginName)) || 'Not reported.'],
+            ['Collected by', (user && (user.name || user.email || user.loginName)) || 'Not reported.', true],
             ['Their access', report.isAdmin ? 'Can manage this site' : 'Can view this site']
         ]);
 
@@ -4827,7 +5686,7 @@ function snaBuildPrintDocument(report) {
         '<h3>People and groups</h3>' + renderPermissionsByPrincipal() +
         '<h3>Check a person\'s access</h3>' +
             // check.html was built by snaCheckUserAccess with every SharePoint value escaped.
-            (check ? '<p>' + snaEscapeHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
+            (check ? '<p>' + snaPersonHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
         '<h3>Lists and libraries with their own permissions</h3>' + snaRenderInheritanceReport(report.listsRead) +
         '<h3>Sharing links</h3>' + snaRenderSharingLinks(perms.sharingLinks) +
         '<h3>Apps with access to this site</h3>' + snaRenderAppsHtml(report) + '</section>';
@@ -4845,11 +5704,18 @@ function snaBuildPrintDocument(report) {
                 snaPrintFactsHtml([['Description', group.groupDescription || 'No description.'], ['Term group ID', group.groupId]]) +
                 (sets.length === 0 ? '<p>This term group has no term sets.</p>' : '');
             sets.forEach(function(set) {
+                var withParents = set.parentsStatus !== 'failed';
                 html += '<h4>' + snaEscapeHtml(set.setName) + '</h4>' +
                     snaPrintFactsHtml([['Description', set.setDescription || 'No description.'], ['Term set ID', set.setId]]) +
-                    snaPrintTableHtml('Terms in ' + set.setName, ['Term name', 'Description', 'Term ID'],
-                        (set.terms || []).map(function(t) { return [t.termName, t.termDescription || 'No description.', t.termId]; }),
-                        'This term set has no terms.');
+                    snaPrintTableHtml('Terms in ' + set.setName,
+                        withParents ? ['Term name', 'Parent term', 'Description', 'Term ID'] : ['Term name', 'Description', 'Term ID'],
+                        (set.terms || []).map(function(t) {
+                            return withParents
+                                ? [t.termName, t.parentNames || 'Top level', t.termDescription || 'No description.', t.termId]
+                                : [t.termName, t.termDescription || 'No description.', t.termId];
+                        }),
+                        'This term set has no terms.') +
+                    snaPrintTermSetUsageHtml(set, taxonomy);
             });
             html += '</section>';
         });
@@ -4884,7 +5750,7 @@ function snaPreparePrintDocument() {
         root.className = 'sna-print-doc';
         document.body.appendChild(root);
     }
-    root.innerHTML = snaBuildPrintDocument(_snaReport);
+    root.innerHTML = snaMaskHtml(snaBuildPrintDocument(_snaReport));
     // Group members are in closed sections, and a printout shows only what is open.
     root.querySelectorAll('details').forEach(function(d) { d.open = true; });
     document.documentElement.classList.add('sna-printing');
@@ -4900,13 +5766,13 @@ function snaRemovePrintDocument() {
 // Fills the empty document of the hidden frame with the print document and Sitenalyzer's style sheet. onReady runs
 // once, after the style sheet loads or fails, or after 3 seconds, whichever comes first.
 function snaWritePrintDocument(doc, onReady) {
-    doc.title = 'Sitenalyzer report - ' + (_snaReport.site.title || 'Untitled site');
+    doc.title = 'Sitenalyzer report - ' + snaMaskText(_snaReport.site.title || 'Untitled site');
     doc.documentElement.lang = document.documentElement.lang || 'en';
     doc.documentElement.className = 'sna-printing';
     var root = doc.createElement('div');
     root.id = 'sna-print-root';
     root.className = 'sna-print-doc';
-    root.innerHTML = snaBuildPrintDocument(_snaReport);
+    root.innerHTML = snaMaskHtml(snaBuildPrintDocument(_snaReport));
     // Group members are in closed sections, and a printout shows only what is open.
     root.querySelectorAll('details').forEach(function(d) { d.open = true; });
     doc.body.appendChild(root);
@@ -5039,17 +5905,17 @@ function snaRenderSiteChoices() {
     var current = _snaReport ? xlsxStripSlash(_snaReport.siteUrl).toLowerCase() : '';
     function isCurrent(site) { return xlsxStripSlash(String(site.url || '')).toLowerCase() === current; }
     var matches = (globalAccessibleSites || []).filter(function(site) {
-        return !query || String(site.title || '').toLowerCase().indexOf(query) > -1 || String(site.url || '').toLowerCase().indexOf(query) > -1;
+        return !query || snaMaskText(site.title || '').toLowerCase().indexOf(query) > -1 || String(site.url || '').toLowerCase().indexOf(query) > -1;
     });
     matches = matches.filter(isCurrent).concat(matches.filter(function(site) { return !isCurrent(site); }));
     var shown = matches.slice(0, SNA_SITE_CHOICES_MAX);
 
-    list.innerHTML = shown.map(function(site) {
+    list.innerHTML = snaMaskHtml(shown.map(function(site) {
         return '<li><button type="button" class="sna-site-choice" data-action="choose-site" data-url="' + snaEscapeHtml(site.url) + '">' +
             '<span class="sna-site-choice-title">' + snaEscapeHtml(site.title || site.url) + '</span>' +
             '<span class="sna-site-choice-url">' + snaEscapeHtml(site.url) + '</span>' +
             (isCurrent(site) ? '<span class="sna-site-choice-note">Current site</span>' : '') + '</button></li>';
-    }).join('');
+    }).join(''));
 
     if ((globalAccessibleSites || []).length === 0) {
         status.textContent = 'Sitenalyzer has not found your sites yet. Select Refresh sites list, or enter the site address below.';
@@ -5171,6 +6037,22 @@ function startApplication() {
     }
 
     snaInsertIcons(app);
+
+    var hiddenValuesSwitch = document.getElementById('sna-hidden-values-switch');
+    if (hiddenValuesSwitch) {
+        hiddenValuesSwitch.addEventListener('change', function() { snaSetShowHiddenValues(hiddenValuesSwitch.checked); });
+    }
+    // The tooltip of Show hidden values shows while the pointer is over it or the switch has focus. Escape closes it
+    // until the pointer or focus leaves, so it never has to be moved away to read what is under it.
+    var hiddenValuesControl = document.getElementById('sna-hidden-values-control');
+    if (hiddenValuesControl) {
+        hiddenValuesControl.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') { hiddenValuesControl.classList.add('sna-tip-closed'); }
+        });
+        ['mouseleave', 'focusout'].forEach(function(eventName) {
+            hiddenValuesControl.addEventListener(eventName, function() { hiddenValuesControl.classList.remove('sna-tip-closed'); });
+        });
+    }
 
     var technicalSwitch = document.getElementById('sna-technical-switch');
     if (technicalSwitch) {
@@ -5367,7 +6249,7 @@ function startApplication() {
                 var li = document.createElement('li');
                 var titleSpan = document.createElement('div');
                 titleSpan.className = 'site-suggestion-title';
-                titleSpan.textContent = site.title;
+                titleSpan.textContent = snaMaskText(site.title);
                 var urlSpan = document.createElement('div');
                 urlSpan.className = 'site-suggestion-url';
                 urlSpan.textContent = site.url;

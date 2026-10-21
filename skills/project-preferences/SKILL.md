@@ -143,6 +143,8 @@ messages, help, and documentation. For example, "participant", not "subject" or
 - **Sharing link:** a link made with SharePoint's Share button. Name its kinds the way
   SharePoint does: "Anyone with the link", "People in your organization", and
   "Specific people".
+- **Hidden value:** text that Sitenalyzer hides because it looks like personal information, such as a phone
+  number, shown as `[phone number hidden]`. The switch is **Show hidden values**. Not "masked" or "redacted".
 - **Sign-in name:** the account name SharePoint uses, such as
   `i:0#.f|membership|user@med.umich.edu`. Not "login" or "claims".
 

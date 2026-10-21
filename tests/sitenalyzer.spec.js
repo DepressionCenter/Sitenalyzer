@@ -27,7 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { openPretendSite, reply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID } = require('./pretend-sharepoint');
+const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields } = require('./pretend-sharepoint');
 // The pretend site's one term set, Study Arms.
 const TERM_SET_ID = 'eeeeeeee-0000-4000-8000-000000000001';
 
@@ -136,6 +136,30 @@ function sheetRows(workbook, sheetName) {
 // Returns the addresses of the API requests, parsed, so tests can check paths and query values.
 function apiUrls(record) {
     return record.apiRequests.map(function(address) { return new URL(address); });
+}
+
+// Returns the request lines inside a $batch request body, such as 'GET https://... HTTP/1.1'.
+function batchRequestLines(body) {
+    return (body.match(/^[A-Z]+ \S+ HTTP\/1\.1\r?$/gm) || []).map(function(line) { return line.replace(/\r$/, ''); });
+}
+
+// Returns the requests that could change the site: every request that isn't a GET, except the request digest
+// and $batch requests that hold only GET requests to this site.
+function changeRequests(record) {
+    return record.writeRequests.filter(function(r) {
+        const pathname = new URL(r.url).pathname;
+        if (r.method === 'POST' && pathname === SITE_PATH + '/_api/contextinfo') { return false; }
+        if (r.method === 'POST' && pathname === SITE_PATH + '/_api/$batch') {
+            const lines = batchRequestLines(r.body);
+            return lines.length === 0 || !lines.every(function(line) { return line.indexOf('GET ' + SITE_URL + '/_api/') === 0; });
+        }
+        return true;
+    });
+}
+
+// Returns the $batch requests the page sent.
+function batchRequests(record) {
+    return record.writeRequests.filter(function(r) { return r.method === 'POST' && new URL(r.url).pathname === SITE_PATH + '/_api/$batch'; });
 }
 
 // Returns the part of the page address after #, such as 'sna/overview'.
@@ -705,7 +729,7 @@ test('shows a page\'s details with the image chosen for it', async function({ pa
     await expect(image).toHaveAttribute('src', SITE_URL + '/SiteAssets/images/welcome.png');
     await expect(image).toHaveAttribute('alt', '');
     await expect.poll(function() { return image.evaluate(function(img) { return img.complete && img.naturalWidth; }); }).toBe(1);
-    await expect(detail).toContainText('The image chosen for this page.');
+    await expect(detail.locator('#sna-page-image-area figcaption')).toHaveCount(0);
     const lookups = apiUrls(record).filter(function(u) { return /\/items\(1\)$/.test(u.pathname); });
     expect(lookups.length).toBe(1);
     expect(lookups[0].searchParams.get('$select')).toBe('BannerImageUrl');
@@ -896,7 +920,7 @@ test('reports columns, folders, and list permissions as not read when the lists 
 
     await gotoSection(page, 'Site review');
     const coverage = page.locator('.sna-coverage-table');
-    await expect(coverage.getByRole('row', { name: /^Lists and libraries/ })).toContainText('Not read');
+    await expect(coverage.getByRole('row', { name: /^Lists and libraries (Read|Partly read|Not read)/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /^Columns/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /^Top-level folders/ })).toContainText('Not read');
     await expect(coverage.getByRole('row', { name: /^Permissions of lists and libraries/ })).toContainText('Not read');
@@ -1114,12 +1138,115 @@ test('does not look up sharing link files whose ID is not a GUID', async functio
 
     const sharing = await openPermissionPart(page, 'Sharing links (1)');
     await expect(sharing).toContainText('Anyone with the link');
-    await expect(sharing).toContainText('File name not available');
+    await expect(sharing).toContainText('No name found. It may be a list item or a deleted file.');
     await openPermissionPart(page, 'Site permissions');
     await expect(page.locator('.sna-risk-panel')).toContainText('1 sharing link lets anyone with the link open a file.');
     await expect(page.locator('.sna-risk-panel').getByRole('link', { name: 'Review sharing links (1)' })).toHaveAttribute('href', '#sna/permissions/sharing');
-    expect(apiUrls(record).filter(function(u) { return /GetFileById/i.test(u.pathname); })).toEqual([]);
+    expect(apiUrls(record).filter(function(u) { return /GetF(ile|older)ById/i.test(u.pathname); })).toEqual([]);
+    expect(batchRequests(record)).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
+});
+
+// The pretend site's sharing link groups for a shared file, a shared folder, and an item that is neither,
+// such as a list item. The file is the pretend site's own shared file.
+const SHARED_FOLDER_ID = '44444444-0000-4000-8000-000000000002';
+const SHARED_LIST_ITEM_ID = '44444444-0000-4000-8000-000000000003';
+const THREE_SHARED_ITEMS = [
+    { pattern: /^\/_api\/web\/sitegroups$/, body: { value: [
+        { Id: 61, Title: 'SharingLinks.' + SHARED_FILE_ID + '.OrganizationView.66666666-0000-4000-8000-000000000011' },
+        { Id: 62, Title: 'SharingLinks.' + SHARED_FOLDER_ID + '.FlexibleEdit.66666666-0000-4000-8000-000000000012' },
+        { Id: 63, Title: 'SharingLinks.' + SHARED_LIST_ITEM_ID + '.AnonymousView.66666666-0000-4000-8000-000000000013' }
+    ] } },
+    { pattern: /^\/_api\/web\/GetFolderById\('([^']+)'\)$/, answer: function(url, match) {
+        return match[1] === SHARED_FOLDER_ID ? { Name: 'Consent Forms', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Consent Forms' } : undefined;
+    } }
+];
+
+test('names shared files and folders from batch requests, with no failed requests in the console', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: OWNERS_ONLY_ANSWERS.concat(THREE_SHARED_ITEMS) });
+    await extractSiteInformation(page);
+
+    const sharing = await openPermissionPart(page, 'Sharing links (3)');
+    await expect(sharing.getByRole('columnheader', { name: 'Shared item' })).toBeVisible();
+    await expect(sharing.getByRole('link', { name: 'Visit Schedule.docx' })).toHaveAttribute('href', SITE_URL + '/Shared%20Documents/Visit%20Schedule.docx');
+    const folderRow = sharing.getByRole('row', { name: /Consent Forms/ });
+    await expect(folderRow).toContainText('Consent Forms (folder)');
+    await expect(folderRow.getByRole('link', { name: 'Consent Forms' })).toHaveAttribute('href', SITE_URL + '/Shared%20Documents/Consent%20Forms');
+    await expect(sharing.getByRole('row', { name: new RegExp(SHARED_LIST_ITEM_ID) }))
+        .toContainText('No name found. It may be a list item or a deleted file. Item ID: ' + SHARED_LIST_ITEM_ID);
+
+    // Files are looked up first, in one batch; the two IDs that aren't files are then looked up as folders.
+    const batches = batchRequests(record);
+    expect(batches.length).toBe(2);
+    expect(batchRequestLines(batches[0].body)).toEqual([SHARED_FILE_ID, SHARED_FOLDER_ID, SHARED_LIST_ITEM_ID].map(function(id) {
+        return 'GET ' + SITE_URL + "/_api/web/GetFileById('" + id + "')?$select=Name,ServerRelativeUrl HTTP/1.1";
+    }));
+    expect(batchRequestLines(batches[1].body)).toEqual([SHARED_FOLDER_ID, SHARED_LIST_ITEM_ID].map(function(id) {
+        return 'GET ' + SITE_URL + "/_api/web/GetFolderById('" + id + "')?$select=Name,ServerRelativeUrl HTTP/1.1";
+    }));
+    batches.forEach(function(batch) { expect(batch.body).toMatch(/^--batch_[0-9a-f]{32}\r\n/); });
+    expect(changeRequests(record)).toEqual([]);
+    expect(apiUrls(record).filter(function(u) { return /GetF(ile|older)ById/i.test(u.pathname) && !u.href.startsWith(SITE_URL + '/_api/'); })).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('sends at most 20 lookups in each batch request', async function({ page }) {
+    const groups = [];
+    for (let i = 1; i <= 25; i++) {
+        const id = '44444444-0000-4000-8000-0000000001' + String(i).padStart(2, '0');
+        groups.push({ Id: 100 + i, Title: 'SharingLinks.' + id + '.OrganizationView.66666666-0000-4000-8000-000000000001' });
+    }
+    const record = await openPretendSite(page, {
+        answerOverrides: OWNERS_ONLY_ANSWERS.concat([{ pattern: /^\/_api\/web\/sitegroups$/, body: { value: groups } }])
+    });
+    await extractSiteInformation(page);
+
+    await expect(await openPermissionPart(page, 'Sharing links (25)')).toContainText('No name found');
+    expect(batchRequests(record).map(function(batch) { return batchRequestLines(batch.body).length; })).toEqual([20, 5, 20, 5]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+for (const failure of [
+    { name: 'a batch request', answer: { method: 'POST', pattern: /^\/_api\/\$batch$/, body: reply(500, { error: 'Server error' }) } },
+    { name: 'the request digest', answer: { method: 'POST', pattern: /^\/_api\/contextinfo$/, body: reply(403, { error: 'Access denied' }) } }
+]) {
+    test('shows sharing links without names when ' + failure.name + ' fails', async function({ page }) {
+        await openPretendSite(page, { answerOverrides: OWNERS_ONLY_ANSWERS.concat(THREE_SHARED_ITEMS, [failure.answer]) });
+        await extractSiteInformation(page);
+        const sharing = await openPermissionPart(page, 'Sharing links (3)');
+        await expect(sharing.getByText('No name found. It may be a list item or a deleted file.')).toHaveCount(3);
+        await expect(sharing.getByRole('link')).toHaveCount(0);
+    });
+}
+
+test('reads a batch answer with LF line endings, parts in quotes, and a part that failed', async function({ page }) {
+    // The answer names its boundary in quotes, uses LF line endings, and the second lookup failed with 500.
+    const boundary = 'batchresponse_test-0001';
+    const part = function(status, statusText, body) {
+        return '--' + boundary + '\nContent-Type: application/http\nContent-Transfer-Encoding: binary\n\n' +
+            'HTTP/1.1 ' + status + ' ' + statusText + '\nCONTENT-TYPE: application/json;odata=nometadata\n\n' + JSON.stringify(body) + '\n';
+    };
+    const record = await openPretendSite(page, {
+        answerOverrides: OWNERS_ONLY_ANSWERS.concat(THREE_SHARED_ITEMS, [{ method: 'POST', pattern: /^\/_api\/\$batch$/, answer: function(url, match, request) {
+            if (/GetFolderById/.test(request.postData())) { return undefined; }
+            return rawReply(200, 'multipart/mixed; boundary="' + boundary + '"',
+                part(200, 'OK', { Name: 'Visit Schedule.docx', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Visit Schedule.docx' }) +
+                part(500, 'Internal Server Error', { error: 'Server error' }) +
+                part(404, 'Not Found', { error: 'File not found' }) +
+                '--' + boundary + '--\n');
+        } }])
+    });
+    await extractSiteInformation(page);
+
+    const sharing = await openPermissionPart(page, 'Sharing links (3)');
+    await expect(sharing.getByRole('link', { name: 'Visit Schedule.docx' })).toBeVisible();
+    // The item that failed isn't looked up again as a folder; the item that wasn't found is.
+    await expect(sharing.getByText('No name found')).toHaveCount(2);
+    expect(batchRequestLines(batchRequests(record)[1].body)).toEqual([
+        'GET ' + SITE_URL + "/_api/web/GetFolderById('" + SHARED_LIST_ITEM_ID + "')?$select=Name,ServerRelativeUrl HTTP/1.1"
+    ]);
+    expect(record.consoleErrors).toEqual([]);
 });
 
 // Answers the site groups request in pages, as SharePoint does with $top and $skip. Group IDs start at 1000.
@@ -1306,7 +1433,7 @@ test('edits a column description in its table with the editor keys', async funct
     await expect(editor).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Edit description of Visit Date' })).toBeFocused();
     await expect(detail.locator('.tabulator-row', { hasText: 'Visit Date' })).toContainText('Planned date of the visit.');
-    expect(record.writeRequests).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
 
     // Double-clicking the text opens the editor too. Shift+Enter and Alt+Enter add lines, and Enter saves.
     await detail.locator('.tabulator-row', { hasText: 'Visit Date' }).locator('.sna-editable-text').dblclick();
@@ -1467,7 +1594,7 @@ test('keeps an unsaved draft across views and asks before Refresh report discard
     await expect.poll(siteReads).toBe(2);
     await expect(page.locator('#sna-detail-title')).toContainText('Study Visits');
     await expect(page.locator('#sp-results textarea')).toHaveCount(0);
-    expect(record.writeRequests).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
 });
 
 test('saves term group, term set, term, and site descriptions through their own addresses', async function({ page }) {
@@ -1908,6 +2035,743 @@ test('filters a long terms table to the term from a search result', async functi
     await expect(termSet.locator('.tabulator-row')).toContainText('Arm G');
 });
 
+// Opens the Study Arms term set from the Taxonomy navigation.
+async function openStudyArms(page) {
+    await gotoSection(page, 'Taxonomy');
+    await page.locator('#sp-results .sna-subnav').getByRole('link', { name: /^Study Arms/ }).click();
+    await expect(page.locator('#sna-part-title')).toHaveText('Study Arms');
+}
+
+// A term set with three levels, as the term store API returns it: Arm sits at the top with Treatment A under it,
+// Dose 1 sits under Treatment A, and Shared Visit is pinned under both Arm and Other.
+const TERM = {
+    arm: 'ffffffff-0000-4000-8000-000000000011',
+    treatmentA: 'ffffffff-0000-4000-8000-000000000012',
+    dose1: 'ffffffff-0000-4000-8000-000000000013',
+    other: 'ffffffff-0000-4000-8000-000000000014',
+    sharedVisit: 'ffffffff-0000-4000-8000-000000000015'
+};
+function graphTerm(id, name) { return { id: id, labels: [{ name: name, isDefault: true }], descriptions: [] }; }
+const TREE_TERMS = [
+    graphTerm(TERM.other, 'Other'), graphTerm(TERM.dose1, 'Dose 1'), graphTerm(TERM.arm, 'Arm'),
+    graphTerm(TERM.treatmentA, 'Treatment A'), graphTerm(TERM.sharedVisit, 'Shared Visit')
+];
+const TREE_CHILDREN = {
+    [TERM.arm]: [TERM.treatmentA, TERM.sharedVisit],
+    [TERM.treatmentA]: [TERM.dose1],
+    [TERM.other]: [TERM.sharedVisit]
+};
+function treeChildren(id) {
+    return (TREE_CHILDREN[id] || []).map(function(childId) { return TREE_TERMS.filter(function(t) { return t.id === childId; })[0]; });
+}
+const TERMS_PATTERN = /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms$/;
+const TERM_CHILDREN_PATTERN = /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms\/([^/]+)\/children$/;
+
+// Returns the rows of the terms table on screen as [term name, parent term], in order.
+async function termRows(termSet) {
+    const rows = termSet.locator('.tabulator-row');
+    const result = [];
+    for (let i = 0; i < await rows.count(); i++) {
+        result.push([
+            (await rows.nth(i).locator('[tabulator-field="termName"]').innerText()).replace(/^[^\p{L}\p{N}]+/u, '').trim(),
+            (await rows.nth(i).locator('[tabulator-field="parentNames"]').innerText()).trim()
+        ]);
+    }
+    return result;
+}
+
+test('shows the parent of each term, with a pinned term under both of its parents', async function({ page }) {
+    const record = await openPretendSite(page, {
+        answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
+            const withChildren = /children/.test(url.searchParams.get('$expand') || '');
+            return { value: TREE_TERMS.map(function(t) { return withChildren ? Object.assign({ children: treeChildren(t.id) }, t) : t; }) };
+        } }]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Terms (5)' })).toBeVisible();
+    // Each term follows the term it sits under, and terms at the top come in the order SharePoint gave them.
+    expect(await termRows(termSet)).toEqual([
+        ['Other', 'Top level'], ['Shared Visit', 'Arm; Other'], ['Arm', 'Top level'], ['Treatment A', 'Arm'], ['Dose 1', 'Treatment A']
+    ]);
+    // One request with $expand=children answered every parent, so no term's children were asked for one at a time.
+    expect(apiUrls(record).filter(function(u) { return TERM_CHILDREN_PATTERN.test(u.pathname.substring(SITE_PATH.length)); })).toEqual([]);
+    await expect(termSet.getByText('No column on this site uses this term set.')).toBeVisible();
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ })).toContainText('Read');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('finds parent terms one term at a time when the term set does not return children', async function({ page }) {
+    // This term store lists only top-level terms and rejects $expand, as some term stores may.
+    const record = await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: TERMS_PATTERN, answer: function(url) {
+                if (url.searchParams.get('$expand')) { return reply(400, { error: 'Expand is not supported' }); }
+                return { value: [graphTerm(TERM.arm, 'Arm'), graphTerm(TERM.other, 'Other')] };
+            } },
+            { pattern: TERM_CHILDREN_PATTERN, answer: function(url, match) { return { value: treeChildren(match[1]) }; } }
+        ]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Terms (5)' })).toBeVisible();
+    expect(await termRows(termSet)).toEqual([
+        ['Arm', 'Top level'], ['Treatment A', 'Arm'], ['Dose 1', 'Treatment A'], ['Shared Visit', 'Arm; Other'], ['Other', 'Top level']
+    ]);
+    // Every term's children were asked for once, including the terms found only as children.
+    const childRequests = apiUrls(record).filter(function(u) { return TERM_CHILDREN_PATTERN.test(u.pathname.substring(SITE_PATH.length)); });
+    expect(childRequests.length).toBe(5);
+
+    // Search finds a term found only as a child, and the print document has the parent column.
+    await searchReport(page, '"Dose 1"');
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Dose 1' })).toBeVisible();
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('says when it could not read parent terms, and leaves out the parent column', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: TERMS_PATTERN, answer: function(url) {
+                return url.searchParams.get('$expand') ? reply(400, { error: 'Expand is not supported' }) : undefined;
+            } },
+            { pattern: TERM_CHILDREN_PATTERN, body: reply(500, { error: 'Server error' }) }
+        ]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.locator('.tabulator-row')).toHaveCount(2);
+    await expect(termSet).toContainText('Sitenalyzer could not read which term each term sits under, so the table has no Parent term column.');
+    await expect(termSet.getByRole('columnheader', { name: 'Parent term' })).toHaveCount(0);
+    await gotoSection(page, 'Site review');
+    const parentsRow = page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ });
+    await expect(parentsRow).toContainText('Not read');
+    await expect(parentsRow).toContainText('Sitenalyzer could not read which term each term sits under in 1 term set');
+});
+
+test('reads every page of a term set, and stops at a next-batch link to another site', async function({ page }) {
+    const record = await openPretendSite(page, {
+        answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
+            if (url.searchParams.get('$expand')) { return undefined; }
+            if (url.searchParams.get('$skiptoken') === '2') {
+                return { value: [graphTerm(TERM.other, 'Other')], '@odata.nextLink': 'https://contoso.sharepoint.com/sites/othersite/_api/v2.1/terms?$skiptoken=3' };
+            }
+            return { value: [graphTerm(TERM.arm, 'Arm')], '@odata.nextLink': SITE_URL + '/_api/v2.1/sites/x/termStore/sets/' + TERM_SET_ID + '/terms?$skiptoken=2' };
+        } }]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Terms (2)' })).toBeVisible();
+    await expect(termSet).toContainText('Sitenalyzer stopped reading the terms of this term set because SharePoint sent a link to a different site');
+    expect(apiUrls(record).filter(function(u) { return u.pathname.indexOf('/sites/othersite/') > -1; })).toEqual([]);
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Term store/ })).toContainText('Partly read');
+});
+
+// Two managed metadata columns in Study Visits that use Study Arms: one offers the whole set, and one allows several
+// values and starts at the Treatment term. A third site column uses the set but isn't in any list.
+const ARM_TAG_ID = 'bbbbbbbb-0000-4000-8000-000000000011';
+const ARM_DETAIL_ID = 'bbbbbbbb-0000-4000-8000-000000000012';
+const UNUSED_ARM_COLUMN_ID = 'bbbbbbbb-0000-4000-8000-000000000013';
+function taxonomySchemaXml(termSetId, anchorId) {
+    return '<Field Type="TaxonomyFieldType" Name="X"><Customization><ArrayOfProperty>' +
+        '<Property><Name>SspId</Name><Value xmlns:q1="http://www.w3.org/2001/XMLSchema" p4:type="q1:string" xmlns:p4="http://www.w3.org/2001/XMLSchema-instance">33333333-0000-4000-8000-000000000000</Value></Property>' +
+        '<Property><Name>TermSetId</Name><Value xmlns:q2="http://www.w3.org/2001/XMLSchema" p4:type="q2:string" xmlns:p4="http://www.w3.org/2001/XMLSchema-instance">' + termSetId + '</Value></Property>' +
+        '<Property><Name>AnchorId</Name><Value xmlns:q3="http://www.w3.org/2001/XMLSchema" p4:type="q3:string" xmlns:p4="http://www.w3.org/2001/XMLSchema-instance">' + anchorId + '</Value></Property>' +
+        '</ArrayOfProperty></Customization></Field>';
+}
+const NO_ANCHOR = '00000000-0000-0000-0000-000000000000';
+const TREATMENT_TERM_ID = 'ffffffff-0000-4000-8000-000000000002';
+const ARM_COLUMNS = [
+    { Id: ARM_TAG_ID, InternalName: 'ArmTag', Title: 'Arm Tag', TypeAsString: 'TaxonomyFieldType', Description: 'Study arm of the visit.',
+      SchemaXml: taxonomySchemaXml(TERM_SET_ID.toUpperCase(), NO_ANCHOR) },
+    { Id: ARM_DETAIL_ID, InternalName: 'ArmDetail', Title: 'Arm Detail', TypeAsString: 'TaxonomyFieldTypeMulti', Description: '',
+      SchemaXml: taxonomySchemaXml(TERM_SET_ID, TREATMENT_TERM_ID) }
+];
+const LIST_FIELDS_PATTERN = new RegExp("^/_api/web/lists\\(guid'" + LIST_ID + "'\\)/fields$");
+function taxonomyColumnAnswers(options) {
+    const settings = options || {};
+    return [
+        { pattern: LIST_FIELDS_PATTERN, answer: function(url) {
+            if (/TaxonomyFieldType/.test(url.searchParams.get('$filter') || '')) {
+                return settings.listSchemaFails ? reply(500, { error: 'Server error' }) : { value: ARM_COLUMNS };
+            }
+            return { value: fields.value.concat(ARM_COLUMNS.map(function(c) { return { Id: c.Id, InternalName: c.InternalName, Title: c.Title, TypeAsString: c.TypeAsString, Description: c.Description }; })) };
+        } },
+        { pattern: /^\/_api\/web\/fields$/, body: settings.siteColumnsFail ? reply(500, { error: 'Server error' }) : { value: [
+            ARM_COLUMNS[0],
+            { Id: UNUSED_ARM_COLUMN_ID, InternalName: 'UnusedArm', Title: 'Unused Arm Column', TypeAsString: 'TaxonomyFieldType', SchemaXml: taxonomySchemaXml(TERM_SET_ID, NO_ANCHOR) },
+            { Id: 'bbbbbbbb-0000-4000-8000-000000000014', InternalName: 'OtherSet', Title: 'Other Set Column', TypeAsString: 'TaxonomyFieldType',
+              SchemaXml: taxonomySchemaXml('eeeeeeee-0000-4000-8000-000000000099', NO_ANCHOR) }
+        ] } }
+    ];
+}
+
+test('lists the columns that use a term set and links to their Columns tab', async function({ page }, testInfo) {
+    const record = await openPretendSite(page, {
+        answerOverrides: taxonomyColumnAnswers()
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Lists and libraries using this term set (3)' })).toBeVisible();
+    const usage = termSet.locator('.sna-term-usage-table');
+    await expect(usage.getByRole('columnheader')).toHaveText(['List or library', 'Column', 'Starts at term', 'Allows several values']);
+    await expect(usage.locator('tbody tr').nth(0).locator('td')).toHaveText(['Study Visits (Arm Detail column)', 'Arm Detail', 'Treatment', 'Yes']);
+    await expect(usage.locator('tbody tr').nth(1).locator('td')).toHaveText(['Study Visits (Arm Tag column)', 'Arm Tag', 'Whole term set', 'No']);
+    // The site column that is also in Study Visits is listed once, and the site column of another term set isn't listed.
+    await expect(usage.locator('tbody tr').nth(2).locator('td')).toHaveText(['Site column (not in a list or library)', 'Unused Arm Column', 'Whole term set', 'No']);
+    await expect(usage).not.toContainText('Other Set Column');
+    expect(await new AxeBuilder({ page }).include('#sp-results').withTags(WCAG_TAGS).analyze().then(function(r) { return r.violations; })).toEqual([]);
+
+    // The link opens the list's Columns tab, with the table filtered to the column, because it has more than 10 columns.
+    await usage.getByRole('link', { name: 'Study Visits (Arm Tag column)' }).click();
+    const detail = page.locator('#sna-contents-detail');
+    expect(hashOf(page)).toBe('#sna/contents/' + LIST_ID + '/columns');
+    await expect(detail.getByRole('searchbox')).toHaveValue('Arm Tag');
+    await expect(detail.locator('.tabulator-row')).toHaveCount(1);
+    await expect(detail.locator('.tabulator-row')).toContainText('Arm Tag');
+
+    // Technical details add each column's internal name; the print document has both tables.
+    await page.goBack();
+    await expect(page.locator('#sna-part-title')).toHaveText('Study Arms');
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    await expect(page.locator('.sna-term-usage-table').getByRole('columnheader', { name: 'Internal name' })).toBeVisible();
+    await expect(page.locator('.sna-term-usage-table')).toContainText('ArmDetail');
+
+    // In the data dictionary, both columns name the term set's value set.
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    const fieldRows = sheetRows(workbook, 'Fields');
+    const header = fieldRows[0];
+    const valueSetColumn = header.indexOf('value_set_id');
+    const armTagRow = fieldRows.filter(function(r) { return r[header.indexOf('internal_name')] === 'ArmTag'; })[0];
+    const armDetailRow = fieldRows.filter(function(r) { return r[header.indexOf('internal_name')] === 'ArmDetail'; })[0];
+    const valueSets = sheetRows(workbook, 'Value_Sets');
+    const studyArmsSet = valueSets.filter(function(r) { return r[1] === 'Study Arms'; });
+    expect(studyArmsSet.length).toBe(2);
+    expect(armTagRow[valueSetColumn]).toBe(studyArmsSet[0][0]);
+    expect(armDetailRow[valueSetColumn]).toBe(studyArmsSet[0][0]);
+
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Lists and libraries using term sets/ })).toContainText('Read');
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('prints the parent terms and the columns that use each term set', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: taxonomyColumnAnswers() });
+    await extractSiteInformation(page);
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+
+    const doc = printFrameDocument(page);
+    const terms = doc.locator('table').filter({ hasText: 'Terms in Study Arms' });
+    await expect(terms.locator('thead th')).toHaveText(['Term name', 'Parent term', 'Description', 'Term ID']);
+    await expect(terms.locator('tbody tr').first()).toContainText('Top level');
+    const usage = doc.locator('table').filter({ hasText: 'Lists and libraries using Study Arms' });
+    await expect(usage.locator('tbody tr')).toHaveCount(3);
+    await expect(usage.locator('tbody tr').nth(0)).toContainText('Study Visits');
+    await expect(usage.locator('tbody tr').nth(0)).toContainText('Treatment');
+});
+
+test('says which columns it could not read instead of showing an empty table', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: taxonomyColumnAnswers({ listSchemaFails: true, siteColumnsFail: true })
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Lists and libraries using this term set (0)' })).toBeVisible();
+    await expect(termSet).toContainText('Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns.');
+    await expect(termSet).not.toContainText('No column on this site uses this term set.');
+    await gotoSection(page, 'Site review');
+    const usageRow = page.locator('.sna-coverage-table').getByRole('row', { name: /^Lists and libraries using term sets/ });
+    await expect(usageRow).toContainText('Partly read');
+    await expect(usageRow).toContainText('Sitenalyzer could not read the managed metadata columns of 1 list or library.');
+    await expect(usageRow).toContainText('Sitenalyzer could not read the site\'s own managed metadata columns.');
+});
+
+test('says it could not read where a term set is used when neither the lists nor the site columns can be read', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [
+            { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+                return /BaseTemplate eq 119/.test(url.searchParams.get('$filter') || '') ? undefined : reply(500, { error: 'Server error' });
+            } },
+            { pattern: /^\/_api\/web\/fields$/, body: reply(500, { error: 'Server error' }) }
+        ]
+    });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet).toContainText('Sitenalyzer could not read which columns use this term set.');
+    await expect(termSet.locator('.sna-term-usage-table')).toHaveCount(0);
+    await gotoSection(page, 'Site review');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Lists and libraries using term sets/ })).toContainText('Not read');
+});
+
+// ### Hidden Values ###
+
+// Made-up values that look like personal information, placed in every kind of free text the report shows.
+const HIDDEN = {
+    siteTitle: 'Study 123-45-6789',
+    siteDescription: 'Call (734) 555-0100 for help.',
+    listTitle: 'Visits MRN 1234567',
+    listDescription: 'Ask participant@example.org',
+    columnTitle: 'Contact 734-555-0111',
+    columnDescription: 'DOB 01/02/1980',
+    columnChoice: 'MRN 7654321',
+    columnDefault: '734-555-0199',
+    folderName: 'MRN 2345678',
+    pageTitle: 'Notes 123-45-6780',
+    sharedFile: 'Consent 123-45-6781.docx',
+    termGroup: 'Team participant2@example.org',
+    termName: 'Arm 734-555-0123',
+    termDescription: 'born on 03/04/1950'
+};
+// The parts of each value that must never show while values are hidden.
+const HIDDEN_PARTS = ['123-45-6789', '555-0100', '1234567', 'participant@example.org', '555-0111', '01/02/1980', '7654321',
+    '555-0199', '2345678', '123-45-6780', '123-45-6781', 'participant2@example.org', '555-0123', '03/04/1950'];
+const HIDDEN_LIST_ID = 'aaaaaaaa-0000-4000-8000-000000000003';
+const HIDDEN_VALUE_ANSWERS = [
+    { pattern: /^\/_api\/web$/, body: { Title: HIDDEN.siteTitle, Url: SITE_URL, Id: '11111111-0000-4000-8000-000000000000', Description: HIDDEN.siteDescription, SiteLogoUrl: '' } },
+    { pattern: LIST_FIELDS_PATTERN, body: { value: [
+        { Id: 'bbbbbbbb-0000-4000-8000-000000000021', InternalName: 'Contact', Title: HIDDEN.columnTitle, TypeAsString: 'Choice', Description: HIDDEN.columnDescription,
+          Choices: ['Control', HIDDEN.columnChoice], DefaultValue: HIDDEN.columnDefault }
+    ] } },
+    { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/RootFolder\/Folders$/, body: { value: [
+        { Name: HIDDEN.folderName, UniqueId: 'cccccccc-0000-4000-8000-000000000021', ItemCount: 2, ServerRelativeUrl: SITE_PATH + '/Shared Documents/Participant Folder' }
+    ] } },
+    { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), body: { value: [
+        { Id: 1, Title: HIDDEN.pageTitle, FileLeafRef: 'Notes.aspx', FileRef: SITE_PATH + '/SitePages/Notes.aspx', FSObjType: 0, Modified: '2026-09-01T00:00:00Z' }
+    ] } },
+    { pattern: /^\/_api\/web\/GetFileById\('[^']+'\)$/, body: { Name: HIDDEN.sharedFile, ServerRelativeUrl: SITE_PATH + '/Shared Documents/Consent.docx' } },
+    { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/groups$/, body: { value: [
+        { id: 'dddddddd-0000-4000-8000-000000000001', displayName: HIDDEN.termGroup, description: '', scope: 'siteCollection' }
+    ] } },
+    { pattern: TERMS_PATTERN, answer: function(url) {
+        const term = { id: 'ffffffff-0000-4000-8000-000000000031', labels: [{ name: HIDDEN.termName, isDefault: true }], descriptions: [{ description: HIDDEN.termDescription }] };
+        return { value: [/children/.test(url.searchParams.get('$expand') || '') ? Object.assign({ children: [] }, term) : term] };
+    } }
+];
+const HIDDEN_VALUE_LIST = {
+    Id: HIDDEN_LIST_ID, EntityTypeName: 'ParticipantVisitsList', Title: HIDDEN.listTitle, Description: HIDDEN.listDescription,
+    ItemCount: 4, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 100, HasUniqueRoleAssignments: true,
+    DefaultViewUrl: SITE_PATH + '/Lists/ParticipantVisits/AllItems.aspx', LastItemModifiedDate: '2026-09-01T00:00:00Z',
+    EnableVersioning: true, EnableMinorVersions: false, MajorVersionLimit: 0
+};
+
+// Returns the text a person can see or hear in the app: the text of the page, and the attributes screen readers read.
+function readableText(page) {
+    return page.evaluate(function() {
+        const app = document.getElementById('sp-info-app');
+        const attributes = Array.prototype.map.call(app.querySelectorAll('[aria-label], [title], [alt]'), function(el) {
+            return [el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('alt')].join(' ');
+        });
+        return app.innerText + '\n' + attributes.join('\n');
+    });
+}
+
+// Fails when text contains any part of a hidden value, and names the view and the value.
+function expectNoHiddenValues(text, where) {
+    HIDDEN_PARTS.forEach(function(part) { expect(text.indexOf(part) === -1 ? '' : part + ' shows in ' + where).toBe(''); });
+}
+
+test('hides values that look like personal information in every view, search, the print document, and both workbooks', async function({ page }, testInfo) {
+    test.setTimeout(90000);
+    await stubPrint(page);
+    const record = await openPretendSite(page, { answerOverrides: HIDDEN_VALUE_ANSWERS, extraLists: [HIDDEN_VALUE_LIST] });
+    await extractSiteInformation(page);
+    await expect(page.getByRole('switch', { name: 'Show hidden values' })).not.toBeChecked();
+    await expect(page.locator('#sna-site-header h1')).toHaveText('Study [Social Security number hidden]');
+    await expect(page.locator('#sna-hidden-values-tip')).toHaveText(/^Hid \d+ values that look like personal information, such as phone numbers\.$/);
+    expectNoHiddenValues(await readableText(page), 'Overview');
+
+    await gotoSection(page, 'Contents');
+    expectNoHiddenValues(await readableText(page), 'Contents');
+    await page.locator('#sna-contents-inventory').getByRole('link', { name: /^Visits \[record number or ID hidden\]/ }).click();
+    await expect(page.locator('#sna-detail-title')).toContainText('Visits [record number or ID hidden]');
+    expectNoHiddenValues(await readableText(page), 'a list');
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    const columns = await openListDetail(page, 'Study Visits', 'Columns');
+    await expect(columns.locator('.tabulator-row', { hasText: 'Contact' })).toContainText('[date of birth or visit date hidden]');
+    expectNoHiddenValues(await readableText(page), 'Columns');
+    await openListDetail(page, 'Documents', 'Folders');
+    expectNoHiddenValues(await readableText(page), 'Folders');
+    const pagesSection = await openSitePages(page);
+    await pagesSection.locator('#sna-tbl-pages').getByRole('link', { name: /^Notes/ }).click();
+    expectNoHiddenValues(await readableText(page), 'Site pages');
+
+    for (const part of ['Site permissions', 'People and groups', 'Own permissions', 'Sharing links', 'Apps with access']) {
+        await openPermissionPart(page, part);
+        expectNoHiddenValues(await readableText(page), part);
+    }
+    // Names, emails, and sign-in names of people and groups stay visible.
+    const people = await openPermissionPart(page, 'People and groups');
+    await people.locator('summary', { hasText: 'Members' }).first().click();
+    await expect(people).toContainText('test.owner@example.org');
+
+    await gotoSection(page, 'Taxonomy');
+    expectNoHiddenValues(await readableText(page), 'Taxonomy');
+    await page.locator('#sp-results .sna-subnav').getByRole('link', { name: /^Study Arms/ }).click();
+    await expect(page.locator('#sna-taxonomy-section .tabulator-row')).toContainText('Arm [phone number hidden]');
+    expectNoHiddenValues(await readableText(page), 'a term set');
+    await gotoSection(page, 'Site review');
+    expectNoHiddenValues(await readableText(page), 'Site review');
+
+    // Search finds a hidden value's item by its other words, but not by the hidden value.
+    await searchReport(page, 'Visits');
+    expectNoHiddenValues(await readableText(page), 'search results');
+    await expect(page.locator('#sp-results')).toContainText('Visits [record number or ID hidden]');
+    await searchReport(page, '1234567');
+    await expect(page.locator('#sp-results')).toContainText('No results for "1234567"');
+
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    const printText = await printFrameDocument(page).innerText();
+    expect(printText).toContain('Sitenalyzer hid');
+    expectNoHiddenValues(printText, 'the print document');
+    expect(await page.frameLocator('#sna-print-frame').locator('title').textContent()).toContain('[Social Security number hidden]');
+
+    for (const buttonName of ['Data dictionary (.xlsx)', 'Permissions workbook (.xlsx)']) {
+        const { fileName, workbook } = await downloadWorkbook(page, testInfo, buttonName);
+        expectNoHiddenValues(fileName, buttonName + ' file name');
+        workbook.SheetNames.forEach(function(sheetName) {
+            expectNoHiddenValues(sheetRows(workbook, sheetName).map(function(row) { return row.join('\t'); }).join('\n'), buttonName + ' ' + sheetName);
+        });
+        const about = sheetRows(workbook, buttonName.indexOf('Data') === 0 ? 'Export_Info' : 'About');
+        expect(about.filter(function(row) { return /hidden.values/i.test(row[0]); })[0][1]).toMatch(/^Hidden\./);
+    }
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('shows hidden values only while the switch is on, and starts with them hidden on every visit', async function({ page }, testInfo) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: HIDDEN_VALUE_ANSWERS, extraLists: [HIDDEN_VALUE_LIST] });
+    await extractSiteInformation(page);
+    await openListDetail(page, 'Study Visits', 'Columns');
+
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    await hiddenSwitch.check();
+    await expect(hiddenSwitch).toBeFocused();
+    await expect(page.locator('#sna-site-header h1')).toHaveText(HIDDEN.siteTitle);
+    await expect(page.locator('#sna-contents-detail .tabulator-row', { hasText: HIDDEN.columnTitle })).toContainText(HIDDEN.columnDescription);
+    await expect(page.locator('#sna-hidden-values-tip')).toHaveText(/^Showing \d+ values that look like personal information\. Turn this off before you share, print, or download\.$/);
+    await searchReport(page, '1234567');
+    await expect(page.locator('#sp-results')).toContainText(HIDDEN.listTitle);
+
+    // Print and the workbooks follow the switch.
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await expect(printFrameDocument(page)).toContainText(HIDDEN.siteDescription);
+    await expect(printFrameDocument(page)).toContainText('This printout includes');
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(sheetRows(workbook, 'Sources')[1]).toContain(HIDDEN.siteTitle);
+
+    await hiddenSwitch.uncheck();
+    await expect(hiddenSwitch).toBeFocused();
+    await expect(page.locator('#sna-site-header h1')).toHaveText('Study [Social Security number hidden]');
+    expect(await page.evaluate(function() { return JSON.stringify(Object.keys(window.localStorage)); })).not.toContain('hidden');
+
+    // The switch is never saved, so a new visit starts with values hidden.
+    await hiddenSwitch.check();
+    await page.reload();
+    await extractSiteInformation(page);
+    await expect(page.getByRole('switch', { name: 'Show hidden values' })).not.toBeChecked();
+    await expect(page.locator('#sna-site-header h1')).toHaveText('Study [Social Security number hidden]');
+});
+
+test('says 1 value in the tooltip of Show hidden values, which shows on hover and focus and closes with Escape', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: [HIDDEN_VALUE_ANSWERS[0]].map(function(answer) {
+        return { pattern: answer.pattern, body: Object.assign({}, answer.body, { Title: 'Test Research Site' }) };
+    }) });
+    await extractSiteInformation(page);
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    const tip = page.getByRole('tooltip');
+    await expect(hiddenSwitch).toHaveAccessibleDescription('Hid 1 value that looks like personal information, such as a phone number.');
+    await expect(tip).toBeHidden();
+
+    await page.locator('label[for="sna-hidden-values-switch"]').hover();
+    await expect(tip).toBeVisible();
+    await expect(tip).toHaveText('Hid 1 value that looks like personal information, such as a phone number.');
+    await page.mouse.move(0, 0);
+    await expect(tip).toBeHidden();
+
+    await hiddenSwitch.focus();
+    await expect(tip).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(tip).toBeHidden();
+    await page.keyboard.press('Space');
+    await expect(hiddenSwitch).toBeFocused();
+    await expect(page.locator('#sna-hidden-values-tip')).toHaveText('Showing 1 value that looks like personal information. Turn this off before you share, print, or download.');
+});
+
+test('shows Show hidden values only when the report has values to hide', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    await expect(page.getByRole('switch', { name: 'Show technical details' })).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Show hidden values' })).toBeHidden();
+    await expect(page.getByText('Downloads and the printed report')).toHaveCount(0);
+});
+
+test('opens the description editor with the real text and saves the real text while values are hidden', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: HIDDEN_VALUE_ANSWERS });
+    await extractSiteInformation(page);
+    const header = page.locator('#sna-site-header');
+    await expect(header.locator('.sna-site-desc .sna-editable-text')).toHaveText('Call [phone number hidden] for help.');
+
+    await header.getByRole('button', { name: /^Edit description of/ }).click();
+    const editor = header.getByRole('textbox', { name: /^Description for/ });
+    await expect(editor).toHaveValue(HIDDEN.siteDescription);
+    await editor.fill(HIDDEN.siteDescription + ' Updated.');
+    await editor.press('Enter');
+    await expect(header.locator('.sna-site-desc .sna-editable-text')).toHaveText('Call [phone number hidden] for help. Updated.');
+    const patch = record.writeRequests.filter(function(r) { return r.method === 'PATCH'; }).pop();
+    expect(JSON.parse(patch.body)).toEqual({ Description: HIDDEN.siteDescription + ' Updated.' });
+});
+
+test('hides each kind of value it looks for, and keeps text that only looks close', async function({ page }) {
+    // Each pair is a value that must be hidden, with its label, and a value close to it that must stay visible.
+    const cases = [
+        ['participant@example.org', 'email address', 'participant at example dot org'],
+        ['DOB: 01/02/1980', 'date of birth or visit date', 'Visit 01/02/1980'],
+        ['MRN: 12345678', 'record number or ID', 'MRN Source'],
+        ['4111 1111 1111 1111', 'card number', '4111 1111 1111 1112'],
+        ['123-45-6789', 'Social Security number', '000-12-3456'],
+        ['48109-1234', 'ZIP+4 code', '48109'],
+        ['(734) 555-0100', 'phone number', '555-0100'],
+        ['192.168.10.20', 'IP address', 'version 1.2.3'],
+        ['1500 Main Street', 'street address', 'Main Street'],
+        ['aged 93', 'age over 89', 'aged 45']
+    ];
+    const extras = ['Patient ID Number', 'Last Modified: 2026-10-09', 'PMID 12345678', 'Item 44444444-0000-4000-8000-000000000001'];
+    const columnsAnswer = { value: [] };
+    cases.forEach(function(c, i) {
+        columnsAnswer.value.push({ Id: 'bbbbbbbb-0000-4000-8000-0000000001' + String(i).padStart(2, '0') + '', InternalName: 'Hit' + i, Title: 'Hit ' + i, TypeAsString: 'Text', Description: c[0] });
+        columnsAnswer.value.push({ Id: 'bbbbbbbb-0000-4000-8000-0000000002' + String(i).padStart(2, '0') + '', InternalName: 'Miss' + i, Title: 'Miss ' + i, TypeAsString: 'Text', Description: c[2] });
+    });
+    extras.forEach(function(text, i) {
+        columnsAnswer.value.push({ Id: 'bbbbbbbb-0000-4000-8000-0000000003' + String(i).padStart(2, '0') + '', InternalName: 'Extra' + i, Title: text, TypeAsString: 'Text', Description: text });
+    });
+    await openPretendSite(page, { answerOverrides: [{ pattern: LIST_FIELDS_PATTERN, body: columnsAnswer }] });
+    await extractSiteInformation(page);
+    const columns = await openListDetail(page, 'Study Visits', 'Columns');
+    const description = function(title) {
+        return columns.locator('.tabulator-row').filter({ has: page.locator('[tabulator-field="title"]', { hasText: new RegExp('^\\S*' + escapeRegExp(title) + '$') }) })
+            .locator('[tabulator-field="description"] .sna-editable-text');
+    };
+    for (let i = 0; i < cases.length; i++) {
+        await expect(description('Hit ' + i)).toHaveText('[' + cases[i][1] + ' hidden]');
+        await expect(description('Miss ' + i)).toHaveText(cases[i][2]);
+    }
+    for (const text of extras) { await expect(description(text)).toHaveText(text); }
+});
+
+test('hides values in custom permission level names and descriptions in the permissions workbook', async function({ page }, testInfo) {
+    const level = { Id: 1073741931, Name: 'Caller 734-555-0142', Description: 'Calls (734) 555-0143 each week.', Hidden: false, RoleTypeKind: 0, Order: 210,
+        BasePermissions: { High: '0', Low: '69639' } };
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/web\/roledefinitions$/, body: { value: [level] } },
+        { pattern: /^\/_api\/web\/roleassignments$/, body: { value: [
+            { Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 }, RoleDefinitionBindings: [{ Id: level.Id, Name: level.Name, Hidden: false, RoleTypeKind: 0 }] }
+        ] } }
+    ] });
+    await extractSiteInformation(page);
+
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Permissions workbook (.xlsx)');
+    const permissions = sheetRows(workbook, 'Permissions').map(function(row) { return row.join('\t'); }).join('\n');
+    const levels = sheetRows(workbook, 'Permission_Levels').map(function(row) { return row.join('\t'); }).join('\n');
+    expect(permissions).toContain('Caller [phone number hidden]');
+    expect(levels).toContain('Caller [phone number hidden]');
+    expect(levels).toContain('Calls [phone number hidden] each week.');
+    expect(permissions + levels).not.toContain('555-014');
+});
+
+test('gives no value set to a column whose term set has no terms', async function({ page }, testInfo) {
+    await openPretendSite(page, { answerOverrides: [{ pattern: TERMS_PATTERN, body: { value: [] } }].concat(taxonomyColumnAnswers()) });
+    await extractSiteInformation(page);
+
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    const fieldRows = sheetRows(workbook, 'Fields');
+    const header = fieldRows[0];
+    const armTagRow = fieldRows.filter(function(r) { return r[header.indexOf('internal_name')] === 'ArmTag'; })[0];
+    expect(armTagRow[header.indexOf('value_set_id')]).toBe('');
+    expect(sheetRows(workbook, 'Value_Sets').filter(function(r) { return r[1] === 'Study Arms'; })).toEqual([]);
+});
+
+test('leaves out the parent column of a term set whose terms were never looked up because the lookup limit ran out', async function({ page }) {
+    test.setTimeout(120000);
+    // The first term set uses all 1,000 child lookups, so none are left for the second.
+    const bigSetId = 'eeeeeeee-0000-4000-8000-000000000002';
+    const bigTerms = [];
+    for (let i = 0; i < 1000; i++) { bigTerms.push(graphTerm('ffffffff-0000-4000-8000-00000001' + String(i).padStart(4, '0'), 'Term ' + i)); }
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/groups\/[^/]+\/sets$/, body: { value: [
+            { id: bigSetId, localizedNames: [{ name: 'Big Set' }], description: '' },
+            { id: TERM_SET_ID, localizedNames: [{ name: 'Study Arms' }], description: '' }
+        ] } },
+        { pattern: TERMS_PATTERN, answer: function(url) {
+            if (url.searchParams.get('$expand')) { return reply(400, { error: 'Expand is not supported' }); }
+            return url.pathname.indexOf(bigSetId) > -1 ? { value: bigTerms } : undefined;
+        } }
+    ] });
+    // Reading 1,000 terms' children takes longer than the usual wait when other tests run at the same time.
+    await page.getByRole('button', { name: 'Extract site information' }).click();
+    await expect(page.locator('#sna-report')).toBeVisible({ timeout: 90000 });
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.locator('.tabulator-row')).toHaveCount(2);
+    await expect(termSet).toContainText('Sitenalyzer could not read which term each term sits under, so the table has no Parent term column.');
+    await expect(termSet.getByRole('columnheader', { name: 'Parent term' })).toHaveCount(0);
+    await expect(termSet.locator('[tabulator-field="parentNames"]:visible')).toHaveCount(0);
+});
+
+test('looks up a shared item again when SharePoint throttles it inside a batch', async function({ page }) {
+    let fileAnswers = 0;
+    const record = await openPretendSite(page, { answerOverrides: OWNERS_ONLY_ANSWERS.concat(THREE_SHARED_ITEMS, [
+        { pattern: /^\/_api\/web\/GetFileById\('([^']+)'\)$/, answer: function(url, match) {
+            if (match[1] !== SHARED_FILE_ID) { return undefined; }
+            fileAnswers++;
+            return fileAnswers === 1 ? reply(429, { error: 'Too many requests' }) : undefined;
+        } }
+    ]) });
+    await extractSiteInformation(page);
+
+    const sharing = await openPermissionPart(page, 'Sharing links (3)');
+    await expect(sharing.getByRole('link', { name: 'Visit Schedule.docx' })).toBeVisible();
+    // The throttled file is sent again on its own, then the two items that aren't files are looked up as folders.
+    const batches = batchRequests(record);
+    expect(batches.length).toBe(3);
+    expect(batchRequestLines(batches[1].body)).toEqual([
+        'GET ' + SITE_URL + "/_api/web/GetFileById('" + SHARED_FILE_ID + "')?$select=Name,ServerRelativeUrl HTTP/1.1"
+    ]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('shows Show hidden values when the only hidden values are in a custom permission level', async function({ page }) {
+    const level = { Id: 1073741931, Name: 'Caller 734-555-0142', Description: 'Calls (734) 555-0143 each week.', Hidden: false, RoleTypeKind: 0, Order: 210,
+        BasePermissions: { High: '0', Low: '69639' } };
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/web\/roledefinitions$/, body: { value: [level] } },
+        { pattern: /^\/_api\/web\/roleassignments$/, body: { value: [
+            { Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 }, RoleDefinitionBindings: [{ Id: level.Id, Name: level.Name, Hidden: false, RoleTypeKind: 0 }] }
+        ] } }
+    ] });
+    await extractSiteInformation(page);
+
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    await expect(hiddenSwitch).toBeVisible();
+    await expect(hiddenSwitch).toHaveAccessibleDescription('Hid 2 values that look like personal information, such as phone numbers.');
+    const site = await openPermissionPart(page, 'Site permissions');
+    await expect(site).toContainText('Caller [phone number hidden]');
+    await hiddenSwitch.check();
+    await expect(page.locator('#sp-results')).toContainText('Caller 734-555-0142');
+});
+
+test('shows Show hidden values once a value is hidden anywhere on screen, such as in Choose a site', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: [{ pattern: /^\/_api\/search\/query$/, body: { PrimaryQueryResult: { RelevantResults: { Table: { Rows: [
+        { Cells: [{ Key: 'Title', Value: 'Test Research Site' }, { Key: 'Path', Value: SITE_URL }] },
+        { Cells: [{ Key: 'Title', Value: 'Archive 734-555-0177' }, { Key: 'Path', Value: 'https://contoso.sharepoint.com/sites/testarchive' }] }
+    ] } } } } }] });
+    await extractSiteInformation(page);
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    await expect(hiddenSwitch).toBeHidden();
+
+    await page.getByRole('button', { name: 'Change site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    await expect(dialog).toContainText('Archive [phone number hidden]');
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    await expect(hiddenSwitch).toBeVisible();
+    await expect(hiddenSwitch).toHaveAccessibleDescription('Hid 1 value that looks like personal information, such as a phone number.');
+});
+
+test('shows a person\'s email in People and groups but hides the same email in a list description', async function({ page }) {
+    const coordinatorList = Object.assign({}, HIDDEN_VALUE_LIST, { Title: 'Coordinator Notes', Description: 'Ask test.coordinator@example.org' });
+    await openPretendSite(page, { extraLists: [coordinatorList] });
+    await extractSiteInformation(page);
+
+    const detail = await openListDetail(page, 'Coordinator Notes');
+    await expect(detail.locator('.sna-editable-text').first()).toHaveText('Ask [email address hidden]');
+    const people = await openPermissionPart(page, 'People and groups');
+    const team = people.locator('.sna-principal-block', { hasText: 'Test Study Team' });
+    await team.locator('summary', { hasText: 'Members' }).click();
+    await expect(team).toContainText('test.coordinator@example.org');
+});
+
+test('does not find a site page by a hidden value in its file name', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), body: { value: [
+            { Id: 1, Title: 'Call notes', FileLeafRef: 'Call-734-555-0100.aspx', FileRef: SITE_PATH + '/SitePages/Call-734-555-0100.aspx', FSObjType: 0, Modified: '2026-09-01T00:00:00Z' }
+        ] } }
+    ] });
+    await extractSiteInformation(page);
+
+    await searchReport(page, '555-0100');
+    await expect(page.locator('#sp-results')).toContainText('No results for "555-0100"');
+    await searchReport(page, 'Call notes');
+    await expect(page.locator('#sp-results .sna-search-list')).toContainText('Call-[phone number hidden].aspx');
+    await page.getByRole('switch', { name: 'Show hidden values' }).check();
+    await searchReport(page, '555-0100');
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Call notes' })).toBeVisible();
+});
+
+test('clears a hidden value typed into a filter or search box when Show hidden values is turned off', async function({ page }) {
+    // Study Visits gets 12 columns, so its Columns tab has a filter box; one column's description has a phone number.
+    const manyColumns = { value: [] };
+    for (let i = 1; i <= 12; i++) {
+        manyColumns.value.push({ Id: 'bbbbbbbb-0000-4000-8000-0000000004' + String(i).padStart(2, '0'), InternalName: 'Col' + i, Title: 'Column ' + i,
+            TypeAsString: 'Text', Description: i === 7 ? 'Call 734-555-0188' : '' });
+    }
+    await openPretendSite(page, { answerOverrides: [{ pattern: LIST_FIELDS_PATTERN, body: manyColumns }], extraLists: [HIDDEN_VALUE_LIST] });
+    await extractSiteInformation(page);
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    await hiddenSwitch.check();
+
+    // A table filter box.
+    const columns = await openListDetail(page, 'Study Visits', 'Columns');
+    await columns.getByRole('searchbox', { name: /^Filter/ }).fill('555-0188');
+    await expect(columns.locator('.tabulator-row')).toHaveCount(1);
+    await hiddenSwitch.uncheck();
+    await expect(columns.getByRole('searchbox', { name: /^Filter/ })).toHaveValue('');
+    await expect(columns.locator('.tabulator-row', { hasText: 'Column 7' })).toContainText('Call [phone number hidden]');
+    expect(await readableText(page)).not.toContain('555-0188');
+
+    // The Contents name filter.
+    await hiddenSwitch.check();
+    await page.locator('#sna-inventory-filter').fill('1234567');
+    await hiddenSwitch.uncheck();
+    await expect(page.locator('#sna-inventory-filter')).toHaveValue('');
+    await expect(page.locator('#sna-contents-inventory')).toContainText('Visits [record number or ID hidden]');
+
+    // Search this report and the page address.
+    await hiddenSwitch.check();
+    await searchReport(page, '1234567');
+    await expect(page.locator('#sp-results')).toContainText(HIDDEN.listTitle);
+    await hiddenSwitch.uncheck();
+    await expect(page.getByRole('searchbox', { name: 'Search this report' })).toHaveValue('');
+    await expect(hiddenSwitch).toBeFocused();
+    expect(decodeURIComponent(await page.evaluate(function() { return window.location.hash; }))).not.toContain('1234567');
+    expect(await readableText(page)).not.toContain('1234567');
+
+    // A filter with no hidden value is kept.
+    await openListDetail(page, 'Study Visits', 'Columns');
+    await page.locator('#sna-contents-detail').getByRole('searchbox', { name: /^Filter/ }).fill('Column 1');
+    await hiddenSwitch.check();
+    await expect(page.locator('#sna-contents-detail').getByRole('searchbox', { name: /^Filter/ })).toHaveValue('Column 1');
+});
+
 test('finds internal names but shows them only with technical details on', async function({ page }) {
     await openPretendSite(page);
     await extractSiteInformation(page);
@@ -2004,3 +2868,16 @@ test('has no automatically detectable accessibility problems on the start screen
         await expectNoAxeViolations(page);
     });
 });
+
+for (const shown of [false, true]) {
+    test('has no automatically detectable accessibility problems with hidden values ' + (shown ? 'shown' : 'hidden'), async function({ page }) {
+        await openPretendSite(page, { answerOverrides: HIDDEN_VALUE_ANSWERS, extraLists: [HIDDEN_VALUE_LIST] });
+        await extractSiteInformation(page);
+        if (shown) { await page.getByRole('switch', { name: 'Show hidden values' }).check(); }
+        await page.locator('label[for="sna-hidden-values-switch"]').hover();
+        await expect(page.getByRole('tooltip')).toBeVisible();
+        await expectNoAxeViolations(page);
+        await openListDetail(page, 'Study Visits', 'Columns');
+        await expectNoAxeViolations(page);
+    });
+}
