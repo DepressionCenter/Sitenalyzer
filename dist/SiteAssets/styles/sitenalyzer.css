@@ -951,7 +951,7 @@ details.permissions-section {
 #sp-info-app #sna-site-address { flex: 1 1 14rem; min-width: 0; padding: 8px 10px; font: inherit; border: 1px solid #767676; border-radius: 4px; }
 .sna-site-address-form .sna-url-row { flex-wrap: wrap; }
 
-/* Column headings sort the table, so keyboard focus on them must be visible. */
+/* Column headings sort the table and the paging controls change the page, so keyboard focus on them must be visible. */
 #sp-info-app .tabulator .tabulator-col:focus-visible { outline: 3px solid var(--sna-focus); outline-offset: -3px; }
 #sp-info-app .sna-table-pages .tabulator-page:focus-visible,
 #sp-info-app .sna-table-pages .tabulator-page-size:focus-visible { outline: 3px solid var(--sna-focus); outline-offset: 2px; }

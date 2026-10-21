@@ -175,7 +175,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = 'caebc1ed626b';
+var SNA_ASSET_VERSION = '622b3a7a17b9';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
@@ -621,6 +621,28 @@ function snaTableColumnSettings(type, tbl) {
         title: 'Allows several values', field: 'allowsSeveral', sorter: 'boolean', width: 140,
         formatter: function(cell) { return cell.getValue() ? 'Yes' : 'No'; }
       }
+    ];
+  }
+  if (type === 'largest') {
+    return [
+      {
+        title: 'Name', field: 'title', sorter: 'string', widthGrow: 3, minWidth: 140,
+        formatter: function(cell) {
+          return '<a href="' + snaEscapeHtml(cell.getRow().getData().route) + '" data-nav-focus="detail">' + snaEscapeHtml(cell.getValue()) + '</a>';
+        }
+      },
+      { title: 'Type', field: 'typeText', sorter: 'string', width: 110 },
+      {
+        title: 'Items', field: 'items', sorter: 'number', width: 110, hozAlign: 'right',
+        formatter: function(cell) { return snaEscapeHtml(Number(cell.getValue()).toLocaleString('en-US')); }
+      }
+    ];
+  }
+  if (type === 'coverage') {
+    return [
+      { title: 'Part of the report', field: 'area', sorter: 'string', widthGrow: 2, minWidth: 150 },
+      { title: 'Status', field: 'status', sorter: 'string', width: 130 },
+      { title: 'Notes', field: 'note', sorter: 'string', widthGrow: 4, minWidth: 180, formatter: 'textarea' }
     ];
   }
   return [];
@@ -2392,12 +2414,20 @@ function snaRenderReviewFindings(report, level, tableId) {
 }
 
 // Returns the five lists and libraries with the most items, under a heading of the given level. System lists are left
-// out, because the User Information List can hold most of an organization.
-function snaRenderLargestLists(report, level) {
+// out, because the User Information List can hold most of an organization. The table is sortable on screen, and a
+// plain table when forPrint is true.
+function snaRenderLargestLists(report, level, forPrint) {
     var largest = snaUserLists(report).filter(function(l) { return (Number(l.itemCount) || 0) > 0; })
         .sort(function(a, b) { return (Number(b.itemCount) || 0) - (Number(a.itemCount) || 0); }).slice(0, 5);
     var html = '<h' + level + ' class="sna-subsection-title">Largest lists and libraries</h' + level + '>';
     if (largest.length === 0) { return html + '<p class="sna-muted">Every list and library is empty.</p>'; }
+    if (!forPrint) {
+        return html + snaQueueTableHtml({ id: 'sna-tbl-largest', type: 'largest', searchLabel: 'lists and libraries',
+            label: 'Largest lists and libraries', data: largest.map(function(l) {
+                return { title: l.title, route: snaRouteHash({ section: 'contents', id: l.routeId }), typeText: l.isLib ? 'Library' : 'List',
+                    items: Number(l.itemCount) || 0 };
+            }) });
+    }
     html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Largest lists and libraries</caption>' +
         '<thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Items</th></tr></thead><tbody>';
     largest.forEach(function(l) {
@@ -6137,9 +6167,15 @@ function snaRenderReview(route, report) {
     return html + '<h3 class="sna-subsection-title">Report coverage</h3>' + snaRenderCoverageTable(report.coverage);
 }
 
-// Returns the coverage table: one row per part of the report, saying whether Sitenalyzer could read it.
-function snaRenderCoverageTable(coverage) {
+// Returns the coverage table: one row per part of the report, saying whether Sitenalyzer could read it. The table is
+// sortable on screen, and a plain table when forPrint is true.
+function snaRenderCoverageTable(coverage, forPrint) {
     var labels = { read: 'Read', partial: 'Partly read', failed: 'Not read' };
+    if (!forPrint) {
+        return snaQueueTableHtml({ id: 'sna-tbl-coverage', type: 'coverage', searchLabel: 'parts of the report', label: 'Report coverage',
+            data: coverage.map(function(row) { return { area: row.area, status: labels[row.status] || row.status, note: row.note }; }) },
+            'sna-coverage-table');
+    }
     var html = '<table class="sna-perm-list-table sna-coverage-table"><caption class="sna-visually-hidden">Report coverage</caption>' +
         '<thead><tr><th scope="col">Part of the report</th><th scope="col">Status</th><th scope="col">Notes</th></tr></thead><tbody>';
     coverage.forEach(function(row) {
@@ -6379,11 +6415,11 @@ function snaBuildPrintDocument(report) {
             snaPrintTableHtml('Lists and libraries to review', ['Finding', 'List or library', 'Detail', 'Next step'],
                 findings.map(function(f) { return [f.finding, f.title, f.detail, f.nextStep]; }),
                 'Sitenalyzer found nothing to review in the lists and libraries.') +
-            snaRenderLargestLists(report, 3);
+            snaRenderLargestLists(report, 3, true);
     } else {
         html += '<p>Sitenalyzer could not read the lists and libraries, so it could not look for cleanup findings.</p>';
     }
-    html += '<h3>Report coverage</h3>' + snaRenderCoverageTable(report.coverage) + '</section>';
+    html += '<h3>Report coverage</h3>' + snaRenderCoverageTable(report.coverage, true) + '</section>';
 
     return html + '<p class="sna-print-footer">Copyright &copy; 2026 The Regents of the University of Michigan | ' +
         'Eisenberg Family Depression Center (https://depressioncenter.org)</p>';

@@ -1443,11 +1443,25 @@ test('shows cleanup findings, the largest lists, and what the report could read 
     await expect(rows.nth(2)).toContainText('Description is missing');
     await expect(rows.nth(2)).toContainText('Documents');
     await expect(rows.nth(2)).toContainText('Add a description.');
-    const largest = results.getByRole('table', { name: 'Largest lists and libraries' });
-    await expect(largest.getByRole('row')).toHaveText([/Name/, /Study Visits.*12/, /Documents.*3/]);
+    const largest = results.getByRole('grid', { name: 'Largest lists and libraries' });
+    await expect(largest.locator('.tabulator-row')).toHaveText([/Study Visits.*12/, /Documents.*3/]);
     const coverage = results.locator('.sna-coverage-table');
     await expect(coverage.getByRole('row', { name: /Term store/ })).toContainText('Read');
     await expect(coverage.getByRole('row', { name: /Sharing links/ })).toContainText('Read');
+
+    // Both tables sort from their column headings.
+    await largest.getByRole('columnheader', { name: 'Items' }).click();
+    await expect(largest.locator('.tabulator-row')).toHaveText([/Documents.*3/, /Study Visits.*12/]);
+    const status = results.getByRole('grid', { name: 'Report coverage' }).getByRole('columnheader', { name: 'Status' });
+    await status.focus();
+    await page.keyboard.press('Enter');
+    await expect(status).toHaveAttribute('aria-sort', 'ascending');
+    // Tabulator can mark the heading as sorted before it redraws the rows, so the test waits for the order.
+    await expect.poll(async function() {
+        const statuses = await coverage.locator('.tabulator-row [tabulator-field="status"]').allInnerTexts();
+        return statuses.join('|') === statuses.slice().sort(function(a, b) { return a.localeCompare(b); }).join('|');
+    }).toBe(true);
+    await expectNoAxeViolations(page);
 
     // A finding opens its list or library in Contents.
     await rows.nth(2).getByRole('link', { name: 'Documents' }).click();
