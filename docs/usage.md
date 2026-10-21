@@ -222,9 +222,9 @@ At the bottom, **Report coverage** lists each part of the report, such as **Shar
 When you select a term set in **Taxonomy**, Sitenalyzer shows two tables.
 
 - **Terms** lists every term in the set. **Parent term** names the term each one sits under, or says **Top level**. A term that sits under two terms, such as a term pinned in two places, shows both names, such as "Arm A; Arm B". Each term comes right after the term it sits under.
-- **Lists and libraries using this term set** lists each managed metadata column that takes its values from the set. A managed metadata column is a SharePoint column whose values come from a term set. The table shows the list or library, the column, and whether the column allows several values. When a column offers only the terms under one term, **Starts at term** names that term. Select a list or library to open its **Columns** tab with the table filtered to that column. A site column that uses the set but isn't added to any list or library says **Site column (not in a list or library)**.
+- **Columns that use this term set** lists each managed metadata column that takes its values from the set. A managed metadata column is a SharePoint column whose values come from a term set. The table shows the list or library, the column, and whether the column allows several values. When a column offers only the terms under one term, **Starts at term** names that term. Select a list or library to open its **Columns** tab with the table filtered to that column. A site column that uses the set but isn't added to any list or library says **Site column (not in a list or library)**.
 
-If Sitenalyzer could not read this information, the term set says so instead of showing an empty table, and **Report coverage** in **Site review** has a **Parent terms** or **Lists and libraries using term sets** row that says **Partly read** or **Not read**.
+If Sitenalyzer could not read this information, the term set says so instead of showing an empty table, and **Report coverage** in **Site review** has a **Parent terms** or **Managed metadata columns** row that says **Partly read** or **Not read**.
 
 ### Site pages
 

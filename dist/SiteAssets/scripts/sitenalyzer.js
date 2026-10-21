@@ -67,7 +67,7 @@ var SNA_APP_HTML = [
     "\t<div id=\"sp-info-app\" data-technical=\"false\">",
     "\t\t<div id=\"sna-entry\" class=\"sna-entry\">",
     "\t\t\t<h1 class=\"sna-entry-title\"><svg class=\"sna-symbol sna-entry-symbol\" viewBox=\"0 0 32 32\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"sna-symbol-site\" x=\"3.5\" y=\"3.5\" width=\"11\" height=\"9\" rx=\"2\"/><path class=\"sna-symbol-branch\" d=\"M9 12.5V25.5H15M9 17.5H15\"/><rect class=\"sna-symbol-list\" x=\"15.5\" y=\"14.1\" width=\"13\" height=\"6.8\" rx=\"2\"/><rect class=\"sna-symbol-list\" x=\"15.5\" y=\"22.1\" width=\"13\" height=\"6.8\" rx=\"2\"/></svg><span class=\"sna-wordmark\">Sitenalyzer</span></h1>",
-    "\t\t\t<p class=\"sna-tagline\">See what a SharePoint site holds and who can open it, and save a data dictionary.</p>",
+    "\t\t\t<p class=\"sna-tagline\">Data dictionary and security report for SharePoint sites: lists, libraries, columns, term sets, permissions, and sharing links.</p>",
     "\t\t\t<div id=\"sna-url-section\">",
     "\t\t\t\t<label for=\"site-url-input\" class=\"sna-field-label\">Site address</label>",
     "\t\t\t\t<div class=\"sna-url-row\">",
@@ -3290,7 +3290,7 @@ function snaBuildCoverage(report) {
             if (usage.siteColumnsFailed) { usageNotes.push('Sitenalyzer could not read the site\'s own managed metadata columns.'); }
             usageNotes.push('Taxonomy may not show every column that uses a term set. Refresh the report to try again.');
         }
-        add('Lists and libraries using term sets', usage.status, usageNotes.join(' '));
+        add('Managed metadata columns', usage.status, usageNotes.join(' '));
     }
     return rows;
 }
@@ -5553,13 +5553,13 @@ function snaTermNameInSet(set, termId) {
     return found ? found.termName : '';
 }
 
-// Returns the "Lists and libraries using this term set" part of a term set: each list or library and column that uses it, with a
+// Returns the "Columns that use this term set" part of a term set: each list or library and column that uses it, with a
 // link to that list's Columns tab, and each site column that uses it but isn't in any list or library.
 function snaRenderTermSetUsage(set, report) {
     var technical = snaTechnicalDetailsOn();
     var usage = report.taxonomy.usage || { bySet: {}, status: 'failed' };
     var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
-    var html = '<h4 class="sna-subsection-title">Lists and libraries using this term set (' + rows.length + ')</h4>';
+    var html = '<h4 class="sna-subsection-title">Columns that use this term set (' + rows.length + ')</h4>';
     if (usage.status === 'failed') {
         return html + '<p class="sna-note">Sitenalyzer could not read which columns use this term set. Refresh the report to try again.</p>';
     }
@@ -5571,7 +5571,7 @@ function snaRenderTermSetUsage(set, report) {
     }
 
     var hasAnchor = rows.some(function(r) { return r.anchorTermId; });
-    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Lists and libraries using ' + snaEscapeHtml(set.setName) + '</caption>' +
+    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Columns that use ' + snaEscapeHtml(set.setName) + '</caption>' +
         '<thead><tr><th scope="col">List or library</th><th scope="col">Column</th>' +
         (technical ? '<th scope="col">Internal name</th>' : '') +
         (hasAnchor ? '<th scope="col">Starts at term</th>' : '') +
@@ -5679,7 +5679,7 @@ function snaPrintTermSetUsageHtml(set, taxonomy) {
     if (usage.status === 'failed') { return '<p>Sitenalyzer could not read which columns use this term set.</p>'; }
     var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
     return (usage.status === 'partial' ? '<p>Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns.</p>' : '') +
-        snaPrintTableHtml('Lists and libraries using ' + set.setName, ['List or library', 'Column', 'Internal name', 'Starts at term', 'Allows several values'],
+        snaPrintTableHtml('Columns that use ' + set.setName, ['List or library', 'Column', 'Internal name', 'Starts at term', 'Allows several values'],
             rows.map(function(r) {
                 var anchor = r.anchorTermId ? (snaTermNameInSet(set, r.anchorTermId) || r.anchorTermId) : 'Whole term set';
                 return [r.isSiteColumn ? 'Site column (not in a list or library)' : r.listTitle, r.columnTitle, r.internalName, anchor, r.allowsSeveral ? 'Yes' : 'No'];

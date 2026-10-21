@@ -3182,7 +3182,7 @@ function snaBuildCoverage(report) {
             if (usage.siteColumnsFailed) { usageNotes.push('Sitenalyzer could not read the site\'s own managed metadata columns.'); }
             usageNotes.push('Taxonomy may not show every column that uses a term set. Refresh the report to try again.');
         }
-        add('Lists and libraries using term sets', usage.status, usageNotes.join(' '));
+        add('Managed metadata columns', usage.status, usageNotes.join(' '));
     }
     return rows;
 }
@@ -5445,13 +5445,13 @@ function snaTermNameInSet(set, termId) {
     return found ? found.termName : '';
 }
 
-// Returns the "Lists and libraries using this term set" part of a term set: each list or library and column that uses it, with a
+// Returns the "Columns that use this term set" part of a term set: each list or library and column that uses it, with a
 // link to that list's Columns tab, and each site column that uses it but isn't in any list or library.
 function snaRenderTermSetUsage(set, report) {
     var technical = snaTechnicalDetailsOn();
     var usage = report.taxonomy.usage || { bySet: {}, status: 'failed' };
     var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
-    var html = '<h4 class="sna-subsection-title">Lists and libraries using this term set (' + rows.length + ')</h4>';
+    var html = '<h4 class="sna-subsection-title">Columns that use this term set (' + rows.length + ')</h4>';
     if (usage.status === 'failed') {
         return html + '<p class="sna-note">Sitenalyzer could not read which columns use this term set. Refresh the report to try again.</p>';
     }
@@ -5463,7 +5463,7 @@ function snaRenderTermSetUsage(set, report) {
     }
 
     var hasAnchor = rows.some(function(r) { return r.anchorTermId; });
-    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Lists and libraries using ' + snaEscapeHtml(set.setName) + '</caption>' +
+    html += '<table class="sna-perm-list-table sna-term-usage-table"><caption class="sna-visually-hidden">Columns that use ' + snaEscapeHtml(set.setName) + '</caption>' +
         '<thead><tr><th scope="col">List or library</th><th scope="col">Column</th>' +
         (technical ? '<th scope="col">Internal name</th>' : '') +
         (hasAnchor ? '<th scope="col">Starts at term</th>' : '') +
@@ -5571,7 +5571,7 @@ function snaPrintTermSetUsageHtml(set, taxonomy) {
     if (usage.status === 'failed') { return '<p>Sitenalyzer could not read which columns use this term set.</p>'; }
     var rows = usage.bySet[String(set.setId).toLowerCase()] || [];
     return (usage.status === 'partial' ? '<p>Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns.</p>' : '') +
-        snaPrintTableHtml('Lists and libraries using ' + set.setName, ['List or library', 'Column', 'Internal name', 'Starts at term', 'Allows several values'],
+        snaPrintTableHtml('Columns that use ' + set.setName, ['List or library', 'Column', 'Internal name', 'Starts at term', 'Allows several values'],
             rows.map(function(r) {
                 var anchor = r.anchorTermId ? (snaTermNameInSet(set, r.anchorTermId) || r.anchorTermId) : 'Whole term set';
                 return [r.isSiteColumn ? 'Site column (not in a list or library)' : r.listTitle, r.columnTitle, r.internalName, anchor, r.allowsSeveral ? 'Yes' : 'No'];

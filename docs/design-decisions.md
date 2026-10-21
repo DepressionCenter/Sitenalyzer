@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/design-decisions.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-20
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: The design decisions behind the Sitenalyzer report screen, as built, and the reason for each.
 Notes: See README file for documentation and full license information.
 
@@ -48,7 +48,7 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 - **A list beside the details.** Contents shows the lists and libraries on the left and the details of the selected one on the right. On a narrow screen the details replace the list, and **Back to results** returns to it. Before anything is selected, the **Contents summary** shows the totals.
 - **The same layout in Permissions and Taxonomy.** Their parts or term sets are on the left, and the one you selected is on the right.
 - **No About this site card.** With technical details on, the site ID and a **Copy** button appear under the site's address in the header.
-- **Parent terms and term set use.** A term set shows each term's parent term in a column, and the terms are listed in tree order, with each term right after the term it sits under. The terms aren't indented, so the table still sorts and filters like the others. Below the terms, **Lists and libraries using this term set** lists the columns that use the set and links to their **Columns** tab.
+- **Parent terms and term set use.** A term set shows each term's parent term in a column, and the terms are listed in tree order, with each term right after the term it sits under. The terms aren't indented, so the table still sorts and filters like the others. Below the terms, **Columns that use this term set** lists the columns that use the set and links to their **Columns** tab.
 
 ### Tables
 

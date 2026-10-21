@@ -2254,8 +2254,9 @@ test('lists the columns that use a term set and links to their Columns tab', asy
     await openStudyArms(page);
 
     const termSet = page.locator('#sna-taxonomy-section');
-    await expect(termSet.getByRole('heading', { level: 4, name: 'Lists and libraries using this term set (3)' })).toBeVisible();
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Columns that use this term set (3)' })).toBeVisible();
     const usage = termSet.locator('.sna-term-usage-table');
+    await expect(termSet.getByRole('table', { name: 'Columns that use Study Arms' })).toBeVisible();
     await expect(usage.getByRole('columnheader')).toHaveText(['List or library', 'Column', 'Starts at term', 'Allows several values']);
     await expect(usage.locator('tbody tr').nth(0).locator('td')).toHaveText(['Study Visits (Arm Detail column)', 'Arm Detail', 'Treatment', 'Yes']);
     await expect(usage.locator('tbody tr').nth(1).locator('td')).toHaveText(['Study Visits (Arm Tag column)', 'Arm Tag', 'Whole term set', 'No']);
@@ -2293,7 +2294,7 @@ test('lists the columns that use a term set and links to their Columns tab', asy
     expect(armDetailRow[valueSetColumn]).toBe(studyArmsSet[0][0]);
 
     await gotoSection(page, 'Site review');
-    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Lists and libraries using term sets/ })).toContainText('Read');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Managed metadata columns/ })).toContainText('Read');
     expect(record.unexpectedRequests).toEqual([]);
     expect(record.consoleErrors).toEqual([]);
 });
@@ -2309,7 +2310,7 @@ test('prints the parent terms and the columns that use each term set', async fun
     const terms = doc.locator('table').filter({ hasText: 'Terms in Study Arms' });
     await expect(terms.locator('thead th')).toHaveText(['Term name', 'Parent term', 'Description', 'Term ID']);
     await expect(terms.locator('tbody tr').first()).toContainText('Top level');
-    const usage = doc.locator('table').filter({ hasText: 'Lists and libraries using Study Arms' });
+    const usage = doc.locator('table').filter({ hasText: 'Columns that use Study Arms' });
     await expect(usage.locator('tbody tr')).toHaveCount(3);
     await expect(usage.locator('tbody tr').nth(0)).toContainText('Study Visits');
     await expect(usage.locator('tbody tr').nth(0)).toContainText('Treatment');
@@ -2323,11 +2324,11 @@ test('says which columns it could not read instead of showing an empty table', a
     await openStudyArms(page);
 
     const termSet = page.locator('#sna-taxonomy-section');
-    await expect(termSet.getByRole('heading', { level: 4, name: 'Lists and libraries using this term set (0)' })).toBeVisible();
+    await expect(termSet.getByRole('heading', { level: 4, name: 'Columns that use this term set (0)' })).toBeVisible();
     await expect(termSet).toContainText('Sitenalyzer could not read the columns of every list and library, so this table may be missing some columns.');
     await expect(termSet).not.toContainText('No column on this site uses this term set.');
     await gotoSection(page, 'Site review');
-    const usageRow = page.locator('.sna-coverage-table').getByRole('row', { name: /^Lists and libraries using term sets/ });
+    const usageRow = page.locator('.sna-coverage-table').getByRole('row', { name: /^Managed metadata columns/ });
     await expect(usageRow).toContainText('Partly read');
     await expect(usageRow).toContainText('Sitenalyzer could not read the managed metadata columns of 1 list or library.');
     await expect(usageRow).toContainText('Sitenalyzer could not read the site\'s own managed metadata columns.');
@@ -2349,7 +2350,7 @@ test('says it could not read where a term set is used when neither the lists nor
     await expect(termSet).toContainText('Sitenalyzer could not read which columns use this term set.');
     await expect(termSet.locator('.sna-term-usage-table')).toHaveCount(0);
     await gotoSection(page, 'Site review');
-    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Lists and libraries using term sets/ })).toContainText('Not read');
+    await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Managed metadata columns/ })).toContainText('Not read');
 });
 
 // ### Hidden Values ###
