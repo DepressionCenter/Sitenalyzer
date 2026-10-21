@@ -1260,7 +1260,7 @@ test('lists who has access by person or group', async function({ page }) {
     const ownFinding = site.locator('.sna-finding');
     await expect(ownFinding.getByRole('heading', { level: 4 })).toHaveText('1 list or library has its own permissions');
     await expect(ownFinding.getByRole('link')).toHaveAttribute('href', '#sna/permissions/own');
-    await expect(site.getByRole('table', { name: 'Site permissions' }).getByRole('row', { name: /Test Site Visitors/ })).toContainText('Read');
+    await expect(site.getByRole('grid', { name: 'Site permissions' }).getByRole('row', { name: /Test Site Visitors/ })).toContainText('Read');
     await expect(site.locator('.sna-callout').getByRole('heading', { level: 4 })).toHaveText('About Limited Access');
     await expect(site.locator('.sna-callout')).toContainText('Limited Access isn\'t access to the whole site.');
     await expect(site).toContainText('Test Admin');
@@ -1291,6 +1291,61 @@ test('lists who has access by person or group', async function({ page }) {
     expect(record.consoleErrors).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
     expect(record.otherOriginRequests).toEqual([]);
+});
+
+test('sorts, filters, and splits into pages a long site permissions table, with people\'s emails shown', async function({ page }) {
+    // 60 people with Read access, each named with an email address, which is shown because it names a person.
+    const assignments = [{ Member: { Id: 3, Title: 'Test Site Owners', LoginName: 'Test Site Owners', PrincipalType: 8 },
+        RoleDefinitionBindings: [{ Id: 1073741829, Name: 'Full Control', Hidden: false, RoleTypeKind: 5 }] }];
+    for (let i = 1; i <= 60; i++) {
+        const email = 'reader' + String(i).padStart(2, '0') + '@example.org';
+        assignments.push({ Member: { Id: 100 + i, Title: email, LoginName: 'i:0#.f|membership|' + email, PrincipalType: 1 },
+            RoleDefinitionBindings: [{ Id: 1073741826, Name: 'Read', Hidden: false, RoleTypeKind: 2 }] });
+    }
+    await openPretendSite(page, { answerOverrides: [{ pattern: /^\/_api\/web\/roleassignments$/, body: { value: assignments } }] });
+    await extractSiteInformation(page);
+    const site = await openPermissionPart(page, 'Site permissions');
+    const grid = site.getByRole('grid', { name: 'Site permissions' });
+    const count = site.locator('.sna-table-count');
+    await expect(count).toHaveText('Showing 1 to 50 of 61 people and groups.');
+    await expect(grid.locator('.tabulator-row')).toHaveCount(50);
+    await expect(grid.getByRole('row', { name: /reader01@example\.org/ })).toContainText('Read');
+    await expect(site.getByRole('group', { name: 'Pages of Site permissions' }).getByRole('button', { name: 'Next page' })).toBeVisible();
+
+    // A person's email can be found with the filter, because it is shown.
+    await site.getByRole('searchbox', { name: 'Filter people and groups' }).fill('reader42@example.org');
+    await expect(count).toHaveText('Showing 1 of 61 people and groups.');
+    await expect(grid.locator('.tabulator-row')).toHaveText([/reader42@example\.org/]);
+
+    // The headings sort the table from the keyboard.
+    await site.getByRole('searchbox', { name: 'Filter people and groups' }).fill('');
+    const heading = grid.getByRole('columnheader', { name: 'Person or group' });
+    await heading.focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press(' ');
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect(grid.locator('.tabulator-row').first()).toContainText('Test Site Owners');
+    await expectNoAxeViolations(page);
+});
+
+test('builds a new result table each time a person\'s access is checked', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    await openPermissionPart(page, 'Check a person\'s access');
+    const input = page.getByLabel('Email address or sign-in name');
+    for (let i = 0; i < 2; i++) {
+        await input.fill('test.coordinator@example.org');
+        await page.getByRole('button', { name: 'Check access' }).click();
+        await expect(page.locator('#sna-user-access-status')).toHaveText('Finished checking access for Test Coordinator.');
+        await expect(page.getByRole('grid', { name: 'Access for Test Coordinator' })).toHaveCount(1);
+        await expect(page.locator('#sna-tbl-person .tabulator-row')).toHaveCount(2);
+    }
+    // An empty check removes the result table.
+    await input.fill('');
+    await page.getByRole('button', { name: 'Check access' }).click();
+    await expect(page.locator('#sna-tbl-person')).toHaveCount(0);
+    expect(record.consoleErrors).toEqual([]);
+    expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
 });
 
 test('says what it could not check instead of saying no guests have access', async function({ page }) {
@@ -1355,7 +1410,8 @@ test('checks one person\'s access when Enter is pressed, and keeps the result', 
     await input.press('Enter');
 
     await expect(page.locator('#sna-user-access-status')).toHaveText('Finished checking access for Test Coordinator.');
-    const results = page.getByRole('table', { name: 'Access for Test Coordinator' });
+    await expect(tool.getByRole('heading', { level: 4, name: 'Access for Test Coordinator' })).toBeVisible();
+    const results = page.getByRole('grid', { name: 'Access for Test Coordinator' });
     await expect(results.getByRole('row', { name: /Whole site/ })).toContainText('Can view items');
     await expect(results.getByRole('row', { name: /Study Visits/ })).toContainText('Can edit items');
     await expect(results).not.toContainText('Documents');
@@ -1365,7 +1421,7 @@ test('checks one person\'s access when Enter is pressed, and keeps the result', 
     // The result is still there after opening another section and coming back.
     await gotoSection(page, 'Overview');
     await openPermissionPart(page, 'Check a person\'s access');
-    await expect(page.getByRole('table', { name: 'Access for Test Coordinator' })).toBeVisible();
+    await expect(page.getByRole('grid', { name: 'Access for Test Coordinator' })).toBeVisible();
     await expect(page.getByLabel('Email address or sign-in name')).toHaveValue('test.coordinator@example.org');
     expect(record.consoleErrors).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
@@ -2559,12 +2615,13 @@ test('lists the columns that use a term set and links to their Columns tab', asy
     const termSet = page.locator('#sna-taxonomy-section');
     await expect(termSet.getByRole('heading', { level: 4, name: 'Columns that use this term set (3)' })).toBeVisible();
     const usage = termSet.locator('.sna-term-usage-table');
-    await expect(termSet.getByRole('table', { name: 'Columns that use Study Arms' })).toBeVisible();
+    await expect(termSet.getByRole('grid', { name: 'Columns that use Study Arms' })).toBeVisible();
     await expect(usage.getByRole('columnheader')).toHaveText(['List or library', 'Column', 'Starts at term', 'Allows several values']);
-    await expect(usage.locator('tbody tr').nth(0).locator('td')).toHaveText(['Study Visits (Arm Detail column)', 'Arm Detail', 'Treatment', 'Yes']);
-    await expect(usage.locator('tbody tr').nth(1).locator('td')).toHaveText(['Study Visits (Arm Tag column)', 'Arm Tag', 'Whole term set', 'No']);
+    const usageCells = function(index) { return usage.locator('.tabulator-row').nth(index).locator('.tabulator-cell:visible'); };
+    await expect(usageCells(0)).toHaveText(['Study Visits (Arm Detail column)', 'Arm Detail', 'Treatment', 'Yes']);
+    await expect(usageCells(1)).toHaveText(['Study Visits (Arm Tag column)', 'Arm Tag', 'Whole term set', 'No']);
     // The site column that is also in Study Visits is listed once, and the site column of another term set isn't listed.
-    await expect(usage.locator('tbody tr').nth(2).locator('td')).toHaveText(['Site column (not in a list or library)', 'Unused Arm Column', 'Whole term set', 'No']);
+    await expect(usageCells(2)).toHaveText(['Site column (not in a list or library)', 'Unused Arm Column', 'Whole term set', 'No']);
     await expect(usage).not.toContainText('Other Set Column');
     expect(await new AxeBuilder({ page }).include('#sp-results').withTags(WCAG_TAGS).analyze().then(function(r) { return r.violations; })).toEqual([]);
 
