@@ -730,7 +730,50 @@ details.permissions-section {
     color: #323130;
 }
 #sp-info-app .tabulator-row .tabulator-cell:last-child { border-right: none; }
-#sp-info-app .tabulator .tabulator-footer { display: none; }
+/* Paging controls under tables with more than 50 rows. The page buttons and the Rows per page box are at least
+   32 pixels tall, and the open page is marked by a filled button with a heavier border, not by color alone. */
+#sp-info-app .sna-table-pages {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 8px 10px;
+    background: #faf9f8;
+    border: 1px solid #c8c6c4;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    font-size: 14px;
+    color: #323130;
+}
+#sp-info-app .sna-table-pages .tabulator-pages { display: inline-flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+#sp-info-app .sna-table-pages label { font-weight: 700; margin: 0; }
+#sp-info-app .sna-table-pages .tabulator-page-size {
+    min-height: 32px;
+    margin: 0 8px 0 0;
+    padding: 2px 6px;
+    font: inherit;
+    border: 1px solid #767676;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #323130;
+}
+#sp-info-app .sna-table-pages .tabulator-page {
+    min-height: 32px;
+    min-width: 32px;
+    margin: 0;
+    padding: 2px 10px;
+    font: inherit;
+    font-weight: 600;
+    border: 1px solid #767676;
+    border-radius: 4px;
+    background: #ffffff;
+    color: var(--um-dark-blue);
+    opacity: 1;
+}
+#sp-info-app .sna-table-pages .tabulator-page:not(:disabled):hover { background: #e8f3fb; color: var(--um-dark-blue); cursor: pointer; }
+#sp-info-app .sna-table-pages .tabulator-page.active { background: var(--um-dark-blue); color: #ffffff; border: 2px solid #000000; }
+#sp-info-app .sna-table-pages .tabulator-page:disabled { background: #f3f2f1; color: #605e5c; cursor: not-allowed; }
 #sp-info-app .tabulator-placeholder span { color: #595959; font-style: italic; }
 #sp-info-app .tabulator .tabulator-tableholder { overflow-y: auto; }
 /* Let Tabulator rows expand and overflow when a cell editor is active */
@@ -740,9 +783,10 @@ details.permissions-section {
     z-index: 50;
     position: relative;
 }
-/* Scroll area around long tables; keyboard users can focus it and scroll with the arrow keys. */
-.sna-table-scroll { max-height: 420px; overflow: auto; margin-top: 4px; border-radius: 4px; }
-#sp-info-app .sna-table-scroll .tabulator { margin-top: 0; }
+/* Box around every table. It scrolls sideways only when the columns can't fit, such as on a narrow screen;
+   keyboard users can then focus it and scroll with the arrow keys. */
+.sna-table-wrap { max-width: 100%; overflow-x: auto; border-radius: 4px; }
+#sp-info-app .sna-table-wrap[tabindex="0"]:focus-visible { outline: 3px solid var(--sna-focus); outline-offset: 2px; }
 
 /* Filter box and row count above tables with more than 10 rows, and above the Contents list. */
 .sna-table-filter { margin: 4px 0 8px 0; }
@@ -903,6 +947,8 @@ details.permissions-section {
 
 /* Column headings sort the table, so keyboard focus on them must be visible. */
 #sp-info-app .tabulator .tabulator-col:focus-visible { outline: 3px solid var(--sna-focus); outline-offset: -3px; }
+#sp-info-app .sna-table-pages .tabulator-page:focus-visible,
+#sp-info-app .sna-table-pages .tabulator-page-size:focus-visible { outline: 3px solid var(--sna-focus); outline-offset: 2px; }
 
 /* ### Narrow Screens ###
    At 320 CSS pixels the frame keeps a 16 pixel gutter and nothing scrolls sideways except wide tables. */
@@ -927,6 +973,10 @@ details.permissions-section {
     #sp-info-app .sna-detail-tabs a[aria-current="page"] { border-bottom-color: Highlight; }
     #sp-info-app .sna-subnav-list a[aria-current="page"] { border-left-color: Highlight; }
     #sp-info-app .sna-pencil-btn { border-color: ButtonText; }
+    #sp-info-app .sna-table-pages .tabulator-page,
+    #sp-info-app .sna-table-pages .tabulator-page-size { border-color: ButtonText; }
+    #sp-info-app .sna-table-pages .tabulator-page.active { background: Highlight; color: HighlightText; border-color: Highlight; }
+    #sp-info-app .sna-table-pages .tabulator-page:disabled { color: GrayText; border-color: GrayText; }
     .sna-symbol .sna-symbol-site, .sna-symbol .sna-symbol-list { fill: CanvasText; }
     .sna-symbol .sna-symbol-branch { stroke: CanvasText; }
     .sna-mark-site { color: inherit; }

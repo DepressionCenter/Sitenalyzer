@@ -561,6 +561,137 @@ test('shows a filter box only above tables with more than 10 rows, and keeps its
     await expect(detail.locator('.sna-table-count')).toHaveText('Showing 1 of 12 columns.');
 });
 
+// Answers for a Study Visits list with 120 columns, named Column 001 to Column 120, so its Columns tab has 126 rows
+// with the 6 columns every list has. Every even column's description is "Visit note", so a filter for it matches
+// 60 columns, more than one page.
+const MANY_COLUMNS = { value: [] };
+for (let i = 1; i <= 120; i++) {
+    MANY_COLUMNS.value.push({ Id: 'bbbbbbbb-0000-4000-8000-000000005' + String(i).padStart(3, '0'), InternalName: 'Col' + i,
+        Title: 'Column ' + String(i).padStart(3, '0'), TypeAsString: 'Text', Description: i % 2 === 0 ? 'Visit note' : '' });
+}
+const MANY_COLUMNS_ANSWERS = [{ pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, answer: function(url) {
+    return url.pathname.indexOf(LIST_ID) > -1 ? MANY_COLUMNS : undefined;
+} }];
+
+test('splits a table with more than 50 rows into pages, with paging controls under it', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: MANY_COLUMNS_ANSWERS });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+    const grid = detail.getByRole('grid', { name: 'Columns of Study Visits' });
+    const count = detail.locator('.sna-table-count');
+    const rows = grid.locator('.tabulator-row');
+    // The paging controls are under the table, outside the grid.
+    const pages = detail.getByRole('group', { name: 'Pages of Columns of Study Visits' });
+    const currentPage = pages.locator('.tabulator-page[aria-current="page"]');
+
+    // The table grows with its rows, with no scroll box around it, and shows 50 rows at a time.
+    await expect(count).toHaveText('Showing 1 to 50 of 126 columns.');
+    await expect(rows).toHaveCount(50);
+    await expect(detail.locator('.sna-table-wrap')).not.toHaveAttribute('tabindex');
+    expect(await grid.evaluate(function(el) { return el.querySelector('.tabulator-tableholder').hasAttribute('tabindex'); })).toBe(false);
+    for (const name of ['First page', 'Previous page', 'Next page', 'Last page', 'Show page 1', 'Show page 2', 'Show page 3']) {
+        await expect(pages.getByRole('button', { name: name, exact: true })).toBeVisible();
+    }
+    await expect(pages.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    await expect(pages.getByRole('combobox', { name: 'Rows per page' })).toHaveValue('50');
+    await expect(currentPage).toHaveText('1');
+    await expect(grid.locator('.tabulator-footer')).toHaveCount(0);
+
+    await pages.getByRole('button', { name: 'Next page' }).click();
+    await expect(count).toHaveText('Showing 51 to 100 of 126 columns.');
+    await expect(currentPage).toHaveText('2');
+    await pages.getByRole('button', { name: 'Show page 3' }).click();
+    await expect(count).toHaveText('Showing 101 to 126 of 126 columns.');
+    await expect(rows).toHaveCount(26);
+
+    // A filter goes back to the first page, and the count names both totals while the matches fill more than one page.
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Visit note');
+    await expect(count).toHaveText('Showing 1 to 50 of 60 columns that match, out of 126.');
+    await expect(currentPage).toHaveText('1');
+    await pages.getByRole('button', { name: 'Last page' }).click();
+    await expect(count).toHaveText('Showing 51 to 60 of 60 columns that match, out of 126.');
+    await expect(rows).toHaveCount(10);
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Column 007');
+    await expect(count).toHaveText('Showing 1 of 126 columns.');
+    await expect(rows).toHaveCount(1);
+
+    // Rows per page changes how many rows each page shows; All shows every row on one page.
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('');
+    const rowsPerPage = pages.getByRole('combobox', { name: 'Rows per page' });
+    await rowsPerPage.selectOption({ label: 'All' });
+    await expect(count).toHaveText('Showing all 126 columns.');
+    await expect(rows).toHaveCount(126);
+    await rowsPerPage.selectOption('25');
+    await expect(count).toHaveText('Showing 1 to 25 of 126 columns.');
+    await expect(rows).toHaveCount(25);
+    await expect(pages.getByRole('button', { name: 'Show page 5' })).toBeVisible();
+
+    // Sorting by a column heading sorts every matching row, not only the rows on the open page.
+    await rowsPerPage.selectOption('50');
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Column ');
+    await expect(count).toHaveText('Showing 1 to 50 of 120 columns that match, out of 126.');
+    const heading = grid.getByRole('columnheader', { name: 'Title' });
+    await heading.focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press(' ');
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect(rows.first()).toContainText('Column 120');
+    await expect(currentPage).toHaveText('1');
+    await expectNoAxeViolations(page);
+});
+
+test('shows no paging controls under tables with 50 rows or fewer', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Documents', 'Columns');
+    await expect(detail.getByRole('grid', { name: 'Columns of Documents' }).locator('.tabulator-row')).toHaveCount(12);
+    await expect(detail.locator('.tabulator-footer, .sna-table-pages')).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: 'Next page' })).toHaveCount(0);
+    await expect(detail.getByRole('combobox', { name: 'Rows per page' })).toHaveCount(0);
+});
+
+test('prints every row of a table that is split into pages and filtered on screen', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: MANY_COLUMNS_ANSWERS });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Visit note');
+    await detail.getByRole('button', { name: 'Next page' }).click();
+    await expect(detail.locator('.sna-table-count')).toHaveText('Showing 51 to 60 of 60 columns that match, out of 126.');
+
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page);
+    await expect(printed.getByRole('table', { name: 'Columns of Study Visits', exact: true }).locator('tbody tr')).toHaveCount(126);
+    await expect(printed.locator('.tabulator, .sna-table-pages, input, button, select')).toHaveCount(0);
+});
+
+test('lets keyboard users scroll a table sideways only while its columns are wider than the screen', async function({ page }) {
+    await page.setViewportSize({ width: 320, height: 800 });
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    const detail = await openListDetail(page, 'Documents', 'Columns');
+    const box = detail.locator('.sna-table-wrap');
+    // The columns don't fit, so the box around the table scrolls; the table itself never scrolls inside the grid.
+    await expect(box).toHaveAttribute('tabindex', '0');
+    await expect(box).toHaveAttribute('role', 'region');
+    await expect(detail.getByRole('region', { name: 'Columns of Documents (scroll sideways to see more)' })).toBeVisible();
+    expect(await box.evaluate(function(el) { return el.scrollWidth > el.clientWidth; })).toBe(true);
+    expect(await detail.locator('.tabulator-tableholder').evaluate(function(el) { return el.hasAttribute('tabindex'); })).toBe(false);
+    expect(await page.evaluate(function() { return document.documentElement.scrollWidth; })).toBeLessThanOrEqual(320);
+    await box.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(function() { return box.evaluate(function(el) { return el.scrollLeft; }); }).toBeGreaterThan(0);
+    await expectNoAxeViolations(page);
+
+    // On a screen wide enough for every column, the box is not a separate stop for the Tab key.
+    await page.setViewportSize({ width: 2560, height: 800 });
+    await expect(box).not.toHaveAttribute('tabindex');
+    await expect(box).not.toHaveAttribute('role');
+});
+
 test('keeps the Contents filter while items open and close', async function({ page }) {
     await openPretendSite(page);
     await extractSiteInformation(page);

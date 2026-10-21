@@ -120,6 +120,24 @@ var SNA_ROUTE_PREFIX = '#sna/';
 // Tables with more rows than this get a filter box and a row count above them.
 var SNA_TABLE_FILTER_MIN_ROWS = 10;
 
+// Tables with more rows than this are split into pages, with paging controls under the table.
+var SNA_TABLE_PAGE_ROWS = 50;
+
+// Choices in a paged table's Rows per page box. true is Tabulator's name for showing every row on one page.
+var SNA_TABLE_PAGE_SIZES = [25, 50, 100, true];
+
+// Names for Tabulator's paging controls, which otherwise say "Prev" and "Page Size". page_size is both the
+// visible label of the Rows per page box and its spoken name.
+var SNA_TABLE_TEXT = {
+  default: {
+    pagination: {
+      page_size: 'Rows per page', page_title: 'Show page',
+      first: 'First', first_title: 'First page', last: 'Last', last_title: 'Last page',
+      prev: 'Previous', prev_title: 'Previous page', next: 'Next', next_title: 'Next page', all: 'All'
+    }
+  }
+};
+
 // Remembers the Show technical details switch in this browser. The value is '1' when it is on; no report data is stored.
 var SNA_TECHNICAL_DETAILS_KEY = 'sitenalyzer:technical-details';
 
@@ -439,7 +457,61 @@ function snaUpdateTableCount(countEl, shown, total, label) {
     : 'Showing ' + shown + ' of ' + total + ' ' + label + '.';
 }
 
+// Writes the row count of a table split into pages, naming the rows on the open page, such as
+// "Showing 51 to 100 of 340 columns." When a filter is in use and the matching rows fill more than one page,
+// the count names both totals: "Showing 51 to 100 of 120 columns that match, out of 340."
+function snaUpdatePagedTableCount(table, countEl, total, label) {
+  if (!countEl) { return; }
+  var matching = table.getDataCount('active');
+  var size = table.getPageSize();
+  if (size === true || !(size > 0) || matching <= size) { snaUpdateTableCount(countEl, matching, total, label); return; }
+  var first = (table.getPage() - 1) * size + 1;
+  var last = Math.min(first + size - 1, matching);
+  countEl.textContent = 'Showing ' + first + ' to ' + last + ' of ' + matching + ' ' + label +
+    (matching === total ? '.' : ' that match, out of ' + total + '.');
+}
+
+// Marks the button of the open page with aria-current, so screen readers say which page is open.
+function snaMarkCurrentPage(pagesEl) {
+  pagesEl.querySelectorAll('.tabulator-page[data-page]').forEach(function(button) {
+    if (button.classList.contains('active')) { button.setAttribute('aria-current', 'page'); }
+    else { button.removeAttribute('aria-current'); }
+  });
+}
+
+// Tabulator fits the columns to the table's width. When they can't fit, such as on a narrow screen, this makes the
+// table wide enough for them, and the box around the table scrolls sideways instead, with the headings and paging
+// controls. While the box scrolls, it is a labeled region that keyboard users can focus and scroll with the arrow
+// keys. The box is outside the table because the grid role allows only rows inside it, and Tabulator's own scroll
+// area inside the grid is never focusable for the same reason.
+function snaFitTableWidth(table, el, wrap) {
+  var holder = el.querySelector('.tabulator-tableholder');
+  if (holder) {
+    holder.removeAttribute('tabindex');
+    var extra = holder.scrollWidth - holder.clientWidth;
+    var tries = Number(el.getAttribute('data-sna-widened')) || 0;
+    // Each redraw below draws the table again, which runs this again; three tries keep that from repeating for ever.
+    if (extra > 1 && holder.clientWidth > 0 && tries < 3) {
+      el.setAttribute('data-sna-widened', String(tries + 1));
+      el.style.minWidth = (el.offsetWidth + extra) + 'px';
+      table.redraw(true);
+      return;
+    }
+    if (extra <= 1) { el.removeAttribute('data-sna-widened'); }
+  }
+  if (wrap.scrollWidth > wrap.clientWidth + 1) {
+    wrap.setAttribute('role', 'region');
+    wrap.setAttribute('tabindex', '0');
+    wrap.setAttribute('aria-label', el.getAttribute('aria-label') + ' (scroll sideways to see more)');
+  } else {
+    wrap.removeAttribute('role');
+    wrap.removeAttribute('tabindex');
+    wrap.removeAttribute('aria-label');
+  }
+}
+
 // Builds every table in _snaTablesQueue whose element is on the page, then empties the queue.
+// Each entry is { id, type, data, searchLabel, label }; label is the table's name for screen readers.
 function initSnaTabulators() {
   if (!Tabulator) { _snaTablesQueue = []; return; }
 
@@ -451,6 +523,8 @@ function initSnaTabulators() {
     var filterInput = null;
     var countEl = null;
     var total = tbl.data.length;
+    var paged = total > SNA_TABLE_PAGE_ROWS;
+    var countLabel = snaMaskText(tbl.searchLabel);
     if (total > SNA_TABLE_FILTER_MIN_ROWS) {
       var filterWrap = document.createElement('div');
       filterWrap.className = 'sna-table-filter hide-on-print';
@@ -471,46 +545,74 @@ function initSnaTabulators() {
       el.parentNode.insertBefore(filterWrap, el);
     }
 
-    // Long tables scroll inside a labeled region that keyboard users can focus and scroll.
-    // The region is outside the table because the table's grid role allows only rows inside it.
-    if (total > 7) {
-      var scrollRegion = document.createElement('div');
-      scrollRegion.className = 'sna-table-scroll';
-      scrollRegion.setAttribute('tabindex', '0');
-      scrollRegion.setAttribute('role', 'region');
-      scrollRegion.setAttribute('aria-label', 'Table of ' + snaMaskText(tbl.searchLabel));
-      el.parentNode.insertBefore(scrollRegion, el);
-      scrollRegion.appendChild(el);
-    }
+    // Tabulator gives this element the grid role, so this names the table for screen readers. The name is
+    // set here, after the markup's hidden values were hidden, so it is hidden separately.
+    el.setAttribute('aria-label', snaMaskText(tbl.label || tbl.searchLabel));
+    var wrap = document.createElement('div');
+    wrap.className = 'sna-table-wrap';
+    el.parentNode.insertBefore(wrap, el);
+    wrap.appendChild(el);
 
-    var table = new Tabulator(el, {
+    // Every table grows with its rows, so its headings and frame stay in view. Long tables are split into pages.
+    var options = {
       data: tbl.data,
       columns: snaTableColumns(tbl.type, tbl),
       layout: 'fitColumns',
-      renderType: 'basic',
+      renderVertical: 'basic',
       movableColumns: false,
-      selectable: false,
+      selectableRows: false,
       placeholder: '<em>No data found.</em>'
-    });
+    };
+    // The paging controls sit under the table, outside the grid, because the grid role allows only rows inside it.
+    // They are outside the sideways scroll box too, so they stay in view on a narrow screen.
+    if (paged) {
+      var pagesEl = document.createElement('div');
+      pagesEl.className = 'sna-table-pages hide-on-print';
+      pagesEl.setAttribute('role', 'group');
+      pagesEl.setAttribute('aria-label', 'Pages of ' + el.getAttribute('aria-label'));
+      wrap.parentNode.insertBefore(pagesEl, wrap.nextSibling);
+      options.paginationElement = pagesEl;
+      options.pagination = true;
+      options.paginationSize = SNA_TABLE_PAGE_ROWS;
+      options.paginationSizeSelector = SNA_TABLE_PAGE_SIZES;
+      options.langs = SNA_TABLE_TEXT;
+    }
+    var table = new Tabulator(el, options);
     _snaTabInstances[tbl.id] = table;
     _snaTabMeta[tbl.id] = tbl;
 
-    table.on('dataFiltered', function(filters, rows) { snaUpdateTableCount(countEl, rows.length, total, tbl.searchLabel); });
+    function updateCount(shown) {
+      if (paged) { snaUpdatePagedTableCount(table, countEl, total, countLabel); }
+      else { snaUpdateTableCount(countEl, shown, total, countLabel); }
+    }
+
+    var built = false;
+    table.on('dataFiltered', function(filters, rows) { if (!paged) { updateCount(rows.length); } });
+    table.on('renderComplete', function() {
+      if (!built) { return; }
+      snaFitTableWidth(table, el, wrap);
+      if (paged) { updateCount(); snaMarkCurrentPage(pagesEl); }
+    });
+    if (paged) {
+      table.on('pageLoaded', function() { updateCount(); snaMarkCurrentPage(pagesEl); });
+      table.on('pageSizeChanged', function() { updateCount(); });
+    }
 
     table.on('tableBuilt', function() {
-      // Tabulator makes its inner scroll area focusable, which puts a focus stop with no role inside the grid.
-      // The table does not scroll by itself here, so that focus stop is removed.
+      built = true;
       var holder = el.querySelector('.tabulator-tableholder');
       if (holder) { holder.removeAttribute('tabindex'); }
       snaMakeHeadingsSortableByKeyboard(table);
       if (filterInput) {
         var saved = _snaTableFilters[tbl.id] || '';
         filterInput.value = saved;
-        if (saved) { snaApplyTableFilter(table, saved); } else { snaUpdateTableCount(countEl, total, total, tbl.searchLabel); }
+        if (saved) { snaApplyTableFilter(table, saved); } else { updateCount(total); }
       }
+      if (paged) { snaMarkCurrentPage(pagesEl); }
       // A table in a column the browser has only just laid out can measure its width too early, so it redraws once.
       requestAnimationFrame(function() {
-        if (_snaTabInstances[tbl.id] === table) { table.redraw(true); }
+        if (_snaTabInstances[tbl.id] !== table) { return; }
+        table.redraw(true);
       });
     });
 
@@ -518,6 +620,8 @@ function initSnaTabulators() {
       filterInput.addEventListener('input', function() {
         _snaTableFilters[tbl.id] = filterInput.value;
         snaApplyTableFilter(table, filterInput.value);
+        // Tabulator keeps the open page number when the filter changes, so the matches start on the first page.
+        if (paged) { table.setPage(1); }
       });
     }
 
@@ -1940,7 +2044,7 @@ function snaRenderReviewFindings(report, level, tableId) {
     var html = '<h' + level + ' class="sna-subsection-title">Lists and libraries to review (' + rows.length + ')</h' + level + '>' +
         '<p>Use these findings to decide what to review. Some older content may still need to be kept. Sitenalyzer changes nothing from this page.</p>';
     if (rows.length === 0) { return html + '<p class="sna-muted">Sitenalyzer found nothing to review in the lists and libraries.</p>'; }
-    _snaTablesQueue.push({ id: tableId, type: 'findings', searchLabel: 'findings', data: rows });
+    _snaTablesQueue.push({ id: tableId, type: 'findings', searchLabel: 'findings', label: 'Lists and libraries to review', data: rows });
     return html + '<div id="' + tableId + '"></div>';
 }
 
@@ -3987,7 +4091,7 @@ function snaRenderSitePagesSection(sitePages) {
         html += '<p class="sna-note">Sitenalyzer stopped reading Site Pages because SharePoint sent a link to a different site. The pages below may be incomplete.</p>';
     }
     if (pages.length > 0) {
-        _snaTablesQueue.push({ id: 'sna-tbl-pages', type: 'pages', searchLabel: 'pages', data: pages });
+        _snaTablesQueue.push({ id: 'sna-tbl-pages', type: 'pages', searchLabel: 'pages', label: 'Site pages', data: pages });
         html += '<div id="sna-tbl-pages"></div>';
     } else {
         html += '<p>No site pages found.</p>';
@@ -5230,14 +5334,14 @@ function snaRenderListTab(list, tab) {
         if (list.columnsStatus === 'failed') { return '<p class="sna-error-text">Sitenalyzer could not read the columns. Refresh the report to try again.</p>'; }
         if (list.columns.length === 0) { return '<p class="sna-muted">No visible columns found.</p>'; }
         var columnsId = 'sna-tbl-f-' + list.routeId;
-        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', data: list.columns });
+        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', label: 'Columns of ' + list.title, data: list.columns });
         return '<div id="' + columnsId + '" class="sna-fields-table"></div>';
     }
     if (tab === 'folders') {
         if (list.foldersStatus === 'failed') { return '<p class="sna-error-text">Sitenalyzer could not read the folders. Refresh the report to try again.</p>'; }
         if (list.folders.length === 0) { return '<p class="sna-muted">No top-level folders found.</p>'; }
         var foldersId = 'sna-tbl-d-' + list.routeId;
-        _snaTablesQueue.push({ id: foldersId, type: 'folders', searchLabel: 'folders', data: list.folders });
+        _snaTablesQueue.push({ id: foldersId, type: 'folders', searchLabel: 'folders', label: 'Top-level folders in ' + list.title, data: list.folders });
         return '<div id="' + foldersId + '"></div>';
     }
     if (tab === 'permissions') {
@@ -5289,7 +5393,7 @@ function snaRenderContentsSummary(report) {
     function table(title, lists, tableId, label) {
         var block = '<h4 class="sna-summary-heading">' + snaEscapeHtml(title) + ' (' + lists.length + ')</h4>';
         if (lists.length === 0) { return block + '<p class="sna-muted">None found.</p>'; }
-        _snaTablesQueue.push({ id: tableId, type: 'lists', searchLabel: label, data: lists.slice().sort(snaByTitle).map(function(l) {
+        _snaTablesQueue.push({ id: tableId, type: 'lists', searchLabel: label, label: title, data: lists.slice().sort(snaByTitle).map(function(l) {
             return {
                 title: l.title, route: snaRouteHash({ section: 'contents', id: l.routeId }), description: l.description,
                 items: Number(l.itemCount) || 0, columns: l.columns.length, lastChanged: l.lastModified,
@@ -5621,7 +5725,7 @@ function snaRenderTermSet(group, set, report) {
             html += '<p class="sna-note">Sitenalyzer could not read which term every term sits under, so a term shown as Top level may sit under another term. Refresh the report to try again.</p>';
         }
         var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
-        _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', setId: set.setId, parentsHidden: parentsHidden });
+        _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', label: 'Terms in ' + set.setName, setId: set.setId, parentsHidden: parentsHidden });
         html += '<div id="' + tblId + '"></div>';
     }
     return html + snaRenderTermSetUsage(set, report);
