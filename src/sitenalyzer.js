@@ -4507,10 +4507,15 @@ function snaRouteWithoutHiddenSearch(route) {
     return Object.assign({}, route, { q: '', hiddenSearch: true });
 }
 
+// Least number of digits in a row that a number in a search must share with a hidden value's digits to count as
+// showing part of it, so a search such as "visits 2026" still runs unless 2026 is really part of a hidden value.
+var SNA_HIDDEN_SEARCH_MIN_DIGITS = 4;
+
 // True when text a person typed shows a hidden value or part of one, such as "555-0100" from "(734) 555-0100", on its
 // own or among other words, such as "notes 555-0100". Among other words, a word counts only when it has a digit or @,
 // because those are the parts of a hidden value that identify someone, so a search such as "visit notes" still runs.
-// Text shorter than 3 characters, such as "a", is too short to show part of a value.
+// Text shorter than 3 characters, such as "a", is too short to show part of a value. The same digits written with
+// other spaces or punctuation, or none, such as "555.0100" or "5550100", count too (see snaSharesHiddenDigits).
 function snaTypedTextShowsHiddenValue(text, hiddenValues) {
     var typed = String(text || '').trim().toLowerCase();
     if (!typed) { return false; }
@@ -4522,10 +4527,44 @@ function snaTypedTextShowsHiddenValue(text, hiddenValues) {
     if (inHiddenValue(typed)) { return true; }
     // Words are split at every character other than a letter, digit, or a character inside an email or a number, such as
     // @ . - _ +, and lose those characters at their ends, so "(555-0100)" and "phone:555-0100." both give "555-0100".
-    return typed.split(/[^a-z0-9@._+\-]+/).some(function(word) {
+    var wordShowsValue = typed.split(/[^a-z0-9@._+\-]+/).some(function(word) {
         word = word.replace(/^[._+\-]+|[._+\-]+$/g, '');
         return /[0-9@]/.test(word) && inHiddenValue(word);
     });
+    return wordShowsValue || snaSharesHiddenDigits(typed, values);
+}
+
+// True when a number in typed has SNA_HIDDEN_SEARCH_MIN_DIGITS digits in a row that also appear in a number in one of
+// values, whatever spaces or punctuation sit between the digits. So when "(734) 555-0100" is hidden, "555.0100",
+// "555 0100", "5550100", and "15550100" all count. GUIDs in typed, such as a list's ID, are left out, as they are when
+// values are hidden, because their digits are never personal information.
+function snaSharesHiddenDigits(typed, values) {
+    var size = SNA_HIDDEN_SEARCH_MIN_DIGITS;
+    var hiddenRuns = {};
+    values.forEach(function(value) {
+        snaNumbersInText(value).forEach(function(digits) {
+            for (var i = 0; i + size <= digits.length; i++) { hiddenRuns[digits.slice(i, i + size)] = true; }
+        });
+    });
+    // split keeps each GUID at an odd index, because SNA_GUID_IN_TEXT has one capturing group.
+    return typed.split(SNA_GUID_IN_TEXT).some(function(part, index) {
+        if (index % 2 === 1) { return false; }
+        return snaNumbersInText(part).some(function(digits) {
+            for (var i = 0; i + size <= digits.length; i++) {
+                if (hiddenRuns[digits.slice(i, i + size)]) { return true; }
+            }
+            return false;
+        });
+    });
+}
+
+// Returns the numbers in text as strings of digits only. Digits with only spaces or punctuation between them, and no
+// letter from a to z, form one number, so "(734) 555-0100" gives "7345550100", and "visit 2026, room 12" gives "2026"
+// and "12".
+function snaNumbersInText(text) {
+    return String(text).toLowerCase().split(/[a-z]+/).map(function(part) {
+        return part.replace(/\D/g, '');
+    }).filter(function(digits) { return digits.length > 0; });
 }
 
 // Clears the text a person typed into the table filter boxes, the Contents name filter, and Search this report when

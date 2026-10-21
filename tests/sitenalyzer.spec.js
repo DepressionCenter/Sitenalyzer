@@ -2983,6 +2983,36 @@ test('opens an empty search when the page opens with a search address that holds
     await expect(page.getByRole('searchbox', { name: 'Search this report' })).toHaveValue('');
 });
 
+test('keeps a hidden value written with other spaces or punctuation out of the page address', async function({ page }) {
+    // Two phone numbers are hidden in the list's description. The list's ID holds -8000-, so its digits share 4 digits
+    // in a row with the second phone number, and searching for the ID checks that GUIDs are left out of the check.
+    const phoneList = Object.assign({}, HIDDEN_VALUE_LIST, { Description: 'Call (734) 555-0100 or (734) 555-8000.' });
+    await openPretendSite(page, { extraLists: [phoneList] });
+    await extractSiteInformation(page);
+    const notice = 'Sitenalyzer hides values that look like personal information, so it doesn\'t search for them. To search for this text, turn on Show hidden values.';
+
+    // The same digits with other separators, with none, or with more digits around them, also among other words.
+    for (const text of ['notes 555.0100', 'notes 555 0100', '5550100', '(734)555.0100', 'notes 555/0100', 'visit 2026 555.0100',
+        '15550100', '12.34.567']) {
+        await searchReport(page, text);
+        await expect(page.locator('#sp-results'), text).toContainText(notice);
+        expect(hashOf(page), text).toBe('#sna/search?q=');
+    }
+
+    // Numbers that share fewer than 4 digits in a row with a hidden value still run, and so does a search for a list's ID.
+    for (const text of ['visits 2026', 'visits 2026 10', HIDDEN_LIST_ID]) {
+        await searchReport(page, text);
+        await expect(page.locator('#sp-results'), text).not.toContainText(notice);
+        expect(decodeURIComponent(hashOf(page)), text).toBe('#sna/search?q=' + text);
+    }
+
+    // With Show hidden values on, the same search runs.
+    await page.getByRole('switch', { name: 'Show hidden values' }).check();
+    await searchReport(page, 'notes 555.0100');
+    await expect(page.locator('#sp-results')).not.toContainText(notice);
+    expect(decodeURIComponent(hashOf(page))).toBe('#sna/search?q=notes 555.0100');
+});
+
 test('clears a hidden value typed into a filter or search box when Show hidden values is turned off', async function({ page }) {
     // Study Visits gets 12 columns, so its Columns tab has a filter box; one column's description has a phone number.
     const manyColumns = { value: [] };
@@ -3003,6 +3033,12 @@ test('clears a hidden value typed into a filter or search box when Show hidden v
     await expect(columns.getByRole('searchbox', { name: /^Filter/ })).toHaveValue('');
     await expect(columns.locator('.tabulator-row', { hasText: 'Column 7' })).toContainText('Call [phone number hidden]');
     expect(await readableText(page)).not.toContain('555-0188');
+
+    // The same digits with other punctuation are cleared too.
+    await hiddenSwitch.check();
+    await columns.getByRole('searchbox', { name: /^Filter/ }).fill('555.0188');
+    await hiddenSwitch.uncheck();
+    await expect(columns.getByRole('searchbox', { name: /^Filter/ })).toHaveValue('');
 
     // The Contents name filter.
     await hiddenSwitch.check();
