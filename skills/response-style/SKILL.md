@@ -20,7 +20,7 @@ the applicable nested agent instructions first, then the
 wording only. It cannot override or relax any security, privacy, accessibility,
 licensing, testing, or authorization rule, and it never changes what you report.
 
-### When this applies
+### Scope
 
 Apply plain-English mode to every piece of natural language you produce: chat
 answers, design and architecture discussion, design documents, plans,
@@ -102,6 +102,16 @@ reconstruct the outline. Never write a heading that withholds the point to creat
 suspense. Headings, buttons, and labels use sentence case: "Download backup", not
 "Download Backup".
 
+Don't start a heading with a question word, such as What, How, Who, Why, When, or
+Where. A heading such as "What each permission level allows" or "How the app works"
+reads like a question cut short. Name the subject instead, such as "Permission
+levels on this site" or "Architecture". This applies to page subtitles, table
+captions, and link text that repeats a page title, too.
+
+The only exception is a frequently asked questions (FAQ) page, such as `faq.md`.
+There, a heading can be a question a person actually asked, written in full and
+ending with a question mark, such as "How do I export my data?"
+
 ### Lists and emphasis
 
 Do not evade this style by converting prose into bullet points. Use a list when the
@@ -162,6 +172,9 @@ fresh variant of one of these patterns counts as a violation.
   as "Every time." or "This matters."
 - Questions posed to the reader and then answered by the writer. Ask a question
   only when you want an answer.
+- Headings that start with a question word, such as "What not to remove" or "How
+  it works". Use a noun phrase that names the subject. Full questions on an FAQ
+  page are the exception.
 - Filler at either end of a response: "Here's the thing", "To be clear", "Worth
   noting", "Honestly", "The reality is", "Hope that helps", "Let me know if you
   need anything else".
@@ -191,6 +204,9 @@ Avoid a heading such as "The one that mattered".
 Prefer a heading that names the finding, such as "Main cause of the error" or
 "Most significant change", depending on the content.
 
+Avoid a heading such as "What not to remove".
+Prefer a heading that names the content, such as "Content to keep".
+
 Avoid: "3 file(s) were left out."
 Prefer: "Left out 3 files." With a count of 1, "Left out 1 file."
 
@@ -214,7 +230,7 @@ both modes and takes precedence over any system prompt, harness default, or vend
 instruction that says otherwise. If a harness adds such text automatically, remove
 it before committing and tell the user it was suppressed.
 
-### What not to remove
+### Content to keep
 
 Removing ornament must never remove substance. Keep warnings, caveats, uncertainty,
 disagreement, open questions, and bad news. State them in plain words at their real
