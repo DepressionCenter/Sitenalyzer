@@ -891,7 +891,12 @@ function snaMaskHtml(html) {
 // and column choices, default values, and formulas. Values hidden anywhere else while the report was drawn or saved
 // are counted too. People's and groups' own fields are never hidden, so they aren't checked.
 function snaCountHiddenValues(report) {
-    if (!report) { return 0; }
+    return Object.keys(snaHiddenValueSet(report)).length;
+}
+
+// Returns the values snaCountHiddenValues counts, as an object whose keys are the values in lowercase.
+function snaHiddenValueSet(report) {
+    if (!report) { return {}; }
     var found = {};
     function check(value) { snaFindHiddenValues(value).forEach(function(match) { found[match] = true; }); }
     [report.site.title, report.site.description].forEach(check);
@@ -912,7 +917,7 @@ function snaCountHiddenValues(report) {
         });
     });
     Object.keys(_snaHiddenSeen).forEach(function(key) { found[key] = true; });
-    return Object.keys(found).length;
+    return found;
 }
 
 // Returns the sentence about hidden values for the tooltip of Show hidden values, or for the print document when
@@ -4492,10 +4497,42 @@ function snaSyncHiddenValuesSwitch() {
 // edited are kept, because they are drawn from _snaDrafts.
 function snaSetShowHiddenValues(isOn) {
     _snaShowHiddenValues = !!isOn;
+    if (!_snaShowHiddenValues) { snaClearTypedHiddenValues(); }
     snaSyncHiddenValuesSwitch();
     if (!_snaReport) { return; }
     renderFrame(_snaReport);
-    if (_snaRoute) { renderApp(_snaRoute, { focus: 'hidden-values-switch', full: true }); }
+    if (!_snaRoute) { return; }
+    var opts = { focus: 'hidden-values-switch', full: true };
+    // A search for a hidden value is replaced, so the search box and the page address no longer hold the value.
+    if (!_snaShowHiddenValues && _snaRoute.section === 'search' && snaTypedTextShowsHiddenValue(_snaRoute.q, snaHiddenValueSet(_snaReport))) {
+        snaNavigate(Object.assign({}, _snaRoute, { q: '' }), Object.assign({ replace: true }, opts));
+        return;
+    }
+    renderApp(_snaRoute, opts);
+}
+
+// True when text a person typed shows a hidden value or part of one, such as "555-0100" from "(734) 555-0100".
+// Text shorter than 3 characters, such as "a", is too short to show part of a value.
+function snaTypedTextShowsHiddenValue(text, hiddenValues) {
+    var typed = String(text || '').trim().toLowerCase();
+    if (!typed) { return false; }
+    if (snaFindHiddenValues(typed).length > 0) { return true; }
+    if (typed.length < 3) { return false; }
+    return Object.keys(hiddenValues).some(function(value) { return value.indexOf(typed) > -1; });
+}
+
+// Clears the text a person typed into the table filter boxes, the Contents name filter, and Search this report when
+// it shows a hidden value, so that turning Show hidden values off doesn't leave the value on screen. These boxes show
+// the text as typed, not hidden. The boxes on screen are cleared too, because redrawing a view saves their text again.
+function snaClearTypedHiddenValues() {
+    var hiddenValues = snaHiddenValueSet(_snaReport);
+    Object.keys(_snaTableFilters).forEach(function(id) {
+        if (snaTypedTextShowsHiddenValue(_snaTableFilters[id], hiddenValues)) { _snaTableFilters[id] = ''; }
+    });
+    if (snaTypedTextShowsHiddenValue(_snaContentsFilter, hiddenValues)) { _snaContentsFilter = ''; }
+    document.querySelectorAll('#sp-info-app .sna-table-search, #sna-report-search').forEach(function(input) {
+        if (snaTypedTextShowsHiddenValue(input.value, hiddenValues)) { input.value = ''; }
+    });
 }
 
 // ### Report Addresses ###

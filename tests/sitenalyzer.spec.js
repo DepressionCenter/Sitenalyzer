@@ -2727,6 +2727,51 @@ test('does not find a site page by a hidden value in its file name', async funct
     await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Call notes' })).toBeVisible();
 });
 
+test('clears a hidden value typed into a filter or search box when Show hidden values is turned off', async function({ page }) {
+    // Study Visits gets 12 columns, so its Columns tab has a filter box; one column's description has a phone number.
+    const manyColumns = { value: [] };
+    for (let i = 1; i <= 12; i++) {
+        manyColumns.value.push({ Id: 'bbbbbbbb-0000-4000-8000-0000000004' + String(i).padStart(2, '0'), InternalName: 'Col' + i, Title: 'Column ' + i,
+            TypeAsString: 'Text', Description: i === 7 ? 'Call 734-555-0188' : '' });
+    }
+    await openPretendSite(page, { answerOverrides: [{ pattern: LIST_FIELDS_PATTERN, body: manyColumns }], extraLists: [HIDDEN_VALUE_LIST] });
+    await extractSiteInformation(page);
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+    await hiddenSwitch.check();
+
+    // A table filter box.
+    const columns = await openListDetail(page, 'Study Visits', 'Columns');
+    await columns.getByRole('searchbox', { name: /^Filter/ }).fill('555-0188');
+    await expect(columns.locator('.tabulator-row')).toHaveCount(1);
+    await hiddenSwitch.uncheck();
+    await expect(columns.getByRole('searchbox', { name: /^Filter/ })).toHaveValue('');
+    await expect(columns.locator('.tabulator-row', { hasText: 'Column 7' })).toContainText('Call [phone number hidden]');
+    expect(await readableText(page)).not.toContain('555-0188');
+
+    // The Contents name filter.
+    await hiddenSwitch.check();
+    await page.locator('#sna-inventory-filter').fill('1234567');
+    await hiddenSwitch.uncheck();
+    await expect(page.locator('#sna-inventory-filter')).toHaveValue('');
+    await expect(page.locator('#sna-contents-inventory')).toContainText('Visits [record number or ID hidden]');
+
+    // Search this report and the page address.
+    await hiddenSwitch.check();
+    await searchReport(page, '1234567');
+    await expect(page.locator('#sp-results')).toContainText(HIDDEN.listTitle);
+    await hiddenSwitch.uncheck();
+    await expect(page.getByRole('searchbox', { name: 'Search this report' })).toHaveValue('');
+    await expect(hiddenSwitch).toBeFocused();
+    expect(decodeURIComponent(await page.evaluate(function() { return window.location.hash; }))).not.toContain('1234567');
+    expect(await readableText(page)).not.toContain('1234567');
+
+    // A filter with no hidden value is kept.
+    await openListDetail(page, 'Study Visits', 'Columns');
+    await page.locator('#sna-contents-detail').getByRole('searchbox', { name: /^Filter/ }).fill('Column 1');
+    await hiddenSwitch.check();
+    await expect(page.locator('#sna-contents-detail').getByRole('searchbox', { name: /^Filter/ })).toHaveValue('Column 1');
+});
+
 test('finds internal names but shows them only with technical details on', async function({ page }) {
     await openPretendSite(page);
     await extractSiteInformation(page);

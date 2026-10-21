@@ -161,7 +161,7 @@ Sitenalyzer checks the names and descriptions of the site, lists, libraries, col
 - IDs, internal names, and addresses, so links and IDs keep working. A page or folder address can still hold a value that is hidden in its name.
 - The image chosen for a site page.
 
-To see the hidden values, turn on **Show hidden values**. The printed report and both workbooks then include them too, and the switch's tip reminds you to turn it off before you share, print, or download. Sitenalyzer never remembers the switch, so values are hidden again the next time you open the page.
+To see the hidden values, turn on **Show hidden values**. The printed report and both workbooks then include them too, and the switch's tip reminds you to turn it off before you share, print, or download. Sitenalyzer never remembers the switch, so values are hidden again the next time you open the page. When you turn the switch off, Sitenalyzer clears any filter or search text that shows a hidden value or part of one.
 
 When you edit a description, the description box shows the real text, and Sitenalyzer saves the text you typed.
 
