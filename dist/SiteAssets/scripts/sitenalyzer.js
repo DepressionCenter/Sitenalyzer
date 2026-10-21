@@ -67,7 +67,7 @@ var SNA_APP_HTML = [
     "\t<div id=\"sp-info-app\" data-technical=\"false\">",
     "\t\t<div id=\"sna-entry\" class=\"sna-entry\">",
     "\t\t\t<h1 class=\"sna-entry-title\"><svg class=\"sna-symbol sna-entry-symbol\" viewBox=\"0 0 32 32\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"sna-symbol-site\" x=\"3.5\" y=\"3.5\" width=\"11\" height=\"9\" rx=\"2\"/><path class=\"sna-symbol-branch\" d=\"M9 12.5V25.5H15M9 17.5H15\"/><rect class=\"sna-symbol-list\" x=\"15.5\" y=\"14.1\" width=\"13\" height=\"6.8\" rx=\"2\"/><rect class=\"sna-symbol-list\" x=\"15.5\" y=\"22.1\" width=\"13\" height=\"6.8\" rx=\"2\"/></svg><span class=\"sna-wordmark\">Sitenalyzer</span></h1>",
-    "\t\t\t<p class=\"sna-tagline\">Data dictionary and security report for SharePoint sites: lists, libraries, columns, term sets, permissions, and sharing links.</p>",
+    "\t\t\t<p class=\"sna-tagline\">Data dictionary and security report for SharePoint sites: lists, libraries, term sets, and permissions.</p>",
     "\t\t\t<div id=\"sna-url-section\">",
     "\t\t\t\t<label for=\"site-url-input\" class=\"sna-field-label\">Site address</label>",
     "\t\t\t\t<div class=\"sna-url-row\">",
