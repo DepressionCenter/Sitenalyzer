@@ -2697,6 +2697,36 @@ test('shows Show hidden values once a value is hidden anywhere on screen, such a
     await expect(hiddenSwitch).toHaveAccessibleDescription('Hid 1 value that looks like personal information, such as a phone number.');
 });
 
+test('shows a person\'s email in People and groups but hides the same email in a list description', async function({ page }) {
+    const coordinatorList = Object.assign({}, HIDDEN_VALUE_LIST, { Title: 'Coordinator Notes', Description: 'Ask test.coordinator@example.org' });
+    await openPretendSite(page, { extraLists: [coordinatorList] });
+    await extractSiteInformation(page);
+
+    const detail = await openListDetail(page, 'Coordinator Notes');
+    await expect(detail.locator('.sna-editable-text').first()).toHaveText('Ask [email address hidden]');
+    const people = await openPermissionPart(page, 'People and groups');
+    const team = people.locator('.sna-principal-block', { hasText: 'Test Study Team' });
+    await team.locator('summary', { hasText: 'Members' }).click();
+    await expect(team).toContainText('test.coordinator@example.org');
+});
+
+test('does not find a site page by a hidden value in its file name', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), body: { value: [
+            { Id: 1, Title: 'Call notes', FileLeafRef: 'Call-734-555-0100.aspx', FileRef: SITE_PATH + '/SitePages/Call-734-555-0100.aspx', FSObjType: 0, Modified: '2026-09-01T00:00:00Z' }
+        ] } }
+    ] });
+    await extractSiteInformation(page);
+
+    await searchReport(page, '555-0100');
+    await expect(page.locator('#sp-results')).toContainText('No results for "555-0100"');
+    await searchReport(page, 'Call notes');
+    await expect(page.locator('#sp-results .sna-search-list')).toContainText('Call-[phone number hidden].aspx');
+    await page.getByRole('switch', { name: 'Show hidden values' }).check();
+    await searchReport(page, '555-0100');
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Call notes' })).toBeVisible();
+});
+
 test('finds internal names but shows them only with technical details on', async function({ page }) {
     await openPretendSite(page);
     await extractSiteInformation(page);

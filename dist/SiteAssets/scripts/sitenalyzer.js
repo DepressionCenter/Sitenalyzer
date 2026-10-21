@@ -779,8 +779,6 @@ var SNA_HIDDEN_VALUE_PATTERNS = [
 var SNA_HIDDEN_VALUE_ATTRIBUTES = /(\s(?:aria-label|title|alt|data-name|data-filter-text)=")([^"]*)(")/g;
 
 var _snaShowHiddenValues = false; // True while Show hidden values is on. Never saved, so every visit starts with values hidden.
-var _snaKeptValues = null;        // Matches found in people's and groups' names, emails, and sign-in names, which stay visible
-var _snaKeptPeople = [];          // Names and sign-in names from person checks, added to _snaKeptValues
 var _snaHiddenSeen = {};          // Every value hidden while drawing or saving this report, in lowercase
 var _snaHiddenSyncQueued = false; // True while an update of Show hidden values is waiting to run
 
@@ -807,15 +805,14 @@ function snaShowingHiddenValues() {
 var SNA_GUID_IN_TEXT = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
 // Calls replace(match, pattern) for each match of SNA_HIDDEN_VALUE_PATTERNS in text, outside GUIDs, and returns the
-// text with each match replaced by what replace returns. Matches in kept (lowercase text to keep) are left as they are.
-function snaReplaceHiddenValues(text, kept, replace) {
+// text with each match replaced by what replace returns.
+function snaReplaceHiddenValues(text, replace) {
     var parts = String(text === null || text === undefined ? '' : text).split(SNA_GUID_IN_TEXT);
     for (var i = 0; i < parts.length; i += 2) {
         if (!parts[i]) { continue; }
         SNA_HIDDEN_VALUE_PATTERNS.forEach(function(pattern) {
             parts[i] = parts[i].replace(pattern.re, function(match) {
                 if (pattern.isMatch && !pattern.isMatch(match)) { return match; }
-                if (kept && kept[match.toLowerCase()]) { return match; }
                 return replace(match, pattern);
             });
         });
@@ -823,37 +820,25 @@ function snaReplaceHiddenValues(text, kept, replace) {
     return parts.join('');
 }
 
-// Returns every match of SNA_HIDDEN_VALUE_PATTERNS in text, in lowercase, leaving out the matches in kept when given.
-function snaFindHiddenValues(text, kept) {
+// Returns every match of SNA_HIDDEN_VALUE_PATTERNS in text, in lowercase.
+function snaFindHiddenValues(text) {
     var found = [];
-    snaReplaceHiddenValues(text, kept, function(match) { found.push(match.toLowerCase()); return ''; });
+    snaReplaceHiddenValues(text, function(match) { found.push(match.toLowerCase()); return ''; });
     return found;
 }
 
-// Returns the matches in the names, emails, and sign-in names of the people and groups in the report and of the
-// people checked with Check a person's access. These stay visible, because reviewing who has access needs them.
-function snaKeptValues() {
-    if (_snaKeptValues) { return _snaKeptValues; }
-    var kept = {};
-    function keep(value) { snaFindHiddenValues(value).forEach(function(match) { kept[match] = true; }); }
-    Object.keys(_snaPermIndex).forEach(function(key) {
-        var p = _snaPermIndex[key];
-        [p.title, p.loginName, p.email].forEach(keep);
-        (p.members || []).forEach(function(m) { [m.title, m.loginName, m.email].forEach(keep); });
-    });
-    (_snaSiteAdmins || []).forEach(function(a) { [a.Title, a.LoginName, a.Email].forEach(keep); });
-    if (_snaCurrentUser) { [_snaCurrentUser.name, _snaCurrentUser.email, _snaCurrentUser.loginName].forEach(keep); }
-    _snaKeptPeople.forEach(keep);
-    _snaKeptValues = kept;
-    return kept;
+// Returns a person's or group's name, email, or sign-in name as markup that snaMaskHtml keeps visible, because
+// reviewing who has access needs them. The same value elsewhere, such as in a list's description, is still hidden.
+function snaPersonHtml(text) {
+    return '<span class="sna-person">' + snaEscapeHtml(text) + '</span>';
 }
 
 // Returns text with each value that looks like personal information replaced by "[<label> hidden]", such as
-// "[phone number hidden]", unless Show hidden values is on. Values of people and groups (snaKeptValues) are kept.
+// "[phone number hidden]", unless Show hidden values is on.
 function snaMaskText(value) {
     var text = String(value === null || value === undefined ? '' : value);
     if (_snaShowHiddenValues || !text) { return text; }
-    return snaReplaceHiddenValues(text, snaKeptValues(), function(match, pattern) {
+    return snaReplaceHiddenValues(text, function(match, pattern) {
         snaNoteHiddenValue(match);
         return '[' + pattern.label + ' hidden]';
     });
@@ -875,7 +860,8 @@ function snaNoteHiddenValue(match) {
 
 // Hides values in markup that Sitenalyzer built, unless Show hidden values is on: in the text between tags and in the
 // attributes in SNA_HIDDEN_VALUE_ATTRIBUTES. Kept as they are: the text of a <textarea>, which is a description being
-// edited, and of elements with the class list-id-text or sna-code, which show IDs and internal names.
+// edited, of elements with the class list-id-text or sna-code, which show IDs and internal names, and of elements with
+// the class sna-person, which show people's and groups' names, emails, and sign-in names (see snaPersonHtml).
 // Values in the markup are already escaped; the hidden-value labels have no characters that need escaping.
 function snaMaskHtml(html) {
     if (typeof html !== 'string') { return html; }
@@ -891,7 +877,7 @@ function snaMaskHtml(html) {
         var isVoid = /\/>$/.test(part) || /^(?:br|img|input|hr|meta|link|col|source|wbr)$/.test(name);
         if (keepDepth > 0) {
             if (name === keepTag && !isVoid) { keepDepth += isEnd ? -1 : 1; }
-        } else if (!isEnd && !isVoid && (name === 'textarea' || /\sclass="[^"]*\b(?:list-id-text|sna-code)\b[^"]*"/.test(part))) {
+        } else if (!isEnd && !isVoid && (name === 'textarea' || /\sclass="[^"]*\b(?:list-id-text|sna-code|sna-person)\b[^"]*"/.test(part))) {
             keepTag = name;
             keepDepth = 1;
         }
@@ -903,12 +889,11 @@ function snaMaskHtml(html) {
 // Returns how many different values in the report's free text look like personal information: names and
 // descriptions of the site, lists, libraries, columns, folders, pages, shared items, permission levels, and terms,
 // and column choices, default values, and formulas. Values hidden anywhere else while the report was drawn or saved
-// are counted too. People's and groups' values are kept, so they aren't counted.
+// are counted too. People's and groups' own fields are never hidden, so they aren't checked.
 function snaCountHiddenValues(report) {
     if (!report) { return 0; }
-    var kept = snaKeptValues();
     var found = {};
-    function check(value) { snaFindHiddenValues(value, kept).forEach(function(match) { found[match] = true; }); }
+    function check(value) { snaFindHiddenValues(value).forEach(function(match) { found[match] = true; }); }
     [report.site.title, report.site.description].forEach(check);
     report.lists.forEach(function(list) {
         [list.title, list.description].forEach(check);
@@ -926,7 +911,7 @@ function snaCountHiddenValues(report) {
             (set.terms || []).forEach(function(t) { [t.termName, t.termDescription].forEach(check); });
         });
     });
-    Object.keys(_snaHiddenSeen).forEach(function(key) { if (!kept[key]) { found[key] = true; } });
+    Object.keys(_snaHiddenSeen).forEach(function(key) { found[key] = true; });
     return Object.keys(found).length;
 }
 
@@ -1348,7 +1333,7 @@ function renderPermissionsHtml(roleAssignments, caption) {
         var levels = (ra.RoleDefinitionBindings || []).map(function(binding) {
             return snaEscapeHtml(snaLevelText(binding.Name || '', snaIsLimitedAccessRole(binding)));
         }).join(', ');
-        html += '<tr><td>' + snaEscapeHtml(memberName) + '</td><td>' + SNA_PRINCIPAL_KIND_LABELS[snaPrincipalKind(member)] + '</td><td>' + levels + '</td></tr>';
+        html += '<tr><td>' + snaPersonHtml(memberName) + '</td><td>' + SNA_PRINCIPAL_KIND_LABELS[snaPrincipalKind(member)] + '</td><td>' + levels + '</td></tr>';
     });
     return html + '</tbody></table>';
 }
@@ -1462,7 +1447,7 @@ function renderPermissionsByPrincipal() {
     entries.forEach(function(p) {
         var isGuest = snaIsGuestLogin(p.loginName, p.title);
         html += '<div class="sna-principal-block">';
-        html += '<div class="sna-principal-name"><strong>' + snaEscapeHtml(p.title) + '</strong> ' +
+        html += '<div class="sna-principal-name"><strong>' + snaPersonHtml(p.title) + '</strong> ' +
             '<span class="app-tag">' + SNA_PRINCIPAL_KIND_LABELS[p.kind] + '</span>' +
             (isGuest ? ' <span class="app-tag sna-guest-tag">Guest</span>' : '') + '</div>';
 
@@ -1476,7 +1461,7 @@ function renderPermissionsByPrincipal() {
 
         if (p.lists.length > 0) {
             html += '<table class="sna-perm-list-table"><caption class="sna-visually-hidden">Lists and libraries with their own permissions for ' +
-                snaEscapeHtml(p.title) + '</caption><thead><tr><th scope="col">List or library with its own permissions</th>' +
+                snaPersonHtml(p.title) + '</caption><thead><tr><th scope="col">List or library with its own permissions</th>' +
                 '<th scope="col">Permission level</th></tr></thead><tbody>';
             p.lists.slice().sort(snaByTitle).forEach(function(l) {
                 var levelText = l.limited ? snaLevelText('Limited Access', true) : l.levels.join(', ');
@@ -1494,8 +1479,8 @@ function renderPermissionsByPrincipal() {
             } else if (p.members) {
                 html += '<details class="sna-members"><summary>Members (' + p.members.length + ')</summary><ul class="sna-members-list">';
                 p.members.slice().sort(snaByTitle).forEach(function(m) {
-                    html += '<li>' + snaEscapeHtml(m.title) +
-                        (m.email ? ' <span class="sna-muted">(' + snaEscapeHtml(m.email) + ')</span>' : '') +
+                    html += '<li>' + snaPersonHtml(m.title) +
+                        (m.email ? ' <span class="sna-muted">(' + snaPersonHtml(m.email) + ')</span>' : '') +
                         (m.isGuest ? ' <span class="app-tag sna-guest-tag">Guest</span>' : '') + '</li>';
                 });
                 html += '</ul></details>';
@@ -1588,7 +1573,7 @@ function snaRenderUserAccessTool() {
             '</div>' +
             '<div id="sna-user-access-hint" class="sna-muted">Such as user@med.umich.edu</div>' +
         '</div>' +
-        '<div id="sna-user-access-status" class="sna-access-status" role="status">' + (done ? snaEscapeHtml(done.status) : '') + '</div>' +
+        '<div id="sna-user-access-status" class="sna-access-status" role="status">' + (done ? snaPersonHtml(done.status) : '') + '</div>' +
         // done.html was built by snaCheckUserAccess with every SharePoint value escaped.
         '<div id="sna-user-access-results">' + (done ? done.html : '') + '</div>' +
     '</div>';
@@ -1626,7 +1611,8 @@ async function snaCheckUserAccess() {
         var liveStatus = document.getElementById('sna-user-access-status');
         var liveOut = document.getElementById('sna-user-access-results');
         if (liveOut) { liveOut.innerHTML = snaMaskHtml(html); }
-        if (liveStatus) { liveStatus.textContent = snaMaskText(statusText); }
+        // The status is fixed text with the checked person's name, which stays visible like other people's names.
+        if (liveStatus) { liveStatus.textContent = statusText; }
     };
 
     _snaUserCheckRunning = true;
@@ -1641,9 +1627,6 @@ async function snaCheckUserAccess() {
 
     try {
         var person = await snaResolveUserLogin(text);
-        // The checked person's name and sign-in name stay visible, like those of the people in the report.
-        _snaKeptPeople.push(text, person.title, person.login);
-        _snaKeptValues = null;
         // Single quotes are doubled so the sign-in name can't end the quoted value early.
         var userParam = "@u='" + encodeURIComponent(person.login.replace(/'/g, "''")) + "'";
         var readLevel = async function(scopeUrl) {
@@ -1671,7 +1654,7 @@ async function snaCheckUserAccess() {
         var noAccessCount = listRows.length - shownRows.length;
         var uncheckedCount = listRows.filter(function(r) { return r.level === null; }).length + (siteLevel === null ? 1 : 0);
 
-        var html = '<table class="sna-perm-list-table"><caption>Access for ' + snaEscapeHtml(person.title) + '</caption>' +
+        var html = '<table class="sna-perm-list-table"><caption>Access for ' + snaPersonHtml(person.title) + '</caption>' +
             '<thead><tr><th scope="col">Site, list, or library</th><th scope="col">What they can do</th></tr></thead><tbody>' +
             '<tr><td>Whole site</td><td>' + snaEscapeHtml(siteLevel || 'Could not check') + '</td></tr>';
         shownRows.forEach(function(r) {
@@ -1685,7 +1668,7 @@ async function snaCheckUserAccess() {
         }
         if (!person.found) {
             html += '<p class="sna-note">Sitenalyzer didn\'t find this email address among the site\'s users, so it checked the sign-in name ' +
-                snaEscapeHtml(person.login) + '. If the results say No access, check the spelling.</p>';
+                snaPersonHtml(person.login) + '. If the results say No access, check the spelling.</p>';
         }
         showResult('Finished checking access for ' + person.title + '.' + (uncheckedCount > 0
             ? ' Sitenalyzer could not check ' + snaCountText(uncheckedCount, 'place', 'places') + '. You need to be a site owner to check them.'
@@ -1730,7 +1713,7 @@ function snaComputeRiskFlags() {
             flags.push({ title: p.title, reason: reason, where: where.join('; ') });
         }
         (p.members || []).forEach(function(m) {
-            if (m.isGuest) { flags.push({ title: m.title, reason: 'Guest from outside your organization', where: 'member of ' + p.title }); }
+            if (m.isGuest) { flags.push({ title: m.title, reason: 'Guest from outside your organization', where: '', group: p.title }); }
         });
     });
     flags.sort(function(a, b) {
@@ -1790,8 +1773,9 @@ function snaRenderRiskFlags() {
     var html = '<div class="sna-risk-panel"><h4 class="sna-risk-title"><span aria-hidden="true">&#9888; </span>Review guest and organization-wide access</h4>' +
         '<ul class="sna-risk-list">';
     flags.forEach(function(f) {
-        html += '<li class="sna-risk-row"><strong>' + snaEscapeHtml(f.title) + '</strong>: <span class="sna-risk-reason">' +
-            snaEscapeHtml(f.reason) + '</span>' + (f.where ? ' (' + snaEscapeHtml(f.where) + ')' : '') + '</li>';
+        html += '<li class="sna-risk-row"><strong>' + snaPersonHtml(f.title) + '</strong>: <span class="sna-risk-reason">' +
+            snaEscapeHtml(f.reason) + '</span>' + (f.where ? ' (' + snaEscapeHtml(f.where) + ')' : '') +
+            (f.group ? ' (member of ' + snaPersonHtml(f.group) + ')' : '') + '</li>';
     });
     if (anyoneLinkCount > 0) {
         html += '<li class="sna-risk-row"><span class="sna-risk-reason">' +
@@ -1824,7 +1808,7 @@ function snaRenderSiteAdmins(admins) {
     if (admins.length === 0) { return '<p class="perm-row">Sitenalyzer found no site collection administrators.</p>'; }
     return '<p>These people have full control of every site in the site collection.</p><ul class="sna-plain-list">' +
         admins.slice().sort(snaByTitle).map(function(a) {
-            return '<li>' + snaEscapeHtml(a.Title || a.LoginName || '') + (a.Email ? ' <span class="sna-muted">(' + snaEscapeHtml(a.Email) + ')</span>' : '') + '</li>';
+            return '<li>' + snaPersonHtml(a.Title || a.LoginName || '') + (a.Email ? ' <span class="sna-muted">(' + snaPersonHtml(a.Email) + ')</span>' : '') + '</li>';
         }).join('') + '</ul>';
 }
 
@@ -2810,8 +2794,6 @@ function snaClearReport() {
     _snaUserCheckResult  = null;
     _snaDrafts           = {};
     _snaEditFocus        = {};
-    _snaKeptValues       = null;
-    _snaKeptPeople       = [];
     _snaHiddenSeen       = {};
 }
 
@@ -3342,7 +3324,6 @@ async function gatherSiteInformation(options) {
         var report = await collectReport(targetUrl, snaSetProgress, token);
         if (token !== _snaCollectionToken) { return; }
         _snaReport = report;
-        _snaKeptValues = null;
         _snaUseAddressRoute = false;
         buildSearchIndex();
         renderFrame(report);
@@ -3453,6 +3434,7 @@ function buildSearchIndex() {
             type:          'Page',
             label:         page.name,
             sublabel:      page.fileName,
+            sublabelIsName: true,
             breadcrumb:    'Site pages',
             route:         snaRouteHash({ section: 'contents', id: 'pages', page: page.key }),
             listTitle:     '',
@@ -3535,9 +3517,9 @@ function snaSearchQuery(query) {
         if (seen[dedupeKey]) { return; }
 
         // Names are compared as they are shown, so a hidden value can't be found by searching for it.
-        // The sublabel holds internal names and IDs, which are never hidden.
+        // The sublabel holds internal names and IDs, which are never hidden, except a site page's file name.
         var labelMatch      = fieldMatches(snaMaskText(item.label));
-        var sublabelMatch   = fieldMatches(item.sublabel);
+        var sublabelMatch   = fieldMatches(item.sublabelIsName ? snaMaskText(item.sublabel) : item.sublabel);
         var breadcrumbMatch = fieldMatches(snaMaskText(item.breadcrumb));
 
         if (!labelMatch && !sublabelMatch && !breadcrumbMatch) { return; }
@@ -5666,11 +5648,12 @@ function snaPrintTermSetUsageHtml(set, taxonomy) {
             usage.status === 'partial' ? 'Sitenalyzer found no column that uses this term set.' : 'No column on this site uses this term set.');
 }
 
-// Returns a list of names and values for the print document. pairs is an array of [name, plain text value].
+// Returns a list of names and values for the print document. pairs is an array of [name, plain text value], with
+// true as a third item when the value is a person's name, email, or sign-in name, which stays visible.
 function snaPrintFactsHtml(pairs) {
     return '<dl class="sna-print-facts">' + pairs.map(function(pair) {
         var value = pair[1] === null || pair[1] === undefined || pair[1] === '' ? 'None.' : pair[1];
-        return '<dt>' + snaEscapeHtml(pair[0]) + '</dt><dd>' + snaEscapeHtml(value) + '</dd>';
+        return '<dt>' + snaEscapeHtml(pair[0]) + '</dt><dd>' + (pair[2] ? snaPersonHtml(value) : snaEscapeHtml(value)) + '</dd>';
     }).join('') + '</dl>';
 }
 
@@ -5737,7 +5720,7 @@ function snaBuildPrintDocument(report) {
             ['Description', site.description || 'No description.'],
             ['Site ID', site.id],
             ['Collected', snaFormatDateTime(report.collectedAt)],
-            ['Collected by', (user && (user.name || user.email || user.loginName)) || 'Not reported.'],
+            ['Collected by', (user && (user.name || user.email || user.loginName)) || 'Not reported.', true],
             ['Their access', report.isAdmin ? 'Can manage this site' : 'Can view this site']
         ]);
 
@@ -5774,7 +5757,7 @@ function snaBuildPrintDocument(report) {
         '<h3>People and groups</h3>' + renderPermissionsByPrincipal() +
         '<h3>Check a person\'s access</h3>' +
             // check.html was built by snaCheckUserAccess with every SharePoint value escaped.
-            (check ? '<p>' + snaEscapeHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
+            (check ? '<p>' + snaPersonHtml(check.status) + '</p>' + check.html : '<p>No one\'s access was checked for this report.</p>') +
         '<h3>Lists and libraries with their own permissions</h3>' + snaRenderInheritanceReport(report.listsRead) +
         '<h3>Sharing links</h3>' + snaRenderSharingLinks(perms.sharingLinks) +
         '<h3>Apps with access to this site</h3>' + snaRenderAppsHtml(report) + '</section>';

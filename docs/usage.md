@@ -157,7 +157,7 @@ Sitenalyzer looks for these kinds of values:
 
 Sitenalyzer checks the names and descriptions of the site, lists, libraries, columns, folders, site pages, shared items, permission levels, term groups, term sets, and terms, and column choices, default values, and formulas. These stay visible:
 
-- Names, email addresses, and sign-in names of people and groups, because you need them to review who has access.
+- Names, email addresses, and sign-in names of people and groups where Sitenalyzer shows who has access, because you need them to review it. The same email or phone number in other text, such as a list description, is hidden.
 - IDs, internal names, and addresses, so links and IDs keep working. A page or folder address can still hold a value that is hidden in its name.
 - The image chosen for a site page.
 
