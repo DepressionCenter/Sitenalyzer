@@ -386,6 +386,90 @@ test('still reads site skills when the lists could not be read', async function(
     expect(record.unexpectedRequests).toEqual([]);
 });
 
+// Builds search rows with the same cell structure returned by the site search API.
+function agentSearchResults(values, total) {
+    return { PrimaryQueryResult: { RelevantResults: { RowCount: values.length, TotalRows: total === undefined ? values.length : total,
+        Table: { Rows: values.map(function(value) { return { Cells: Object.keys(value).map(function(key) { return { Key: key, Value: value[key] }; }) }; }) } } } };
+}
+
+test('uses SharePoint search when a library cannot be filtered and checks every result path', async function({ page }) {
+    const searchRow = { Title: 'Study Visits Helper', Path: SITE_URL + '/Shared%20Documents/Study%20Visits%20Helper.agent',
+        ListId: '{' + LIBRARY_ID.toUpperCase() + '}', UniqueId: agentItems[0].UniqueId, AuthorOWSUSER: 'test.owner@example.org | Test Owner' };
+    const record = await openPretendSite(page, { answerOverrides: [
+        agentAnswer(reply(500, { 'odata.error': { code: '-2147024860, Microsoft.SharePoint.SPQueryThrottledException',
+            message: { value: 'The attempted operation is prohibited because it exceeds the list view threshold.' } } })),
+        { pattern: /^\/_api\/search\/query$/, answer: function(url) {
+            if (!(url.searchParams.get('querytext') || '').includes('FileExtension:agent')) { return undefined; }
+            return agentSearchResults([searchRow,
+                Object.assign({}, searchRow, { Path: 'https://example.org/outside.agent' }),
+                Object.assign({}, searchRow, { Path: SITE_URL + '-other/outside.agent' }),
+                Object.assign({}, searchRow, { ListId: LIST_ID }),
+                Object.assign({}, searchRow, { Path: SITE_URL + '/Shared%20Documents/notes.txt' })]);
+        } }
+    ] });
+    await extractSiteInformation(page);
+    await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('Agent1');
+    const section = await openAgents(page);
+    await expect(section.locator('#sna-tbl-agents .tabulator-row')).toHaveCount(1);
+    await expect(section).toContainText('Study Visits Helper');
+    await expect(section).toContainText('Test Owner');
+    await expect(section).toContainText('Not checked');
+    await expect(section).toContainText('could not filter Documents by file type');
+    await expect(section).toContainText('Search results can be a few minutes behind');
+    await expect(section.getByRole('button', { name: /^Permissions:/ })).toHaveCount(0);
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Agents Partly read/ })).toContainText('Search results can be a few minutes behind');
+    const requests = record.apiRequests.map(function(url) { return new URL(url); }).filter(function(url) {
+        return (url.searchParams.get('querytext') || '').includes('FileExtension:agent');
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].searchParams.get('querytext')).toContain('path:"' + SITE_URL + '"');
+    expect(requests[0].searchParams.get('rowlimit')).toBe('500');
+    expect(requests[0].searchParams.get('trimduplicates')).toBe('false');
+    expect(record.otherOriginRequests).toEqual([]);
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('reports agents as not read when the library and search both fail', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [agentAnswer(reply(500, { error: 'Threshold exceeded' })),
+        { pattern: /^\/_api\/search\/query$/, answer: function(url) {
+            return (url.searchParams.get('querytext') || '').includes('FileExtension:agent') ? reply(500, { error: 'Search unavailable' }) : undefined;
+        } }
+    ] });
+    await extractSiteInformation(page);
+    await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('AgentsNot read');
+    const section = await openAgents(page);
+    await expect(section).toContainText('could not check Documents and SharePoint search did not answer');
+    await expect(section).not.toContainText('No agents found.');
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Agents Not read/ })).toBeVisible();
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('reads later search rows without duplicating agents already read from a library', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: [agentItems[0]],
+        'odata.nextLink': SITE_URL + "/_api/web/lists(guid'" + LIBRARY_ID + "')/items?$filter=File_x0020_Type%20eq%20'agent'" }),
+        { pattern: /^\/_api\/search\/query$/, answer: function(url) {
+            if (!(url.searchParams.get('querytext') || '').includes('FileExtension:agent')) { return undefined; }
+            const start = Number(url.searchParams.get('startrow'));
+            const item = agentItems[start];
+            return agentSearchResults([{ Path: SITE_URL.replace(SITE_PATH, '') + encodeURI(item.FileRef), ListId: LIBRARY_ID,
+                UniqueId: item.UniqueId, AuthorOWSUSER: 'Unknown format' }], 2);
+        } }
+    ] });
+    await extractSiteInformation(page);
+    await openAgents(page);
+    await expect(page.locator('#sna-tbl-agents .tabulator-row')).toHaveCount(2);
+    await expect(page.locator('#sna-tbl-agents').getByRole('row', { name: /Protocol Reviewer/ })).toContainText('Not checked');
+    await expect(page.locator('#sna-tbl-agents').getByRole('row', { name: /Study Visits Helper/ })).toContainText('Own permissions');
+    const starts = record.apiRequests.map(function(url) { return new URL(url); }).filter(function(url) {
+        return (url.searchParams.get('querytext') || '').includes('FileExtension:agent');
+    }).map(function(url) { return url.searchParams.get('startrow'); });
+    expect(starts).toEqual(['0', '1']);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
 // ### Startup and Loading ###
 
 test('shows the app inside the page with no errors', async function({ page }) {

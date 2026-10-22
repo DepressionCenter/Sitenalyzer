@@ -261,6 +261,8 @@ Select **Agents and skills** in **Contents** to see two tables. **Agents** lists
 
 The **Agents** count on the Overview links to these tables and includes the number of site skills. **Search this report** finds their names and descriptions. Names and descriptions that look like personal information are hidden; **Created by** remains visible. **Show technical details** adds file addresses.
 
+When SharePoint cannot filter a library by file type, Sitenalyzer uses SharePoint search for that library. This can happen above 5,000 items. Search results can be a few minutes behind, so a new agent may be missing temporarily. The section names the affected libraries, and **Report coverage** says **Partly read**. Their **Permissions** cells say **Not checked**. If search also fails, the report says which libraries could not be checked.
+
 Agents made with Microsoft Copilot Agent Builder, agents saved on other sites, usage numbers, and the site's main agent setting cannot be listed here. Agents saved as `.agent` files stop working after March 2027. Site owners should review [Upgrade agents in SharePoint and OneDrive](https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents).
 
 ### Print the report

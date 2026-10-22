@@ -78,6 +78,8 @@ Every request is a read made with the signed-in person's own permissions. The on
 | `/_api/contextinfo` and `/_api/$batch`, holding `GetFileById('…')` and then `GetFolderById('…')` | The names and addresses of up to 60 shared files and folders. See [Shared item names](#shared-item-names). |
 | `/_api/web/roledefinitions`, `/_api/web/siteusers?$filter=IsSiteAdmin eq true` | Permission levels and site collection administrators, for the permissions workbook. |
 | `/_api/web/lists?$filter=BaseTemplate eq 119` and its `items` | The Site Pages library and its pages. |
+| `/_api/web/lists(guid'…')/items` with `File_x0020_Type eq 'agent'` and `$expand=Author` | Agents in each document library, with file metadata and the creator's name. |
+| `/_api/search/query` with `FileExtension:agent` and the site path | Agents in libraries whose items request failed, including libraries over the 5,000-item list view threshold. One site query is read in batches of up to 500 rows. Search can be minutes behind the library. Only results in the failed libraries and this site are kept; their permissions say **Not checked**. |
 | `/_api/web/lists(guid'...')/items(<ID>)?$select=BannerImageUrl` | The image chosen for one site page, read only when its details open. |
 | `/_api/web/siteusers?$filter=Email eq '…'` and `getUserEffectivePermissions(@u)` | Only when someone uses **Check a person's access**. |
 | Fields, root folders, and the term store (`/_api/v2.1/sites/…/termStore`) | Columns, top-level folders, and terms for the data dictionary. |

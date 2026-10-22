@@ -4531,6 +4531,63 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
     });
     stillWanted();
 
+    if (result.libraries.failed.length) {
+        result.searched = true;
+        var failedLibraries = {};
+        libraries.forEach(function(library) {
+            if (result.libraries.failed.indexOf(library.title) >= 0) { failedLibraries[snaCleanListId(library.id)] = library; }
+        });
+        var startRow = 0;
+        var query = "'FileExtension:agent path:\"" + targetUrl.replace(/'/g, "''") + "\"'";
+        try {
+            while (startRow < SNA_AGENT_SEARCH_MAX) {
+                stillWanted();
+                var search = await spFetch(targetUrl + '/_api/search/query?querytext=' + encodeURIComponent(query) +
+                    "&selectproperties='Title,Path,Filename,LastModifiedTime,ListId,UniqueId,AuthorOWSUSER'&rowlimit=" +
+                    SNA_AGENT_SEARCH_ROWS + '&startrow=' + startRow + '&trimduplicates=false');
+                stillWanted();
+                var relevant = search && search.PrimaryQueryResult && search.PrimaryQueryResult.RelevantResults;
+                if (!relevant || !relevant.Table || !Array.isArray(relevant.Table.Rows) || !Number.isFinite(Number(relevant.TotalRows))) {
+                    throw new Error('Invalid search response');
+                }
+                var rows = relevant.Table.Rows;
+                var remaining = SNA_AGENT_SEARCH_MAX - startRow;
+                rows.slice(0, remaining).forEach(function(searchRow) {
+                    var values = {};
+                    (searchRow.Cells || []).forEach(function(cell) {
+                        if (['Path', 'Filename', 'LastModifiedTime', 'ListId', 'UniqueId', 'AuthorOWSUSER'].indexOf(cell.Key) >= 0) {
+                            values[cell.Key] = String(cell.Value || '');
+                        }
+                    });
+                    var library = failedLibraries[snaCleanListId(values.ListId || '')];
+                    var path = values.Path || '';
+                    if (!library || !/\.agent$/i.test(path) || !snaIsSameSiteUrl(path, targetUrl)) { return; }
+                    var address;
+                    try { address = new URL(path); } catch(e) { return; }
+                    var filePath = decodeURIComponent(address.pathname);
+                    var creator = (values.AuthorOWSUSER || '').split(' | ');
+                    var row = fileRow({ FileLeafRef: values.Filename || filePath.split('/').pop(), FileRef: filePath,
+                        Modified: values.LastModifiedTime, UniqueId: values.UniqueId,
+                        Author: creator.length === 2 && creator[0].trim() && creator[1].trim()
+                            ? { Title: creator[1].trim(), EMail: creator[0].trim() } : {} }, library);
+                    if (!row.url || seenAgents[row.url]) { return; }
+                    if (result.agents.length >= SNA_AGENTS_MAX) { result.truncated = true; return; }
+                    row.fromSearch = true;
+                    row.ownPermissions = null;
+                    seenAgents[row.url] = true;
+                    result.agents.push(row);
+                });
+                startRow += Math.min(rows.length, remaining);
+                if (rows.length > remaining || (startRow >= SNA_AGENT_SEARCH_MAX && startRow < Number(relevant.TotalRows))) {
+                    result.searchTruncated = true;
+                }
+                if (startRow >= Number(relevant.TotalRows) || result.searchTruncated || result.truncated) { break; }
+                if (!rows.length) { throw new Error('Search stopped before all rows were returned'); }
+            }
+        } catch(e) { result.searchFailed = true; }
+    }
+    stillWanted();
+
     // Agent Assets is looked up separately because the product may keep the library hidden.
     var skillLibraries;
     try {
@@ -4619,9 +4676,17 @@ function snaAgentCoverage(assets) {
     } else if (assets.collectionFailed) {
         agentNotes.push('Sitenalyzer could not look for agents. Refresh the report to try again.');
     } else if (assets.libraries.failed.length) {
-        agentNotes.push('Sitenalyzer could not check ' + assets.libraries.failed.join(', ') + ', so agents in them may be missing. Refresh the report to try again.');
+        var names = assets.libraries.failed.length === 1 ? assets.libraries.failed[0] :
+            assets.libraries.failed.slice(0, -1).join(', ') + ' and ' + assets.libraries.failed[assets.libraries.failed.length - 1];
+        if (assets.searched && !assets.searchFailed) {
+            agentNotes.push('SharePoint could not filter ' + names + ' by file type, so Sitenalyzer used SharePoint search for them. ' +
+                'Search results can be a few minutes behind, so a new agent may be missing for a while. Try refreshing the report later.');
+        } else {
+            agentNotes.push('Sitenalyzer could not check ' + names + ' and SharePoint search did not answer, so agents in them are missing. Refresh the report to try again.');
+        }
     }
     if (assets.truncated) { agentNotes.push('Sitenalyzer read the first ' + SNA_AGENTS_MAX.toLocaleString('en-US') + ' agents only.'); }
+    if (assets.searchTruncated) { agentNotes.push('Sitenalyzer read the first ' + SNA_AGENT_SEARCH_MAX.toLocaleString('en-US') + ' search results only.'); }
     if (assets.skillsStatus === 'none') { skillNotes.push('This site has no Agent Assets library, so it has no site skills.'); }
     if (assets.skillsStatus === 'failed') { skillNotes.push('Sitenalyzer could not read the Agent Assets library. Refresh the report to try again.'); }
     if (assets.skillTextFailed) {
@@ -4630,7 +4695,8 @@ function snaAgentCoverage(assets) {
     }
     if (assets.skillTextSkipped) { skillNotes.push('Sitenalyzer read the text of the first ' + SNA_SKILL_TEXT_LOOKUPS + ' site skills only.'); }
     if (assets.skillsTruncated) { skillNotes.push('Sitenalyzer read the first ' + SNA_AGENTS_MAX.toLocaleString('en-US') + ' site skills only.'); }
-    return [{ area: 'Agents', status: snaAgentsNotRead(assets) ? 'failed' : (agentNotes.length ? 'partial' : 'read'), note: agentNotes.join(' ') },
+    return [{ area: 'Agents', status: snaAgentsNotRead(assets) || (assets.searchFailed && !assets.agents.length) ? 'failed' :
+            (agentNotes.length ? 'partial' : 'read'), note: agentNotes.join(' ') },
         { area: 'Site skills', status: assets.skillsStatus === 'failed' ? 'failed' :
             (assets.skillTextFailed || assets.skillTextSkipped || assets.skillsTruncated ? 'partial' : 'read'), note: skillNotes.join(' ') }];
 }
@@ -4646,7 +4712,7 @@ function snaAgentPermissionsHtml(asset, type) {
     var html = '<span class="sna-badge sna-badge-own">Own permissions</span>';
     if (SNA_GUID_PATTERN.test(asset.libraryId) && /^\d+$/.test(asset.itemId)) {
         var url = _snaTargetUrl + '/_layouts/15/user.aspx?obj={' + asset.libraryId + '},' + asset.itemId + ',LISTITEM&List={' + asset.libraryId + '}';
-        html += ' <button type="button" class="sna-btn-sm" data-action="open-url" data-url="' + snaEscapeHtml(url) +
+        html += ' <button type="button" class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(url) +
             '" aria-label="Permissions: open the SharePoint permissions page for this ' + (type === 'agents' ? 'agent' : 'site skill') + ' in a new window">Permissions</button>';
     }
     return html;
