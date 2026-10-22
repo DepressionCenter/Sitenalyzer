@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-sharepoint.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-21
+Last Modified: 2026-10-22
 Summary: A pretend SharePoint Online site for the browser tests. Playwright answers every request to
          https://contoso.sharepoint.com itself: the page holds the code from dist/SitePages/sitenalyzer.html.txt,
          files under SiteAssets come from dist/SiteAssets, and REST API calls get the synthetic answers below.
@@ -297,11 +297,13 @@ const API_ANSWERS = [
     { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
         const filter = url.searchParams.get('$filter') || '';
         if (/BaseTemplate eq 119/.test(filter)) { return sitePagesLibrary; }
-        if (/Title eq 'Agent Assets'/.test(filter)) {
-            return { value: [{ Id: AGENT_ASSETS_ID, Title: 'Agent Assets', BaseTemplate: 101, Hidden: true,
-                HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Agent Assets/Forms/AllItems.aspx' }] };
-        }
         return lists;
+    } },
+    { pattern: /^\/_api\/web\/GetList\(@listUrl\)$/, answer: function(url) {
+        return url.searchParams.get('@listUrl') === "'" + SITE_PATH + "/Agent Assets'"
+            ? { Id: AGENT_ASSETS_ID, Title: 'Agent Assets', BaseTemplate: 101, Hidden: true,
+                HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Agent Assets/Forms/AllItems.aspx' }
+            : reply(404, { error: 'Library not found' });
     } },
     { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
         const filter = url.searchParams.get('$filter') || '';

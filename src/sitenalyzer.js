@@ -84,7 +84,7 @@ var SNA_AGENT_ITEMS_BATCH_SIZE = 2000; // Items requested in each batch of agent
 var SNA_AGENTS_MAX = 10000; // Most agents read across the site's libraries.
 var SNA_AGENT_SEARCH_ROWS = 500; // Most rows SharePoint search accepts in one request.
 var SNA_AGENT_SEARCH_MAX = 5000; // Most search rows read for agents on a site.
-var SNA_AGENT_ASSETS_TITLE = 'Agent Assets';
+var SNA_AGENT_ASSETS_FOLDER = 'Agent Assets';
 var SNA_SKILLS_FOLDER = 'Skills';
 var SNA_SKILL_FILE = 'SKILL.md';
 var SNA_SKILL_TEXT_LOOKUPS = 200; // Most site skills whose names and descriptions are read from their text.
@@ -4517,6 +4517,8 @@ function snaSkillFrontMatter(text) {
         if (/^["']/.test(value)) {
             value = snaSkillQuotedScalar(value);
             if (value === null) { return null; }
+        } else {
+            value = value.replace(/(?:^|[ \t])#.*$/, '').trim();
         }
         values[match[1]] = value;
     }
@@ -4645,16 +4647,20 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
     }
     stillWanted();
 
-    // Agent Assets is looked up separately because the product may keep the library hidden.
+    // The fixed library address works even when its display title changes or the library is hidden.
     var skillLibraries;
     try {
-        var response = await spFetch(targetUrl + '/_api/web/lists?$select=Id,Title,BaseTemplate,Hidden,HasUniqueRoleAssignments,DefaultViewUrl&$filter=' +
-            encodeURIComponent("Title eq '" + SNA_AGENT_ASSETS_TITLE.replace(/'/g, "''") + "'"));
-        if (!response || !Array.isArray(response.value)) { throw new Error('Invalid libraries response'); }
-        skillLibraries = response.value;
+        var skillLibraryPath = decodeURIComponent(new URL(targetUrl).pathname).replace(/\/$/, '') + '/' + SNA_AGENT_ASSETS_FOLDER;
+        var response = await spFetch(targetUrl + '/_api/web/GetList(@listUrl)?@listUrl=' +
+            encodeURIComponent("'" + skillLibraryPath.replace(/'/g, "''") + "'") +
+            '&$select=Id,Title,BaseTemplate,Hidden,HasUniqueRoleAssignments,DefaultViewUrl');
+        if (!response || !SNA_GUID_PATTERN.test(snaCleanListId(response.Id))) { throw new Error('Invalid library response'); }
+        skillLibraries = [response];
     } catch(e) {
-        result.skillsLibraryFailed = true;
-        result.skillsStatus = 'failed';
+        if (!/^HTTP 404\b/.test(e.message || '')) {
+            result.skillsLibraryFailed = true;
+            result.skillsStatus = 'failed';
+        }
         skillLibraries = [];
     }
     stillWanted();
@@ -4680,7 +4686,7 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
                 skillsJson.value.forEach(function(item) {
                     var path = String(item.FileRef || '');
                     if (/[\\\u0000-\u001f]/.test(path)) { return; }
-                    var prefix = decodeURIComponent(new URL(targetUrl).pathname).replace(/\/$/, '') + '/' + SNA_AGENT_ASSETS_TITLE + '/' + SNA_SKILLS_FOLDER + '/';
+                    var prefix = decodeURIComponent(new URL(targetUrl).pathname).replace(/\/$/, '') + '/' + SNA_AGENT_ASSETS_FOLDER + '/' + SNA_SKILLS_FOLDER + '/';
                     if (path.toLowerCase().indexOf(prefix.toLowerCase()) !== 0) { return; }
                     var parts = path.slice(prefix.length).split('/');
                     if (parts.length !== 2 || !parts[0] || parts[0] === '.' || parts[0] === '..' ||

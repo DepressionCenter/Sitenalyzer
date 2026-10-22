@@ -93,8 +93,8 @@ function agentAnswer(answer) {
 
 // Overrides only the separate lookup for the Agent Assets library.
 function skillLibraryAnswer(body) {
-    return { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
-        return (url.searchParams.get('$filter') || '').includes("Title eq 'Agent Assets'") ? body : undefined;
+    return { pattern: /^\/_api\/web\/GetList\(@listUrl\)$/, answer: function(url) {
+        return url.searchParams.get('@listUrl') === "'" + SITE_PATH + "/Agent Assets'" ? body : undefined;
     } };
 }
 
@@ -235,7 +235,9 @@ test('lists agents and site skills in Contents with file and permissions links',
     expect(agentRequests).toHaveLength(1);
     expect(agentRequests[0].searchParams.has('$orderby')).toBe(false);
     expect(agentRequests[0].searchParams.get('$expand')).toBe('Author');
-    expect(requests.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("Title eq 'Agent Assets'"); })).toHaveLength(1);
+    const skillLibraries = requests.filter(function(url) { return url.pathname.endsWith('/GetList(@listUrl)'); });
+    expect(skillLibraries).toHaveLength(1);
+    expect(skillLibraries[0].searchParams.get('@listUrl')).toBe("'" + SITE_PATH + "/Agent Assets'");
     expect(requests.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("FileLeafRef eq 'SKILL.md'"); })).toHaveLength(1);
     expect(requests.filter(function(url) { return url.pathname.endsWith('/$value'); })).toHaveLength(1);
     expect(requests.filter(function(url) { return (url.searchParams.get('querytext') || '').includes('FileExtension:agent'); })).toHaveLength(0);
@@ -259,6 +261,33 @@ test('counts agents and site skills on the Overview and in Report coverage', asy
     expect(record.consoleErrors).toEqual([]);
 });
 
+for (const hidden of [true, false]) {
+    test('finds site skills by address when the library title changes and Hidden is ' + hidden, async function({ page }) {
+        const record = await openPretendSite(page, { answerOverrides: [
+            { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+                return (url.searchParams.get('$filter') || '').includes("Title eq 'Agent Assets'") ? { value: [] } : undefined;
+            } },
+            { pattern: /^\/_api\/web\/GetList\(@listUrl\)$/, body: {
+                Id: AGENT_ASSETS_ID, Title: 'Instructions du site', Hidden: hidden, BaseTemplate: 101,
+                HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Agent Assets/Forms/AllItems.aspx'
+            } }
+        ] });
+        await extractSiteInformation(page);
+        await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('1 site skill');
+        const section = await openAgents(page);
+        await expect(section.getByRole('grid', { name: 'Site skills', exact: true })).toContainText('Weekly summary');
+        const lookups = record.apiRequests.map(function(url) { return new URL(url); })
+            .filter(function(url) { return url.pathname.endsWith('/GetList(@listUrl)'); });
+        expect(lookups).toHaveLength(1);
+        expect(lookups[0].searchParams.get('@listUrl')).toBe("'" + SITE_PATH + "/Agent Assets'");
+        await gotoSection(page, 'Site review');
+        await expect(page.getByRole('row', { name: /^Site skills Read/ })).toBeVisible();
+        expect(record.unexpectedRequests).toEqual([]);
+        expect(record.consoleErrors).toEqual([]);
+        expect(changeRequests(record)).toEqual([]);
+    });
+}
+
 test('reports unread site skills without hiding agents', async function({ page }) {
     await openPretendSite(page, { answerOverrides: [skillLibraryAnswer(reply(403, { error: 'Access denied' }))] });
     await extractSiteInformation(page);
@@ -272,13 +301,28 @@ test('reports unread site skills without hiding agents', async function({ page }
 });
 
 test('reports no site skills when Agent Assets does not exist', async function({ page }) {
-    const record = await openPretendSite(page, { answerOverrides: [skillLibraryAnswer({ value: [] })] });
+    const record = await openPretendSite(page, { answerOverrides: [skillLibraryAnswer(reply(404, { error: 'Library not found' }))] });
     await extractSiteInformation(page);
     await expect(await openAgents(page)).toContainText('No site skills found.');
     await gotoSection(page, 'Site review');
     await expect(page.getByRole('row', { name: /^Site skills Read/ })).toContainText('no Agent Assets library');
     expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual(['Failed to load resource: the server responded with a status of 404 (Not Found)']);
+});
+
+test('rejects an invalid library ID without requesting site skill items', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [
+        skillLibraryAnswer({ Id: "invalid')/items?extra='value", Title: 'Agent Assets' })
+    ] });
+    await extractSiteInformation(page);
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Site skills Not read/ })).toBeVisible();
+    expect(record.apiRequests.some(function(url) {
+        return (new URL(url).searchParams.get('$filter') || '').includes("FileLeafRef eq 'SKILL.md'");
+    })).toBe(false);
+    expect(record.unexpectedRequests).toEqual([]);
     expect(record.consoleErrors).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
 });
 
 for (const hasSkills of [true, false]) {
@@ -338,7 +382,14 @@ test('uses site skill folders when text cannot be read or has no front matter', 
     }
 });
 
-const quotedSkillCases = [
+const skillTextCases = [
+    { title: 'plain scalar comments', name: 'Weekly summary # display label',
+        description: 'Use C# and https://example.org/help#details\t# internal note',
+        expectedName: 'Weekly summary', expectedDescription: 'Use C# and https://example.org/help#details', query: 'Weekly' },
+    { title: 'a comment instead of a name', name: '# display label', description: 'Read notes # internal note',
+        expectedName: 'weekly-summary', expectedDescription: 'Read notes', query: 'weekly-summary' },
+    { title: 'hashes inside quotes', name: "'C# helper # label'", description: '"Read # literally" # internal note',
+        expectedName: 'C# helper # label', expectedDescription: 'Read # literally', query: 'C#' },
     { title: 'single quotes', name: "'Director''s helper'", description: String.raw`'Keep C:\notes and "quotes".'`,
         expectedName: "Director's helper", expectedDescription: String.raw`Keep C:\notes and "quotes".`, query: "Director's" },
     { title: 'double quotes', name: String.raw`"Quoted \"helper\" \x26 \u03A9 \U0001F680"`,
@@ -349,7 +400,7 @@ const quotedSkillCases = [
         expectedDescription: '<img src=x>', query: 'Call' }
 ];
 
-for (const sample of quotedSkillCases) {
+for (const sample of skillTextCases) {
     test('reads site skill text with ' + sample.title + ' in every output', async function({ page }, testInfo) {
         await stubPrint(page);
         const record = await openPretendSite(page, { answerOverrides: [
@@ -653,7 +704,7 @@ test('limits site skill text reads and rejects paths outside a single skill fold
     skills.push({ Id: 999, FileRef: SITE_PATH + '/Agent Assets/Skills/../SKILL.md' },
         { Id: 998, FileRef: SITE_PATH + '/Agent Assets/Skills/..\\outside/SKILL.md' });
     const record = await openPretendSite(page, { answerOverrides: [
-        skillLibraryAnswer({ value: [{ Id: '{' + AGENT_ASSETS_ID + '}', Title: 'Agent Assets' }] }),
+        skillLibraryAnswer({ Id: '{' + AGENT_ASSETS_ID + '}', Title: 'Agent Assets' }),
         { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
             return match[1] === AGENT_ASSETS_ID ? { value: skills } : undefined;
         } },
