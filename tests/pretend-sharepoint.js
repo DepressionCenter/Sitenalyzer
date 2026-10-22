@@ -297,6 +297,14 @@ const API_ANSWERS = [
     { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
         const filter = url.searchParams.get('$filter') || '';
         if (/BaseTemplate eq 119/.test(filter)) { return sitePagesLibrary; }
+        if (filter === 'BaseType eq 1') {
+            return { value: lists.value.filter(function(list) { return list.BaseType === 1; }).concat([
+                { Id: AGENT_ASSETS_ID, Title: 'Agent Assets', BaseType: 1, Hidden: true,
+                    DefaultViewUrl: SITE_PATH + '/Agent Assets/Forms/AllItems.aspx' },
+                { Id: SITE_PAGES_ID, Title: 'Site Pages', BaseType: 1, Hidden: false,
+                    DefaultViewUrl: SITE_PATH + '/SitePages/Forms/AllItems.aspx' }
+            ]) };
+        }
         return lists;
     } },
     { pattern: /^\/_api\/web\/GetList\(@listUrl\)$/, answer: function(url) {

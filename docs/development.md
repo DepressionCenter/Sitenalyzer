@@ -140,11 +140,14 @@ Tests also cover changed library titles, hidden and visible libraries, missing l
 
 Search tests include creators with trailing account data and missing email or name values. Export tests cover site skills collected after a failed lists request, agents without list columns, and a report with nothing to export.
 
+The agent library listing includes hidden Agent Assets and Site Pages. Tests check hidden agents in search, print, and export, library paging without duplicate scans, rejected links to other sites, and incomplete library discovery. A failed Contents listing does not prevent the separate agent library listing.
+
 #### Checks on a real site
 
 The fixtures cannot confirm these service details. Check them on a SharePoint Online site before relying on this inventory:
 
 1. The `.agent` file-type filter returns the expected files, and `$expand=Author` supplies their creators.
+   Check a readable hidden document library too, including one that needs the search fallback.
 2. A library above 5,000 items triggers the search path when filtering fails. Check that search returns its files and that the first two `AuthorOWSUSER` parts supply the email and name, with any trailing account data ignored.
 3. The fixed `/Agent Assets` address finds the library when its title is renamed or shown in another language, whether hidden or visible.
 4. `GetFileByServerRelativePath(...)/$value` returns the site skill text, with `name:` and `description:` at the start.

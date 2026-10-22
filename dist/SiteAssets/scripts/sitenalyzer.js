@@ -4644,10 +4644,37 @@ function snaSkillFrontMatter(text) {
  * @throws {Error} Cancellation from stillWanted. Read failures are recorded for accessible coverage messages.
  */
 async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
-    var result = snaEmptySiteAgents(!listsRead);
+    var result = snaEmptySiteAgents(false);
     var libraries = listsRead ? lists.filter(function(list) { return list.raw.BaseType === 1; }) : [];
     var origin = snaOrigin(targetUrl);
     var seenAgents = {};
+
+    // Agent files can be in hidden libraries excluded from the general Contents inventory.
+    // Keep known libraries and earlier pages if the complete library listing cannot be read.
+    var knownLibraries = {};
+    libraries.forEach(function(library) { knownLibraries[snaCleanListId(library.id)] = true; });
+    var librariesNext = targetUrl + '/_api/web/lists?$select=Id,Title,BaseType,DefaultViewUrl&$filter=BaseType eq 1';
+    var librariesVisited = {};
+    try {
+        while (librariesNext) {
+            stillWanted();
+            if (librariesVisited[librariesNext] || !snaIsSameSiteApiUrl(librariesNext, targetUrl)) { throw new Error('Invalid next-batch link'); }
+            librariesVisited[librariesNext] = true;
+            var librariesJson = await spFetch(librariesNext);
+            stillWanted();
+            if (!librariesJson || !Array.isArray(librariesJson.value)) { throw new Error('Invalid libraries response'); }
+            librariesJson.value.forEach(function(library) {
+                var id = snaCleanListId(library.Id);
+                if (!SNA_GUID_PATTERN.test(id) || library.BaseType !== 1) { throw new Error('Invalid library response'); }
+                if (knownLibraries[id]) { return; }
+                knownLibraries[id] = true;
+                libraries.push({ id: id, title: String(library.Title || ''), routeId: '', raw: library });
+            });
+            var librariesLink = librariesJson['odata.nextLink'] || librariesJson['@odata.nextLink'];
+            librariesNext = librariesLink ? new URL(librariesLink, targetUrl + '/').href : '';
+        }
+    } catch(e) { result.listsNotRead = true; }
+    stillWanted();
 
     function fileRow(item, library) {
         var fileRef = String(item.FileRef || '');
@@ -4840,7 +4867,7 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
 
 // True only when no agent count can be given, rather than a known empty result.
 function snaAgentsNotRead(assets) {
-    return assets.listsNotRead || assets.collectionFailed ||
+    return assets.collectionFailed || ((assets.listsNotRead || assets.searchFailed) && !assets.agents.length) ||
         (assets.libraries.failed.length > 0 && assets.libraries.checked.length === 0 && !assets.agents.length && (!assets.searched || assets.searchFailed));
 }
 
@@ -4848,7 +4875,7 @@ function snaAgentsNotRead(assets) {
 function snaAgentCoverage(assets) {
     var agentNotes = [], skillNotes = [];
     if (assets.listsNotRead) {
-        agentNotes.push('Sitenalyzer could not read the lists and libraries, so it could not look for agents. Refresh the report to try again.');
+        agentNotes.push('Sitenalyzer could not read the complete list of document libraries. Some agents may be missing. Refresh the report to try again.');
     } else if (assets.collectionFailed) {
         agentNotes.push('Sitenalyzer could not look for agents. Refresh the report to try again.');
     } else if (assets.libraries.failed.length) {

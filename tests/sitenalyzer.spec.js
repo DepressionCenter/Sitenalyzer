@@ -233,7 +233,7 @@ test('lists agents and site skills in Contents with file and permissions links',
     await expect(skills.locator('.tabulator-row')).toHaveCount(1);
     const requests = record.apiRequests.map(function(url) { return new URL(url); });
     const agentRequests = requests.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'"); });
-    expect(agentRequests).toHaveLength(1);
+    expect(agentRequests).toHaveLength(3);
     expect(agentRequests[0].searchParams.has('$orderby')).toBe(false);
     expect(agentRequests[0].searchParams.get('$expand')).toBe('Author');
     const skillLibraries = requests.filter(function(url) { return url.pathname.endsWith('/GetList(@listUrl)'); });
@@ -247,6 +247,112 @@ test('lists agents and site skills in Contents with file and permissions links',
     expect(record.consoleErrors).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
     expect(changeRequests(record)).toEqual([]);
+});
+
+test('finds agents in a hidden library and includes them in print and export', async function({ page }, testInfo) {
+    await stubPrint(page);
+    const hiddenAgent = Object.assign({}, agentItems[0], { FileLeafRef: 'Hidden Helper.agent',
+        FileRef: SITE_PATH + '/Agent Assets/Hidden Helper.agent', FileDirRef: SITE_PATH + '/Agent Assets' });
+    const record = await openPretendSite(page, { answerOverrides: [
+        agentAnswer({ value: [] }),
+        { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
+            return match[1] === AGENT_ASSETS_ID && (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'")
+                ? { value: [hiddenAgent] } : undefined;
+        } }
+    ] });
+    await extractSiteInformation(page);
+    await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('Agent1');
+    const section = await openAgents(page);
+    const row = section.locator('#sna-tbl-agents .tabulator-row');
+    await expect(row).toContainText('Hidden Helper');
+    await expect(row.locator('[tabulator-field="libraryTitle"]')).toHaveText('Agent Assets');
+    await expect(row.locator('[tabulator-field="libraryTitle"] a')).toHaveCount(0);
+    await expect(row.getByRole('button', { name: /^Permissions:/ })).toHaveAttribute('data-url', SITE_URL + '/_layouts/15/user.aspx?obj={' + AGENT_ASSETS_ID + '},21,LISTITEM&List={' + AGENT_ASSETS_ID + '}');
+    await searchReport(page, 'Hidden Helper');
+    await expect(page.locator('#sp-results')).toContainText('Hidden Helper');
+    const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+    const agents = sheetRows(workbook, 'Assets').filter(function(asset) { return asset[4] === 'SharePoint Agent'; });
+    expect(agents).toHaveLength(1);
+    expect(agents[0][6]).toBe(SITE_PATH + '/Agent Assets');
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await page.emulateMedia({ media: 'print' });
+    await expect(printFrameDocument(page).getByRole('table', { name: 'Agents', exact: true })).toContainText('Hidden Helper');
+    await page.emulateMedia({ media: 'screen' });
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Agents Read/ })).toBeVisible();
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
+});
+
+for (const unsafeNext of [false, true]) {
+    test('reads later library pages without duplicate scans and unsafe next link is ' + unsafeNext, async function({ page }) {
+        const record = await openPretendSite(page, { answerOverrides: [
+            { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+                if (url.searchParams.get('$filter') !== 'BaseType eq 1') { return undefined; }
+                if (!url.searchParams.has('$skiptoken')) {
+                    return { value: [{ Id: LIBRARY_ID, Title: 'Documents', BaseType: 1 }],
+                        '@odata.nextLink': SITE_URL + '/_api/web/lists?$filter=BaseType%20eq%201&$skiptoken=next' };
+                }
+                return { value: [{ Id: LIBRARY_ID, Title: 'Documents', BaseType: 1 },
+                    { Id: AGENT_ASSETS_ID, Title: 'Agent Assets', BaseType: 1, Hidden: true }],
+                    'odata.nextLink': unsafeNext ? 'https://example.org/_api/web/lists' : '' };
+            } },
+            { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
+                return match[1] === AGENT_ASSETS_ID && (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'")
+                    ? { value: [Object.assign({}, agentItems[0], { FileLeafRef: 'Hidden Helper.agent',
+                        FileRef: SITE_PATH + '/Agent Assets/Hidden Helper.agent', FileDirRef: SITE_PATH + '/Agent Assets' })] } : undefined;
+            } }
+        ] });
+        await extractSiteInformation(page);
+        await expect(await openAgents(page)).toContainText('Hidden Helper');
+        await expect(page.locator('#sna-detail-title .item-count-badge')).toHaveText('3 agents');
+        await gotoSection(page, 'Site review');
+        await expect(page.getByRole('row', { name: unsafeNext ? /^Agents Partly read/ : /^Agents Read/ })).toBeVisible();
+        const reads = record.apiRequests.map(function(url) { return new URL(url); });
+        expect(reads.filter(function(url) { return url.searchParams.get('$filter') === 'BaseType eq 1'; })).toHaveLength(2);
+        expect(reads.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'"); })).toHaveLength(2);
+        expect(record.otherOriginRequests).toEqual([]);
+        expect(record.unexpectedRequests).toEqual([]);
+        expect(record.consoleErrors).toEqual([]);
+    });
+}
+
+for (const hasAgents of [true, false]) {
+    test('reports incomplete library discovery when known libraries have agents is ' + hasAgents, async function({ page }) {
+        const record = await openPretendSite(page, { answerOverrides: [
+            agentAnswer({ value: hasAgents ? agentItems : [] }),
+            { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+                return url.searchParams.get('$filter') === 'BaseType eq 1' ? reply(403, { error: 'Access denied' }) : undefined;
+            } }
+        ] });
+        await extractSiteInformation(page);
+        const section = await openAgents(page);
+        await expect(section).toContainText('could not read the complete list of document libraries');
+        await expect(section.locator('#sna-detail-title .item-count-badge')).toHaveText(hasAgents ? '2 agents' : 'Agents not read');
+        await gotoSection(page, 'Site review');
+        await expect(page.getByRole('row', { name: hasAgents ? /^Agents Partly read/ : /^Agents Not read/ })).toBeVisible();
+        expect(record.unexpectedRequests).toEqual([]);
+        expect(changeRequests(record)).toEqual([]);
+    });
+}
+
+test('reads agents independently when the general Contents listing fails', async function({ page }, testInfo) {
+    const record = await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+            return (url.searchParams.get('$filter') || '').includes('Hidden eq false') ? reply(403, { error: 'Access denied' }) : undefined;
+        } }
+    ] });
+    await extractSiteInformation(page);
+    await expect(await openAgents(page)).toContainText('Study Visits Helper');
+    await expect(page.locator('#sna-detail-title .item-count-badge')).toHaveText('2 agents');
+    await expect(page.locator('#sna-tbl-agents [tabulator-field="libraryTitle"] a')).toHaveCount(0);
+    const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+    expect(sheetRows(workbook, 'Fields')).toHaveLength(1);
+    expect(sheetRows(workbook, 'Assets').filter(function(row) { return row[4] === 'SharePoint Agent'; })).toHaveLength(2);
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Agents Read/ })).toBeVisible();
+    expect(record.unexpectedRequests).toEqual([]);
 });
 
 test('counts agents and site skills on the Overview and in Report coverage', async function({ page }) {
@@ -333,7 +439,7 @@ for (const hasSkills of [true, false]) {
         const nextPage = SITE_URL + "/_api/web/lists(guid'" + AGENT_ASSETS_ID + "')/items?$skiptoken=next";
         const record = await openPretendSite(page, { answerOverrides: [
             { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
-                if (match[1] !== AGENT_ASSETS_ID) { return undefined; }
+                if (match[1] !== AGENT_ASSETS_ID || (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'")) { return undefined; }
                 return url.searchParams.has('$skiptoken') ? reply(403, { error: 'Access denied' }) :
                     { value: [skillItems[hasSkills ? 0 : 1]], '@odata.nextLink': nextPage };
             } }
@@ -553,7 +659,8 @@ test('makes agents and site skills accessible at wide and narrow widths', async 
 
 test('still reads and exports site skills when the lists could not be read', async function({ page }, testInfo) {
     const record = await openPretendSite(page, { answerOverrides: [{ pattern: /^\/_api\/web\/lists$/, answer: function(url) {
-        return (url.searchParams.get('$filter') || '').includes('Hidden eq false') ? reply(403, { error: 'Access denied' }) : undefined;
+        const filter = url.searchParams.get('$filter') || '';
+        return filter.includes('Hidden eq false') || filter === 'BaseType eq 1' ? reply(403, { error: 'Access denied' }) : undefined;
     } }] });
     await extractSiteInformation(page);
     await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('AgentsNot read');
@@ -656,6 +763,25 @@ test('keeps search creators with trailing account data and rejects incomplete tu
     expect(record.unexpectedRequests).toEqual([]);
     expect(record.otherOriginRequests).toEqual([]);
     expect(changeRequests(record)).toEqual([]);
+});
+
+test('uses search for agents in hidden libraries when their item read fails', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
+            return match[1] === AGENT_ASSETS_ID && (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'")
+                ? reply(500, { error: 'Threshold exceeded' }) : undefined;
+        } },
+        { pattern: /^\/_api\/search\/query$/, answer: function(url) {
+            return (url.searchParams.get('querytext') || '').includes('FileExtension:agent')
+                ? agentSearchResults([{ Path: SITE_URL + '/Agent%20Assets/Hidden%20Helper.agent', ListId: AGENT_ASSETS_ID }]) : undefined;
+        } }
+    ] });
+    await extractSiteInformation(page);
+    await openAgents(page);
+    await expect(page.locator('#sna-tbl-agents').getByRole('row', { name: /Hidden Helper/ })).toContainText('Not checked');
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Agents Partly read/ })).toContainText('could not filter Agent Assets');
+    expect(record.unexpectedRequests).toEqual([]);
 });
 
 test('reports agents as not read when the library and search both fail', async function({ page }) {
@@ -779,7 +905,8 @@ test('exports agents when no list columns or site skills were read', async funct
 test('explains why a data dictionary cannot be saved when no columns or file assets were read', async function({ page }) {
     const record = await openPretendSite(page, { answerOverrides: [
         { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
-            return (url.searchParams.get('$filter') || '').includes('Hidden eq false') ? reply(403, { error: 'Access denied' }) : undefined;
+            const filter = url.searchParams.get('$filter') || '';
+            return filter.includes('Hidden eq false') || filter === 'BaseType eq 1' ? reply(403, { error: 'Access denied' }) : undefined;
         } },
         skillLibraryAnswer(reply(404, { error: 'Library not found' }))
     ] });
@@ -803,7 +930,8 @@ test('limits site skill text reads and rejects paths outside a single skill fold
     const record = await openPretendSite(page, { answerOverrides: [
         skillLibraryAnswer({ Id: '{' + AGENT_ASSETS_ID + '}', Title: 'Agent Assets' }),
         { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
-            return match[1] === AGENT_ASSETS_ID ? { value: skills } : undefined;
+            return match[1] === AGENT_ASSETS_ID && (url.searchParams.get('$filter') || '').includes("FileLeafRef eq 'SKILL.md'")
+                ? { value: skills } : undefined;
         } },
         { pattern: /^\/_api\/web\/GetFileByServerRelativePath.*\/\$value$/, body: rawReply(200, 'text/markdown',
             '---\nname: Do not use multiline metadata\ndescription: |\n  This value needs a full parser.\n---') }
@@ -1497,7 +1625,8 @@ test('reads Site Pages in batches and lists only pages, sorted by name', async f
     await expect(pages).not.toContainText('Templates');
     await expect(pages).not.toContainText('banner.png');
 
-    const batches = apiUrls(record).filter(function(u) { return u.pathname.endsWith("lists(guid'" + SITE_PAGES_ID + "')/items"); });
+    const batches = apiUrls(record).filter(function(u) { return u.pathname.endsWith("lists(guid'" + SITE_PAGES_ID + "')/items") &&
+        !(u.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'"); });
     expect(batches.length).toBe(2);
     expect(batches[0].searchParams.get('$top')).toBe('2000');
     expect(batches[0].searchParams.get('$orderby')).toBeNull();
