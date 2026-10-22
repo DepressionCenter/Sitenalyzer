@@ -5,6 +5,7 @@ description: Apply repository-specific preferences when planning, implementing, 
 
 <!--
 This file is part of Sitenalyzer
+Last Modified: 2026-10-21
 Copyright © 2026 The Regents of the University of Michigan
 Licensed under the GNU Free Documentation License v1.3 or later.
 See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license information.
@@ -127,10 +128,16 @@ messages, help, and documentation. For example, "participant", not "subject" or
 
 - **Site Assets:** the SharePoint document library where site owners upload
   Sitenalyzer's scripts. Its address ends in `/SiteAssets/`.
+- **Agent:** an agent saved on the site as a `.agent` file. Use "Agent" in labels,
+  rather than "SharePoint agent", "Copilot agent", or "bot". Product names stay as their makers write them.
+- **Site skill:** a set of instructions for Copilot in SharePoint, saved as `SKILL.md`
+  in the site's **Agent Assets** library. Do not call it a "skill file" or "plugin".
+- **Agent Assets:** the library SharePoint creates for site skills. Its address ends in `/Agent Assets/`.
+- **Agents and skills:** the part of **Contents** with the **Agents** and **Site skills** tables.
 - **Modern Script Editor web part:** the SharePoint web part that shows
   Sitenalyzer on a page.
 - **Data dictionary:** the spreadsheet Sitenalyzer creates that describes a site's
-  lists, libraries, and columns.
+  lists, libraries, columns, agents, and site skills.
 - **Permissions workbook:** the spreadsheet Sitenalyzer creates that lists every
   permission on a site and its lists, with group members and permission levels.
 - **Permission level:** a named set of permissions, such as Read or Contribute. Not
@@ -146,7 +153,7 @@ messages, help, and documentation. For example, "participant", not "subject" or
 - **Hidden value:** text that Sitenalyzer hides because it looks like personal information, such as a phone
   number, shown as `[phone number hidden]`. The switch is **Show hidden values**. Not "masked" or "redacted".
 - **Sign-in name:** the account name SharePoint uses, such as
-  `i:0#.f|membership|user@med.umich.edu`. Not "login" or "claims".
+  `i:0#.f|membership|user@example.org`. Not "login" or "claims".
 - **Page (of a table):** one set of rows of a table with more than 50 rows, moved
   between with **Previous** and **Next**. The size box is **Rows per page**. Not
   "pagination" or "page size" in anything a person reads.
