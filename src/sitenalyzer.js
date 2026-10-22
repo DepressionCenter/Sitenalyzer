@@ -80,6 +80,16 @@ var SNA_SCRIPTS_FOLDER = snaFindScriptsFolder();
 var SNA_SITE_PAGES_MAX = 10000;
 var SNA_SITE_PAGES_BATCH_SIZE = 2000;
 
+var SNA_AGENT_ITEMS_BATCH_SIZE = 2000; // Items requested in each batch of agents or site skills.
+var SNA_AGENTS_MAX = 10000; // Most agents read across the site's libraries.
+var SNA_AGENT_SEARCH_ROWS = 500; // Most rows SharePoint search accepts in one request.
+var SNA_AGENT_SEARCH_MAX = 5000; // Most search rows read for agents on a site.
+var SNA_AGENT_ASSETS_TITLE = 'Agent Assets';
+var SNA_SKILLS_FOLDER = 'Skills';
+var SNA_SKILL_FILE = 'SKILL.md';
+var SNA_SKILL_TEXT_LOOKUPS = 200; // Most site skills whose names and descriptions are read from their text.
+var SNA_SKILL_TEXT_MAX_CHARS = 65536; // Characters inspected at the start of each site's skill text.
+
 // Most terms read from each term set, and the most requests for one term's child terms in each report. Child terms
 // are read one term at a time only when SharePoint doesn't return each term's children with the term set's terms.
 var SNA_TERMS_PER_SET_MAX = 10000;
@@ -226,7 +236,7 @@ var _snaTabMeta = {};             // The _snaTablesQueue entry each table was bu
 
 // Fields that hold a person's or group's name, email, or sign-in name, by table type. They are shown as they are
 // (see snaPersonHtml), so a table's filter compares them as they are too.
-var SNA_TABLE_PERSON_FIELDS = { perm: ['name'] };
+var SNA_TABLE_PERSON_FIELDS = { perm: ['name'], agents: ['createdBy'] };
 
 // Search state. Each entry describes one list, library, column, folder, page, or term in the report.
 var _snaSearchIndex = [];
@@ -298,6 +308,34 @@ function snaTableColumnSettings(type, tbl) {
   var technical = snaTechnicalDetailsOn();
   function idFormatter(cell) { return '<span class="list-id-text">' + snaEscapeHtml(cell.getValue()) + '</span>'; }
   function yesFormatter(cell) { return cell.getValue() ? 'Yes' : ''; }
+
+  if (type === 'agents' || type === 'skills') {
+    var assetColumns = [{
+      title: type === 'agents' ? 'Agent' : 'Site skill', field: 'name', sorter: 'string', widthGrow: 2, minWidth: 150,
+      formatter: function(cell) { return snaLinkHtml(cell.getRow().getData().url, cell.getValue()); }
+    }];
+    if (type === 'agents') {
+      assetColumns.push({
+        title: 'Library', field: 'libraryTitle', sorter: 'string', minWidth: 120,
+        formatter: function(cell) {
+          var row = cell.getRow().getData();
+          return row.libraryRouteId ? '<a href="' + snaEscapeHtml(snaRouteHash({ section: 'contents', id: row.libraryRouteId })) +
+            '" data-nav-focus="detail">' + snaEscapeHtml(cell.getValue()) + '</a>' : snaEscapeHtml(cell.getValue());
+        }
+      }, { title: 'Folder', field: 'folder', sorter: 'string', minWidth: 120 });
+    } else {
+      assetColumns.push({ title: 'Description', field: 'description', sorter: 'string', widthGrow: 3, minWidth: 180, formatter: 'textarea' });
+    }
+    assetColumns.push({ title: 'Last changed', field: 'modified', sorter: 'string', width: 130 });
+    if (type === 'agents') {
+      assetColumns.push({ title: 'Created by', field: 'createdBy', sorter: 'string', minWidth: 140,
+        formatter: function(cell) { return snaPersonHtml(cell.getValue()); } });
+    }
+    assetColumns.push({ title: 'Permissions', field: 'ownPermissions', minWidth: 185,
+      formatter: function(cell) { return snaAgentPermissionsHtml(cell.getRow().getData(), type); } },
+      { title: 'Address', field: 'url', sorter: 'string', widthGrow: 3, minWidth: 180, visible: technical });
+    return assetColumns;
+  }
 
   if (type === 'fields') {
     return [
@@ -1035,6 +1073,10 @@ function snaHiddenValueSet(report) {
         list.folders.forEach(function(f) { check(f.name); });
     });
     (report.pages.pages || []).forEach(function(page) { [page.name, page.fileName].forEach(check); });
+    if (report.agents) {
+        report.agents.agents.forEach(function(agent) { [agent.name, agent.folder].forEach(check); });
+        report.agents.skills.forEach(function(skill) { [skill.name, skill.description, skill.folderName].forEach(check); });
+    }
     (report.permissions.sharingLinks.links || []).forEach(function(l) { check(l.name); });
     (report.permissions.roleDefinitions || []).forEach(function(d) { [d.Name, d.Description].forEach(check); });
     (report.permissions.rows || []).forEach(function(row) { check(row.level); });
@@ -1235,6 +1277,25 @@ async function spFetch(url, throttleRetries) {
     }
 
     return res.json();
+}
+
+/**
+ * Reads plain text with the signed-in person's access, retrying throttled requests.
+ * @param {string} url Same-site file API address, checked by the caller.
+ * @param {number} [throttleRetries=5] Remaining retries after HTTP 429.
+ * @returns {Promise<string>} File text. Makes no writes or interface changes.
+ * @throws {Error} When the response is not successful; errors omit file contents.
+ */
+async function spFetchText(url, throttleRetries) {
+    if (typeof throttleRetries === 'undefined') { throttleRetries = 5; }
+    var res = await fetch(url, { headers: { Accept: 'text/plain, text/markdown, */*' }, credentials: 'include' });
+    if (res.status === 429 && throttleRetries > 0) {
+        var seconds = Math.max(2, parseInt(res.headers.get('Retry-After'), 10) || 10);
+        await new Promise(function(resolve) { setTimeout(resolve, seconds * 1000); });
+        return spFetchText(url, throttleRetries - 1);
+    }
+    if (!res.ok) { throw new Error('HTTP ' + res.status); }
+    return res.text();
 }
 
 // Runs worker(item, index) for every item, with at most limit calls running at the same time, and resolves
@@ -3252,6 +3313,13 @@ async function collectReport(targetUrl, onProgress, token) {
         progress('Reading lists and libraries: ' + (i + 1) + ' of ' + _snaAllListsMeta.length);
         lists.push(await snaCollectList(_snaAllListsMeta[i], targetUrl, listIdMap, stillWanted));
     }
+    var siteAgentsPromise = snaFetchSiteAgents(targetUrl, lists, stillWanted, !!(allLists && allLists.value)).catch(function() {
+        var failed = snaEmptySiteAgents(false);
+        failed.collectionFailed = true;
+        failed.skillsStatus = 'failed';
+        failed.skillsLibraryFailed = true;
+        return failed;
+    });
 
     // Wait for the reads that ran while the lists were read. Group members are read after the lists,
     // because lists with their own permissions can add more SharePoint groups.
@@ -3263,6 +3331,7 @@ async function collectReport(targetUrl, onProgress, token) {
     _snaTermStoreId      = taxonomy.termStoreId;
     await snaExpandGroups(targetUrl);
     var sitePages = await sitePagesPromise;
+    var siteAgents = await siteAgentsPromise;
     var sharingLinks = await sharingPromise;
     var roleDefinitions = await roleDefinitionsPromise;
     var siteAdmins = await siteAdminsPromise;
@@ -3288,6 +3357,7 @@ async function collectReport(targetUrl, onProgress, token) {
         listsRead:   !!(allLists && allLists.value),
         lists:       lists,
         pages:       sitePages,
+        agents:      siteAgents,
         taxonomy: {
             groups:           _snaTaxonomyData,
             read:             taxonomy.read,
@@ -3612,6 +3682,7 @@ function snaBuildCoverage(report) {
     if (pages.truncated) { pageNotes.push('Sitenalyzer read the first ' + SNA_SITE_PAGES_MAX.toLocaleString('en-US') + ' items only.'); }
     if (pages.stoppedAtOtherSite) { pageNotes.push('Sitenalyzer stopped because SharePoint sent a link to a different site.'); }
     add('Site pages', pageNotes.length === 0 ? 'read' : ((pages.failed && pages.pages.length === 0) ? 'failed' : 'partial'), pageNotes.join(' '));
+    snaAgentCoverage(report.agents).forEach(function(row) { add(row.area, row.status, row.note); });
 
     // The term store can stop answering partway, after some term groups were read; Taxonomy shows those groups.
     var taxonomy = report.taxonomy;
@@ -3716,6 +3787,7 @@ var SNA_SEARCH_GROUPS = [
     { kind: 'list',   title: 'Lists and libraries' },
     { kind: 'folder', title: 'Folders' },
     { kind: 'page',   title: 'Site pages' },
+    { kind: 'agent',  title: 'Agents and skills' },
     { kind: 'term',   title: 'Terms' }
 ];
 
@@ -3807,6 +3879,17 @@ function buildSearchIndex() {
             dataType:      '',
             summary:       'Site pages / ' + page.fileName,
             technicalText: ''
+        });
+    });
+
+    ['agents', 'skills'].forEach(function(kind) {
+        var assets = _snaReport.agents ? _snaReport.agents[kind] : [];
+        assets.forEach(function(asset) {
+            var detail = kind === 'agents' ? asset.libraryTitle + (asset.folder ? '/' + asset.folder : '') : asset.description;
+            _snaSearchIndex.push({ kind: 'agent', icon: '🤖', type: kind === 'agents' ? 'Agent' : 'Site skill',
+                label: asset.name, sublabel: detail, sublabelIsName: true, breadcrumb: 'Agents and skills',
+                route: '#sna/contents/agents', summary: 'Agents and skills / ' + detail, technicalText: asset.url,
+                filterTable: assets.length > SNA_TABLE_FILTER_MIN_ROWS ? 'sna-tbl-' + kind : '', filterText: asset.name });
         });
     });
 
@@ -4341,6 +4424,252 @@ async function snaFetchSitePages(targetUrl) {
 
     result.pages.sort(snaByTitle);
     return result;
+}
+
+// Returns the collection state for agents and site skills. A missing library differs from a failed read.
+function snaEmptySiteAgents(listsNotRead) {
+    return { agents: [], skills: [], libraries: { checked: [], failed: [] }, listsNotRead: listsNotRead,
+        searched: false, searchFailed: false, searchTruncated: false, skillsStatus: 'none', skillsLibraryFailed: false,
+        skillTextFailed: 0, skillTextSkipped: 0, truncated: false, skillsTruncated: false, collectionFailed: false };
+}
+
+// Returns the library's decoded root path from its default view, or the first folder beneath the site.
+function snaAgentLibraryRoot(library, filePath, targetUrl) {
+    var view = library.raw ? library.raw.DefaultViewUrl : library.DefaultViewUrl;
+    if (view) {
+        try { return decodeURIComponent(new URL(view, targetUrl).pathname).replace(/\/Forms\/[^/]*$/i, '').replace(/\/$/, ''); }
+        catch(e) { /* The file path can still identify the library root. */ }
+    }
+    var sitePath = decodeURIComponent(new URL(targetUrl).pathname).replace(/\/$/, '');
+    return sitePath + '/' + filePath.substring(sitePath.length + 1).split('/')[0];
+}
+
+// Reads only simple, single-line name and description values between the first two front matter delimiters.
+// The text remains data: Markdown, instructions, YAML objects, and multi-line values are never evaluated.
+function snaSkillFrontMatter(text) {
+    var lines = String(text).slice(0, SNA_SKILL_TEXT_MAX_CHARS).split(/\r?\n/);
+    if (lines[0] !== '---') { return null; }
+    var end = lines.indexOf('---', 1);
+    if (end < 0) { return null; }
+    var values = {};
+    for (var i = 1; i < end; i++) {
+        var match = /^(name|description):\s*(.*?)\s*$/.exec(lines[i]);
+        if (!match || Object.prototype.hasOwnProperty.call(values, match[1])) { continue; }
+        var value = match[2];
+        if (/^[|>\[\{&*!]/.test(value)) { return null; }
+        if (/^["']/.test(value)) {
+            if (value.length < 2 || value.charAt(value.length - 1) !== value.charAt(0)) { return null; }
+            value = value.slice(1, -1);
+        }
+        values[match[1]] = value.trim();
+    }
+    return values.name || values.description ? values : null;
+}
+
+/**
+ * Reads agents and site skills with the signed-in person's library access.
+ * @param {string} targetUrl Site address.
+ * @param {Array} lists Collected lists with their raw library metadata.
+ * @param {Function} stillWanted Throws when a newer collection replaces this one.
+ * @param {boolean} listsRead Whether the list enumeration succeeded.
+ * @returns {Promise<Object>} File rows and read-status flags from snaEmptySiteAgents; no site data is changed.
+ * @throws {Error} Cancellation from stillWanted. Read failures are recorded for accessible coverage messages.
+ */
+async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
+    var result = snaEmptySiteAgents(!listsRead);
+    var libraries = listsRead ? lists.filter(function(list) { return list.raw.BaseType === 1; }) : [];
+    var origin = snaOrigin(targetUrl);
+    var seenAgents = {};
+
+    function fileRow(item, library) {
+        var fileRef = String(item.FileRef || '');
+        var url = origin + fileRef.split('/').map(encodeURIComponent).join('/');
+        var root = snaAgentLibraryRoot(library, fileRef, targetUrl);
+        var dir = String(item.FileDirRef || fileRef.substring(0, fileRef.lastIndexOf('/')));
+        var author = item.Author || {};
+        var uniqueId = snaCleanListId(item.UniqueId || '');
+        return { name: String(item.FileLeafRef || '').replace(/\.agent$/i, ''), fileName: String(item.FileLeafRef || ''),
+            url: snaIsSameSiteUrl(url, targetUrl) ? url : '', libraryId: library.id || library.Id,
+            libraryRouteId: library.routeId || '', libraryTitle: library.title || library.Title, folder: dir.indexOf(root + '/') === 0 ? dir.slice(root.length + 1) : '',
+            modified: String(item.Modified || '').slice(0, 10), ownPermissions: item.HasUniqueRoleAssignments === true,
+            createdBy: String(author.Title || ''), createdByEmail: String(author.EMail || ''),
+            itemId: /^\d+$/.test(String(item.Id)) ? String(item.Id) : '', uniqueId: SNA_GUID_PATTERN.test(uniqueId) ? uniqueId : '', fromSearch: false };
+    }
+
+    // Grain: one row per file address. Repeated items across batches do not add duplicate rows.
+    await snaMapWithLimit(libraries, SNA_MAX_PARALLEL_REQUESTS, async function(library) {
+        var next = targetUrl + "/_api/web/lists(guid'" + snaCleanListId(library.id) + "')/items" +
+            "?$select=Id,UniqueId,FileLeafRef,FileRef,FileDirRef,Modified,HasUniqueRoleAssignments,Author/Title,Author/EMail&$expand=Author" +
+            "&$filter=FSObjType eq 0 and File_x0020_Type eq 'agent'&$top=" + SNA_AGENT_ITEMS_BATCH_SIZE;
+        var visited = {};
+        try {
+            if (!SNA_GUID_PATTERN.test(snaCleanListId(library.id))) { throw new Error('Invalid library ID'); }
+            while (next) {
+                stillWanted();
+                if (result.agents.length >= SNA_AGENTS_MAX) { result.truncated = true; break; }
+                if (visited[next] || !snaIsSameSiteApiUrl(next, targetUrl)) { throw new Error('Invalid next-batch link'); }
+                visited[next] = true;
+                var json = await spFetch(next);
+                stillWanted();
+                if (!json || !Array.isArray(json.value)) { throw new Error('Invalid items response'); }
+                json.value.forEach(function(item) {
+                    if (!/\.agent$/i.test(String(item.FileLeafRef || '')) || Number(item.FSObjType) === 1) { return; }
+                    var row = fileRow(item, library);
+                    var key = row.url || String(item.FileRef || '');
+                    if (seenAgents[key]) { return; }
+                    if (result.agents.length >= SNA_AGENTS_MAX) { result.truncated = true; return; }
+                    seenAgents[key] = true;
+                    result.agents.push(row);
+                });
+                var link = json['odata.nextLink'] || json['@odata.nextLink'];
+                next = link ? new URL(link, targetUrl + '/').href : '';
+            }
+            result.libraries.checked.push(library.title);
+        } catch(e) {
+            result.libraries.failed.push(library.title);
+        }
+    });
+    stillWanted();
+
+    // Agent Assets is looked up separately because the product may keep the library hidden.
+    var skillLibraries;
+    try {
+        var response = await spFetch(targetUrl + '/_api/web/lists?$select=Id,Title,BaseTemplate,Hidden,HasUniqueRoleAssignments,DefaultViewUrl&$filter=' +
+            encodeURIComponent("Title eq '" + SNA_AGENT_ASSETS_TITLE.replace(/'/g, "''") + "'"));
+        if (!response || !Array.isArray(response.value)) { throw new Error('Invalid libraries response'); }
+        skillLibraries = response.value;
+    } catch(e) {
+        result.skillsLibraryFailed = true;
+        result.skillsStatus = 'failed';
+        skillLibraries = [];
+    }
+    stillWanted();
+    var seenSkills = {};
+    for (var i = 0; i < skillLibraries.length; i++) {
+        var library = skillLibraries[i];
+        var libraryId = snaCleanListId(library.Id);
+        var skillsNext = targetUrl + "/_api/web/lists(guid'" + libraryId + "')/items" +
+            '?$select=Id,UniqueId,FileLeafRef,FileRef,FileDirRef,Modified,HasUniqueRoleAssignments&$filter=' +
+            encodeURIComponent("FSObjType eq 0 and FileLeafRef eq '" + SNA_SKILL_FILE + "'") + '&$top=' + SNA_AGENT_ITEMS_BATCH_SIZE;
+        var skillsVisited = {};
+        try {
+            if (!SNA_GUID_PATTERN.test(libraryId)) { throw new Error('Invalid library ID'); }
+            result.skillsStatus = 'read';
+            while (skillsNext) {
+                stillWanted();
+                if (skillsVisited[skillsNext] || !snaIsSameSiteApiUrl(skillsNext, targetUrl)) { throw new Error('Invalid next-batch link'); }
+                skillsVisited[skillsNext] = true;
+                var skillsJson = await spFetch(skillsNext);
+                stillWanted();
+                if (!skillsJson || !Array.isArray(skillsJson.value)) { throw new Error('Invalid items response'); }
+                skillsJson.value.forEach(function(item) {
+                    var path = String(item.FileRef || '');
+                    var prefix = decodeURIComponent(new URL(targetUrl).pathname).replace(/\/$/, '') + '/' + SNA_AGENT_ASSETS_TITLE + '/' + SNA_SKILLS_FOLDER + '/';
+                    if (path.toLowerCase().indexOf(prefix.toLowerCase()) !== 0) { return; }
+                    var parts = path.slice(prefix.length).split('/');
+                    if (parts.length !== 2 || !parts[0] || parts[1].toLowerCase() !== SNA_SKILL_FILE.toLowerCase() || Number(item.FSObjType) === 1) { return; }
+                    var row = fileRow(item, library);
+                    if (!row.url || seenSkills[row.url]) { return; }
+                    seenSkills[row.url] = true;
+                    if (result.skills.length >= SNA_AGENTS_MAX) { result.skillsTruncated = true; return; }
+                    row.name = row.folderName = parts[0];
+                    row.description = '';
+                    row.textRead = false;
+                    result.skills.push(row);
+                });
+                var nextLink = skillsJson['odata.nextLink'] || skillsJson['@odata.nextLink'];
+                if (nextLink && result.skills.length >= SNA_AGENTS_MAX) { result.skillsTruncated = true; break; }
+                skillsNext = nextLink ? new URL(nextLink, targetUrl + '/').href : '';
+            }
+        } catch(e) { result.skillsStatus = 'failed'; }
+    }
+    stillWanted();
+    result.skillTextSkipped = Math.max(0, result.skills.length - SNA_SKILL_TEXT_LOOKUPS);
+    await snaMapWithLimit(result.skills.slice(0, SNA_SKILL_TEXT_LOOKUPS), SNA_MAX_PARALLEL_REQUESTS, async function(skill) {
+        try {
+            stillWanted();
+            var path = decodeURIComponent(new URL(skill.url).pathname);
+            var text = await spFetchText(targetUrl + "/_api/web/GetFileByServerRelativePath(decodedurl='" + encodeURIComponent(path.replace(/'/g, "''")) + "')/$value");
+            stillWanted();
+            var values = snaSkillFrontMatter(text);
+            if (values) {
+                skill.name = values.name || skill.folderName;
+                skill.description = values.description || '';
+                skill.textRead = true;
+            }
+        } catch(e) { result.skillTextFailed++; }
+    });
+    stillWanted();
+    result.agents.sort(function(a, b) { return snaByTitle(a, b) || snaByTitle({ title: a.libraryTitle }, { title: b.libraryTitle }) || a.url.localeCompare(b.url); });
+    result.skills.sort(snaByTitle);
+    return result;
+}
+
+// True only when no agent count can be given, rather than a known empty result.
+function snaAgentsNotRead(assets) {
+    return assets.listsNotRead || assets.collectionFailed ||
+        (assets.libraries.failed.length > 0 && assets.libraries.checked.length === 0 && !assets.agents.length && (!assets.searched || assets.searchFailed));
+}
+
+// Builds the two coverage rows and the notes shared by the screen and print document.
+function snaAgentCoverage(assets) {
+    var agentNotes = [], skillNotes = [];
+    if (assets.listsNotRead) {
+        agentNotes.push('Sitenalyzer could not read the lists and libraries, so it could not look for agents. Refresh the report to try again.');
+    } else if (assets.collectionFailed) {
+        agentNotes.push('Sitenalyzer could not look for agents. Refresh the report to try again.');
+    } else if (assets.libraries.failed.length) {
+        agentNotes.push('Sitenalyzer could not check ' + assets.libraries.failed.join(', ') + ', so agents in them may be missing. Refresh the report to try again.');
+    }
+    if (assets.truncated) { agentNotes.push('Sitenalyzer read the first ' + SNA_AGENTS_MAX.toLocaleString('en-US') + ' agents only.'); }
+    if (assets.skillsStatus === 'none') { skillNotes.push('This site has no Agent Assets library, so it has no site skills.'); }
+    if (assets.skillsStatus === 'failed') { skillNotes.push('Sitenalyzer could not read the Agent Assets library. Refresh the report to try again.'); }
+    if (assets.skillTextFailed) {
+        skillNotes.push('Sitenalyzer could not read the text of ' + snaCountText(assets.skillTextFailed, 'site skill', 'site skills') +
+            ', so their names come from their folders and their descriptions are empty. Refresh the report to try again.');
+    }
+    if (assets.skillTextSkipped) { skillNotes.push('Sitenalyzer read the text of the first ' + SNA_SKILL_TEXT_LOOKUPS + ' site skills only.'); }
+    if (assets.skillsTruncated) { skillNotes.push('Sitenalyzer read the first ' + SNA_AGENTS_MAX.toLocaleString('en-US') + ' site skills only.'); }
+    return [{ area: 'Agents', status: snaAgentsNotRead(assets) ? 'failed' : (agentNotes.length ? 'partial' : 'read'), note: agentNotes.join(' ') },
+        { area: 'Site skills', status: assets.skillsStatus === 'failed' ? 'failed' :
+            (assets.skillTextFailed || assets.skillTextSkipped || assets.skillsTruncated ? 'partial' : 'read'), note: skillNotes.join(' ') }];
+}
+
+// Names the file's permission source without claiming a search result's permissions were checked.
+function snaAgentPermissionsText(asset) {
+    return asset.ownPermissions === null ? 'Not checked' : (asset.ownPermissions ? 'Own permissions' : "Library's permissions");
+}
+
+// Draws permissions and an optional item permissions button using validated library and item IDs.
+function snaAgentPermissionsHtml(asset, type) {
+    if (!asset.ownPermissions) { return snaEscapeHtml(snaAgentPermissionsText(asset)); }
+    var html = '<span class="sna-badge sna-badge-own">Own permissions</span>';
+    if (SNA_GUID_PATTERN.test(asset.libraryId) && /^\d+$/.test(asset.itemId)) {
+        var url = _snaTargetUrl + '/_layouts/15/user.aspx?obj={' + asset.libraryId + '},' + asset.itemId + ',LISTITEM&List={' + asset.libraryId + '}';
+        html += ' <button type="button" class="sna-btn-sm" data-action="open-url" data-url="' + snaEscapeHtml(url) +
+            '" aria-label="Permissions: open the SharePoint permissions page for this ' + (type === 'agents' ? 'agent' : 'site skill') + ' in a new window">Permissions</button>';
+    }
+    return html;
+}
+
+// Draws the notes and queued tables for agents and site skills; callers provide the section heading.
+function snaRenderAgentsSection(assets) {
+    var html = '<div class="info-card"><p class="sna-note">Agents saved on this site as .agent files, and the site skills in its Agent Assets library. ' +
+        "Agents made with Microsoft Copilot Agent Builder, agents saved on other sites, and usage numbers are not stored on the site, so Sitenalyzer can't list them. " +
+        "Sitenalyzer also can't read the site's main agent setting.</p>";
+    var coverage = snaAgentCoverage(assets);
+    coverage.forEach(function(row) { if (row.note) { html += '<p class="sna-note">' + snaEscapeHtml(row.note) + '</p>'; } });
+    html += '<h4 class="sna-subsection-title">Agents</h4>';
+    if (assets.agents.length) {
+        html += snaQueueTableHtml({ id: 'sna-tbl-agents', type: 'agents', label: 'Agents', searchLabel: 'agents', data: assets.agents });
+        html += '<p class="sna-note">Agents saved as .agent files stop working after March 2027. Microsoft asks site owners to upgrade or delete each one. ' +
+            snaLinkHtml('https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents', 'Upgrade agents in SharePoint and OneDrive') + '.</p>';
+    } else if (coverage[0].status === 'read') { html += '<p>No agents found.</p>'; }
+    html += '<h4 class="sna-subsection-title">Site skills</h4>';
+    if (assets.skills.length) {
+        html += snaQueueTableHtml({ id: 'sna-tbl-skills', type: 'skills', label: 'Site skills', searchLabel: 'site skills', data: assets.skills });
+    } else if (assets.skillsStatus !== 'failed') { html += '<p>No site skills found.</p>'; }
+    return html + '</div>';
 }
 
 // Renders the Site Pages notes and table from the result of snaFetchSitePages. The caller adds the heading.
@@ -5018,9 +5347,11 @@ function snaParseRoute(hash) {
         if (parts.length > 3) { return fallback; }
         if (parts[1]) {
             var id = parts[1].toLowerCase();
-            if (id !== 'pages' && !SNA_GUID_PATTERN.test(id)) { return fallback; }
+            if (id !== 'pages' && id !== 'agents' && !SNA_GUID_PATTERN.test(id)) { return fallback; }
             route.id = id;
-            if (id === 'pages') {
+            if (id === 'agents') {
+                if (parts.length !== 2) { return fallback; }
+            } else if (id === 'pages') {
                 // A page key is the page's item ID, with its library's place after a hyphen when there is more than one.
                 if (parts[2]) {
                     if (!SNA_PAGE_KEY_PATTERN.test(parts[2])) { return fallback; }
@@ -5060,7 +5391,7 @@ function snaRouteHash(route) {
     if (section === 'contents' && r.id) {
         hash += '/' + r.id;
         if (r.id === 'pages' && r.page) { hash += '/' + r.page; }
-        if (r.id !== 'pages' && r.tab && r.tab !== 'overview') { hash += '/' + r.tab; }
+        if (r.id !== 'pages' && r.id !== 'agents' && r.tab && r.tab !== 'overview') { hash += '/' + r.tab; }
     }
     if ((section === 'permissions' || section === 'taxonomy') && r.anchor) { hash += '/' + r.anchor; }
     if (section === 'search') { hash += '?q=' + encodeURIComponent(r.q || ''); }
@@ -5422,12 +5753,14 @@ function snaRenderOverview(route, report) {
     report.taxonomy.groups.forEach(function(g) { termSets += (g.termSets || []).length; });
     var NOT_READ = 'Not read';
 
-    var html = snaSectionTitleHtml('Overview', 'Counts of this site\'s lists, libraries, pages, term sets, and sharing links.');
+    var html = snaSectionTitleHtml('Overview', 'Counts of this site\'s lists, libraries, pages, agents, term sets, and sharing links.');
     html += snaStatsHtml([
         { value: report.listsRead ? libraries.length : NOT_READ, singular: 'Document library', plural: 'Document libraries', href: '#sna/contents', detail: itemsText(libraries) },
         { value: report.listsRead ? plainLists.length : NOT_READ, singular: 'List', plural: 'Lists', href: '#sna/contents', detail: itemsText(plainLists) },
         { value: report.listsRead ? systemLists.length : NOT_READ, singular: 'System list', plural: 'System lists', href: '#sna/contents', detail: itemsText(systemLists) },
         { value: pagesNotRead ? NOT_READ : report.pages.pages.length, singular: 'Site page', plural: 'Site pages', href: '#sna/contents/pages' },
+        { value: snaAgentsNotRead(report.agents) ? NOT_READ : report.agents.agents.length, singular: 'Agent', plural: 'Agents', href: '#sna/contents/agents',
+          detail: report.agents.skillsStatus === 'failed' ? NOT_READ : snaCountText(report.agents.skills.length, 'site skill', 'site skills') },
         { value: (report.taxonomy.read || termSets > 0) ? termSets : NOT_READ, singular: 'Term set', plural: 'Term sets', href: '#sna/taxonomy' },
         { value: perms.sharingLinks.failed ? NOT_READ : perms.sharingLinks.links.length, singular: 'Sharing link', plural: 'Sharing links', href: '#sna/permissions/sharing' }
     ]);
@@ -5462,7 +5795,7 @@ function snaRenderOverview(route, report) {
         : snaCountText(groupCount, 'term group', 'term groups') + ' and ' + snaCountText(termSets, 'term set', 'term sets') + ' describe this site\'s content.');
 
     html += '<div class="sna-cards">' +
-        card('folder', 'Contents', contentsText, [['Contents summary', '#sna/contents'], ['Browse site pages', '#sna/contents/pages']]) +
+        card('folder', 'Contents', contentsText, [['Contents summary', '#sna/contents'], ['Browse site pages', '#sna/contents/pages'], ['Browse agents and skills', '#sna/contents/agents']]) +
         card('shield', 'Permissions', 'Access to this site.', [
             ['Site permissions', '#sna/permissions/site'],
             ['People and groups (' + peopleCount + ')', '#sna/permissions/people'],
@@ -5533,6 +5866,12 @@ function snaRenderInventory(route, report) {
     var pageCount = report.pages.pages.length;
     html += '<div class="sna-inventory-group"><h3 class="sna-inventory-heading">Site pages</h3><ul class="sna-inventory-list">' +
         item('pages', '#sna/contents/pages', '📄', 'Site pages', report.pages.failed && pageCount === 0 ? 'Not read' : snaCountText(pageCount, 'page', 'pages')) +
+        '</ul><p class="sna-muted sna-inventory-none" hidden>No names match the filter.</p></div>';
+    var agentsMeta = snaAgentsNotRead(report.agents) && report.agents.skillsStatus === 'failed' ? 'Not read' :
+        (snaAgentsNotRead(report.agents) ? 'Agents not read' : snaCountText(report.agents.agents.length, 'agent', 'agents')) + ', ' +
+        (report.agents.skillsStatus === 'failed' ? 'site skills not read' : snaCountText(report.agents.skills.length, 'site skill', 'site skills'));
+    html += '<div class="sna-inventory-group"><h3 class="sna-inventory-heading">Agents and skills</h3><ul class="sna-inventory-list">' +
+        item('agents', '#sna/contents/agents', '🤖', 'Agents and skills', agentsMeta) +
         '</ul><p class="sna-muted sna-inventory-none" hidden>No names match the filter.</p></div>';
     return html;
 }
@@ -5687,6 +6026,12 @@ function snaRenderContentsSummary(report) {
 function snaRenderContentsDetail(route, report) {
     if (!route.id) { return snaRenderContentsSummary(report); }
     var back = '<p class="sna-back"><a class="sna-back-link" href="#sna/contents" data-nav-focus="inventory">Back to results</a></p>';
+    if (route.id === 'agents') {
+        _snaLastInventoryId = 'agents';
+        return back + '<div id="sna-agents-section"><h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1">Agents and skills' +
+            ' <span class="item-count-badge">' + snaCountText(report.agents.agents.length, 'agent', 'agents') + '</span></h3>' +
+            snaRenderAgentsSection(report.agents) + '</div>';
+    }
 
     if (route.id === 'pages' && route.page) {
         _snaLastInventoryId = 'pages';

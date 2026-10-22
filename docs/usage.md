@@ -253,6 +253,16 @@ Select a page's name to open its details: its file name, last change, and addres
 
 Sitenalyzer reads Site Pages 2,000 items at a time, up to 10,000 items. If the library has more, the section says "Site Pages has more than 10,000 items. Sitenalyzer shows pages from the first 10,000 only."
 
+### Agents and skills
+
+Select **Agents and skills** in **Contents** to see two tables. **Agents** lists the `.agent` files you can read in the site's document libraries. Each row shows its library, folder, last change, creator, and permissions. Select its name to open the file. Select **Permissions** beside **Own permissions** to open that file's permissions page.
+
+**Site skills** lists each `SKILL.md` at `Agent Assets/Skills/<name>/SKILL.md`. It shows the name and description from the text at the start of the file. If that text is missing or unreadable, the folder name is shown instead. Sitenalyzer reads text for up to 200 site skills. **Report coverage** says when a library or file could not be read.
+
+The **Agents** count on the Overview links to these tables and includes the number of site skills. **Search this report** finds their names and descriptions. Names and descriptions that look like personal information are hidden; **Created by** remains visible. **Show technical details** adds file addresses.
+
+Agents made with Microsoft Copilot Agent Builder, agents saved on other sites, usage numbers, and the site's main agent setting cannot be listed here. Agents saved as `.agent` files stop working after March 2027. Site owners should review [Upgrade agents in SharePoint and OneDrive](https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents).
+
 ### Print the report
 
 **Print full report / PDF** opens your browser's print window with a printable copy of the whole report. To save it as a PDF, choose **Save as PDF** or **Microsoft Print to PDF** as the printer. Ctrl+P, or Command+P on a Mac, and your browser's print menu print the same copy while a report is open.

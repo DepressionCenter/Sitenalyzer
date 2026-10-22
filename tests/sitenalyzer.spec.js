@@ -27,7 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields } = require('./pretend-sharepoint');
+const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields, AGENT_ASSETS_ID, agentItems, skillItems } = require('./pretend-sharepoint');
 // The pretend site's one term set, Study Arms.
 const TERM_SET_ID = 'eeeeeeee-0000-4000-8000-000000000001';
 
@@ -71,6 +71,31 @@ async function openSitePages(page) {
     await gotoSection(page, 'Contents');
     await page.locator('#sna-contents-inventory').getByRole('link', { name: /^Site pages / }).click();
     return page.locator('#sna-site-pages-section');
+}
+
+// Opens Agents and skills in Contents and returns its section.
+async function openAgents(page) {
+    await gotoSection(page, 'Contents');
+    await page.locator('#sna-contents-inventory').getByRole('link', { name: /^Agents and skills / }).click();
+    await expect(page.locator('#sna-detail-title')).toBeFocused();
+    return page.locator('#sna-agents-section');
+}
+
+// Overrides only the Documents request that looks for agents, leaving other library reads unchanged.
+function agentAnswer(answer) {
+    return { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
+        if (match[1] === LIBRARY_ID && (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'")) {
+            return typeof answer === 'function' ? answer(url) : answer;
+        }
+        return undefined;
+    } };
+}
+
+// Overrides only the separate lookup for the Agent Assets library.
+function skillLibraryAnswer(body) {
+    return { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+        return (url.searchParams.get('$filter') || '').includes("Title eq 'Agent Assets'") ? body : undefined;
+    } };
 }
 
 // Opens a part of Permissions, such as Sharing links, from the Permissions navigation and returns the part.
@@ -180,6 +205,186 @@ async function expectNoAxeViolations(page) {
     const results = await new AxeBuilder({ page }).include('#sitenalyzer-app').withTags(WCAG_TAGS).analyze();
     expect(describeViolations(results.violations)).toEqual([]);
 }
+
+// ### Agents and Site Skills ###
+
+test('lists agents and site skills in Contents with file and permissions links', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    const section = await openAgents(page);
+    await expect(page.locator('#sna-inv-agents')).toContainText('2 agents, 1 site skill');
+    const agents = section.getByRole('grid', { name: 'Agents', exact: true });
+    await expect(agents.locator('.tabulator-row [tabulator-field="name"]')).toHaveText(['Protocol Reviewer', 'Study Visits Helper']);
+    const helper = agents.getByRole('row', { name: /Study Visits Helper/ });
+    await expect(helper.getByRole('link', { name: 'Study Visits Helper', exact: true })).toHaveAttribute('href', SITE_URL + '/Shared%20Documents/Study%20Visits%20Helper.agent');
+    await expect(helper.getByRole('link', { name: 'Study Visits Helper', exact: true })).toHaveAttribute('data-interception', 'off');
+    await expect(helper).toContainText('Test Owner');
+    await expect(helper.locator('[tabulator-field="folder"]')).toHaveText('');
+    await expect(helper).toContainText('Own permissions');
+    await expect(helper.getByRole('button', { name: /^Permissions:/ })).toHaveAttribute('data-url', SITE_URL + '/_layouts/15/user.aspx?obj={' + LIBRARY_ID + '},21,LISTITEM&List={' + LIBRARY_ID + '}');
+    const reviewer = agents.getByRole('row', { name: /Protocol Reviewer/ });
+    await expect(reviewer).toContainText('Protocols');
+    await expect(reviewer).toContainText("Library's permissions");
+    const skills = section.getByRole('grid', { name: 'Site skills', exact: true });
+    await expect(skills).toContainText('Weekly summary');
+    await expect(skills).toContainText("Summarizes the week's visit notes.");
+    await expect(skills.locator('.tabulator-row')).toHaveCount(1);
+    const requests = record.apiRequests.map(function(url) { return new URL(url); });
+    const agentRequests = requests.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'"); });
+    expect(agentRequests).toHaveLength(1);
+    expect(agentRequests[0].searchParams.has('$orderby')).toBe(false);
+    expect(agentRequests[0].searchParams.get('$expand')).toBe('Author');
+    expect(requests.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("Title eq 'Agent Assets'"); })).toHaveLength(1);
+    expect(requests.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("FileLeafRef eq 'SKILL.md'"); })).toHaveLength(1);
+    expect(requests.filter(function(url) { return url.pathname.endsWith('/$value'); })).toHaveLength(1);
+    expect(requests.filter(function(url) { return (url.searchParams.get('querytext') || '').includes('FileExtension:agent'); })).toHaveLength(0);
+    await helper.getByRole('link', { name: 'Documents', exact: true }).click();
+    await expect(page.locator('#sna-detail-title')).toContainText('Documents');
+    expect(record.consoleErrors).toEqual([]);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
+});
+
+test('counts agents and site skills on the Overview and in Report coverage', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    await expect(page.locator('.sna-stat')).toHaveCount(7);
+    await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('Agents2');
+    await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('1 site skill');
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Agents Read/ })).toBeVisible();
+    await expect(page.getByRole('row', { name: /^Site skills Read/ })).toBeVisible();
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('reports unread site skills without hiding agents', async function({ page }) {
+    await openPretendSite(page, { answerOverrides: [skillLibraryAnswer(reply(403, { error: 'Access denied' }))] });
+    await extractSiteInformation(page);
+    await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('Not read');
+    const section = await openAgents(page);
+    await expect(section).toContainText('Study Visits Helper');
+    await expect(section).toContainText('Sitenalyzer could not read the Agent Assets library.');
+    await expect(section).not.toContainText('No site skills found.');
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Site skills Not read/ })).toBeVisible();
+});
+
+test('reports no site skills when Agent Assets does not exist', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [skillLibraryAnswer({ value: [] })] });
+    await extractSiteInformation(page);
+    await expect(await openAgents(page)).toContainText('No site skills found.');
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Site skills Read/ })).toContainText('no Agent Assets library');
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('uses site skill folders when text cannot be read or has no front matter', async function({ page }) {
+    const cases = [reply(404, { error: 'File not found' }), rawReply(200, 'text/markdown', 'No front matter here.')];
+    for (const body of cases) {
+        await openPretendSite(page, { answerOverrides: [{ pattern: /^\/_api\/web\/GetFileByServerRelativePath.*\/\$value$/, body }] });
+        await extractSiteInformation(page);
+        const section = await openAgents(page);
+        await expect(section.getByRole('grid', { name: 'Site skills', exact: true })).toContainText('weekly-summary');
+        await expect(section.locator('#sna-tbl-skills [tabulator-field="description"]').last()).toHaveText('');
+        await gotoSection(page, 'Site review');
+        const coverage = page.getByRole('row', { name: /^Site skills (Read|Partly read)/ });
+        await expect(coverage).toContainText(body === cases[0] ? 'Partly read' : 'Read');
+        if (body === cases[0]) { await expect(coverage).toContainText('1 site skill'); }
+    }
+});
+
+test('finds agents and site skills and filters the agents table from a result', async function({ page }) {
+    const items = agentItems.concat(Array.from({ length: 10 }, function(_, n) {
+        return Object.assign({}, agentItems[0], { Id: n + 100, FileLeafRef: 'Sample ' + n + '.agent', FileRef: SITE_PATH + '/Shared Documents/Sample ' + n + '.agent' });
+    }));
+    const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: items })] });
+    await extractSiteInformation(page);
+    await page.getByRole('searchbox', { name: 'Search this report' }).fill('Helper');
+    await page.getByRole('searchbox', { name: 'Search this report' }).press('Enter');
+    await expect(page.locator('#sp-results')).toContainText('Agents and skills');
+    await page.locator('#sp-results').getByRole('link', { name: /Study Visits Helper/ }).click();
+    await expect(page.locator('#sna-tbl-agents .tabulator-row')).toHaveCount(1);
+    await expect(page.locator('#sna-agents-section input[type="search"]')).toHaveValue('Study Visits Helper');
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('hides values in agent names and clears a filter when values are hidden again', async function({ page }) {
+    const items = Array.from({ length: 12 }, function(_, n) {
+        return Object.assign({}, agentItems[0], { Id: n + 100, FileLeafRef: n === 0 ? 'Call 734-555-0100.agent' : 'Sample ' + n + '.agent',
+            FileRef: SITE_PATH + '/Shared Documents/Sample ' + n + '.agent', Author: { Title: 'test.owner@example.org', EMail: 'test.owner@example.org' } });
+    });
+    const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: items })] });
+    await extractSiteInformation(page);
+    await openAgents(page);
+    await expect(page.locator('#sna-tbl-agents')).toContainText('Call [phone number hidden]');
+    await expect(page.locator('#sna-tbl-agents')).toContainText('test.owner@example.org');
+    await page.getByRole('switch', { name: 'Show hidden values' }).click();
+    await page.locator('#sna-agents-section input[type="search"]').fill('555-0100');
+    await expect(page.locator('#sna-tbl-agents .tabulator-row')).toHaveCount(1);
+    await page.getByRole('switch', { name: 'Show hidden values' }).click();
+    await expect(page.locator('#sna-agents-section input[type="search"]')).toHaveValue('');
+    await expect(page.locator('#sna-tbl-agents')).not.toContainText('734-555-0100');
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('escapes agent names and rejects next-batch links to another site', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: [Object.assign({}, agentItems[0], {
+        FileLeafRef: '<b>Bold</b>.agent', itemId: 'invalid' })], '@odata.nextLink': 'https://example.org/_api/files' })] });
+    await extractSiteInformation(page);
+    await openAgents(page);
+    await expect(page.locator('#sna-tbl-agents')).toContainText('<b>Bold</b>');
+    await expect(page.locator('#sna-tbl-agents b')).toHaveCount(0);
+    await page.getByRole('searchbox', { name: 'Search this report' }).fill('Bold');
+    await page.getByRole('searchbox', { name: 'Search this report' }).press('Enter');
+    await expect(page.locator('#sp-results')).toContainText('<b>Bold</b>');
+    await expect(page.locator('#sp-results b')).toHaveCount(0);
+    expect(record.otherOriginRequests).toEqual([]);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('opens the agents route and rejects an extra route segment', async function({ page }) {
+    await openPretendSite(page, { addressSuffix: '?siteUrl=' + encodeURIComponent(SITE_URL) + '#sna/contents/agents' });
+    await expect(page.locator('#sna-agents-section')).toBeVisible();
+    await page.evaluate(function() { location.hash = '#sna/contents/agents/4'; });
+    await expect(page.locator('#sna-section-title')).toHaveText('Overview');
+});
+
+test('makes agents and site skills accessible at wide and narrow widths', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    await openAgents(page);
+    await expect(page.locator('#sna-tbl-agents .tabulator-row')).toHaveCount(2);
+    await expect(page.locator('#sna-tbl-skills .tabulator-row')).toHaveCount(1);
+    await expectNoAxeViolations(page);
+    await page.setViewportSize({ width: 320, height: 800 });
+    await expectNoAxeViolations(page);
+    expect(await page.evaluate(function() { return document.documentElement.scrollWidth <= window.innerWidth; })).toBe(true);
+    const heading = page.locator('#sna-tbl-agents').getByRole('columnheader', { name: 'Agent', exact: true });
+    await heading.focus();
+    await heading.press('Enter');
+    await expect(heading).toHaveAttribute('aria-sort', /ascending|descending/);
+    expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('still reads site skills when the lists could not be read', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [{ pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+        return (url.searchParams.get('$filter') || '').includes('Hidden eq false') ? reply(403, { error: 'Access denied' }) : undefined;
+    } }] });
+    await extractSiteInformation(page);
+    await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('AgentsNot read');
+    await expect(await openAgents(page)).toContainText('Weekly summary');
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Agents Not read/ })).toBeVisible();
+    expect(record.apiRequests.filter(function(url) { return decodeURIComponent(url).includes("File_x0020_Type eq 'agent'"); })).toEqual([]);
+    expect(record.unexpectedRequests).toEqual([]);
+});
 
 // ### Startup and Loading ###
 
@@ -699,7 +904,7 @@ test('keeps the Contents filter while items open and close', async function({ pa
 
     const inventory = page.locator('#sna-contents-inventory');
     await inventory.getByRole('searchbox', { name: 'Filter by name' }).fill('doc');
-    await expect(page.locator('#sna-inventory-count')).toHaveText('Showing 1 of 3 items.');
+    await expect(page.locator('#sna-inventory-count')).toHaveText('Showing 1 of 4 items.');
     await expect(inventory.getByRole('link', { name: /^Study Visits/ })).toBeHidden();
     await inventory.getByRole('link', { name: /^Documents/ }).click();
     await expect(page.locator('#sna-detail-title')).toBeFocused();
@@ -708,7 +913,7 @@ test('keeps the Contents filter while items open and close', async function({ pa
     await gotoSection(page, 'Overview');
     await gotoSection(page, 'Contents');
     await expect(inventory.getByRole('searchbox', { name: 'Filter by name' })).toHaveValue('doc');
-    await expect(page.locator('#sna-inventory-count')).toHaveText('Showing 1 of 3 items.');
+    await expect(page.locator('#sna-inventory-count')).toHaveText('Showing 1 of 4 items.');
 });
 
 test('returns focus to the item after Back to results on a narrow screen', async function({ page }) {
@@ -935,7 +1140,7 @@ test('shows counts that link to their sections on the Overview', async function(
     await extractSiteInformation(page);
 
     const counts = page.locator('#sp-results .sna-stats');
-    await expect(counts.locator('.sna-stat')).toHaveCount(6);
+    await expect(counts.locator('.sna-stat')).toHaveCount(7);
     await expect(counts.getByRole('link', { name: 'Document library 1 3 items', exact: true })).toHaveAttribute('href', '#sna/contents');
     await expect(counts.getByRole('link', { name: 'List 1 12 items', exact: true })).toBeVisible();
     await expect(counts.getByRole('link', { name: 'System lists 0 0 items', exact: true })).toHaveAttribute('href', '#sna/contents');
@@ -2399,8 +2604,8 @@ test('groups search results by kind, with columns first', async function({ page 
     // Search also looks at where each item is, so every column of Study Visits matches, plus 2 columns in Documents.
     await searchReport(page, 'Visit*');
     const groups = page.locator('#sp-results .sna-search-group > summary');
-    await expect(groups).toHaveText(['Columns (11)', 'Lists and libraries (1)']);
-    await expect(page.locator('#sp-results .sna-lead')).toHaveText('12 results for "Visit*" in Test Research Site.');
+    await expect(groups).toHaveText(['Columns (11)', 'Lists and libraries (1)', 'Agents and skills (2)']);
+    await expect(page.locator('#sp-results .sna-lead')).toHaveText('14 results for "Visit*" in Test Research Site.');
     expect(hashOf(page)).toBe('#sna/search?q=Visit*');
     // Columns whose names match come before columns that match only by where they are.
     await expect(page.locator('#sp-results .sna-search-group').first().locator('.sna-search-item > a').first()).toHaveText('Visit Count');
@@ -2408,7 +2613,7 @@ test('groups search results by kind, with columns first', async function({ page 
     await searchReport(page, '"Visit Date"');
     await expect(groups).toHaveText(['Columns (2)']);
     await searchReport(page, 'Protocols');
-    await expect(groups).toHaveText(['Folders (1)']);
+    await expect(groups).toHaveText(['Folders (1)', 'Agents and skills (1)']);
     await searchReport(page, 'Control');
     await expect(groups).toHaveText(['Terms (1)']);
     await searchReport(page, 'x');

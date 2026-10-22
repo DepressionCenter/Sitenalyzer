@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-sharepoint.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-20
+Last Modified: 2026-10-21
 Summary: A pretend SharePoint Online site for the browser tests. Playwright answers every request to
          https://contoso.sharepoint.com itself: the page holds the code from dist/SitePages/sitenalyzer.html.txt,
          files under SiteAssets come from dist/SiteAssets, and REST API calls get the synthetic answers below.
@@ -47,6 +47,20 @@ const CONTENT_TYPES = {
 const LIST_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
 const LIBRARY_ID = 'aaaaaaaa-0000-4000-8000-000000000002';
 const SITE_PAGES_ID = 'aaaaaaaa-0000-4000-8000-000000000009';
+const AGENT_ASSETS_ID = 'aaaaaaaa-0000-4000-8000-00000000000a';
+const agentItems = [
+    { Id: 21, UniqueId: 'bbbbbbbb-0000-4000-8000-000000000021', FileLeafRef: 'Study Visits Helper.agent',
+      FileRef: SITE_PATH + '/Shared Documents/Study Visits Helper.agent', FileDirRef: SITE_PATH + '/Shared Documents',
+      Modified: '2026-10-20T12:00:00Z', HasUniqueRoleAssignments: true, Author: { Title: 'Test Owner', EMail: 'test.owner@example.org' } },
+    { Id: 22, UniqueId: 'bbbbbbbb-0000-4000-8000-000000000022', FileLeafRef: 'Protocol Reviewer.agent',
+      FileRef: SITE_PATH + '/Shared Documents/Protocols/Protocol Reviewer.agent', FileDirRef: SITE_PATH + '/Shared Documents/Protocols',
+      Modified: '2026-10-19T12:00:00Z', HasUniqueRoleAssignments: false, Author: { Title: 'Test Owner', EMail: 'test.owner@example.org' } }
+];
+const skillItems = [
+    { Id: 31, UniqueId: 'bbbbbbbb-0000-4000-8000-000000000031', FileLeafRef: 'SKILL.md',
+      FileRef: SITE_PATH + '/Agent Assets/Skills/weekly-summary/SKILL.md', Modified: '2026-10-20T12:00:00Z', HasUniqueRoleAssignments: false },
+    { Id: 32, FileLeafRef: 'SKILL.md', FileRef: SITE_PATH + '/Agent Assets/Skills/README/notes/SKILL.md' }
+];
 const SHARED_FILE_ID = '44444444-0000-4000-8000-000000000001';
 
 // ### Synthetic REST API Answers ###
@@ -281,7 +295,24 @@ const API_ANSWERS = [
     } },
     { pattern: /^\/_api\/web\/GetFolderById\('([^']+)'\)$/, body: reply(404, { error: 'Folder not found' }) },
     { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
-        return /BaseTemplate eq 119/.test(url.searchParams.get('$filter') || '') ? sitePagesLibrary : lists;
+        const filter = url.searchParams.get('$filter') || '';
+        if (/BaseTemplate eq 119/.test(filter)) { return sitePagesLibrary; }
+        if (/Title eq 'Agent Assets'/.test(filter)) {
+            return { value: [{ Id: AGENT_ASSETS_ID, Title: 'Agent Assets', BaseTemplate: 101, Hidden: true,
+                HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Agent Assets/Forms/AllItems.aspx' }] };
+        }
+        return lists;
+    } },
+    { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
+        const filter = url.searchParams.get('$filter') || '';
+        if (filter.includes("File_x0020_Type eq 'agent'")) { return { value: match[1] === LIBRARY_ID ? agentItems : [] }; }
+        if (match[1] === AGENT_ASSETS_ID && filter.includes("FileLeafRef eq 'SKILL.md'")) { return { value: skillItems }; }
+        return undefined;
+    } },
+    { pattern: /^\/_api\/web\/GetFileByServerRelativePath\(decodedurl='(.*)'\)\/\$value$/, answer: function(url, match) {
+        return match[1] === SITE_PATH + '/Agent Assets/Skills/weekly-summary/SKILL.md'
+            ? rawReply(200, 'text/markdown', "---\nname: Weekly summary\ndescription: Summarizes the week's visit notes.\n---\nSynthetic instructions.")
+            : reply(404, { error: 'File not found' });
     } },
     { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: sitePagesItems },
     { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\((\\d+)\\)$"), answer: function(url, match) {
@@ -301,7 +332,10 @@ const API_ANSWERS = [
     { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/[^/]+\/terms\/[^/]+\/children$/, body: { value: [] } },
     // The site's own managed metadata columns. The pretend site has none.
     { pattern: /^\/_api\/web\/fields$/, body: { value: [] } },
-    { pattern: /^\/_api\/search\/query$/, body: searchResults }
+    { pattern: /^\/_api\/search\/query$/, answer: function(url) {
+        return (url.searchParams.get('querytext') || '').includes('FileExtension:agent')
+            ? { PrimaryQueryResult: { RelevantResults: { RowCount: 0, TotalRows: 0, Table: { Rows: [] } } } } : searchResults;
+    } }
 ];
 
 // Splits a $batch request body into its parts and returns the method and address of each request inside.
@@ -495,4 +529,4 @@ async function openPretendSite(page, options) {
     return record;
 }
 
-module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields };
+module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields, AGENT_ASSETS_ID, agentItems, skillItems };
