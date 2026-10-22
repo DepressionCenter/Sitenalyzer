@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-21
+Last Modified: 2026-10-22
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -83,6 +83,7 @@ The tests check that:
 - Search stops after 5,000 rows and reports the limit. Site skill text reads stop after 200 files. Tests reject parent-folder paths and multi-line metadata, and check a permissions link when the library ID includes braces.
 - Print includes every agent and site skill even when tables are filtered. **Assets** adds file rows with the existing columns and sheet list. Hidden-value checks cover names, displayed addresses, technical search text, print, and workbook display names. Creators remain visible in the report and are absent from the workbook.
 - Files without their own permissions say **Inherited permissions** on screen and in print. A failed later site skill batch keeps earlier rows in the report, print, and workbook, with **Partly read** coverage. A failed read with no usable rows still says **Not read**.
+- Quoted site skill names and descriptions decode doubled apostrophes, backslash escapes, and Unicode escapes before display, search, print, and export. Tests preserve quoted spaces, reject malformed values, and check that decoded markup stays text and personal values stay hidden.
 - System lists, such as the User Information List, have their own count and item total on the Overview, their own group and table in Contents, and their own part of the print document. Site review and the largest lists leave them out, and search labels them **System list**. A list named Events that isn't made from the events template stays an ordinary list. **Back to top** on Search results puts focus on the first section link.
 - Opening any section, including a Taxonomy view shorter than the window, scrolls the section links to the top of the window. **Back to top** sits on the left and does the same with one click, and puts focus on the open section's link. With a fixed bar over the top of the page, like SharePoint's page bar, both stop with the section links just below the bar. The report opens at the top, with the site's name.
 - The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.

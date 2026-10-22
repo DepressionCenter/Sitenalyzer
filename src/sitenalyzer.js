@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-21
+Last Modified: 2026-10-22
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -4468,6 +4468,39 @@ function snaAgentLibraryRoot(library, filePath, targetUrl) {
     return sitePath + '/' + filePath.substring(sitePath.length + 1).split('/')[0];
 }
 
+/**
+ * Decodes a YAML quoted scalar written on one source line, without evaluating its contents.
+ * @param {string} value Text beginning with a single or double quote, optionally followed by a comment.
+ * @returns {string|null} Decoded text, including quoted whitespace, or null for malformed quotes or escapes.
+ */
+function snaSkillQuotedScalar(value) {
+    var quote = value.charAt(0), decoded = [];
+    var escapes = { '0': '\0', a: '\x07', b: '\b', t: '\t', '\t': '\t', n: '\n', v: '\v', f: '\f', r: '\r',
+        e: '\x1b', ' ': ' ', '"': '"', '/': '/', '\\': '\\', N: '\u0085', _: '\u00a0', L: '\u2028', P: '\u2029' };
+    for (var i = 1; i < value.length; i++) {
+        var character = value.charAt(i);
+        if (character === quote) {
+            if (quote === "'" && value.charAt(i + 1) === "'") { decoded.push("'"); i++; continue; }
+            var trailing = value.slice(i + 1);
+            return !trailing || /^[ \t]+(?:#.*)?$/.test(trailing) ? decoded.join('') : null;
+        }
+        if (quote === '"' && character === '\\') {
+            var escape = value.charAt(++i);
+            if (Object.prototype.hasOwnProperty.call(escapes, escape)) { decoded.push(escapes[escape]); continue; }
+            var digits = escape === 'x' ? 2 : (escape === 'u' ? 4 : (escape === 'U' ? 8 : 0));
+            var hex = value.slice(i + 1, i + 1 + digits);
+            if (!digits || hex.length !== digits || !/^[0-9a-f]+$/i.test(hex)) { return null; }
+            var codePoint = parseInt(hex, 16);
+            if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) { return null; }
+            decoded.push(String.fromCodePoint(codePoint));
+            i += digits;
+        } else {
+            decoded.push(character);
+        }
+    }
+    return null;
+}
+
 // Reads only simple, single-line name and description values between the first two front matter delimiters.
 // The text remains data: Markdown, instructions, YAML objects, and multi-line values are never evaluated.
 function snaSkillFrontMatter(text) {
@@ -4482,10 +4515,10 @@ function snaSkillFrontMatter(text) {
         var value = match[2];
         if (/^[|>\[\{&*!]/.test(value)) { return null; }
         if (/^["']/.test(value)) {
-            if (value.length < 2 || value.charAt(value.length - 1) !== value.charAt(0)) { return null; }
-            value = value.slice(1, -1);
+            value = snaSkillQuotedScalar(value);
+            if (value === null) { return null; }
         }
-        values[match[1]] = value.trim();
+        values[match[1]] = value;
     }
     return values.name || values.description ? values : null;
 }

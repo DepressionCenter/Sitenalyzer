@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-21
+Last Modified: 2026-10-22
 Summary: Browser tests for Sitenalyzer. Each test opens the built app from dist/ on a pretend SharePoint
          site (see pretend-sharepoint.js) that blocks inline scripts the way SharePoint Online does.
 Notes: See README file for documentation and full license information.
@@ -335,6 +335,68 @@ test('uses site skill folders when text cannot be read or has no front matter', 
         const coverage = page.getByRole('row', { name: /^Site skills (Read|Partly read)/ });
         await expect(coverage).toContainText(body === cases[0] ? 'Partly read' : 'Read');
         if (body === cases[0]) { await expect(coverage).toContainText('1 site skill'); }
+    }
+});
+
+const quotedSkillCases = [
+    { title: 'single quotes', name: "'Director''s helper'", description: String.raw`'Keep C:\notes and "quotes".'`,
+        expectedName: "Director's helper", expectedDescription: String.raw`Keep C:\notes and "quotes".`, query: "Director's" },
+    { title: 'double quotes', name: String.raw`"Quoted \"helper\" \x26 \u03A9 \U0001F680"`,
+        description: String.raw`"  Read\tC:\\notes\nNext\ line\/end\_done  " # Display text`,
+        expectedName: 'Quoted "helper" & Ω 🚀', expectedDescription: '  Read\tC:\\notes\nNext line/end\u00a0done  ', query: 'Quoted' },
+    { title: 'escaped markup and hidden values', name: String.raw`"\u003Cb\u003ECall 734\x2d555\x2d0100\u003C/b\u003E"`,
+        description: String.raw`"\u003Cimg src=x\u003E"`, expectedName: '<b>Call [phone number hidden]</b>',
+        expectedDescription: '<img src=x>', query: 'Call' }
+];
+
+for (const sample of quotedSkillCases) {
+    test('reads site skill text with ' + sample.title + ' in every output', async function({ page }, testInfo) {
+        await stubPrint(page);
+        const record = await openPretendSite(page, { answerOverrides: [
+            { pattern: /^\/_api\/web\/GetFileByServerRelativePath.*\/\$value$/, body: rawReply(200, 'text/markdown',
+                '---\nname: ' + sample.name + '\ndescription: ' + sample.description + '\n---') }
+        ] });
+        await extractSiteInformation(page);
+        const section = await openAgents(page);
+        const skills = section.getByRole('grid', { name: 'Site skills', exact: true });
+        await expect(skills.locator('.tabulator-row [tabulator-field="name"]')).toHaveText(sample.expectedName);
+        await expect(skills.locator('.tabulator-row [tabulator-field="description"]')).toHaveText(sample.expectedDescription);
+        await expect(skills.locator('b, img')).toHaveCount(0);
+        await page.getByRole('searchbox', { name: 'Search this report' }).fill(sample.query);
+        await page.getByRole('searchbox', { name: 'Search this report' }).press('Enter');
+        await expect(page.locator('#sp-results')).toContainText(sample.expectedName);
+        await expect(page.locator('#sp-results')).toContainText(sample.expectedDescription);
+        await expect(page.locator('#sp-results b, #sp-results img')).toHaveCount(0);
+        const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+        const row = sheetRows(workbook, 'Assets').find(function(asset) { return asset[4] === 'Copilot in SharePoint Skill'; });
+        expect(row[3]).toBe(sample.expectedName);
+        expect(row[8]).toBe(sample.expectedDescription);
+        await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+        await page.emulateMedia({ media: 'print' });
+        const printed = printFrameDocument(page).getByRole('table', { name: 'Site skills', exact: true });
+        await expect(printed).toContainText(sample.expectedName);
+        await expect(printed).toContainText(sample.expectedDescription);
+        await expect(printed.locator('b, img')).toHaveCount(0);
+        expect(record.unexpectedRequests).toEqual([]);
+        expect(record.consoleErrors).toEqual([]);
+    });
+}
+
+test('rejects malformed quoted site skill text without showing partially parsed values', async function({ page }) {
+    const invalid = ["'Director's helper'", String.raw`"Unknown \q escape"`, String.raw`"Short \u123"`,
+        String.raw`"Bad \xGG"`, String.raw`"Outside Unicode \U00110000"`, String.raw`"Surrogate \uD800"`,
+        '"Unclosed', '"Closed" trailing text'];
+    for (const value of invalid) {
+        const record = await openPretendSite(page, { answerOverrides: [
+            { pattern: /^\/_api\/web\/GetFileByServerRelativePath.*\/\$value$/, body: rawReply(200, 'text/markdown',
+                '---\nname: "Valid name"\ndescription: ' + value + '\n---') }
+        ] });
+        await extractSiteInformation(page);
+        const section = await openAgents(page);
+        await expect(section.locator('#sna-tbl-skills .tabulator-row [tabulator-field="name"]')).toHaveText('weekly-summary');
+        await expect(section.locator('#sna-tbl-skills .tabulator-row [tabulator-field="description"]')).toHaveText('');
+        expect(record.unexpectedRequests).toEqual([]);
+        expect(record.consoleErrors).toEqual([]);
     }
 });
 

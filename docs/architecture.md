@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/architecture.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-21
+Last Modified: 2026-10-22
 Summary: How Sitenalyzer's files fit together, how it starts on a SharePoint page, and why it is built this way.
 Notes: See README file for documentation and full license information.
 
@@ -121,6 +121,8 @@ The term set of a managed metadata column isn't returned by the columns request.
 Each library request asks for up to 2,000 items (`SNA_AGENT_ITEMS_BATCH_SIZE`), without a server sort. The agent limit is 10,000 across libraries (`SNA_AGENTS_MAX`). A failed library request starts a site search for those libraries. Search reads at most 5,000 rows (`SNA_AGENT_SEARCH_MAX`), 500 at a time (`SNA_AGENT_SEARCH_ROWS`). File addresses remove duplicate rows, including when a later library batch failed and search returns a file already read. Next-batch links must point to this site's API, and repeated links stop the read. Search paths must point to this site and end in `.agent`.
 
 Agent Assets is looked up separately. No such library means no site skills. A failed lookup or items request with no usable rows means **Not read**. When an items request fails after usable rows were collected, those rows remain and coverage says **Partly read**. Site skills have the same 10,000-row safety limit. Sitenalyzer reads text for the first 200 (`SNA_SKILL_TEXT_LOOKUPS`) and inspects its first 65,536 characters (`SNA_SKILL_TEXT_MAX_CHARS`). The response body is downloaded before that character limit is applied. Only single-line `name:` and `description:` values between an opening and closing `---` line are used. Missing or malformed text leaves the folder name and an empty description. Instructions in the text are never executed or rendered as Markdown.
+
+Quoted names and descriptions follow the [YAML quoted-scalar rules](https://yaml.org/spec/1.2.2/#73-flow-scalar-styles) within one source line. Single quotes use doubled apostrophes; double quotes use character and hexadecimal Unicode escapes. Spaces inside quotes are kept, and a comment after the closing quote is ignored. Invalid escapes or unmatched quotes leave the folder name and an empty description. Decoding happens before output escaping and hidden-value checks. Multi-line source values, objects, and tags remain unsupported.
 
 **Report coverage** records failed reads and limits. Search results always count as **Partly read**, because the search index may be behind the library. A search row has no checked file permissions or item ID, so it cannot offer a permissions button. The creator from search is used only when `AuthorOWSUSER` has both parts of `email | name`; other formats leave the creator empty.
 
