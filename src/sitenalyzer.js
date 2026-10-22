@@ -6177,7 +6177,8 @@ function snaRenderContentsDetail(route, report) {
     if (route.id === 'agents') {
         _snaLastInventoryId = 'agents';
         return back + '<div id="sna-agents-section"><h3 id="sna-detail-title" class="sna-detail-title" tabindex="-1">Agents and skills' +
-            ' <span class="item-count-badge">' + snaCountText(report.agents.agents.length, 'agent', 'agents') + '</span></h3>' +
+            ' <span class="item-count-badge">' + (snaAgentsNotRead(report.agents) ? 'Agents not read' :
+                snaCountText(report.agents.agents.length, 'agent', 'agents')) + '</span></h3>' +
             snaRenderAgentsSection(report.agents) + '</div>';
     }
 

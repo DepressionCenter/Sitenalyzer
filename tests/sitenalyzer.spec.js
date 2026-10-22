@@ -213,6 +213,7 @@ test('lists agents and site skills in Contents with file and permissions links',
     await extractSiteInformation(page);
     const section = await openAgents(page);
     await expect(page.locator('#sna-inv-agents')).toContainText('2 agents, 1 site skill');
+    await expect(section.locator('#sna-detail-title .item-count-badge')).toHaveText('2 agents');
     const agents = section.getByRole('grid', { name: 'Agents', exact: true });
     await expect(agents.locator('.tabulator-row [tabulator-field="name"]')).toHaveText(['Protocol Reviewer', 'Study Visits Helper']);
     const helper = agents.getByRole('row', { name: /Study Visits Helper/ });
@@ -557,6 +558,7 @@ test('still reads and exports site skills when the lists could not be read', asy
     await extractSiteInformation(page);
     await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('AgentsNot read');
     await expect(await openAgents(page)).toContainText('Weekly summary');
+    await expect(page.locator('#sna-detail-title .item-count-badge')).toHaveText('Agents not read');
     await gotoSection(page, 'Site review');
     await expect(page.getByRole('row', { name: /^Agents Not read/ })).toBeVisible();
     const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
@@ -667,9 +669,22 @@ test('reports agents as not read when the library and search both fail', async f
     const section = await openAgents(page);
     await expect(section).toContainText('could not check Documents and SharePoint search did not answer');
     await expect(section).not.toContainText('No agents found.');
+    await expect(section.locator('#sna-detail-title .item-count-badge')).toHaveText('Agents not read');
     await gotoSection(page, 'Site review');
     await expect(page.getByRole('row', { name: /^Agents Not read/ })).toBeVisible();
     expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('shows zero agents only after a successful empty collection', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: [] })] });
+    await extractSiteInformation(page);
+    const section = await openAgents(page);
+    await expect(section.locator('#sna-detail-title .item-count-badge')).toHaveText('0 agents');
+    await expect(section).toContainText('No agents found.');
+    await expect(section).toContainText('Weekly summary');
+    await expectNoAxeViolations(page);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
 });
 
 test('reads later search rows without duplicating agents already read from a library', async function({ page }) {

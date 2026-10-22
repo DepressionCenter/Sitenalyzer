@@ -132,6 +132,8 @@ The data dictionary keeps its existing sheets and columns. **Assets** gains one 
 
 Collected agents and site skills can be exported even when no list columns were read. For example, a failed lists request does not block export of site skills read separately. The **Fields** sheet keeps its column headings and has no data rows in that case.
 
+The **Agents and skills** heading shows **Agents not read** when collection failed and the agent count is unknown. A successful empty collection shows **0 agents**. This uses the same read status as the Overview and Contents inventory.
+
 ### Permission rows
 
 Sitenalyzer keeps one permission row for each scope, person or group, and permission level. A scope is the whole site or one list or library that has its own permissions. The **People and groups** part of Permissions and the Permissions sheet of the workbook are both built from these rows, so they always agree.
