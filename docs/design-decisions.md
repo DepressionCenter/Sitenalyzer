@@ -39,7 +39,7 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 
 ### Overview and findings
 
-- **Counts and links only.** The Overview shows five counts and one card for each section. It shows no findings, so the first screen stays calm.
+- **Counts and links only.** The Overview shows seven counts and one card for each section. The Agents count also shows the number of site skills. It shows no findings, so the first screen stays calm.
 - **Findings are where you act on them.** Access findings, such as guest access, are on Permissions. Cleanup findings, such as a missing description, are on Site review.
 - **Not read is not zero.** A count that Sitenalyzer could not read says **Not read**, and a "none found" message appears only when the check finished. Missing information must never look like an empty list.
 
@@ -49,6 +49,9 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 - **The same layout in Permissions and Taxonomy.** Their parts or term sets are on the left, and the one you selected is on the right.
 - **No About this site card.** With technical details on, the site ID and a **Copy** button appear under the site's address in the header.
 - **Parent terms and term set use.** A term set shows each term's parent term in a column, and the terms are listed in tree order, with each term right after the term it sits under. The terms aren't indented, so the table still sorts and filters like the others. Below the terms, **Columns that use this term set** lists the columns that use the set and links to their **Columns** tab.
+
+- **Agents from the site's files.** Sitenalyzer lists `.agent` files and site skills saved on the site with the person's own access. This needs no new permission or app. Agents made with Microsoft Copilot Agent Builder are stored elsewhere, so the section explains that it cannot list them.
+- **Search when a library cannot be filtered.** SharePoint can reject file-type filters above 5,000 items. One site search, read in batches, covers the affected libraries. The report names them and says search can be minutes behind. Search does not supply checked file permissions.
 
 ### Tables
 
@@ -66,7 +69,7 @@ One switch, **Show technical details**, adds internal names, IDs, lookup targets
 
 ### Search
 
-**Search this report** is always visible and searches everything Sitenalyzer read, including sections nobody has opened. Results are grouped as columns, lists and libraries, folders, site pages, and terms, with links that open each result. A results page replaced the earlier floating list of results, because a page works better with the keyboard and screen readers. Quoted phrases and `*` searches work as they did before the redesign.
+**Search this report** is always visible and searches everything Sitenalyzer read, including sections nobody has opened. Results are grouped as columns, lists and libraries, folders, site pages, agents and skills, and terms, with links that open each result. A results page replaced the earlier floating list of results, because a page works better with the keyboard and screen readers. Quoted phrases and `*` searches work as they did before the redesign.
 
 ### Editing descriptions
 

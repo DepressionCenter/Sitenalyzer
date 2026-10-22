@@ -67,9 +67,9 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 
 1. Open the `sitenalyzer` page.
 2. Keep the current site's address in the **Site address** box, or type another site's address or choose one from the list. The list shows sites you can open.
-3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, and permissions, and says what it is reading, such as "Reading lists and libraries: 3 of 12". Large sites can take a minute.
+3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, permissions, agents, and site skills, and says what it is reading, such as "Reading lists and libraries: 3 of 12". Large sites can take a minute.
 4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. When you open a section, the page scrolls so the section links are at the top of the window. **Back to top**, at the bottom left of each section, scrolls back to them. See [Report sections](#report-sections).
-5. To find a list, library, column, folder, page, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
+5. To find a list, library, column, folder, page, agent, site skill, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
 6. To see internal names, IDs, and other values that developers need, turn on **Show technical details** at the right end of the section links. See [Technical details](#technical-details).
 7. Values that look like personal information, such as phone numbers, are hidden at first. When Sitenalyzer hid some, **Show hidden values** appears next to **Show technical details**. Turn it on to see them. See [Hidden values](#hidden-values).
 8. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**. Its **Assets** sheet includes agents and site skills.
@@ -95,8 +95,8 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 
 | Section | Description |
 | --- | --- |
-| **Overview** | Counts of document libraries, lists, system lists, site pages, term sets, and sharing links, each linked to the section that lists them. The document library, list, and system list counts also say how many items they hold. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
-| **Contents** | Document libraries, lists, system lists, and Site pages on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
+| **Overview** | Counts of document libraries, lists, system lists, site pages, agents, term sets, and sharing links, each linked to the section that lists them. The document library, list, and system list counts also say how many items they hold. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
+| **Contents** | Document libraries, lists, system lists, Site pages, and Agents and skills on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
 | **Permissions** | Access to the site, its lists, and its libraries. See [Permissions](#permissions). |
 | **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
 | **Site review** | Lists and libraries to review, the largest ones, and what Sitenalyzer could and couldn't read. See [Site review](#site-review). |
@@ -137,9 +137,9 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 **Search this report** looks through everything Sitenalyzer read from the site, including sections you haven't opened. It searches names, internal names, IDs, data types, and where each item is. It does not search the rest of SharePoint.
 
-- Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, and **Terms**. Columns whose names match come first. A system list is labeled **System list**.
+- Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, **Agents and skills**, and **Terms**. Columns whose names match come first. A system list is labeled **System list**.
 - Use `*` between words, such as `visit*date`, or put a phrase in quotes, such as `"Visit Date"`, to find it exactly.
-- Select a result to open it. A column opens on its list's **Columns** tab, with the table filtered to that column when the table has a filter box. A term opens its term set in **Taxonomy** in the same way.
+- Select a result to open it. A column opens on its list's **Columns** tab, with the table filtered to that column when the table has a filter box. A term opens its term set in **Taxonomy** in the same way. Agents and site skills open their tables in **Contents**, filtered by name when a filter box is available.
 - While **Show hidden values** is off, Sitenalyzer doesn't search for a hidden value or part of one, such as `555-0100`. This includes a search that has such text among other words, such as `notes 555-0100`, and the same number written with other spaces or punctuation, such as `555.0100` or `5550100`. A number counts when it has 4 digits in a row from a hidden value, so a search such as `visits 2026` still runs. It clears the search, says why, and keeps the text out of the page address. See [Hidden values](#hidden-values).
 
 ### Technical details
@@ -167,7 +167,7 @@ Sitenalyzer looks for these kinds of values:
 | Street address | `1500 Main Street` | `Main Street` |
 | Age over 89 | `aged 93` | `aged 45` |
 
-Sitenalyzer checks the names and descriptions of the site, lists, libraries, columns, folders, site pages, shared items, permission levels, term groups, term sets, and terms, and column choices, default values, and formulas. These stay visible:
+Sitenalyzer checks the names and descriptions of the site, lists, libraries, columns, folders, site pages, agents, site skills, shared items, permission levels, term groups, term sets, and terms, and column choices, default values, and formulas. These stay visible:
 
 - Names, email addresses, and sign-in names of people and groups where Sitenalyzer shows who has access, because you need them to review it. The same email or phone number in other text, such as a list description, is hidden.
 - IDs, internal names, and addresses, so links and IDs keep working. A page or folder address can still hold a value that is hidden in its name.
@@ -207,12 +207,12 @@ When Sitenalyzer can't read something, such as a group's members, it says so. It
 #### Check a person's access
 
 1. In **Permissions**, select **Check a person's access**.
-2. Type the person's email address, such as `user@med.umich.edu`, in **Email address or sign-in name**.
+2. Type the person's email address, such as `user@example.org`, in **Email address or sign-in name**.
 3. Press Enter or select **Check access**.
 
 Sitenalyzer asks SharePoint what the person can do on the whole site and in each list and library. The result includes access the person gets through groups. Lists and libraries the person can't open are counted but not listed. You need to be a site owner to use this.
 
-If the email address isn't among the site's users, Sitenalyzer checks the usual Microsoft 365 sign-in name for it, such as `i:0#.f|membership|user@med.umich.edu`. If the results say **No access**, check the spelling.
+If the email address isn't among the site's users, Sitenalyzer checks the usual Microsoft 365 sign-in name for it, such as `i:0#.f|membership|user@example.org`. If the results say **No access**, check the spelling.
 
 The result appears when the check finishes. It stays in **Permissions** while you look at other sections, until you read another site or select **Refresh report**.
 
@@ -227,7 +227,7 @@ The result appears when the check finishes. It stays in **Permissions** while yo
 
 Each row says what was found and what to do next. Select a name to open its details in **Contents**. Sitenalyzer changes nothing from this page; some older content may still need to be kept. Under the table are the five lists and libraries with the most items. System lists are left out of both, because SharePoint manages them.
 
-At the bottom, **Report coverage** lists each part of the report, such as **Sharing links** or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
+At the bottom, **Report coverage** lists each part of the report, such as **Agents**, **Site skills**, **Sharing links**, or **Term store**, as **Read**, **Partly read**, or **Not read**, with what that means for the report.
 
 ### Term sets
 
@@ -314,6 +314,8 @@ You don't need to change the page unless the release notes say so.
 You can now install Sitenalyzer on a site, use it to document the site and its permissions, and update it. If something doesn't work, see [Troubleshooting](troubleshooting.md).
 
 ### Additional resources
+
+- [Upgrade agents in SharePoint and OneDrive](https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents)
 
 - [Troubleshooting](troubleshooting.md)
 - [Sitenalyzer architecture](architecture.md)

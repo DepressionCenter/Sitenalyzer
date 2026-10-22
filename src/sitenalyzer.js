@@ -88,7 +88,7 @@ var SNA_AGENT_ASSETS_TITLE = 'Agent Assets';
 var SNA_SKILLS_FOLDER = 'Skills';
 var SNA_SKILL_FILE = 'SKILL.md';
 var SNA_SKILL_TEXT_LOOKUPS = 200; // Most site skills whose names and descriptions are read from their text.
-var SNA_SKILL_TEXT_MAX_CHARS = 65536; // Characters inspected at the start of each site's skill text.
+var SNA_SKILL_TEXT_MAX_CHARS = 65536; // Characters inspected at the start of each site skill's text.
 
 // Most terms read from each term set, and the most requests for one term's child terms in each report. Child terms
 // are read one term at a time only when SharePoint doesn't return each term's children with the term set's terms.
@@ -594,7 +594,8 @@ function snaRowEditKey(type, tbl, row) {
 
 // Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
 // compared as they are shown, so a hidden value can't be found by typing it. personFields lists the fields that hold
-// people's and groups' names, which are shown as they are, so they are compared as they are.
+// people's and groups' names, which are shown as they are, so they are compared as they are. decodeFileUrls compares
+// agent and site skill addresses as decoded display text, so encoded spaces cannot interfere with hiding values.
 function snaApplyTableFilter(table, text, personFields, decodeFileUrls) {
   var val = String(text || '').trim().toLowerCase();
   if (!val) { table.clearFilter(); return; }
@@ -3273,7 +3274,7 @@ function snaCancelledError() {
 // collection belongs to; when it changes, the collection stops with snaCancelledError.
 //
 // Report shape: { collectedAt (ISO 8601, UTC), siteUrl, site { title, url, id, description, logoUrl }, currentUser, isAdmin,
-// listsRead, lists [snaCollectList entries], pages (snaFetchSitePages result), taxonomy { groups, read, termStoreId,
+// listsRead, lists [snaCollectList entries], pages (snaFetchSitePages result), agents (snaFetchSiteAgents result), taxonomy { groups, read, termStoreId,
 // siteCollectionId, usage (snaBuildTermSetUsage result) }, permissions { siteRolesRead, siteRoleAssignments, appAssignments, index, rows, inheritedLists,
 // uniqueLists, roleDefinitions, siteAdmins, sharingLinks }, coverage [{ area, status: 'read'|'partial'|'failed', note }] }.
 async function collectReport(targetUrl, onProgress, token) {
@@ -3814,8 +3815,8 @@ var SNA_SEARCH_GROUPS = [
     { kind: 'term',   title: 'Terms' }
 ];
 
-// Builds the search index from the collected report: lists and libraries, columns, top-level folders, site pages,
-// and terms. label, sublabel, and breadcrumb are searched; sublabel holds internal names and IDs, so they are always
+// Builds the search index from the report's lists, columns, folders, pages, agents, site skills, and terms.
+// label, sublabel, and breadcrumb are searched; sublabel holds internal names and IDs, so they are always
 // searchable even while technical details are hidden. summary is shown under each result, and technicalText only
 // while Show technical details is on. route is the address of the view the result opens.
 function buildSearchIndex() {
@@ -4512,7 +4513,7 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
         var author = item.Author || {};
         var uniqueId = snaCleanListId(item.UniqueId || '');
         return { name: String(item.FileLeafRef || '').replace(/\.agent$/i, ''), fileName: String(item.FileLeafRef || ''),
-            url: snaIsSameSiteUrl(url, targetUrl) ? url : '', libraryId: library.id || library.Id,
+            url: snaIsSameSiteUrl(url, targetUrl) ? url : '', libraryId: snaCleanListId(library.id || library.Id),
             libraryRouteId: library.routeId || '', libraryTitle: library.title || library.Title, folder: dir.indexOf(root + '/') === 0 ? dir.slice(root.length + 1) : '',
             modified: String(item.Modified || '').slice(0, 10), ownPermissions: item.HasUniqueRoleAssignments === true,
             createdBy: String(author.Title || ''), createdByEmail: String(author.EMail || ''),
@@ -4644,10 +4645,12 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
                 if (!skillsJson || !Array.isArray(skillsJson.value)) { throw new Error('Invalid items response'); }
                 skillsJson.value.forEach(function(item) {
                     var path = String(item.FileRef || '');
+                    if (/[\\\u0000-\u001f]/.test(path)) { return; }
                     var prefix = decodeURIComponent(new URL(targetUrl).pathname).replace(/\/$/, '') + '/' + SNA_AGENT_ASSETS_TITLE + '/' + SNA_SKILLS_FOLDER + '/';
                     if (path.toLowerCase().indexOf(prefix.toLowerCase()) !== 0) { return; }
                     var parts = path.slice(prefix.length).split('/');
-                    if (parts.length !== 2 || !parts[0] || parts[1].toLowerCase() !== SNA_SKILL_FILE.toLowerCase() || Number(item.FSObjType) === 1) { return; }
+                    if (parts.length !== 2 || !parts[0] || parts[0] === '.' || parts[0] === '..' ||
+                        parts[1].toLowerCase() !== SNA_SKILL_FILE.toLowerCase() || Number(item.FSObjType) === 1) { return; }
                     var row = fileRow(item, library);
                     if (!row.url || seenSkills[row.url]) { return; }
                     seenSkills[row.url] = true;
@@ -5914,18 +5917,17 @@ function snaRenderOverview(route, report) {
 
 // ### Contents ###
 
-// Draws Contents: the list of document libraries, lists, and Site pages beside the details of the selected one.
+// Draws Contents: libraries, lists, pages, and Agents and skills beside the selected entry's details.
 // On narrow screens the two stack, and the details offer Back to results.
 function snaRenderContents(route, report) {
-    return snaSectionTitleHtml('Contents', 'The site\'s document libraries, lists, and pages. Select a name to see its details.') +
+    return snaSectionTitleHtml('Contents', 'The site\'s document libraries, lists, pages, agents, and site skills. Select a name to see its details.') +
         '<div id="sna-contents" class="sna-contents' + (route.id ? ' sna-contents-detail-open' : '') + '">' +
             '<div id="sna-contents-inventory" class="sna-inventory">' + snaRenderInventory(route, report) + '</div>' +
             '<div id="sna-contents-detail" class="sna-detail">' + snaRenderContentsDetail(route, report) + '</div>' +
         '</div>';
 }
 
-// Returns the Contents list, grouped into Document libraries, Lists, System lists, and Site pages, with a name filter
-// above it.
+// Returns the Contents inventory grouped by kind, including Agents and skills, with a name filter above it.
 function snaRenderInventory(route, report) {
     function item(routeId, href, icon, name, meta) {
         return '<li data-name="' + snaEscapeHtml(String(name).toLowerCase()) + '">' +

@@ -83,7 +83,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### Check a person's access says "Could not check" or "No access" everywhere
 
-**Cause:** "Could not check" means SharePoint refused the request; you need to be a site owner. "No access" everywhere usually means the email address isn't one of the site's users. Sitenalyzer then checks the usual sign-in name, such as `i:0#.f|membership|user@med.umich.edu`, which may not match the person's account.
+**Cause:** "Could not check" means SharePoint refused the request; you need to be a site owner. "No access" everywhere usually means the email address isn't one of the site's users. Sitenalyzer then checks the usual sign-in name, such as `i:0#.f|membership|user@example.org`, which may not match the person's account.
 
 **Fix:** Check the spelling of the email address. If the person signs in with a different name, type their full sign-in name, which contains a `|` character.
 
@@ -108,6 +108,18 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 **Cause:** The Site Pages library has more than 10,000 items. Sitenalyzer stops there so the page stays quick.
 
 **Fix:** Nothing is broken. To see every page, open the Site Pages library in SharePoint. A developer can change the limit with `SNA_SITE_PAGES_MAX` at the top of `src/sitenalyzer.js`.
+
+### Agents says SharePoint search was used for a library
+
+**Cause:** SharePoint could not filter that library by file type. This can happen when it has more than 5,000 items. Sitenalyzer used SharePoint search to find its agents, but search can be minutes behind the library. Permissions for those files say **Not checked**.
+
+**Fix:** Wait a few minutes, then select **Refresh report**. Open the library itself to check for a newly saved agent. A site owner can review whether an index on the file type column would let SharePoint filter it directly.
+
+### Site skills says Not read
+
+**Cause:** Sitenalyzer could not read the Agent Assets library or its items. This does not mean the site has no site skills.
+
+**Fix:** Select **Refresh report**. If it still fails, ask a site owner to check your access to Agent Assets. If only a site skill's text failed, its folder name is shown and its description is empty.
 
 ### An old version still shows after an update
 

@@ -77,7 +77,11 @@ The tests check that:
 - The app starts when its `<div>` appears up to 10 seconds late, and writes an error when it never appears.
 - Every browser storage key starts with `sitenalyzer:`.
 - **Extract site information** opens the Overview, and Contents shows the pretend site's lists, libraries, column tables, folders, permissions, and site pages.
-- The Overview shows six counts that link to their sections, and counts that could not be read say **Not read**. The Contents summary shows the other totals and a table of every list and library.
+- The Overview shows seven counts that link to their sections, and counts that could not be read say **Not read**. The Agents count includes the number of site skills. The Contents summary shows the other totals and a table of every list and library.
+- **Agents and skills** lists agents in name order, with file and library links, creators, folders, and item permissions. Site skills use names and descriptions from the start of `SKILL.md`; files at the wrong folder depth are excluded. Missing libraries and unreadable text have separate messages and coverage states. Search opens the section and filters long tables. The route rejects extra segments, and both tables pass axe at wide and 320-pixel widths.
+- When a library rejects the file-type filter, a site search supplies its agents with **Not checked** permissions. Tests reject results on another site or in another library, keep files already read without duplicates, read later search rows, and report failed searches.
+- Search stops after 5,000 rows and reports the limit. Site skill text reads stop after 200 files. Tests reject parent-folder paths and multi-line metadata, and check a permissions link when the library ID includes braces.
+- Print includes every agent and site skill even when tables are filtered. **Assets** adds file rows with the existing columns and sheet list. Hidden-value checks cover names, displayed addresses, technical search text, print, and workbook display names. Creators remain visible in the report and are absent from the workbook.
 - System lists, such as the User Information List, have their own count and item total on the Overview, their own group and table in Contents, and their own part of the print document. Site review and the largest lists leave them out, and search labels them **System list**. A list named Events that isn't made from the events template stays an ordinary list. **Back to top** on Search results puts focus on the first section link.
 - Opening any section, including a Taxonomy view shorter than the window, scrolls the section links to the top of the window. **Back to top** sits on the left and does the same with one click, and puts focus on the open section's link. With a fixed bar over the top of the page, like SharePoint's page bar, both stop with the section links just below the bar. The report opens at the top, with the site's name.
 - The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.
@@ -127,6 +131,21 @@ The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresse
 The pretend site also answers the request digest (`POST /_api/contextinfo`), and answers description saves (`PATCH` on the site, a list, or a column) with 204 No Content. Term requests with `$expand=children` get each term with an empty list of children, `…/terms/<ID>/children` gets an empty list, and `/_api/web/fields` has no managed metadata columns, so the standard answers have no parent terms and no term set use. It answers `POST /_api/$batch` by answering each GET inside the batch from the same answers, and sends them back as one `multipart/mixed` answer. It returns lists the test can check afterward: `consoleErrors`, `unexpectedRequests`, `siteAssetsRequests`, `apiRequests`, `otherOriginRequests`, and `writeRequests`, which holds every request that is not a GET. `apiRequests` also holds each request inside a batch. In the tests, `changeRequests(record)` leaves out the request digest and batches that hold only GET requests to the site, so it lists only requests that could change the site. Requests to any other host are refused, so tests never reach the internet.
 
 Automated checks find only part of all accessibility problems. Check keyboard use, zoom to 200%, and a screen reader by hand when you change the interface.
+
+The pretend site also has two agents in Documents and one site skill in hidden Agent Assets. A second `SKILL.md` has the wrong folder depth and must be ignored. The fixtures answer the separate Agent Assets lookup, agent and site skill items requests, and the text request for `SKILL.md`. Search queries for `FileExtension:agent` return no rows unless a test supplies them; the site's existing search answers remain available for choosing a site.
+
+#### Checks on a real site
+
+The fixtures cannot confirm these service details. Check them on a SharePoint Online site before relying on this inventory:
+
+1. The `.agent` file-type filter returns the expected files, and `$expand=Author` supplies their creators.
+2. A library above 5,000 items triggers the search path when filtering fails. Check that search returns its files and that `AuthorOWSUSER` uses `email | name`.
+3. The Agent Assets title is unchanged on sites in other languages, and the library is found whether hidden or visible.
+4. `GetFileByServerRelativePath(...)/$value` returns the site skill text, with `name:` and `description:` at the start.
+5. The item permissions link opens the correct file's permissions page.
+6. Check whether the ready-made agent appears as a file; this inventory counts only files it can read.
+
+Also check the two tables and their Permissions buttons with a screen reader, keyboard only, and 200% zoom. Open the real page with `?csp=enforce` and check for Content Security Policy violations. These checks have not been completed by the pretend-site tests.
 
 ### Update a library
 
