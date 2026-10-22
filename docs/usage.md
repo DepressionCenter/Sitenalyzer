@@ -257,7 +257,11 @@ Sitenalyzer reads Site Pages 2,000 items at a time, up to 10,000 items. If the l
 
 Select **Agents and skills** in **Contents** to see two tables. **Agents** lists the `.agent` files you can read in the site's document libraries. Each row shows its library, folder, last change, creator, and permissions. Select its name to open the file. Select **Permissions** beside **Own permissions** to open that file's permissions page.
 
+In both tables, **Inherited permissions** means the file uses its parent folder's or library's permissions. Sitenalyzer does not check which parent supplies them.
+
 **Site skills** lists each `SKILL.md` at `Agent Assets/Skills/<name>/SKILL.md`. It shows the name and description from the text at the start of the file. If that text is missing or unreadable, the folder name is shown instead. Sitenalyzer reads text for up to 200 site skills. **Report coverage** says when a library or file could not be read.
+
+If a later batch of site skills cannot be read, the earlier rows remain in the report and data dictionary. **Report coverage** says **Partly read**, and the section warns that some site skills may be missing. Select **Refresh report** to try again.
 
 The **Agents** count on the Overview links to these tables and includes the number of site skills. **Search this report** finds their names and descriptions. Names and descriptions that look like personal information are hidden; **Created by** remains visible. **Show technical details** adds file addresses.
 

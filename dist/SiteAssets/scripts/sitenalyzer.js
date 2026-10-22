@@ -4734,6 +4734,7 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
     }
     stillWanted();
     var seenSkills = {};
+    var skillsReadFailed = false;
     for (var i = 0; i < skillLibraries.length; i++) {
         var library = skillLibraries[i];
         var libraryId = snaCleanListId(library.Id);
@@ -4772,8 +4773,9 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
                 if (nextLink && result.skills.length >= SNA_AGENTS_MAX) { result.skillsTruncated = true; break; }
                 skillsNext = nextLink ? new URL(nextLink, targetUrl + '/').href : '';
             }
-        } catch(e) { result.skillsStatus = 'failed'; }
+        } catch(e) { skillsReadFailed = true; }
     }
+    if (skillsReadFailed) { result.skillsStatus = result.skills.length ? 'partial' : 'failed'; }
     stillWanted();
     result.skillTextSkipped = Math.max(0, result.skills.length - SNA_SKILL_TEXT_LOOKUPS);
     await snaMapWithLimit(result.skills.slice(0, SNA_SKILL_TEXT_LOOKUPS), SNA_MAX_PARALLEL_REQUESTS, async function(skill) {
@@ -4823,6 +4825,9 @@ function snaAgentCoverage(assets) {
     if (assets.searchTruncated) { agentNotes.push('Sitenalyzer read the first ' + SNA_AGENT_SEARCH_MAX.toLocaleString('en-US') + ' search results only.'); }
     if (assets.skillsStatus === 'none') { skillNotes.push('This site has no Agent Assets library, so it has no site skills.'); }
     if (assets.skillsStatus === 'failed') { skillNotes.push('Sitenalyzer could not read the Agent Assets library. Refresh the report to try again.'); }
+    if (assets.skillsStatus === 'partial') {
+        skillNotes.push('Sitenalyzer could not read all site skills in Agent Assets. Some site skills may be missing. Refresh the report to try again.');
+    }
     if (assets.skillTextFailed) {
         skillNotes.push('Sitenalyzer could not read the text of ' + snaCountText(assets.skillTextFailed, 'site skill', 'site skills') +
             ', so their names come from their folders and their descriptions are empty. Refresh the report to try again.');
@@ -4832,7 +4837,7 @@ function snaAgentCoverage(assets) {
     return [{ area: 'Agents', status: snaAgentsNotRead(assets) || (assets.searchFailed && !assets.agents.length) ? 'failed' :
             (agentNotes.length ? 'partial' : 'read'), note: agentNotes.join(' ') },
         { area: 'Site skills', status: assets.skillsStatus === 'failed' ? 'failed' :
-            (assets.skillTextFailed || assets.skillTextSkipped || assets.skillsTruncated ? 'partial' : 'read'), note: skillNotes.join(' ') }];
+            (assets.skillsStatus === 'partial' || assets.skillTextFailed || assets.skillTextSkipped || assets.skillsTruncated ? 'partial' : 'read'), note: skillNotes.join(' ') }];
 }
 
 // Decodes file addresses only for display and filtering, so encoded spaces cannot hide personal values from masking.
@@ -4841,9 +4846,9 @@ function snaFileAddressText(address) {
     try { return decodeURIComponent(String(address || '')); } catch(e) { return String(address || ''); }
 }
 
-// Names the file's permission source without claiming a search result's permissions were checked.
+// Inherited permissions may come from a folder or library. Search does not check file permissions.
 function snaAgentPermissionsText(asset) {
-    return asset.ownPermissions === null ? 'Not checked' : (asset.ownPermissions ? 'Own permissions' : "Library's permissions");
+    return asset.ownPermissions === null ? 'Not checked' : (asset.ownPermissions ? 'Own permissions' : 'Inherited permissions');
 }
 
 // Draws permissions and an optional item permissions button using validated library and item IDs.

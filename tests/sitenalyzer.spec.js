@@ -224,10 +224,11 @@ test('lists agents and site skills in Contents with file and permissions links',
     await expect(helper.getByRole('button', { name: /^Permissions:/ })).toHaveAttribute('data-url', SITE_URL + '/_layouts/15/user.aspx?obj={' + LIBRARY_ID + '},21,LISTITEM&List={' + LIBRARY_ID + '}');
     const reviewer = agents.getByRole('row', { name: /Protocol Reviewer/ });
     await expect(reviewer).toContainText('Protocols');
-    await expect(reviewer).toContainText("Library's permissions");
+    await expect(reviewer).toContainText('Inherited permissions');
     const skills = section.getByRole('grid', { name: 'Site skills', exact: true });
     await expect(skills).toContainText('Weekly summary');
     await expect(skills).toContainText("Summarizes the week's visit notes.");
+    await expect(skills).toContainText('Inherited permissions');
     await expect(skills.locator('.tabulator-row')).toHaveCount(1);
     const requests = record.apiRequests.map(function(url) { return new URL(url); });
     const agentRequests = requests.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'"); });
@@ -279,6 +280,48 @@ test('reports no site skills when Agent Assets does not exist', async function({
     expect(record.unexpectedRequests).toEqual([]);
     expect(record.consoleErrors).toEqual([]);
 });
+
+for (const hasSkills of [true, false]) {
+    test(hasSkills ? 'keeps site skills from earlier pages when a later page fails' :
+        'reports site skills as unread when a failed read returned no usable rows', async function({ page }, testInfo) {
+        await stubPrint(page);
+        const nextPage = SITE_URL + "/_api/web/lists(guid'" + AGENT_ASSETS_ID + "')/items?$skiptoken=next";
+        const record = await openPretendSite(page, { answerOverrides: [
+            { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
+                if (match[1] !== AGENT_ASSETS_ID) { return undefined; }
+                return url.searchParams.has('$skiptoken') ? reply(403, { error: 'Access denied' }) :
+                    { value: [skillItems[hasSkills ? 0 : 1]], '@odata.nextLink': nextPage };
+            } }
+        ] });
+        await extractSiteInformation(page);
+        await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText(hasSkills ? '1 site skill' : 'Not read');
+        const section = await openAgents(page);
+        const note = hasSkills ? 'Sitenalyzer could not read all site skills in Agent Assets. Some site skills may be missing.' :
+            'Sitenalyzer could not read the Agent Assets library.';
+        await expect(section).toContainText(note);
+        await expect(section).not.toContainText('No site skills found.');
+        await expect(section.locator('#sna-tbl-skills .tabulator-row')).toHaveCount(hasSkills ? 1 : 0);
+        if (hasSkills) {
+            await expect(section).toContainText('Weekly summary');
+            await expect(page.locator('#sna-inv-agents')).toContainText('1 site skill');
+            const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+            const skills = sheetRows(workbook, 'Assets').filter(function(row) { return row[4] === 'Copilot in SharePoint Skill'; });
+            expect(skills).toHaveLength(1);
+            expect(skills[0][3]).toBe('Weekly summary');
+        }
+        await gotoSection(page, 'Site review');
+        const coverageName = hasSkills ? /^Site skills Partly read/ : /^Site skills Not read/;
+        await expect(page.getByRole('row', { name: coverageName })).toContainText(note);
+        await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+        await page.emulateMedia({ media: 'print' });
+        const printed = printFrameDocument(page);
+        await expect(printed.getByRole('row', { name: coverageName })).toContainText(note);
+        await expect(printed.getByRole('table', { name: 'Site skills', exact: true })).toHaveCount(hasSkills ? 1 : 0);
+        expect(record.apiRequests.filter(function(url) { return url === nextPage; })).toHaveLength(1);
+        expect(record.unexpectedRequests).toEqual([]);
+        expect(record.consoleErrors).toEqual(['Failed to load resource: the server responded with a status of 403 (Forbidden)']);
+    });
+}
 
 test('uses site skill folders when text cannot be read or has no front matter', async function({ page }) {
     const cases = [reply(404, { error: 'File not found' }), rawReply(200, 'text/markdown', 'No front matter here.')];
@@ -507,6 +550,8 @@ test('prints every agent and site skill in plain tables even when their screen t
     await expect(printed.getByRole('heading', { name: 'Agents and skills', exact: true })).toBeAttached();
     await expect(printed.getByRole('table', { name: 'Agents', exact: true }).locator('tbody tr')).toHaveCount(12);
     await expect(printed.getByRole('table', { name: 'Site skills', exact: true })).toContainText('Weekly summary');
+    await expect(printed.getByRole('table', { name: 'Agents', exact: true }).getByRole('row', { name: /Protocol Reviewer/ })).toContainText('Inherited permissions');
+    await expect(printed.getByRole('table', { name: 'Site skills', exact: true })).toContainText('Inherited permissions');
     await expect(printed).toContainText('Test Owner');
     await expect(printed.locator('button, input, .tabulator')).toHaveCount(0);
     expect(record.unexpectedRequests).toEqual([]);
