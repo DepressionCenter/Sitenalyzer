@@ -550,7 +550,7 @@ test('makes agents and site skills accessible at wide and narrow widths', async 
     expect(record.consoleErrors).toEqual([]);
 });
 
-test('still reads site skills when the lists could not be read', async function({ page }) {
+test('still reads and exports site skills when the lists could not be read', async function({ page }, testInfo) {
     const record = await openPretendSite(page, { answerOverrides: [{ pattern: /^\/_api\/web\/lists$/, answer: function(url) {
         return (url.searchParams.get('$filter') || '').includes('Hidden eq false') ? reply(403, { error: 'Access denied' }) : undefined;
     } }] });
@@ -559,6 +559,12 @@ test('still reads site skills when the lists could not be read', async function(
     await expect(await openAgents(page)).toContainText('Weekly summary');
     await gotoSection(page, 'Site review');
     await expect(page.getByRole('row', { name: /^Agents Not read/ })).toBeVisible();
+    const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+    expect(workbook.SheetNames).toEqual(['Export_Info', 'Sources', 'Assets', 'Fields', 'Value_Sets', 'Relationships', 'Dashboards', 'Visualizations', 'Stewards']);
+    const assets = sheetRows(workbook, 'Assets');
+    expect(assets.filter(function(row) { return row[4] === 'Copilot in SharePoint Skill'; })).toHaveLength(1);
+    expect(assets.find(function(row) { return row[4] === 'Copilot in SharePoint Skill'; })[3]).toBe('Weekly summary');
+    expect(sheetRows(workbook, 'Fields')).toHaveLength(1);
     expect(record.apiRequests.filter(function(url) { return decodeURIComponent(url).includes("File_x0020_Type eq 'agent'"); })).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
 });
@@ -605,6 +611,49 @@ test('uses SharePoint search when a library cannot be filtered and checks every 
     expect(requests[0].searchParams.get('trimduplicates')).toBe('false');
     expect(record.otherOriginRequests).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('keeps search creators with trailing account data and rejects incomplete tuples', async function({ page }, testInfo) {
+    await stubPrint(page);
+    const accounts = [
+        { tuple: ' owner@example.org | Example Owner ', name: 'Example Owner' },
+        { tuple: ' reviewer@example.org | <b>Example Reviewer</b> | 693A30 i:0#.f|membership|reviewer@example.org ', name: '<b>Example Reviewer</b>' },
+        { tuple: ' | Missing email | trailing account', name: '' },
+        { tuple: 'missing.name@example.org |  | trailing account', name: '' },
+        { tuple: 'Unknown format', name: '' }
+    ];
+    const record = await openPretendSite(page, { answerOverrides: [
+        agentAnswer(reply(500, { error: 'Threshold exceeded' })),
+        { pattern: /^\/_api\/search\/query$/, answer: function(url) {
+            if (!(url.searchParams.get('querytext') || '').includes('FileExtension:agent')) { return undefined; }
+            return agentSearchResults(accounts.map(function(account, index) {
+                return { Path: SITE_URL + '/Shared%20Documents/Example-' + index + '.agent', ListId: LIBRARY_ID,
+                    AuthorOWSUSER: account.tuple };
+            }));
+        } }
+    ] });
+    await extractSiteInformation(page);
+    await openAgents(page);
+    await expect(page.locator('#sna-tbl-agents .tabulator-row [tabulator-field="createdBy"]')).toHaveText(accounts.map(function(account) { return account.name; }));
+    await expect(page.locator('#sna-tbl-agents b')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page).getByRole('table', { name: 'Agents', exact: true });
+    await expect(printed).toContainText('Example Owner');
+    await expect(printed).toContainText('<b>Example Reviewer</b>');
+    await expect(printed.locator('b')).toHaveCount(0);
+    await expect(printed).not.toContainText('693A30');
+    await expect(printed).not.toContainText('Missing email');
+    await page.emulateMedia({ media: 'screen' });
+    const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+    const assets = sheetRows(workbook, 'Assets');
+    expect(assets.filter(function(row) { return row[4] === 'SharePoint Agent'; })).toHaveLength(accounts.length);
+    expect(JSON.stringify(assets)).not.toContain('Example Owner');
+    expect(JSON.stringify(assets)).not.toContain('Example Reviewer');
+    expect(JSON.stringify(assets)).not.toContain('693A30');
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.otherOriginRequests).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
 });
 
 test('reports agents as not read when the library and search both fail', async function({ page }) {
@@ -694,6 +743,39 @@ test('exports agents and site skills as Assets rows with the existing workbook c
     expect(skills[0][6]).toBe(SITE_PATH + '/Agent Assets/Skills');
     expect(skills[0][8]).toBe("Summarizes the week's visit notes.");
     expect(JSON.stringify(rows)).not.toContain('Test Owner');
+});
+
+test('exports agents when no list columns or site skills were read', async function({ page }, testInfo) {
+    const record = await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, body: reply(403, { error: 'Access denied' }) },
+        skillLibraryAnswer(reply(404, { error: 'Library not found' }))
+    ] });
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+    expect(sheetRows(workbook, 'Fields')).toHaveLength(1);
+    const assets = sheetRows(workbook, 'Assets');
+    expect(assets.filter(function(row) { return row[4] === 'SharePoint Agent'; })).toHaveLength(2);
+    expect(assets.filter(function(row) { return row[4] === 'Copilot in SharePoint Skill'; })).toHaveLength(0);
+    expect(assets.find(function(row) { return row[3] === 'Study Visits Helper'; })[0]).toBe(agentItems[0].UniqueId);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
+});
+
+test('explains why a data dictionary cannot be saved when no columns or file assets were read', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+            return (url.searchParams.get('$filter') || '').includes('Hidden eq false') ? reply(403, { error: 'Access denied' }) : undefined;
+        } },
+        skillLibraryAnswer(reply(404, { error: 'Library not found' }))
+    ] });
+    await extractSiteInformation(page);
+    const downloads = [];
+    page.on('download', function(download) { downloads.push(download); });
+    await page.getByRole('button', { name: /Data dictionary/ }).click();
+    await expect(page.locator('#sna-copy-toast')).toHaveText('No list, column, agent, or site skill data is available to export. Refresh the report to try again.');
+    expect(downloads).toEqual([]);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(changeRequests(record)).toEqual([]);
 });
 
 test('limits site skill text reads and rejects paths outside a single skill folder', async function({ page }) {

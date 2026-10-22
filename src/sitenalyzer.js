@@ -2540,8 +2540,10 @@ function snaFileSafeSiteName(siteTitle) {
 
 // Exports a 9-tab Data Dictionary XLSX file using SheetJS.
 function exportToXLSX() {
-    if (!globalExportedData || globalExportedData.length === 0) {
-        snaShowToast("No list or column data available to export.",true);
+    var siteAgents = _snaReport && _snaReport.agents;
+    var hasFileAssets = siteAgents && (siteAgents.agents.length > 0 || siteAgents.skills.length > 0);
+    if ((!globalExportedData || globalExportedData.length === 0) && !hasFileAssets) {
+        snaShowToast('No list, column, agent, or site skill data is available to export. Refresh the report to try again.', true);
         return;
     }
     
@@ -2662,7 +2664,6 @@ function exportToXLSX() {
     }
 
     // Grain: one Assets row per agent or site skill file. File IDs identify rows; absent IDs use a report-local key.
-    var siteAgents = _snaReport && _snaReport.agents;
     if (siteAgents) {
         ['agents', 'skills'].forEach(function(kind) {
             siteAgents[kind].forEach(function(asset, index) {
@@ -4627,7 +4628,7 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
                     var creator = (values.AuthorOWSUSER || '').split(' | ');
                     var row = fileRow({ FileLeafRef: values.Filename || filePath.split('/').pop(), FileRef: filePath,
                         Modified: values.LastModifiedTime, UniqueId: values.UniqueId,
-                        Author: creator.length === 2 && creator[0].trim() && creator[1].trim()
+                        Author: creator.length >= 2 && creator[0].trim() && creator[1].trim()
                             ? { Title: creator[1].trim(), EMail: creator[0].trim() } : {} }, library);
                     if (!row.url || seenAgents[row.url]) { return; }
                     if (result.agents.length >= SNA_AGENTS_MAX) { result.truncated = true; return; }

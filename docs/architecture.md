@@ -126,9 +126,11 @@ Quoted names and descriptions follow the [YAML quoted-scalar rules](https://yaml
 
 For unquoted values, `#` starts a comment at the start of the value or after a space or tab. That comment is left out. Hashes within words, such as `C#`, and address fragments, such as `https://example.org/help#details`, remain part of the value. Hashes inside quotes remain text.
 
-**Report coverage** records failed reads and limits. Search results always count as **Partly read**, because the search index may be behind the library. A search row has no checked file permissions or item ID, so it cannot offer a permissions button. The creator from search is used only when `AuthorOWSUSER` has both parts of `email | name`; other formats leave the creator empty.
+**Report coverage** records failed reads and limits. Search results always count as **Partly read**, because the search index may be behind the library. A search row has no checked file permissions or item ID, so it cannot offer a permissions button. The creator from search uses the first two parts of `AuthorOWSUSER`: `email | name`. Both must be nonempty. Any trailing account data is ignored. Missing email or name leaves the creator empty.
 
 The data dictionary keeps its existing sheets and columns. **Assets** gains one row per file, keyed by its file GUID when present, or a report-local key otherwise. The types are `SharePoint Agent` and `Copilot in SharePoint Skill`. `container` is the site-relative parent folder for an agent, or the site-relative `Agent Assets/Skills` path for a site skill. `qualified_path` is the full decoded file address without a query. Creators are left out of the workbook.
+
+Collected agents and site skills can be exported even when no list columns were read. For example, a failed lists request does not block export of site skills read separately. The **Fields** sheet keeps its column headings and has no data rows in that case.
 
 ### Permission rows
 

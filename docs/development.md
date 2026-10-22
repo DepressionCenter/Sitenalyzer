@@ -138,12 +138,14 @@ The pretend site also has two agents in Documents and one site skill in hidden A
 
 Tests also cover changed library titles, hidden and visible libraries, missing libraries, and denied reads. Site skill text checks cover quoted escapes, plain comments, and literal hashes in the tables, report search, print, and data dictionary.
 
+Search tests include creators with trailing account data and missing email or name values. Export tests cover site skills collected after a failed lists request, agents without list columns, and a report with nothing to export.
+
 #### Checks on a real site
 
 The fixtures cannot confirm these service details. Check them on a SharePoint Online site before relying on this inventory:
 
 1. The `.agent` file-type filter returns the expected files, and `$expand=Author` supplies their creators.
-2. A library above 5,000 items triggers the search path when filtering fails. Check that search returns its files and that `AuthorOWSUSER` uses `email | name`.
+2. A library above 5,000 items triggers the search path when filtering fails. Check that search returns its files and that the first two `AuthorOWSUSER` parts supply the email and name, with any trailing account data ignored.
 3. The fixed `/Agent Assets` address finds the library when its title is renamed or shown in another language, whether hidden or visible.
 4. `GetFileByServerRelativePath(...)/$value` returns the site skill text, with `name:` and `description:` at the start.
 5. The item permissions link opens the correct file's permissions page.
