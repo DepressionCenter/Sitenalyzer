@@ -1032,7 +1032,7 @@ details.permissions-section {
     #sna-print-root th, #sna-print-root td { border: 1px solid #767676; padding: 3pt 5pt; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
     #sna-print-root thead th { overflow-wrap: normal; hyphens: auto; background: #e6e6e6; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     #sna-print-root tbody th { font-weight: 600; }
-    #sna-print-root a { color: #000000; text-decoration: none; }
+    #sna-print-root a { color: #000000; text-decoration: underline; }
     #sna-print-root .hide-on-print, #sna-print-root .sna-visually-hidden:not(caption) { display: none !important; }
     #sna-print-root caption.sna-visually-hidden { position: static !important; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
     #sna-print-root .sna-risk-panel, #sna-print-root .sna-finding, #sna-print-root .sna-callout { border: 1px solid #767676; padding: 4pt 8pt; margin: 0 0 8pt 0; break-inside: avoid; }

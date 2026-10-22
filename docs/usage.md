@@ -72,7 +72,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 5. To find a list, library, column, folder, page, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
 6. To see internal names, IDs, and other values that developers need, turn on **Show technical details** at the right end of the section links. See [Technical details](#technical-details).
 7. Values that look like personal information, such as phone numbers, are hidden at first. When Sitenalyzer hid some, **Show hidden values** appears next to **Show technical details**. Turn it on to see them. See [Hidden values](#hidden-values).
-8. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**.
+8. To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**. Its **Assets** sheet includes agents and site skills.
 9. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
 10. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
 11. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
@@ -265,6 +265,8 @@ When SharePoint cannot filter a library by file type, Sitenalyzer uses SharePoin
 
 Agents made with Microsoft Copilot Agent Builder, agents saved on other sites, usage numbers, and the site's main agent setting cannot be listed here. Agents saved as `.agent` files stop working after March 2027. Site owners should review [Upgrade agents in SharePoint and OneDrive](https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents).
 
+The printed report includes both tables and every row, even when a filter is set. The data dictionary adds one row per agent and site skill to **Assets**, with no new sheets or columns. It uses the asset types `SharePoint Agent` and `Copilot in SharePoint Skill`. **Created by** is not included in the workbook. Display names and descriptions hide values; file names, folder names in `asset_name`, and file addresses remain unchanged. Check those cells before sharing the workbook.
+
 ### Print the report
 
 **Print full report / PDF** opens your browser's print window with a printable copy of the whole report. To save it as a PDF, choose **Save as PDF** or **Microsoft Print to PDF** as the printer. Ctrl+P, or Command+P on a Mac, and your browser's print menu print the same copy while a report is open.
@@ -275,9 +277,10 @@ The printed report is built from everything Sitenalyzer read, not from what is o
 2. **Contents**: a table of every list and library.
 3. **Document libraries**, **Lists**, and **System lists**, when the site has any: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, and descriptions, and one with internal names, IDs, and other technical details.
 4. **Site pages**.
-5. **Permissions**: the access findings, site permissions, people and groups with their members, the result of **Check a person's access** if you ran one, lists and libraries with their own permissions, sharing links, and apps.
-6. **Taxonomy**: every term group, term set, and term, with their IDs, each term's parent term, and the columns that use each term set.
-7. **Site review**: the cleanup findings, the largest lists and libraries, and **Report coverage**.
+5. **Agents and skills**.
+6. **Permissions**: the access findings, site permissions, people and groups with their members, the result of **Check a person's access** if you ran one, lists and libraries with their own permissions, sharing links, and apps.
+7. **Taxonomy**: every term group, term set, and term, with their IDs, each term's parent term, and the columns that use each term set.
+8. **Site review**: the cleanup findings, the largest lists and libraries, and **Report coverage**.
 
 Technical details are always printed, even when **Show technical details** is off. Hidden values stay hidden in the printout unless **Show hidden values** is on. See [Hidden values](#hidden-values). The printout leaves out buttons, search boxes, the section links, and the SharePoint page around Sitenalyzer. Table headings repeat at the top of each page. Page images aren't printed.
 

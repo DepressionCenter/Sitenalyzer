@@ -175,7 +175,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = '622b3a7a17b9';
+var SNA_ASSET_VERSION = 'f9dbda48cb5f';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
@@ -441,7 +441,8 @@ function snaTableColumnSettings(type, tbl) {
     }
     assetColumns.push({ title: 'Permissions', field: 'ownPermissions', minWidth: 185,
       formatter: function(cell) { return snaAgentPermissionsHtml(cell.getRow().getData(), type); } },
-      { title: 'Address', field: 'url', sorter: 'string', widthGrow: 3, minWidth: 180, visible: technical });
+      { title: 'Address', field: 'url', sorter: 'string', widthGrow: 3, minWidth: 180, visible: technical,
+        formatter: function(cell) { return snaEscapeHtml(snaFileAddressText(cell.getValue())); } });
     return assetColumns;
   }
 
@@ -702,7 +703,7 @@ function snaRowEditKey(type, tbl, row) {
 // Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
 // compared as they are shown, so a hidden value can't be found by typing it. personFields lists the fields that hold
 // people's and groups' names, which are shown as they are, so they are compared as they are.
-function snaApplyTableFilter(table, text, personFields) {
+function snaApplyTableFilter(table, text, personFields, decodeFileUrls) {
   var val = String(text || '').trim().toLowerCase();
   if (!val) { table.clearFilter(); return; }
   var asShown = personFields || [];
@@ -711,6 +712,7 @@ function snaApplyTableFilter(table, text, personFields) {
     for (var k = 0; k < keys.length; k++) {
       var v = data[keys[k]];
       if (!v || typeof v === 'object') { continue; }
+      if (decodeFileUrls && keys[k] === 'url') { v = snaFileAddressText(v); }
       var shown = asShown.indexOf(keys[k]) > -1 ? String(v) : snaMaskText(v);
       if (shown.toLowerCase().indexOf(val) > -1) { return true; }
     }
@@ -877,7 +879,7 @@ function initSnaTabulators() {
       if (filterInput) {
         var saved = _snaTableFilters[tbl.id] || '';
         filterInput.value = saved;
-        if (saved) { snaApplyTableFilter(table, saved, personFields); } else { updateCount(total); }
+        if (saved) { snaApplyTableFilter(table, saved, personFields, tbl.type === 'agents' || tbl.type === 'skills'); } else { updateCount(total); }
       }
       if (paged) { snaMarkCurrentPage(pagesEl); }
       // A table in a column the browser has only just laid out can measure its width too early, so it redraws once.
@@ -890,7 +892,7 @@ function initSnaTabulators() {
     if (filterInput) {
       filterInput.addEventListener('input', function() {
         _snaTableFilters[tbl.id] = filterInput.value;
-        snaApplyTableFilter(table, filterInput.value, personFields);
+        snaApplyTableFilter(table, filterInput.value, personFields, tbl.type === 'agents' || tbl.type === 'skills');
         // Tabulator keeps the open page number when the filter changes, so the matches start on the first page.
         if (paged) { table.setPage(1); }
       });
@@ -2766,6 +2768,27 @@ function exportToXLSX() {
         ]);
     }
 
+    // Grain: one Assets row per agent or site skill file. File IDs identify rows; absent IDs use a report-local key.
+    var siteAgents = _snaReport && _snaReport.agents;
+    if (siteAgents) {
+        ['agents', 'skills'].forEach(function(kind) {
+            siteAgents[kind].forEach(function(asset, index) {
+                var isAgent = kind === 'agents';
+                var filePath = asset.url ? decodeURIComponent(new URL(asset.url).pathname) : '';
+                var parentPath = filePath.substring(0, filePath.lastIndexOf('/'));
+                if (!isAgent) { parentPath = parentPath.substring(0, parentPath.lastIndexOf('/')); }
+                assetsRows.push([
+                    asset.uniqueId ? xlsxCleanGuid(asset.uniqueId) : srcId + (isAgent ? '_agent_' : '_skill_') + (index + 1),
+                    srcId, isAgent ? asset.fileName : asset.folderName, asset.name,
+                    isAgent ? 'SharePoint Agent' : 'Copilot in SharePoint Skill', asset.url, parentPath,
+                    filePath ? xlsxStripSlash(origin) + filePath : '', isAgent ? '' : asset.description,
+                    '', '', '', 'Source', 'Real-time', 'Unknown', 'Unknown', '', '', techStewardId, 'Active',
+                    isAgent ? 'Saved as a .agent file. Agents in this format stop working after March 2027.' : ''
+                ]);
+            });
+        });
+    }
+
     var fieldsRows        = [];
     var valueSetsRows     = [];
     var relationshipsRows = [];
@@ -3996,7 +4019,7 @@ function buildSearchIndex() {
             var detail = kind === 'agents' ? asset.libraryTitle + (asset.folder ? '/' + asset.folder : '') : asset.description;
             _snaSearchIndex.push({ kind: 'agent', icon: '🤖', type: kind === 'agents' ? 'Agent' : 'Site skill',
                 label: asset.name, sublabel: detail, sublabelIsName: true, breadcrumb: 'Agents and skills',
-                route: '#sna/contents/agents', summary: 'Agents and skills / ' + detail, technicalText: asset.url,
+                route: '#sna/contents/agents', summary: 'Agents and skills / ' + detail, technicalText: snaFileAddressText(asset.url), technicalTextIsName: true,
                 filterTable: assets.length > SNA_TABLE_FILTER_MIN_ROWS ? 'sna-tbl-' + kind : '', filterText: asset.name });
         });
     });
@@ -4809,6 +4832,12 @@ function snaAgentCoverage(assets) {
             (assets.skillTextFailed || assets.skillTextSkipped || assets.skillsTruncated ? 'partial' : 'read'), note: skillNotes.join(' ') }];
 }
 
+// Decodes file addresses only for display and filtering, so encoded spaces cannot hide personal values from masking.
+// Links and workbook paths keep their original addresses.
+function snaFileAddressText(address) {
+    try { return decodeURIComponent(String(address || '')); } catch(e) { return String(address || ''); }
+}
+
 // Names the file's permission source without claiming a search result's permissions were checked.
 function snaAgentPermissionsText(asset) {
     return asset.ownPermissions === null ? 'Not checked' : (asset.ownPermissions ? 'Own permissions' : "Library's permissions");
@@ -4826,22 +4855,28 @@ function snaAgentPermissionsHtml(asset, type) {
     return html;
 }
 
-// Draws the notes and queued tables for agents and site skills; callers provide the section heading.
-function snaRenderAgentsSection(assets) {
+// Draws notes and queued tables, or plain tables with every row when forPrint is true. Callers provide the heading.
+function snaRenderAgentsSection(assets, forPrint) {
     var html = '<div class="info-card"><p class="sna-note">Agents saved on this site as .agent files, and the site skills in its Agent Assets library. ' +
         "Agents made with Microsoft Copilot Agent Builder, agents saved on other sites, and usage numbers are not stored on the site, so Sitenalyzer can't list them. " +
         "Sitenalyzer also can't read the site's main agent setting.</p>";
     var coverage = snaAgentCoverage(assets);
     coverage.forEach(function(row) { if (row.note) { html += '<p class="sna-note">' + snaEscapeHtml(row.note) + '</p>'; } });
-    html += '<h4 class="sna-subsection-title">Agents</h4>';
+    var headingTag = forPrint ? 'h3' : 'h4';
+    html += '<' + headingTag + ' class="sna-subsection-title">Agents</' + headingTag + '>';
     if (assets.agents.length) {
-        html += snaQueueTableHtml({ id: 'sna-tbl-agents', type: 'agents', label: 'Agents', searchLabel: 'agents', data: assets.agents });
+        html += forPrint ? snaPrintTableHtml('Agents', ['Agent', 'Library', 'Folder', 'Last changed', 'Created by', 'Permissions', 'Address'],
+            assets.agents.map(function(asset) {
+                return [asset.name, asset.libraryTitle, asset.folder, asset.modified, { person: asset.createdBy }, snaAgentPermissionsText(asset), snaFileAddressText(asset.url)];
+            }), 'No agents found.') : snaQueueTableHtml({ id: 'sna-tbl-agents', type: 'agents', label: 'Agents', searchLabel: 'agents', data: assets.agents });
         html += '<p class="sna-note">Agents saved as .agent files stop working after March 2027. Microsoft asks site owners to upgrade or delete each one. ' +
             snaLinkHtml('https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents', 'Upgrade agents in SharePoint and OneDrive') + '.</p>';
     } else if (coverage[0].status === 'read') { html += '<p>No agents found.</p>'; }
-    html += '<h4 class="sna-subsection-title">Site skills</h4>';
+    html += '<' + headingTag + ' class="sna-subsection-title">Site skills</' + headingTag + '>';
     if (assets.skills.length) {
-        html += snaQueueTableHtml({ id: 'sna-tbl-skills', type: 'skills', label: 'Site skills', searchLabel: 'site skills', data: assets.skills });
+        html += forPrint ? snaPrintTableHtml('Site skills', ['Site skill', 'Description', 'Last changed', 'Permissions', 'Address'],
+            assets.skills.map(function(asset) { return [asset.name, asset.description, asset.modified, snaAgentPermissionsText(asset), snaFileAddressText(asset.url)]; }),
+            'No site skills found.') : snaQueueTableHtml({ id: 'sna-tbl-skills', type: 'skills', label: 'Site skills', searchLabel: 'site skills', data: assets.skills });
     } else if (assets.skillsStatus !== 'failed') { html += '<p>No site skills found.</p>'; }
     return html + '</div>';
 }
@@ -6631,7 +6666,8 @@ function snaRenderSearch(route, report) {
                 (item.filterTable ? ' data-filter-table="' + snaEscapeHtml(item.filterTable) + '" data-filter-text="' + snaEscapeHtml(item.filterText) + '"' : '') + '>' +
                 snaEscapeHtml(item.label) + '</a> <span class="app-tag">' + snaEscapeHtml(item.type) + '</span>' +
                 '<p class="sna-search-summary">' + snaEscapeHtml(item.summary) +
-                    (technical && item.technicalText ? '<br><span class="list-id-text">' + snaEscapeHtml(item.technicalText) + '</span>' : '') +
+                    (technical && item.technicalText ? '<br><span class="list-id-text">' +
+                        snaEscapeHtml(item.technicalTextIsName ? snaMaskText(item.technicalText) : item.technicalText) + '</span>' : '') +
                 '</p></li>';
         });
         html += '</ul></details>';
@@ -6642,15 +6678,16 @@ function snaRenderSearch(route, report) {
 // ### Print Document ###
 
 // Returns a table for the print document, with a caption that names it. headers are the column names, and each row is
-// an array of plain text, which is escaped here. The first cell of each row names the row. emptyText is shown instead of
-// a table with no rows.
+// an array of plain text, escaped here, or { person: value } for a person's text that stays visible while values are hidden.
+// The first cell of each row names the row. emptyText is shown instead of a table with no rows.
 function snaPrintTableHtml(caption, headers, rows, emptyText) {
     if (rows.length === 0) { return '<p>' + snaEscapeHtml(emptyText) + '</p>'; }
     return '<table class="sna-print-table"><caption>' + snaEscapeHtml(caption) + '</caption><thead><tr>' +
         headers.map(function(h) { return '<th scope="col">' + snaEscapeHtml(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
         rows.map(function(row) {
             return '<tr>' + row.map(function(cell, i) {
-                var text = snaEscapeHtml(cell === null || cell === undefined ? '' : cell);
+                var text = cell && typeof cell === 'object' && Object.prototype.hasOwnProperty.call(cell, 'person')
+                    ? snaPersonHtml(cell.person) : snaEscapeHtml(cell === null || cell === undefined ? '' : cell);
                 return i === 0 ? '<th scope="row">' + text + '</th>' : '<td>' + text + '</td>';
             }).join('') + '</tr>';
         }).join('') + '</tbody></table>';
@@ -6775,6 +6812,8 @@ function snaBuildPrintDocument(report) {
         pageNotes.map(function(n) { return '<p>' + snaEscapeHtml(n) + '</p>'; }).join('') +
         snaPrintTableHtml('Site pages', ['Page', 'File name', 'Last changed', 'Address'],
             pages.pages.map(function(p) { return [p.name, p.fileName, p.modified, p.url]; }), 'No site pages found.') + '</section>';
+
+    html += '<section class="sna-print-section"><h2>Agents and skills</h2>' + snaRenderAgentsSection(report.agents, true) + '</section>';
 
     // Permissions use the same text and tables as the Permissions section.
     var check = _snaUserCheckResult;

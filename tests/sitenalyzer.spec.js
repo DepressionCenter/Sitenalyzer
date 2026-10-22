@@ -311,22 +311,42 @@ test('finds agents and site skills and filters the agents table from a result', 
     expect(record.consoleErrors).toEqual([]);
 });
 
-test('hides values in agent names and clears a filter when values are hidden again', async function({ page }) {
+test('hides values in agent names, search, print, and workbook display names', async function({ page }, testInfo) {
+    await stubPrint(page);
     const items = Array.from({ length: 12 }, function(_, n) {
         return Object.assign({}, agentItems[0], { Id: n + 100, FileLeafRef: n === 0 ? 'Call 734-555-0100.agent' : 'Sample ' + n + '.agent',
-            FileRef: SITE_PATH + '/Shared Documents/Sample ' + n + '.agent', Author: { Title: 'test.owner@example.org', EMail: 'test.owner@example.org' } });
+            FileRef: SITE_PATH + '/Shared Documents/' + (n === 0 ? 'Call 734-555-0100' : 'Sample ' + n) + '.agent',
+            Author: { Title: 'test.owner@example.org', EMail: 'test.owner@example.org' } });
     });
     const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: items })] });
     await extractSiteInformation(page);
     await openAgents(page);
     await expect(page.locator('#sna-tbl-agents')).toContainText('Call [phone number hidden]');
     await expect(page.locator('#sna-tbl-agents')).toContainText('test.owner@example.org');
+    await page.locator('#sna-agents-section input[type="search"]').fill('555-0100');
+    await expect(page.locator('#sna-tbl-agents .tabulator-row')).toHaveCount(0);
+    await page.locator('#sna-agents-section input[type="search"]').fill('');
     await page.getByRole('switch', { name: 'Show hidden values' }).click();
     await page.locator('#sna-agents-section input[type="search"]').fill('555-0100');
     await expect(page.locator('#sna-tbl-agents .tabulator-row')).toHaveCount(1);
     await page.getByRole('switch', { name: 'Show hidden values' }).click();
     await expect(page.locator('#sna-agents-section input[type="search"]')).toHaveValue('');
     await expect(page.locator('#sna-tbl-agents')).not.toContainText('734-555-0100');
+    await page.getByRole('switch', { name: 'Show technical details' }).click();
+    await searchReport(page, 'Call');
+    await expect(page.locator('#sp-results')).toContainText('Call [phone number hidden]');
+    await expect(page.locator('#sp-results')).not.toContainText('734-555-0100');
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page);
+    await expect(printed.getByRole('table', { name: 'Agents', exact: true })).not.toContainText('734-555-0100');
+    await expect(printed.getByRole('table', { name: 'Agents', exact: true })).toContainText('test.owner@example.org');
+    await page.emulateMedia({ media: 'screen' });
+    const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+    const rows = sheetRows(workbook, 'Assets');
+    const call = rows.find(function(row) { return row[2] === 'Call 734-555-0100.agent'; });
+    expect(call[3]).toBe('Call [phone number hidden]');
+    expect(JSON.stringify(rows)).not.toContain('test.owner@example.org');
     expect(record.unexpectedRequests).toEqual([]);
     expect(record.consoleErrors).toEqual([]);
 });
@@ -468,6 +488,53 @@ test('reads later search rows without duplicating agents already read from a lib
     expect(starts).toEqual(['0', '1']);
     expect(record.unexpectedRequests).toEqual([]);
     expect(record.consoleErrors).toEqual([]);
+});
+
+test('prints every agent and site skill in plain tables even when their screen table is filtered', async function({ page }) {
+    await stubPrint(page);
+    const items = agentItems.concat(Array.from({ length: 10 }, function(_, n) {
+        return Object.assign({}, agentItems[0], { Id: n + 100, FileLeafRef: 'Sample ' + n + '.agent', FileRef: SITE_PATH + '/Shared Documents/Sample ' + n + '.agent' });
+    }));
+    const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: items })] });
+    await extractSiteInformation(page);
+    await openAgents(page);
+    await page.locator('#sna-agents-section input[type="search"]').fill('Helper');
+    await expect(page.locator('#sna-tbl-agents .tabulator-row')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page);
+    await expect(printed.getByRole('heading', { name: 'Agents and skills', exact: true })).toBeAttached();
+    await expect(printed.getByRole('table', { name: 'Agents', exact: true }).locator('tbody tr')).toHaveCount(12);
+    await expect(printed.getByRole('table', { name: 'Site skills', exact: true })).toContainText('Weekly summary');
+    await expect(printed).toContainText('Test Owner');
+    await expect(printed.locator('button, input, .tabulator')).toHaveCount(0);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('exports agents and site skills as Assets rows with the existing workbook columns', async function({ page }, testInfo) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
+    expect(workbook.SheetNames).toEqual(['Export_Info', 'Sources', 'Assets', 'Fields', 'Value_Sets', 'Relationships', 'Dashboards', 'Visualizations', 'Stewards']);
+    const rows = sheetRows(workbook, 'Assets');
+    expect(rows[0]).toEqual(['asset_id', 'source_id', 'asset_name', 'asset_display_name', 'asset_type', 'url', 'container',
+        'qualified_path', 'description', 'grain', 'record_count', 'view_or_derivation_definition', 'source_or_derived', 'refresh_frequency',
+        'contains_phi', 'contains_pii', 'sensitivity', 'business_steward_id', 'technical_steward_id', 'status', 'notes']);
+    const agents = rows.filter(function(row) { return row[4] === 'SharePoint Agent'; });
+    expect(agents).toHaveLength(2);
+    const helper = agents.find(function(row) { return row[3] === 'Study Visits Helper'; });
+    expect(helper[0]).toBe(agentItems[0].UniqueId);
+    expect(helper[6]).toBe(SITE_PATH + '/Shared Documents');
+    expect(helper[7]).toBe(SITE_URL + '/Shared Documents/Study Visits Helper.agent');
+    expect(helper[20]).toContain('March 2027');
+    const skills = rows.filter(function(row) { return row[4] === 'Copilot in SharePoint Skill'; });
+    expect(skills).toHaveLength(1);
+    expect(skills[0][2]).toBe('weekly-summary');
+    expect(skills[0][3]).toBe('Weekly summary');
+    expect(skills[0][6]).toBe(SITE_PATH + '/Agent Assets/Skills');
+    expect(skills[0][8]).toBe("Summarizes the week's visit notes.");
+    expect(JSON.stringify(rows)).not.toContain('Test Owner');
 });
 
 // ### Startup and Loading ###
@@ -2367,7 +2434,7 @@ test('prints a full report with every section', async function({ page }) {
     await page.emulateMedia({ media: 'print' });
     const printed = printFrameDocument(page);
     await expect(printed.getByRole('heading', { level: 1 })).toHaveText('Test Research Site');
-    for (const heading of ['Contents', 'Document libraries', 'Lists', 'Site pages', 'Permissions', 'Taxonomy', 'Site review']) {
+    for (const heading of ['Contents', 'Document libraries', 'Lists', 'Site pages', 'Agents and skills', 'Permissions', 'Taxonomy', 'Site review']) {
         await expect(printed.getByRole('heading', { level: 2, name: heading, exact: true })).toHaveCount(1);
     }
     await expect(printed.getByRole('table', { name: 'Columns of Study Visits', exact: true }).locator('tbody tr')).toHaveCount(9);
