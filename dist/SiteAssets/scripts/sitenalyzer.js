@@ -3356,24 +3356,22 @@ async function snaCopyToClipboard(text, label) {
         }
     }
     snaShowToast(copied ? (label || 'ID') + ' copied!' :
-        "Couldn't copy the ID. Select the displayed ID and copy it manually.", !copied, !copied);
+        "Couldn't copy the ID. Select the displayed ID and copy it manually.", !copied);
     return copied;
 }
 
-// Shows text in the live status. Errors use a red background; persistent messages remain until the next message.
-function snaShowToast(msg, isError, persistent) {
+// Shows text in the live status for ten seconds on errors, or 2.2 seconds for other messages.
+function snaShowToast(msg, isError) {
     var toast = document.getElementById('sna-copy-toast');
     if (!toast) { return; }
     if (toast._snaHideTimer) { clearTimeout(toast._snaHideTimer); }
     toast.textContent = msg;
     toast.style.background = isError ? '#a4262c' : '#323130';
     toast.classList.add('visible');
-    if (!persistent) {
-        toast._snaHideTimer = setTimeout(function() {
-            toast.classList.remove('visible');
-            toast.style.background = '';
-        }, 2200);
-    }
+    toast._snaHideTimer = setTimeout(function() {
+        toast.classList.remove('visible');
+        toast.style.background = '';
+    }, isError ? 10000 : 2200);
 }
 
 // One click handler for the whole app: links to report views (#sna/...) and every button or link with data-action.
