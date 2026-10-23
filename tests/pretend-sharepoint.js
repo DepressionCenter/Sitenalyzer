@@ -243,7 +243,7 @@ const folders = {
 };
 
 const siteCollection = { Id: '22222222-0000-4000-8000-000000000000' };
-const termStore = { id: '33333333-0000-4000-8000-000000000000' };
+const termStore = { id: '33333333-0000-4000-8000-000000000000', defaultLanguageTag: 'en-US' };
 const termGroups = { value: [{ id: 'dddddddd-0000-4000-8000-000000000001', displayName: 'Test Term Group', description: '', scope: 'siteCollection' }] };
 const termSets = { value: [{ id: 'eeeeeeee-0000-4000-8000-000000000001', localizedNames: [{ name: 'Study Arms' }], description: '' }] };
 const terms = {

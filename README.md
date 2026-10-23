@@ -58,7 +58,7 @@ To install a newer version, download the files again and upload the files from `
 
 
 ## Documentation
-+ **Complete documentation:** See the [`/docs`](./docs) folder in this repository: [installing and using Sitenalyzer](docs/usage.md), [troubleshooting](docs/troubleshooting.md), [architecture](docs/architecture.md), and [building and testing](docs/development.md).
++ **Complete documentation:** See the [`/docs`](./docs) folder in this repository: [installing and using Sitenalyzer](docs/usage.md), [troubleshooting](docs/troubleshooting.md), [data dictionary format](docs/data-dictionary.md), [architecture](docs/architecture.md), and [building and testing](docs/development.md).
 + **Overview for researchers and developers:** Visit the [Health Research Resource Library](https://michmed.org/efdc-kb) for a high-level summary, key features, and important assumptions.
 + **Project instructions for contributors and AI coding tools:** See [AGENTS.md](AGENTS.md) and the [skills index](SKILLS.md).
 

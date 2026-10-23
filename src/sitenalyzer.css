@@ -720,6 +720,8 @@ details.permissions-section {
 .sna-fields-table .tabulator-row .tabulator-cell { cursor: default; }
 /* The Show all button of a column's choices sits on its own line under them. */
 #sp-info-app .sna-fields-table .sna-choices-btn { display: block; min-height: 24px; padding: 2px 0; font-size: inherit; text-align: left; }
+/* The term a managed metadata column starts at sits on its own line under the term set's name. */
+#sp-info-app .sna-fields-table .sna-term-start { display: block; white-space: normal; }
 #sp-info-app .tabulator .tabulator-header .tabulator-col .tabulator-col-sorter .tabulator-arrow { border-top-color: var(--um-dark-blue); border-bottom-color: var(--um-dark-blue); }
 #sp-info-app .tabulator-row { border-bottom: 1px solid #edebe9; }
 #sp-info-app .tabulator-row:nth-child(even) { background: #faf9f8; }
