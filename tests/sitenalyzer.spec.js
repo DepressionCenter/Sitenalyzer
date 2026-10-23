@@ -238,6 +238,176 @@ async function expectNoAxeViolations(page) {
     expect(describeViolations(results.violations)).toEqual([]);
 }
 
+// ### Clipboard Feedback ###
+
+// Opens a list's ID control and replaces only the browser's copy methods with deterministic results.
+async function prepareClipboardCopy(page, clipboardMode, fallbackResult) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits');
+    const button = detail.getByRole('button', { name: 'Copy List ID to clipboard', exact: true });
+    const displayId = await button.getAttribute('data-display-id');
+    const textareaCount = await page.locator('textarea').count();
+    await page.evaluate(function(settings) {
+        const state = window.__copyTest = { clipboardTexts: [], fallbackCalls: [], feedback: [] };
+        const clipboard = settings.clipboardMode === 'missing' ? undefined : {
+            writeText: settings.clipboardMode === 'unusable' ? null : function(text) {
+                state.clipboardTexts.push(text);
+                if (settings.clipboardMode === 'throw') { throw new Error('Synthetic clipboard error'); }
+                if (settings.clipboardMode === 'reject') { return Promise.reject(new Error('Synthetic clipboard denial')); }
+                if (settings.clipboardMode === 'pending') {
+                    return new Promise(function(resolve, reject) { state.rejectCopy = reject; });
+                }
+                return Promise.resolve();
+            }
+        };
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard });
+        document.execCommand = function(command) {
+            const textarea = document.activeElement;
+            state.fallbackCalls.push({ command: command, text: textarea.value,
+                selected: textarea.value.substring(textarea.selectionStart, textarea.selectionEnd) });
+            if (settings.fallbackResult === 'throw') { throw new Error('Synthetic legacy copy error'); }
+            return settings.fallbackResult;
+        };
+        new MutationObserver(function(records) {
+            records.forEach(function() { state.feedback.push(document.getElementById('sna-copy-toast').textContent); });
+        }).observe(document.getElementById('sna-copy-toast'), { childList: true });
+    }, { clipboardMode: clipboardMode, fallbackResult: fallbackResult });
+    return { record, button, display: page.locator('#' + displayId), toast: page.locator('#sna-copy-toast'), textareaCount };
+}
+
+const COPY_FAILURE_MESSAGE = "Couldn't copy the ID. Select the displayed ID and copy it manually.";
+[
+    { name: 'Clipboard API success', mode: 'success', fallback: false, copied: true },
+    { name: 'missing Clipboard API uses a successful fallback', mode: 'missing', fallback: true, copied: true },
+    { name: 'unusable writeText uses a successful fallback', mode: 'unusable', fallback: true, copied: true },
+    { name: 'rejected Clipboard API uses a successful fallback', mode: 'reject', fallback: true, copied: true },
+    { name: 'synchronous Clipboard API error uses a successful fallback', mode: 'throw', fallback: true, copied: true },
+    { name: 'missing Clipboard API and false fallback fail', mode: 'missing', fallback: false, copied: false },
+    { name: 'missing Clipboard API and throwing fallback fail', mode: 'missing', fallback: 'throw', copied: false },
+    { name: 'rejected Clipboard API and false fallback fail', mode: 'reject', fallback: false, copied: false },
+    { name: 'both copy methods throwing fail', mode: 'throw', fallback: 'throw', copied: false }
+].forEach(function(scenario) {
+    test('clipboard copy: ' + scenario.name, async function({ page }) {
+        const copy = await prepareClipboardCopy(page, scenario.mode, scenario.fallback);
+        await copy.button.focus();
+        await copy.button.press('Enter');
+        const message = scenario.copied ? 'List ID copied!' : COPY_FAILURE_MESSAGE;
+        await expect(copy.toast).toHaveText(message);
+        await expect(copy.toast).toHaveClass(/visible/);
+        await expect(copy.toast).toHaveAttribute('role', 'status');
+        await expect(copy.toast).toHaveAttribute('aria-live', 'polite');
+        await expect(copy.display).toHaveText(LIST_ID);
+        await expect(copy.display).toBeVisible();
+        await expect(copy.button).toBeFocused();
+        await expect(page.locator('textarea')).toHaveCount(copy.textareaCount);
+        const state = await page.evaluate(function() { return window.__copyTest; });
+        expect(state.clipboardTexts).toEqual(['missing', 'unusable'].includes(scenario.mode) ? [] : [LIST_ID]);
+        expect(state.fallbackCalls).toEqual(scenario.mode === 'success' ? [] : [{ command: 'copy', text: LIST_ID, selected: LIST_ID }]);
+        expect(state.feedback).toEqual([message]);
+        expect(copy.record.consoleErrors).toEqual([]);
+        expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
+    });
+});
+
+test('clipboard copy: failure keeps the ID and accessible message available for manual copying', async function({ page }) {
+    const copy = await prepareClipboardCopy(page, 'reject', false);
+    await page.clock.install();
+    await copy.button.focus();
+    await copy.button.press('Space');
+    await expect(copy.toast).toHaveText(COPY_FAILURE_MESSAGE);
+    await page.clock.fastForward(6000);
+    await expect(copy.display).toBeVisible();
+    await expect(copy.toast).toHaveClass(/visible/);
+    await expect(copy.button).toBeFocused();
+    await expectNoAxeViolations(page);
+    await page.setViewportSize({ width: 320, height: 800 });
+    await expect(copy.display).toBeVisible();
+    const bounds = await copy.toast.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+    await expectNoAxeViolations(page);
+});
+
+test('clipboard copy: success still hides the revealed ID after five seconds', async function({ page }) {
+    const copy = await prepareClipboardCopy(page, 'success', false);
+    await page.clock.install();
+    await copy.button.focus();
+    await copy.button.press('Enter');
+    await expect(copy.toast).toHaveText('List ID copied!');
+    await expect(copy.display).toBeVisible();
+    await page.clock.fastForward(5000);
+    await expect(copy.display).toBeHidden();
+    await expect(copy.toast).not.toHaveClass(/visible/);
+    await expect(copy.button).toBeFocused();
+});
+
+test('clipboard copy: a removed initiating control does not prevent fallback cleanup', async function({ page }) {
+    const copy = await prepareClipboardCopy(page, 'pending', true);
+    await copy.button.focus();
+    await copy.button.press('Enter');
+    await expect(copy.display).toBeVisible();
+    await copy.button.evaluate(function(button) {
+        button.remove();
+        window.__copyTest.rejectCopy(new Error('Synthetic delayed denial'));
+    });
+    await expect(copy.toast).toHaveText('List ID copied!');
+    await expect(page.locator('textarea')).toHaveCount(copy.textareaCount);
+    expect(copy.record.consoleErrors).toEqual([]);
+});
+
+test('clipboard copy: later attempts replace feedback without an earlier timer hiding the error', async function({ page }) {
+    const copy = await prepareClipboardCopy(page, 'success', false);
+    await page.clock.install();
+    await copy.button.focus();
+    await copy.button.press('Enter');
+    await expect(copy.toast).toHaveText('List ID copied!');
+    await page.clock.fastForward(1000);
+    await page.evaluate(function() {
+        navigator.clipboard.writeText = function() { return Promise.reject(new Error('Synthetic clipboard denial')); };
+    });
+    await copy.button.press('Enter');
+    await expect(copy.toast).toHaveText(COPY_FAILURE_MESSAGE);
+    await page.clock.fastForward(6000);
+    await expect(copy.toast).toHaveClass(/visible/);
+    await expect(copy.display).toBeVisible();
+    await page.evaluate(function() {
+        navigator.clipboard.writeText = function() { return Promise.resolve(); };
+    });
+    await copy.button.press('Enter');
+    await expect(copy.toast).toHaveText('List ID copied!');
+    await expect(copy.toast).toHaveCSS('background-color', 'rgb(50, 49, 48)');
+    await page.clock.fastForward(5000);
+    await expect(copy.display).toBeHidden();
+    await expect(copy.toast).not.toHaveClass(/visible/);
+    await expect(copy.button).toBeFocused();
+});
+
+test('clipboard copy: ID and feedback display markup as text', async function({ page }) {
+    const copy = await prepareClipboardCopy(page, 'missing', false);
+    const syntheticText = '<img src=x onerror="window.__copyInjection=true">';
+    await copy.button.evaluate(function(button, text) {
+        button.setAttribute('data-id', text);
+        button.setAttribute('data-label', text);
+    }, syntheticText);
+    await copy.button.focus();
+    await copy.button.press('Enter');
+    await expect(copy.toast).toHaveText(COPY_FAILURE_MESSAGE);
+    await expect(copy.display).toHaveText(syntheticText);
+    await expect(copy.display.locator('img')).toHaveCount(0);
+    await page.evaluate(function() {
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true, value: { writeText: function() { return Promise.resolve(); } }
+        });
+    });
+    await copy.button.press('Enter');
+    await expect(copy.toast).toHaveText(syntheticText + ' copied!');
+    await expect(copy.toast.locator('img')).toHaveCount(0);
+    expect(await page.evaluate(function() { return window.__copyInjection; })).toBeUndefined();
+    expect(copy.record.consoleErrors).toEqual([]);
+    expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
+});
+
 // ### Agents and Site Skills ###
 
 test('lists agents and site skills in Contents with file and permissions links', async function({ page }) {

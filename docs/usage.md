@@ -124,6 +124,11 @@ With **Show technical details** on, the **Columns** tab also shows the choices o
 
 Above the tabs are the **ID**, **Open**, and **Permissions** buttons. **ID** copies the list or library ID. **Permissions** opens SharePoint's own permissions page for it. On a narrow screen, the details replace the list; select **Back to results** to return to it.
 
+After you select **ID**, the ID appears beside the button for five seconds. A status message confirms when copying succeeds.
+If copying fails, the message tells you to select the displayed ID and copy it manually.
+The ID and message stay visible so you have time to copy it. A later status message replaces the error.
+Keyboard focus returns to the control you used if it is still on the page.
+
 #### Tables in the report
 
 Every table in the report works the same way, including the permission tables, the sharing links, the person check result, and the tables in **Site review**. The one exception is the short list of lists and libraries inside each card in **People and groups**, which keeps a plain table. To sort or filter the people and groups who can use one list or library, open its **Permissions** tab.
