@@ -19,6 +19,7 @@ for developers and maintainers.
 
 - [Installing and using Sitenalyzer](usage.md): add Sitenalyzer to a SharePoint site, use it, and update it.
 - [Troubleshooting](troubleshooting.md): problems you might see after installing, with fixes.
+- [Data dictionary format](data-dictionary.md): every sheet and column of the data dictionary workbook, for people who read it or write it from other data sources.
 - [Sitenalyzer architecture](architecture.md): its parts, how it starts on a page, and why it is built this way.
 - [Building and testing Sitenalyzer](development.md): build the files for SharePoint, run the tests, and update libraries.
 - [Branding](branding.md): the Sitenalyzer symbol, name, colors, and image files, and how to use them.

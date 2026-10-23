@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-22
+Last Modified: 2026-10-23
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -175,7 +175,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = 'f9dbda48cb5f';
+var SNA_ASSET_VERSION = '0b30dfefb74e';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
@@ -202,6 +202,12 @@ var SNA_SKILL_TEXT_MAX_CHARS = 65536; // Characters inspected at the start of ea
 // are read one term at a time only when SharePoint doesn't return each term's children with the term set's terms.
 var SNA_TERMS_PER_SET_MAX = 10000;
 var SNA_TERM_CHILD_LOOKUPS = 1000;
+
+// Most term sets named from the term store in each report, for columns whose term set isn't in the site's term groups.
+var SNA_TERM_SET_NAME_LOOKUPS = 50;
+
+// Choices shown for a column before its Show all button. The printed report shows every choice.
+var SNA_CHOICES_SHOWN = 5;
 
 // Most requests that run at the same time, such as group member lookups. Keeps large sites from being throttled.
 var SNA_MAX_PARALLEL_REQUESTS = 6;
@@ -340,6 +346,7 @@ function snaGetFieldTypeIcon(spType, calcType) {
 var _snaTablesQueue = [];
 var _snaTabInstances = {};
 var _snaTableFilters = {};
+var _snaOpenChoices = {};         // Columns whose choices are all shown, by the column's key from snaRowEditKey
 var _snaTabMeta = {};             // The _snaTablesQueue entry each table was built from, by element id
 
 // Fields that hold a person's or group's name, email, or sign-in name, by table type. They are shown as they are
@@ -377,6 +384,7 @@ var _snaRequestDigest       = null;
 var _snaRequestDigestExpiry = 0;
 var _snaSiteInfo            = null;  // Site metadata from _api/web; used by XLSX export
 var _snaAllListsMeta        = [];    // Raw allLists.value objects; used by XLSX export
+var _snaHiddenListsMeta     = {};    // Hidden lists that lookup columns can read from, such as TaxonomyHiddenList, by lowercase list ID; used by XLSX export
 var _snaCurrentUser         = null;  // Logged-in user { name, email, loginName } fetched at analysis time
 
 // Permission state, filled while the site is read. The access list and the permissions workbook use it.
@@ -467,10 +475,18 @@ function snaTableColumnSettings(type, tbl) {
         }
       },
       { title: 'Required', field: 'required', sorter: 'boolean', width: 120, formatter: yesFormatter },
-      { title: 'Choices', field: 'choices', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
       { title: 'Lookup list', field: 'lookupList', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
+      {
+        title: 'Term set', field: 'termSetName', sorter: 'string', widthGrow: 1.5, minWidth: 110, visible: !!tbl.hasTermSets,
+        formatter: function(cell) { return snaColumnTermSetHtml(cell.getRow().getData()); }
+      },
+      {
+        title: 'Choices', field: 'choices', sorter: 'string', widthGrow: 2, minWidth: 140, visible: technical,
+        formatter: function(cell) { return snaChoicesHtml(cell.getRow().getData()); }
+      },
       { title: 'Internal name', field: 'internalName', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical },
       { title: 'Lookup target', field: 'lookupTarget', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter },
+      { title: 'Term set ID', field: 'termSetId', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical && !!tbl.hasTermSets, formatter: idFormatter },
       { title: 'Column ID', field: 'fieldId', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter },
       { title: 'Default value', field: 'defaultValue', sorter: 'string', widthGrow: 1.5, minWidth: 110, visible: technical },
       { title: 'Max length', field: 'maxLength', sorter: 'number', width: 110, visible: technical },
@@ -491,6 +507,7 @@ function snaTableColumnSettings(type, tbl) {
         title: 'Parent term', field: 'parentNames', sorter: 'string', widthGrow: 2, visible: !tbl.parentsHidden,
         formatter: function(cell) { return cell.getValue() ? snaEscapeHtml(cell.getValue()) : '<span class="sna-muted">Top level</span>'; }
       },
+      { title: 'Synonyms', field: 'synonyms', sorter: 'string', widthGrow: 2, visible: !!tbl.hasSynonyms },
       { title: 'Term ID', field: 'termId', sorter: 'string', widthGrow: 2, visible: technical, formatter: idFormatter },
       {
         title: 'Description', field: 'termDescription', sorter: 'string', widthGrow: 3,
@@ -530,7 +547,13 @@ function snaTableColumnSettings(type, tbl) {
           return '<a href="' + snaEscapeHtml(rowData.route) + '" data-nav-focus="detail">' + snaEscapeHtml(cell.getValue()) + '</a>';
         }
       },
-      { title: 'Description', field: 'description', sorter: 'string', widthGrow: 3, minWidth: 120, formatter: 'textarea' },
+      {
+        title: 'Description', field: 'description', sorter: 'string', widthGrow: 3, minWidth: 120,
+        formatter: function(cell) {
+          var row = cell.getRow().getData();
+          return renderAdminDescWrap(cell.getValue(), snaRowEditKey('lists', tbl, row), row.title);
+        }
+      },
       { title: 'Items', field: 'items', sorter: 'number', width: 90, hozAlign: 'right' },
       { title: 'Columns', field: 'columns', sorter: 'number', width: 125, hozAlign: 'right' },
       {
@@ -693,11 +716,78 @@ function snaQueueTableHtml(entry, className) {
   return '<div id="' + snaEscapeHtml(entry.id) + '"' + (className ? ' class="' + className + '"' : '') + '></div>';
 }
 
-// Returns the description key of a row in a columns or terms table, the same key snaSaveDescription takes, or ''.
+// Returns the description key of a row in a lists, columns, or terms table, the same key snaSaveDescription takes, or ''.
 function snaRowEditKey(type, tbl, row) {
+  if (type === 'lists') { return 'list:' + (row.id || ''); }
   if (type === 'fields') { return 'column:' + (row.listId || '') + ':' + (row.fieldId || row.internalName || ''); }
   if (type === 'terms') { return 'term:' + ((tbl && tbl.setId) || '') + ':' + (row.termId || ''); }
   return '';
+}
+
+// Returns the choices of a column in the columns table. A column with more than SNA_CHOICES_SHOWN choices shows the
+// first ones and a button that shows all of them, or fewer again.
+function snaChoicesHtml(row) {
+  var choices = row.choiceList || [];
+  if (choices.length <= SNA_CHOICES_SHOWN) { return snaEscapeHtml(choices.join('; ')); }
+  var key = snaRowEditKey('fields', null, row);
+  var open = !!_snaOpenChoices[key];
+  var shown = open ? choices : choices.slice(0, SNA_CHOICES_SHOWN);
+  return '<span class="sna-choices-text">' + snaEscapeHtml(shown.join('; ') + (open ? '' : '; ...')) + '</span> ' +
+    '<button type="button" class="sna-link-btn sna-choices-btn hide-on-print" data-action="toggle-choices" data-choices-key="' + snaEscapeHtml(key) + '"' +
+      ' aria-expanded="' + (open ? 'true' : 'false') + '">' +
+      (open ? 'Show fewer' : 'Show all ' + choices.length) +
+      '<span class="sna-visually-hidden"> choices of ' + snaEscapeHtml(row.title || row.internalName) + '</span></button>';
+}
+
+// Shows all of a column's choices, or the first ones again, and keeps focus on the button.
+function snaToggleChoices(button) {
+  var key = button.getAttribute('data-choices-key') || '';
+  if (_snaOpenChoices[key]) { delete _snaOpenChoices[key]; } else { _snaOpenChoices[key] = true; }
+  var tableEl = button.closest('.tabulator');
+  var table = tableEl ? _snaTabInstances[tableEl.id] : null;
+  var rowEl = button.closest('.tabulator-row');
+  var row = (table && rowEl) ? table.getRows().filter(function(r) { return r.getElement() === rowEl; })[0] : null;
+  if (!row) { return; }
+  row.reformat();
+  // The table keeps the height it had when it was drawn, so it is drawn again to fit the row's new height.
+  requestAnimationFrame(function() {
+    row.normalizeHeight();
+    table.redraw();
+    var again = Array.prototype.filter.call(row.getElement().querySelectorAll('.sna-choices-btn'), function(b) {
+      return b.getAttribute('data-choices-key') === key;
+    })[0];
+    if (again) { again.focus(); }
+  });
+}
+
+// Returns where a managed metadata column starts in its term set, such as 'Starts at Treatment', or '' when it offers
+// the whole term set or its term set wasn't read.
+function snaColumnStartText(column) {
+  if (!column.termSetName || !column.anchorTermId) { return ''; }
+  return column.anchorTermName ? 'Starts at ' + column.anchorTermName : 'Starts at a term not in this report';
+}
+
+// Returns the term set a managed metadata column uses for the printed report, such as 'Study Arms. Starts at
+// Treatment', 'Not read' when Sitenalyzer could not read it, or '' for other columns.
+function snaColumnTermSetText(column) {
+  if (!column.isTaxonomy) { return ''; }
+  if (!column.termSetName) { return 'Not read'; }
+  var start = snaColumnStartText(column);
+  return column.termSetName + (start ? '. ' + start : '');
+}
+
+// Returns the term set of a column in the columns table. A term set in this site collection's term groups links to it
+// in Taxonomy. Others, such as the Keywords term set of the Enterprise Keywords column, are named without a link.
+// A column that starts at one term of its term set says so on a second line.
+function snaColumnTermSetHtml(row) {
+  if (!row.isTaxonomy) { return ''; }
+  if (!row.termSetName) { return '<span class="sna-muted">Not read</span>'; }
+  var start = snaColumnStartText(row);
+  var name = row.termSetLinked
+    ? '<a href="' + snaEscapeHtml(snaRouteHash({ section: 'taxonomy', anchor: snaCleanListId(row.termSetId) })) + '">' +
+      snaEscapeHtml(row.termSetName) + '</a>'
+    : snaEscapeHtml(row.termSetName);
+  return name + (start ? '<span class="sna-term-start">' + snaEscapeHtml(start) + '</span>' : '');
 }
 
 // Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
@@ -951,7 +1041,7 @@ async function snaFetchFields(targetUrl, listGuid, isDocLib) {
     " and (TypeAsString ne 'LookupMulti' or (TypeAsString eq 'LookupMulti' and ReadOnlyField eq false and IsDependentLookup eq false)))" +
     " or InternalName eq 'Editor' or InternalName eq 'Author' or InternalName eq 'Created'" +
     " or InternalName eq 'Modified' or InternalName eq 'ID' or InternalName eq 'Title' or InternalName eq 'TaxKeyword'";
-  var select = "Id,InternalName,Title,TypeAsString,Description,Required,MaxLength,Choices,LookupField,LookupList,IsHidden,Hidden,ReadOnlyField,IsDependentLookup,DefaultValue,Formula,Indexed";
+  var select = "Id,InternalName,Title,TypeAsString,Description,Required,MaxLength,Choices,FillInChoice,LookupField,LookupList,IsHidden,Hidden,ReadOnlyField,IsDependentLookup,DefaultValue,Formula,Indexed";
   var fieldsUrl = targetUrl + "/_api/web/lists(guid'" + listGuid + "')/fields?$select=" + select + "&$filter=" + filter;
 
   var json = await spFetch(fieldsUrl);
@@ -1195,7 +1285,7 @@ function snaHiddenValueSet(report) {
         [group.groupName, group.groupDescription].forEach(check);
         (group.termSets || []).forEach(function(set) {
             [set.setName, set.setDescription].forEach(check);
-            (set.terms || []).forEach(function(t) { [t.termName, t.termDescription].forEach(check); });
+            (set.terms || []).forEach(function(t) { [t.termName, t.synonyms, t.termDescription].forEach(check); });
         });
     });
     Object.keys(_snaHiddenSeen).forEach(function(key) { found[key] = true; });
@@ -1360,7 +1450,11 @@ function snaIsGuestLogin(loginName, title) {
 }
 
 var globalAccessibleSites = [];
-var globalExportedData = []; // To store field data for CSV export
+// The columns of every list and library, for the data dictionary. Grain: one row per list or library column, in the
+// order the columns were read. Each row has the list (ListTitle, ListGuid), the column as SharePoint describes it
+// (FieldId, InternalName, FieldTitle, Type, Required, Choices, FillInChoice, LookupList, and more), and for a managed
+// metadata column TermSetId and AnchorTermId (lowercase GUIDs or '') and TermSetName ('' when not read).
+var globalExportedData = [];
 
 // Authenticated fetch wrapper for SharePoint REST APIs with automatic throttle retry on 429 responses.
 async function spFetch(url, throttleRetries) {
@@ -1602,6 +1696,14 @@ function getOutputTypeName(outputType) {
 
 // The column types of managed metadata columns, which take their values from a term set.
 var SNA_TAXONOMY_FIELD_TYPES = ['TaxonomyFieldType', 'TaxonomyFieldTypeMulti'];
+// The column types that can hold more than one value in one item.
+var SNA_MULTI_VALUE_FIELD_TYPES = ['MultiChoice', 'LookupMulti', 'UserMulti', 'TaxonomyFieldTypeMulti'];
+
+// True for the Enterprise Keywords column (internal name TaxKeyword) when it names no term set. Its values are then
+// in the term store's Keywords set, which people add to while tagging.
+function snaUsesKeywordsTermSet(internalName, termSetId) {
+    return !termSetId && internalName === 'TaxKeyword';
+}
 // IDs from SharePoint, such as item IDs in sharing link group names, must look like this before Sitenalyzer uses them.
 var SNA_GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var SNA_PAGE_KEY_PATTERN = /^\d{1,10}(-\d{1,3})?$/;
@@ -2559,6 +2661,187 @@ function xlsxCleanGuid(s) {
     return String(s || '').toLowerCase().split('{').join('').split('}').join('');
 }
 
+// The column names of each data dictionary sheet, format 1.1. docs/data-dictionary.md describes every column.
+// New columns go at the end of a sheet, so readers that find columns by position keep working.
+var XLSX_HEADERS = {
+    sources: [
+        'source_id','source_name','source_type','platform','url','database_or_site',
+        'environment','business_unit','domain','description','refresh_frequency',
+        'contains_phi','contains_pii','sensitivity','business_steward_id','technical_steward_id','status'
+    ],
+    assets: [
+        'asset_id','source_id','asset_name','asset_display_name','asset_type','url','container',
+        'qualified_path','description','grain','record_count','view_or_derivation_definition',
+        'source_or_derived','refresh_frequency','contains_phi','contains_pii','sensitivity',
+        'business_steward_id','technical_steward_id','status','notes'
+    ],
+    fields: [
+        'field_id','asset_id','internal_name','display_name','field_order','description',
+        'display_type','native_type','calculation_formula','length','precision','scale',
+        'format','unit_of_measure','required','nullable','unique','primary_key','indexed',
+        'default_value','valid_min','valid_max','valid_regex','value_set_id','missing_value_codes',
+        'sensitivity','contains_phi','contains_pii','identifier_type','nih_cde_id',
+        'standard_code_system','standard_code','status','notes',
+        'multi_valued','value_set_root_code','allows_other_values'
+    ],
+    valueSets: [
+        'value_set_id','value_set_name','description','value_code','value_label',
+        'value_definition','display_order','active','is_missing_value','standard_code_system','standard_code',
+        'parent_value_code','synonyms'
+    ],
+    valueSetDefinitions: [
+        'value_set_id','value_set_name','description','asset_id','values_listed','hierarchy_listed',
+        'standard_code_system','status','notes'
+    ],
+    relationships: [
+        'relationship_id','relationship_type','from_asset_id','from_field_id',
+        'to_asset_id','to_field_id','cardinality','join_type','enforced','description'
+    ],
+    dashboards: [
+        'dashboard_id','name','tool','url','workspace_or_site','description','audience',
+        'business_process','refresh_frequency','source_ids','asset_ids',
+        'contains_phi','contains_pii','sensitivity','business_steward_id','technical_steward_id','status','notes'
+    ],
+    visualizations: [
+        'viz_id','dashboard_id','page_or_section','name','viz_type','description',
+        'asset_ids','field_ids_used','x_field_id','y_field_id_or_metric',
+        'group_by_field_ids','filter_field_ids','default_filters','calculation_formula','sort_logic','notes'
+    ],
+    stewards: ['steward_id','name','type','role_default','unit','email','phone','backup_steward_id','notes']
+};
+
+// Returns one data dictionary row in the order of headers, from values keyed by column name. A column with no value
+// is ''. A name that isn't one of the headers throws an error, so a value can't end up in the wrong column.
+function xlsxRow(headers, values) {
+    Object.keys(values).forEach(function(name) {
+        if (headers.indexOf(name) === -1) { throw new Error('The data dictionary has no column named ' + name + '.'); }
+    });
+    return headers.map(function(name) {
+        var value = values[name];
+        return (value === undefined || value === null) ? '' : value;
+    });
+}
+
+// Returns how completely a term set from the site collection's term groups is listed: { values, hierarchy, notes }.
+// values and hierarchy are 'All' or 'Some' (hierarchy can also be 'None'), for values_listed and hierarchy_listed.
+function xlsxListedTermSetStatus(set) {
+    var status = { values: 'All', hierarchy: 'All', notes: [] };
+    if (set.termsTruncated) {
+        status.values = 'Some';
+        status.notes.push('Sitenalyzer read the first ' + SNA_TERMS_PER_SET_MAX.toLocaleString('en-US') + ' terms of this term set only.');
+    }
+    if (set.termsStoppedAtOtherSite) {
+        status.values = 'Some';
+        status.notes.push('Sitenalyzer stopped reading the terms of this term set because SharePoint sent a link to a different site, so some terms may be missing.');
+    }
+    if ((set.terms || []).length > 0 && set.parentsStatus === 'failed') {
+        status.hierarchy = 'None';
+        status.notes.push('Sitenalyzer could not read which term each term sits under.');
+    } else if ((set.terms || []).length > 0 && set.parentsStatus === 'partial') {
+        status.hierarchy = 'Some';
+        status.notes.push('Sitenalyzer could not read which term every term sits under, so a term with no parent term may sit under another term.');
+    }
+    status.notes = status.notes.join(' ');
+    return status;
+}
+
+// Returns the notes of a term set whose terms aren't listed. termStoreRead is false when Sitenalyzer could not read
+// all of the term store, so the term set may be one of the site collection's own.
+function xlsxUnlistedTermSetNotes(hasName, termStoreRead) {
+    var note = termStoreRead
+        ? 'This term set isn\'t in this site collection\'s term groups, so its terms aren\'t listed.'
+        : 'Sitenalyzer could not read all of the term store, so this term set\'s terms aren\'t listed.';
+    return hasName ? note : note + ' Sitenalyzer could not read its name.';
+}
+
+// Builds the value sets of the data dictionary from the list and library columns (fields, globalExportedData rows)
+// and the site collection's term groups (groups, _snaTaxonomyData). Returns { definitions, values, fieldValueSetIds,
+// usesTermStore }: definitions are Value_Set_Definitions rows, one per value set; values are Value_Sets rows, one per
+// listed value; fieldValueSetIds[i] is the value_set_id of fields[i], or '' for a column with no value set; and
+// usesTermStore is true when a definition names the term store asset (termStoreAstId).
+// A term set uses its own ID. A choice column's choices, the Keywords set, and a term set that could not be read get
+// generated IDs. Only the term sets in groups have their terms listed: other term sets are shared with other site
+// collections, and keywords change as people add them.
+function xlsxBuildValueSets(fields, groups, termStoreAstId, termStoreRead, ec) {
+    var result = { definitions: [], values: [], fieldValueSetIds: [], usesTermStore: false };
+    var defined = {};
+    var listed = {};
+    groups.forEach(function(group) {
+        (group.termSets || []).forEach(function(set) { if (set.setId) { listed[xlsxCleanGuid(set.setId)] = true; } });
+    });
+    function define(values) {
+        defined[values.value_set_id] = true;
+        if (values.asset_id === termStoreAstId) { result.usesTermStore = true; }
+        result.definitions.push(xlsxRow(XLSX_HEADERS.valueSetDefinitions, Object.assign({ status: 'Active' }, values)));
+    }
+
+    // Value sets of the columns, in the order of the Fields sheet.
+    var keywordsId = '';
+    result.fieldValueSetIds = fields.map(function(f) {
+        if (SNA_TAXONOMY_FIELD_TYPES.indexOf(f.Type) > -1) {
+            var termSetId = xlsxCleanGuid(f.TermSetId);
+            if (termSetId) {
+                if (!listed[termSetId] && !defined[termSetId]) {
+                    define({ value_set_id: termSetId, value_set_name: f.TermSetName || '', asset_id: termStoreAstId,
+                        values_listed: 'None', notes: xlsxUnlistedTermSetNotes(!!f.TermSetName, termStoreRead) });
+                }
+                return termSetId;
+            }
+            if (snaUsesKeywordsTermSet(f.InternalName, termSetId)) {
+                if (!keywordsId) {
+                    keywordsId = xlsxNid(ec, 'VS_', 'vs');
+                    define({ value_set_id: keywordsId, value_set_name: 'Keywords', asset_id: termStoreAstId, values_listed: 'None',
+                        notes: 'People add keywords while they tag items, so the keywords aren\'t listed.' });
+                }
+                return keywordsId;
+            }
+            var unreadId = xlsxNid(ec, 'VS_', 'vs');
+            define({ value_set_id: unreadId, asset_id: termStoreAstId, values_listed: 'None',
+                notes: 'Sitenalyzer could not read which term set this column uses.' });
+            return unreadId;
+        }
+        var choices = Array.isArray(f.Choices) ? f.Choices : [];
+        if (choices.length === 0) { return ''; }
+        var choiceSetId = xlsxNid(ec, 'VS_', 'vs');
+        var choiceSetName = (f.ListTitle || '') + ' - ' + (f.FieldTitle || '');
+        define({ value_set_id: choiceSetId, value_set_name: choiceSetName, asset_id: xlsxCleanGuid(f.ListGuid),
+            values_listed: 'All', hierarchy_listed: 'All' });
+        choices.forEach(function(choice, index) {
+            result.values.push(xlsxRow(XLSX_HEADERS.valueSets, {
+                value_set_id: choiceSetId, value_set_name: choiceSetName, value_code: choice, value_label: choice,
+                display_order: String(index + 1), active: 'Y', is_missing_value: 'N'
+            }));
+        });
+        return choiceSetId;
+    });
+
+    // The term sets of the site collection's term groups, with their terms in tree order. A term's first parent
+    // is the one it is listed under.
+    groups.forEach(function(group) {
+        (group.termSets || []).forEach(function(set) {
+            var setId = xlsxCleanGuid(set.setId) || xlsxNid(ec, 'VS_', 'vs');
+            if (defined[setId]) { return; }
+            var status = xlsxListedTermSetStatus(set);
+            define({ value_set_id: setId, value_set_name: set.setName || '', description: set.setDescription || '',
+                asset_id: termStoreAstId, values_listed: status.values, hierarchy_listed: status.hierarchy, notes: status.notes });
+            var terms = set.terms || [];
+            var inSet = {};
+            terms.forEach(function(term) { inSet[xlsxCleanGuid(term.termId)] = true; });
+            terms.forEach(function(term, index) {
+                result.values.push(xlsxRow(XLSX_HEADERS.valueSets, {
+                    value_set_id: setId, value_set_name: set.setName || '', description: set.setDescription || '',
+                    value_code: xlsxCleanGuid(term.termId), value_label: term.termName || '',
+                    value_definition: term.termDescription || '', display_order: String(index + 1), active: 'Y',
+                    is_missing_value: 'N',
+                    parent_value_code: (term.parentIds || []).map(xlsxCleanGuid).filter(function(id) { return inSet[id]; }).join('; '),
+                    synonyms: term.synonyms || ''
+                }));
+            });
+        });
+    });
+    return result;
+}
+
 // Removes trailing forward slashes from a URL string.
 function xlsxStripSlash(s) {
     var r = String(s || '');
@@ -2646,7 +2929,9 @@ function snaFileSafeSiteName(siteTitle) {
     return toPascalCase(String(siteTitle || '').trim().replace(/\.?mm$/i, '').trim()) || 'Site';
 }
 
-// Exports a 9-tab Data Dictionary XLSX file using SheetJS.
+// Saves the data dictionary as an Excel workbook with SheetJS, in data dictionary format 1.1 (docs/data-dictionary.md).
+// Sheets: Export_Info, Sources, Assets, Fields, Value_Sets, Value_Set_Definitions, Relationships, Dashboards,
+// Visualizations, and Stewards.
 function exportToXLSX() {
     var siteAgents = _snaReport && _snaReport.agents;
     var hasFileAssets = siteAgents && (siteAgents.agents.length > 0 || siteAgents.skills.length > 0);
@@ -2656,12 +2941,9 @@ function exportToXLSX() {
     }
     
     var ec = { stw: 0, fld: 0, vs: 0, rel: 0 };
-    var i, j, ti, ci;
+    var i;
     var list, astId, cleanId, assetType, qualifiedPath, dvParts, qparts, container, itemCount, listUrl;
-    var f, fldId, cleanList, fieldAstId, displayType, nativeType, vsId, choices, choice;
-    var req, nullable, indexed, pk, maxLen;
-    var tgtClean, toAstId, toIdFieldGuid, cardinality;
-    var group, termSets, termSet, terms, term;
+    var f, fldId, fieldAstId, nativeType, vsId, isTaxonomy, allowsOther, tgtClean;
 
     var now     = new Date();
     var dateStr = snaDateStamp(now);
@@ -2682,7 +2964,7 @@ function exportToXLSX() {
         ['exported_by',    exporterName],
         ['tool',           'Sitenalyzer'],
         ['tool_version',   '1.0'],
-        ['format_version', '1.0'],
+        ['format_version', '1.1'],
         ['scope_notes',    'SharePoint site: ' + siteUrl],
         ['contact_email',  exporterEmail],
         ['hidden_values',  snaWorkbookHiddenValuesText()]
@@ -2705,8 +2987,9 @@ function exportToXLSX() {
     var assetsRows = [];
     var origin = siteUrl ? (siteUrl.match(/^(https?:\/\/[^\/]+)/) || ['', ''])[1] : '';
 
-    for (i = 0; i < _snaAllListsMeta.length; i++) {
-        list    = _snaAllListsMeta[i];
+    // Adds one Assets row for a list or library, as SharePoint returns it. webUrl is the address of the site it is in,
+    // used when the list has no default view address.
+    function pushListAsset(list, webUrl, notes) {
         cleanId = xlsxCleanGuid(list.Id);
         astId   = cleanId;
         listGuidToAstId[cleanId] = astId;
@@ -2726,16 +3009,16 @@ function exportToXLSX() {
             qualifiedPath = dvParts.join('/');
         }
         if (!qualifiedPath) {
-            qualifiedPath = xlsxStripSlash(siteUrl) + '/' + (list.EntityTypeName || '');
+            qualifiedPath = xlsxStripSlash(webUrl) + '/' + (list.EntityTypeName || '');
         }
 
         listUrl = list.DefaultViewUrl
             ? (origin + list.DefaultViewUrl)
-            : (xlsxStripSlash(siteUrl) + '/' + (list.EntityTypeName || ''));
+            : (xlsxStripSlash(webUrl) + '/' + (list.EntityTypeName || ''));
 
         qparts    = qualifiedPath.split('/');
         qparts.pop();
-        container = qparts.join('/') || siteUrl;
+        container = qparts.join('/') || webUrl;
 
         itemCount = (list.ItemCount !== undefined && list.ItemCount !== null)
             ? String(list.ItemCount) : '';
@@ -2750,14 +3033,32 @@ function exportToXLSX() {
             '', itemCount, '',
             'Source', 'Real-time',
             'Unknown', 'Unknown', '',
-            '', techStewardId, 'Active', ''
+            '', techStewardId, 'Active', notes || ''
         ]);
     }
 
-    var termStoreAstId = '';
+    for (i = 0; i < _snaAllListsMeta.length; i++) {
+        pushListAsset(_snaAllListsMeta[i], siteUrl, '');
+    }
+
+    // The hidden list each managed metadata column reads from, such as TaxonomyHiddenList, is added once, so the column's
+    // row in Relationships names an asset in this workbook.
+    for (i = 0; i < globalExportedData.length; i++) {
+        f = globalExportedData[i];
+        if (SNA_TAXONOMY_FIELD_TYPES.indexOf(f.Type) === -1 || !f.LookupList) { continue; }
+        tgtClean = xlsxCleanGuid(f.LookupList);
+        list = _snaHiddenListsMeta[snaCleanListId(tgtClean)];
+        if (!list || listGuidToAstId[tgtClean]) { continue; }
+        pushListAsset(list, list.ParentWebUrl ? origin + list.ParentWebUrl : siteUrl,
+            'Hidden list where SharePoint keeps a copy of each term used in this site collection\'s managed metadata columns.');
+    }
+
+    // The value sets are built before the term store asset, which is written whenever a value set is kept there.
+    var termStoreAstId = srcId + '_termstore';
+    var termStoreRead = !!(_snaReport && _snaReport.taxonomy && _snaReport.taxonomy.read);
+    var valueSets = xlsxBuildValueSets(globalExportedData, _snaTaxonomyData || [], termStoreAstId, termStoreRead, ec);
     var hasTaxonomy = (_snaTaxonomyData && _snaTaxonomyData.length > 0);
-    if (hasTaxonomy) {
-        termStoreAstId = srcId + '_termstore';
+    if (hasTaxonomy || valueSets.usesTermStore) {
         var termStoreUrl = xlsxStripSlash(siteUrl) + '/_layouts/15/termstoremanager.aspx';
         assetsRows.push([
             termStoreAstId, srcId,
@@ -2792,25 +3093,7 @@ function exportToXLSX() {
     }
 
     var fieldsRows        = [];
-    var valueSetsRows     = [];
     var relationshipsRows = [];
-
-    // Each term set with terms is one value set. A managed metadata column names its term set's value set, so its ID
-    // is given out the first time either the column or the term set needs it. A term set with no terms has no
-    // Value_Sets rows, so a column that uses it has no value_set_id.
-    var termSetVsIds = {};
-    var reportTermSetIds = {};
-    (_snaTaxonomyData || []).forEach(function(g) {
-        (g.termSets || []).forEach(function(set) {
-            if ((set.terms || []).length > 0) { reportTermSetIds[String(set.setId).toLowerCase()] = true; }
-        });
-    });
-    function termSetVsId(setId) {
-        var key = String(setId || '').toLowerCase();
-        if (!reportTermSetIds[key]) { return ''; }
-        if (!termSetVsIds[key]) { termSetVsIds[key] = xlsxNid(ec, 'VS_', 'vs'); }
-        return termSetVsIds[key];
-    }
 
     var listGuidToIdFieldGuid = {};
     for (i = 0; i < globalExportedData.length; i++) {
@@ -2821,142 +3104,76 @@ function exportToXLSX() {
 
     for (i = 0; i < globalExportedData.length; i++) {
         f           = globalExportedData[i];
-        cleanList   = xlsxCleanGuid(f.ListGuid);
+        fieldAstId  = xlsxCleanGuid(f.ListGuid);
         fldId       = f.FieldId ? xlsxCleanGuid(f.FieldId) : xlsxNid(ec, 'FLD_', 'fld');
-        fieldAstId  = cleanList;
-        displayType = spTypeToDisplayType(f.Type, f.ReturnType);
+        isTaxonomy  = SNA_TAXONOMY_FIELD_TYPES.indexOf(f.Type) > -1;
+        vsId        = valueSets.fieldValueSetIds[i];
 
         nativeType = f.Type || '';
         if (f.Type === 'Calculated' && f.ReturnType) {
             nativeType = 'Calculated (' + f.ReturnType + ')';
         }
 
-        vsId    = f.TermSetId ? termSetVsId(f.TermSetId) : '';
-        choices = Array.isArray(f.Choices) ? f.Choices : [];
-        if (!vsId && choices.length > 0) {
-            vsId = xlsxNid(ec, 'VS_', 'vs');
-            for (ci = 0; ci < choices.length; ci++) {
-                choice = choices[ci];
-                valueSetsRows.push([
-                    vsId,
-                    (f.ListTitle || '') + ' - ' + (f.FieldTitle || ''),
-                    '',
-                    choice, choice, '',
-                    String(ci + 1), 'Y', 'N', '', ''
-                ]);
-            }
-        }
+        // Whether data entry can store a value that isn't in the value set. A choice column's fill-in setting says so,
+        // and people add keywords while tagging. It stays blank when Sitenalyzer doesn't read the setting.
+        allowsOther = '';
+        if (f.Type === 'Choice' || f.Type === 'MultiChoice') { allowsOther = f.FillInChoice ? 'Y' : 'N'; }
+        else if (isTaxonomy && snaUsesKeywordsTermSet(f.InternalName, f.TermSetId)) { allowsOther = 'Y'; }
 
-        req      = f.Required ? 'Y' : 'N';
-        nullable = f.Required ? 'N' : 'Y';
-        indexed  = f.Indexed  ? 'Y' : 'N';
-        pk       = (f.InternalName === 'ID') ? 'Y' : 'N';
-        maxLen   = (f.MaxLength !== '' && f.MaxLength !== null && f.MaxLength !== undefined)
-            ? String(f.MaxLength) : '';
+        fieldsRows.push(xlsxRow(XLSX_HEADERS.fields, {
+            field_id:            fldId,
+            asset_id:            fieldAstId,
+            internal_name:       f.InternalName || '',
+            display_name:        f.FieldTitle || '',
+            field_order:         String(f.FieldOrder || ''),
+            description:         f.Description || '',
+            display_type:        spTypeToDisplayType(f.Type, f.ReturnType),
+            native_type:         nativeType,
+            calculation_formula: f.Formula || '',
+            length:              (f.MaxLength !== '' && f.MaxLength !== null && f.MaxLength !== undefined) ? String(f.MaxLength) : '',
+            required:            f.Required ? 'Y' : 'N',
+            nullable:            f.Required ? 'N' : 'Y',
+            primary_key:         f.InternalName === 'ID' ? 'Y' : 'N',
+            indexed:             f.Indexed ? 'Y' : 'N',
+            default_value:       f.DefaultValue || '',
+            value_set_id:        vsId,
+            contains_phi:        'Unknown',
+            contains_pii:        'Unknown',
+            status:              'Active',
+            multi_valued:        SNA_MULTI_VALUE_FIELD_TYPES.indexOf(f.Type) > -1 ? 'Y' : 'N',
+            value_set_root_code: (isTaxonomy && vsId) ? xlsxCleanGuid(f.AnchorTermId) : '',
+            allows_other_values: allowsOther
+        }));
 
-        fieldsRows.push([
-            fldId, fieldAstId,
-            f.InternalName || '', f.FieldTitle || '',
-            String(f.FieldOrder || ''),
-            f.Description  || '',
-            displayType, nativeType,
-            f.Formula      || '',
-            maxLen, '', '',
-            '', '',
-            req, nullable,
-            '', pk, indexed,
-            f.DefaultValue || '',
-            '', '', '',
-            vsId,
-            '',
-            'Unknown', 'Unknown', '',
-            '', '', '', '',
-            'Active', ''
-        ]);
-
-        if (f.Type === 'Lookup' || f.Type === 'LookupMulti') {
-            tgtClean      = xlsxCleanGuid(f.LookupList);
-            toAstId       = tgtClean;
-            toIdFieldGuid = listGuidToIdFieldGuid[tgtClean] || '';
-            cardinality   = (f.Type === 'LookupMulti') ? 'M-M' : 'M-1';
-            relationshipsRows.push([
-                xlsxNid(ec, 'REL_', 'rel'),
-                'Lookup', fieldAstId, fldId,
-                toAstId, toIdFieldGuid,
-                cardinality, 'Lookup', 'Y',
-                f.Description || ''
-            ]);
+        // A lookup column, and a managed metadata column, which SharePoint stores as a lookup to the hidden list
+        // that holds the terms, usually TaxonomyHiddenList. A managed metadata column's values get their meaning
+        // from its value set.
+        if (f.Type === 'Lookup' || f.Type === 'LookupMulti' || (isTaxonomy && f.LookupList)) {
+            tgtClean = xlsxCleanGuid(f.LookupList);
+            relationshipsRows.push(xlsxRow(XLSX_HEADERS.relationships, {
+                relationship_id:   xlsxNid(ec, 'REL_', 'rel'),
+                relationship_type: 'Lookup',
+                from_asset_id:     fieldAstId,
+                from_field_id:     fldId,
+                to_asset_id:       tgtClean,
+                to_field_id:       listGuidToIdFieldGuid[tgtClean] || '',
+                cardinality:       SNA_MULTI_VALUE_FIELD_TYPES.indexOf(f.Type) > -1 ? 'M-M' : 'M-1',
+                join_type:         'Lookup',
+                enforced:          'Y',
+                description:       f.Description || ''
+            }));
         }
     }
 
-    if (hasTaxonomy) {
-        for (i = 0; i < _snaTaxonomyData.length; i++) {
-            group    = _snaTaxonomyData[i];
-            termSets = group.termSets || [];
-            for (j = 0; j < termSets.length; j++) {
-                termSet = termSets[j];
-                vsId    = termSetVsId(termSet.setId) || xlsxNid(ec, 'VS_', 'vs');
-                terms   = termSet.terms || [];
-                for (ti = 0; ti < terms.length; ti++) {
-                    term = terms[ti];
-                    valueSetsRows.push([
-                        vsId,
-                        termSet.setName || '',
-                        termSet.setDescription || '',
-                        term.termId   || '',
-                        term.termName || '',
-                        term.termDescription || '',
-                        String(ti + 1), 'Y', 'N', '', ''
-                    ]);
-                }
-            }
-        }
-    }
+    var H = XLSX_HEADERS;
 
-    var H_SRC = [
-        'source_id','source_name','source_type','platform','url','database_or_site',
-        'environment','business_unit','domain','description','refresh_frequency',
-        'contains_phi','contains_pii','sensitivity','business_steward_id','technical_steward_id','status'
-    ];
-    var H_AST = [
-        'asset_id','source_id','asset_name','asset_display_name','asset_type','url','container',
-        'qualified_path','description','grain','record_count','view_or_derivation_definition',
-        'source_or_derived','refresh_frequency','contains_phi','contains_pii','sensitivity',
-        'business_steward_id','technical_steward_id','status','notes'
-    ];
-    var H_FLD = [
-        'field_id','asset_id','internal_name','display_name','field_order','description',
-        'display_type','native_type','calculation_formula','length','precision','scale',
-        'format','unit_of_measure','required','nullable','unique','primary_key','indexed',
-        'default_value','valid_min','valid_max','valid_regex','value_set_id','missing_value_codes',
-        'sensitivity','contains_phi','contains_pii','identifier_type','nih_cde_id',
-        'standard_code_system','standard_code','status','notes'
-    ];
-    var H_VS  = [
-        'value_set_id','value_set_name','description','value_code','value_label',
-        'value_definition','display_order','active','is_missing_value','standard_code_system','standard_code'
-    ];
-    var H_REL = [
-        'relationship_id','relationship_type','from_asset_id','from_field_id',
-        'to_asset_id','to_field_id','cardinality','join_type','enforced','description'
-    ];
-    var H_DSH = [
-        'dashboard_id','name','tool','url','workspace_or_site','description','audience',
-        'business_process','refresh_frequency','source_ids','asset_ids',
-        'contains_phi','contains_pii','sensitivity','business_steward_id','technical_steward_id','status','notes'
-    ];
-    var H_VIZ = [
-        'viz_id','dashboard_id','page_or_section','name','viz_type','description',
-        'asset_ids','field_ids_used','x_field_id','y_field_id_or_metric',
-        'group_by_field_ids','filter_field_ids','default_filters','calculation_formula','sort_logic','notes'
-    ];
-    var H_STW = ['steward_id','name','type','role_default','unit','email','phone','backup_steward_id','notes'];
 
     var wb = XLSX.utils.book_new();
     // Free-text columns, where values that look like personal information are hidden unless Show hidden values is on.
     // IDs, addresses, and internal names are never hidden.
     var HIDDEN_VALUE_COLUMNS = ['source_name', 'database_or_site', 'description', 'asset_display_name', 'display_name',
-        'calculation_formula', 'default_value', 'value_set_name', 'value_code', 'value_label', 'value_definition'];
+        'calculation_formula', 'default_value', 'value_set_name', 'value_code', 'value_label', 'value_definition',
+        'parent_value_code', 'synonyms', 'value_set_root_code'];
     function hideValues(headers, rows) {
         var columns = [];
         headers.forEach(function(header, index) { if (HIDDEN_VALUE_COLUMNS.indexOf(header) > -1) { columns.push(index); } });
@@ -2967,15 +3184,18 @@ function exportToXLSX() {
         });
     }
 
-    XLSX.utils.book_append_sheet(wb, wsExportInfo,                          'Export_Info');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_SRC, hideValues(H_SRC, sourcesRows)),       'Sources');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_AST, hideValues(H_AST, assetsRows)),        'Assets');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_FLD, hideValues(H_FLD, fieldsRows)),        'Fields');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_VS,  hideValues(H_VS, valueSetsRows)),      'Value_Sets');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_REL, hideValues(H_REL, relationshipsRows)), 'Relationships');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_DSH, []),                 'Dashboards');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_VIZ, []),                 'Visualizations');
-    XLSX.utils.book_append_sheet(wb, buildSheet(H_STW, stewardsRows),        'Stewards');
+    // Readers find sheets by name. Value_Set_Definitions sits next to Value_Sets, and Stewards stays last.
+    XLSX.utils.book_append_sheet(wb, wsExportInfo, 'Export_Info');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.sources, hideValues(H.sources, sourcesRows)), 'Sources');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.assets, hideValues(H.assets, assetsRows)), 'Assets');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.fields, hideValues(H.fields, fieldsRows)), 'Fields');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.valueSets, hideValues(H.valueSets, valueSets.values)), 'Value_Sets');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.valueSetDefinitions, hideValues(H.valueSetDefinitions, valueSets.definitions)),
+        'Value_Set_Definitions');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.relationships, hideValues(H.relationships, relationshipsRows)), 'Relationships');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.dashboards, []), 'Dashboards');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.visualizations, []), 'Visualizations');
+    XLSX.utils.book_append_sheet(wb, buildSheet(H.stewards, stewardsRows), 'Stewards');
 
     snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(siteTitle)) + '_Data_Dictionary_' + dateStr + '.xlsx');
 }
@@ -3168,6 +3388,7 @@ function snaHandleAppClick(e) {
     else if (action === 'close-site-dialog') { snaCloseSiteDialog(); }
     else if (action === 'choose-site') { snaOpenSite(target.getAttribute('data-url')); }
     else if (action === 'refresh-sites') { snaRefreshSiteChoices(); }
+    else if (action === 'toggle-choices') { snaToggleChoices(target); }
     else if (action === 'start-over') { if (snaConfirmDiscardDrafts('Start over')) { startOver(false); } }
     else if (action === 'refresh-report') { snaRefreshReport(); }
     else if (action === 'scroll-top') { snaScrollToNav(); }
@@ -3297,6 +3518,7 @@ function snaClearReport() {
     _snaTablesQueue = [];
     _snaTabInstances = {};
     _snaTableFilters = {};
+    _snaOpenChoices = {};
     _snaSearchIndex = [];
     snaResetPermissionState();
     _snaTaxonomyData     = [];
@@ -3306,6 +3528,7 @@ function snaClearReport() {
     _snaTargetUrl        = '';
     _snaSiteInfo         = null;
     _snaAllListsMeta     = [];
+    _snaHiddenListsMeta  = {};
     _snaCurrentUser      = null;
     _snaRequestDigest    = null;
     _snaRequestDigestExpiry = 0;
@@ -3435,11 +3658,10 @@ async function collectReport(targetUrl, onProgress, token) {
     stillWanted();
     _snaAllListsMeta = (allLists && allLists.value) ? allLists.value : [];
 
-    // Build a map of list GUID -> Title for lookup field resolution
-    var listIdMap = {};
-    _snaAllListsMeta.forEach(function(lst) {
-        listIdMap[snaCleanListId(lst.Id)] = lst.Title;
-    });
+    var listNames = await snaFetchListNames(targetUrl, _snaAllListsMeta);
+    stillWanted();
+    var listIdMap = listNames.names;
+    _snaHiddenListsMeta = listNames.hidden;
 
     var lists = [];
     for (var i = 0; i < _snaAllListsMeta.length; i++) {
@@ -3462,6 +3684,8 @@ async function collectReport(targetUrl, onProgress, token) {
     _snaTaxonomyData     = taxonomy.groups;
     _snaSiteCollectionId = taxonomy.siteCollectionId;
     _snaTermStoreId      = taxonomy.termStoreId;
+    await snaNameColumnTermSets(targetUrl, lists, taxonomy);
+    stillWanted();
     await snaExpandGroups(targetUrl);
     var sitePages = await sitePagesPromise;
     var siteAgents = await siteAgentsPromise;
@@ -3548,13 +3772,96 @@ function snaItemTotal(lists) {
     return lists.reduce(function(total, l) { return total + (Number(l.itemCount) || 0); }, 0);
 }
 
+// Reads the names of the lists a lookup column can read from. lists are the lists in the report. Lookup columns can also
+// read from hidden lists that the report leaves out: managed metadata columns read from TaxonomyHiddenList, which on a
+// subsite is in the top-level site. Returns { names, hidden }: names maps a lowercase list ID to its title, and hidden
+// maps the ID of each hidden list to its details for the data dictionary. A failed read leaves those lists out of both.
+async function snaFetchListNames(targetUrl, lists) {
+    var names = {};
+    var hidden = {};
+    lists.forEach(function(lst) { names[snaCleanListId(lst.Id)] = lst.Title; });
+    var select = '$select=Id,Title,EntityTypeName,Description,ItemCount,DefaultViewUrl,ParentWebUrl';
+    var hiddenListsUrls = [
+        targetUrl + '/_api/web/lists?' + select + '&$filter=Hidden eq true',
+        targetUrl + '/_api/site/rootweb/lists?' + select + "&$filter=Title eq 'TaxonomyHiddenList'"
+    ];
+    var responses = await Promise.all(hiddenListsUrls.map(function(url) {
+        return spFetch(url).catch(function(e) {
+            console.warn('Sitenalyzer: could not read the names of hidden lists:', e);
+            return null;
+        });
+    }));
+    responses.forEach(function(resp) {
+        ((resp && resp.value) ? resp.value : []).forEach(function(lst) {
+            var id = snaCleanListId(lst.Id);
+            if (!id || names[id]) { return; }
+            names[id] = lst.Title || '';
+            hidden[id] = lst;
+        });
+    });
+    return { names: names, hidden: hidden };
+}
+
+// Names the term set of each managed metadata column in lists. A term set in one of the site collection's term groups
+// (taxonomy.groups) is named from the report, and Taxonomy can show it. Other term sets, such as ones every site can
+// use, are read from the term store, up to SNA_TERM_SET_NAME_LOOKUPS of them. A term set that can't be read stays unnamed.
+// The column's row in globalExportedData gets the same name in TermSetName, for the data dictionary. A column that
+// starts at one term of a term set in the report also gets that term's name in anchorTermName.
+async function snaNameColumnTermSets(targetUrl, lists, taxonomy) {
+    var inReport = {};
+    var setsInReport = {};
+    (taxonomy.groups || []).forEach(function(group) {
+        (group.termSets || []).forEach(function(set) {
+            inReport[snaCleanListId(set.setId)] = set.setName || '';
+            setsInReport[snaCleanListId(set.setId)] = set;
+        });
+    });
+    var columns = [];
+    lists.forEach(function(list) { list.columns.forEach(function(c) { if (c.isTaxonomy) { columns.push(c); } }); });
+
+    var otherNames = {};
+    var toRead = [];
+    columns.forEach(function(c) {
+        var id = snaCleanListId(c.termSetId);
+        if (id && !(id in inReport) && toRead.indexOf(id) === -1) { toRead.push(id); }
+    });
+    if (taxonomy.siteCollectionId && toRead.length > 0) {
+        var termBase = targetUrl + '/_api/v2.1/sites/' + taxonomy.siteCollectionId + '/termStore/sets/';
+        await snaMapWithLimit(toRead.slice(0, SNA_TERM_SET_NAME_LOOKUPS), SNA_MAX_PARALLEL_REQUESTS, async function(id) {
+            try {
+                var set = await spFetch(termBase + id);
+                var name = (set && set.localizedNames && set.localizedNames[0]) ? set.localizedNames[0].name : '';
+                if (name) { otherNames[id] = name; }
+            } catch(e) { /* The column's term set stays unnamed. */ }
+        });
+    }
+
+    var exportRows = {};
+    globalExportedData.forEach(function(row) { exportRows[snaCleanListId(row.ListGuid) + '|' + String(row.FieldId || '').toLowerCase()] = row; });
+    columns.forEach(function(c) {
+        var id = snaCleanListId(c.termSetId);
+        if (id && inReport[id]) {
+            c.termSetName = inReport[id];
+            c.termSetLinked = true;
+            if (c.anchorTermId) { c.anchorTermName = snaTermNameInSet(setsInReport[id], c.anchorTermId); }
+        } else if (id && otherNames[id]) {
+            c.termSetName = otherNames[id];
+        } else if (snaUsesKeywordsTermSet(c.internalName, id)) {
+            c.termSetName = 'Keywords';
+        }
+        var row = exportRows[snaCleanListId(c.listId) + '|' + String(c.fieldId || '').toLowerCase()];
+        if (row) { row.TermSetName = c.termSetName; }
+    });
+}
+
 // Reads one list or library: its permissions when it has its own, its columns, and, for document libraries, its
 // top-level folders. Adds its columns to globalExportedData and its permissions to the access list.
 // Returns { id, routeId, title, internalName, description, itemCount, isLib, isSystem, baseTemplate, url, lastModified,
 // versioning { enabled, minor, majorLimit }, raw, permissions { inherits, rolesRead, roleAssignments },
 // columns [], columnsStatus 'read'|'empty'|'failed', termSetsStatus 'read'|'failed'|'' (no managed metadata column),
 // folders [], foldersStatus 'read'|'empty'|'failed'|'' (lists) }. A managed metadata column also has termSetId and
-// anchorTermId, lowercase GUIDs or '', and allowsSeveral.
+// anchorTermId, lowercase GUIDs or '', and allowsSeveral. snaNameColumnTermSets adds termSetName, termSetLinked,
+// and anchorTermName.
 async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
     var isDocLib = list.BaseTemplate === 101;
     var listTypeLabel = isDocLib ? "Document Library" : "List";
@@ -3635,6 +3942,7 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 fieldId:      f.Id || '',
                 required:     f.Required ? true : false,
                 choices:      choices.join('; '),
+                choiceList:   choices.slice(),
                 defaultValue: f.DefaultValue ? String(f.DefaultValue) : '',
                 maxLength:    maxLength,
                 indexed:      f.Indexed ? true : false,
@@ -3643,7 +3951,10 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 isTaxonomy:   SNA_TAXONOMY_FIELD_TYPES.indexOf(f.TypeAsString) > -1,
                 allowsSeveral: f.TypeAsString === 'TaxonomyFieldTypeMulti',
                 termSetId:    '',
-                anchorTermId: ''
+                anchorTermId: '',
+                termSetName:  '',
+                termSetLinked: false,
+                anchorTermName: ''
             });
             globalExportedData.push({
                 ListTitle:    list.Title,
@@ -3663,9 +3974,12 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 Required:     f.Required ? true : false,
                 MaxLength:    maxLength,
                 Choices:      choices,
+                FillInChoice: f.FillInChoice === true,
                 LookupField:  f.LookupField ? f.LookupField : '',
                 Indexed:      f.Indexed ? true : false,
-                TermSetId:    ''
+                TermSetId:    '',
+                AnchorTermId: '',
+                TermSetName:  ''
             });
         });
     } catch(e) {
@@ -3688,7 +4002,10 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 c.termSetId = schema.termSetId;
                 c.anchorTermId = schema.anchorTermId;
                 globalExportedData.forEach(function(row) {
-                    if (row.ListGuid === list.Id && row.FieldId === c.fieldId) { row.TermSetId = schema.termSetId; }
+                    if (row.ListGuid === list.Id && row.FieldId === c.fieldId) {
+                        row.TermSetId = schema.termSetId;
+                        row.AnchorTermId = schema.anchorTermId;
+                    }
                 });
             });
             entry.termSetsStatus = 'read';
@@ -4046,7 +4363,9 @@ function buildSearchIndex() {
                     listId:        '',
                     columnName:    term.termName || '',
                     dataType:      'Term',
-                    summary:       group.groupName + ' / ' + set.setName + (term.termDescription ? ' / ' + term.termDescription : ''),
+                    synonyms:      term.synonyms || '',
+                    summary:       group.groupName + ' / ' + set.setName + (term.synonyms ? ' / Synonyms: ' + term.synonyms : '') +
+                        (term.termDescription ? ' / ' + term.termDescription : ''),
                     technicalText: term.termId || '',
                     filterTable:   hasTermFilter ? termsTableId : '',
                     filterText:    hasTermFilter ? (term.termName || '') : ''
@@ -4101,8 +4420,9 @@ function snaSearchQuery(query) {
         var labelMatch      = fieldMatches(snaMaskText(item.label));
         var sublabelMatch   = fieldMatches(item.sublabelIsName ? snaMaskText(item.sublabel) : item.sublabel);
         var breadcrumbMatch = fieldMatches(snaMaskText(item.breadcrumb));
+        var synonymsMatch   = !!item.synonyms && fieldMatches(snaMaskText(item.synonyms));
 
-        if (!labelMatch && !sublabelMatch && !breadcrumbMatch) { return; }
+        if (!labelMatch && !sublabelMatch && !breadcrumbMatch && !synonymsMatch) { return; }
 
         seen[dedupeKey] = true;
 
@@ -4170,18 +4490,26 @@ async function getRequestDigest(targetUrl) {
     return _snaRequestDigest;
 }
 
-// Returns a term from the term store API as { termName, termId, termDescription }, named by its default label.
-function snaTermFromGraph(t) {
-    var defaultLabel = '';
-    if (t.labels && t.labels.length > 0) {
-        var found = null;
-        t.labels.forEach(function(l) { if (l.isDefault) { found = l; } });
-        defaultLabel = found ? found.name : t.labels[0].name;
-    }
+// Returns a term from the term store API as { termName, termId, termDescription, synonyms }. termName is the term's
+// default label in languageTag, the term store's default language, or else its first default label. synonyms are its
+// other labels in the same language as termName, separated by '; ' (SharePoint doesn't allow ';' in a label), or ''.
+// A label with no language counts as being in languageTag.
+function snaTermFromGraph(t, languageTag) {
+    var labels = (t.labels || []).filter(function(l) { return l && l.name; });
+    var storeLanguage = String(languageTag || '').toLowerCase();
+    function languageOf(label) { return String(label.languageTag || languageTag || '').toLowerCase(); }
+    var main = labels.filter(function(l) { return l.isDefault && languageOf(l) === storeLanguage; })[0] ||
+        labels.filter(function(l) { return l.isDefault; })[0] || labels[0] || null;
+    var synonyms = [];
+    labels.forEach(function(l) {
+        if (l === main || languageOf(l) !== languageOf(main) || l.name === main.name || synonyms.indexOf(l.name) > -1) { return; }
+        synonyms.push(l.name);
+    });
     return {
-        termName:        defaultLabel || '',
+        termName:        main ? main.name : '',
         termId:          t.id || '',
-        termDescription: (t.descriptions && t.descriptions[0]) ? t.descriptions[0].description : ''
+        termDescription: (t.descriptions && t.descriptions[0]) ? t.descriptions[0].description : '',
+        synonyms:        synonyms.join('; ')
     };
 }
 
@@ -4230,7 +4558,7 @@ async function snaReadTermParents(termBase, setObj, targetUrl, budget) {
         var term = byId[id];
         if (!term) {
             if (setObj.terms.length >= SNA_TERMS_PER_SET_MAX) { setObj.termsTruncated = true; return; }
-            term = snaTermFromGraph(child);
+            term = snaTermFromGraph(child, setObj.languageTag);
             term.parentIds = [];
             byId[id] = term;
             setObj.terms.push(term);
@@ -4317,7 +4645,8 @@ function snaOrderTermsAsTree(setObj) {
 // Returns { groups, read, siteCollectionId, termStoreId }. read is false when any request failed; groups then holds
 // what was read before the failure. Nothing is written to the report until the caller has the whole result.
 // Each term set also gets parentsStatus ('read', 'partial', or 'failed', from snaReadTermParents), and termsTruncated
-// and termsStoppedAtOtherSite when not all of its terms were read.
+// and termsStoppedAtOtherSite when not all of its terms were read. languageTag is the term store's default language,
+// which names each term (see snaTermFromGraph).
 async function fetchTaxonomy(targetUrl) {
     var result = { groups: [], read: false, siteCollectionId: '', termStoreId: '' };
     try {
@@ -4328,6 +4657,7 @@ async function fetchTaxonomy(targetUrl) {
         var termBase      = targetUrl + '/_api/v2.1/sites/' + result.siteCollectionId + '/termStore';
         var termStoreInfo = await spFetch(termBase);
         result.termStoreId = termStoreInfo.id || '';
+        var languageTag = termStoreInfo.defaultLanguageTag || '';
         var groupsData    = await spFetch(termBase + '/groups');
         var siteScopedGroups = (groupsData.value || []).filter(function(g) {
             return g.scope === 'siteCollection';
@@ -4352,6 +4682,7 @@ async function fetchTaxonomy(targetUrl) {
                     setName:        setName,
                     setId:          set.id || '',
                     setDescription: set.description || '',
+                    languageTag:    languageTag,
                     terms:          [],
                     parentsStatus:  'failed',
                     termsTruncated: false,
@@ -4359,7 +4690,7 @@ async function fetchTaxonomy(targetUrl) {
                 };
 
                 var termsData = await snaFetchAllPages(termBase + '/sets/' + set.id + '/terms', targetUrl, SNA_TERMS_PER_SET_MAX);
-                setObj.terms  = termsData.items.map(snaTermFromGraph);
+                setObj.terms  = termsData.items.map(function(t) { return snaTermFromGraph(t, languageTag); });
                 setObj.termsTruncated = termsData.truncated;
                 setObj.termsStoppedAtOtherSite = termsData.stoppedAtOtherSite;
 
@@ -6239,7 +6570,8 @@ function snaRenderListTab(list, tab) {
         if (list.columnsStatus === 'failed') { return '<p class="sna-error-text">Sitenalyzer could not read the columns. Refresh the report to try again.</p>'; }
         if (list.columns.length === 0) { return '<p class="sna-muted">No visible columns found.</p>'; }
         var columnsId = 'sna-tbl-f-' + list.routeId;
-        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', label: 'Columns of ' + list.title, data: list.columns });
+        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', label: 'Columns of ' + list.title, data: list.columns,
+            hasTermSets: list.columns.some(function(c) { return c.isTaxonomy; }) });
         return '<div id="' + columnsId + '" class="sna-fields-table"></div>';
     }
     if (tab === 'folders') {
@@ -6643,7 +6975,8 @@ function snaRenderTermSet(group, set, report) {
             html += '<p class="sna-note">Sitenalyzer could not read which term every term sits under, so a term shown as Top level may sit under another term. Refresh the report to try again.</p>';
         }
         var tblId = 'sna-terms-' + String(set.setId).replace(/[^0-9a-z]/gi, '');
-        _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', label: 'Terms in ' + set.setName, setId: set.setId, parentsHidden: parentsHidden });
+        _snaTablesQueue.push({ id: tblId, type: 'terms', data: terms, searchLabel: set.setName + ' terms', label: 'Terms in ' + set.setName, setId: set.setId, parentsHidden: parentsHidden,
+            hasSynonyms: terms.some(function(t) { return !!t.synonyms; }) });
         html += '<div id="' + tblId + '"></div>';
     }
     return html + snaRenderTermSetUsage(set, report);
@@ -6834,15 +7167,20 @@ function snaPrintListHtml(list) {
         html += '<p>No visible columns found.</p>';
     } else {
         // The columns are in two tables so that each one fits the width of a page.
-        html += snaPrintTableHtml('Columns of ' + list.title, ['Title', 'Data type', 'Required', 'Description', 'Choices', 'Lookup list'],
+        var hasTermSets = list.columns.some(function(c) { return c.isTaxonomy; });
+        html += snaPrintTableHtml('Columns of ' + list.title,
+            ['Title', 'Data type', 'Required', 'Description', 'Choices', 'Lookup list'].concat(hasTermSets ? ['Term set'] : []),
             list.columns.map(function(c) {
-                return [c.title, c.dataType, c.required ? 'Yes' : 'No', c.description || 'No description.', c.choices, c.lookupList];
+                return [c.title, c.dataType, c.required ? 'Yes' : 'No', c.description || 'No description.', c.choices, c.lookupList]
+                    .concat(hasTermSets ? [snaColumnTermSetText(c)] : []);
             }), '') +
             snaPrintTableHtml('Technical details of the columns of ' + list.title,
-                ['Title', 'Internal name', 'Column ID', 'Lookup target', 'Default value', 'Max length', 'Indexed', 'Formula'],
+                ['Title', 'Internal name', 'Column ID', 'Lookup target'].concat(hasTermSets ? ['Term set ID'] : [],
+                    ['Default value', 'Max length', 'Indexed', 'Formula']),
                 list.columns.map(function(c) {
                     var maxLength = (c.maxLength === null || c.maxLength === undefined) ? '' : String(c.maxLength);
-                    return [c.title, c.internalName, c.fieldId, c.lookupTarget, c.defaultValue, maxLength, c.indexed ? 'Yes' : 'No', c.formula];
+                    return [c.title, c.internalName, c.fieldId, c.lookupTarget].concat(hasTermSets ? [c.termSetId] : [],
+                        [c.defaultValue, maxLength, c.indexed ? 'Yes' : 'No', c.formula]);
                 }), '');
     }
 
@@ -6930,14 +7268,14 @@ function snaBuildPrintDocument(report) {
                 (sets.length === 0 ? '<p>This term group has no term sets.</p>' : '');
             sets.forEach(function(set) {
                 var withParents = set.parentsStatus !== 'failed';
+                var withSynonyms = (set.terms || []).some(function(t) { return !!t.synonyms; });
                 html += '<h4>' + snaEscapeHtml(set.setName) + '</h4>' +
                     snaPrintFactsHtml([['Description', set.setDescription || 'No description.'], ['Term set ID', set.setId]]) +
                     snaPrintTableHtml('Terms in ' + set.setName,
-                        withParents ? ['Term name', 'Parent term', 'Description', 'Term ID'] : ['Term name', 'Description', 'Term ID'],
+                        ['Term name'].concat(withParents ? ['Parent term'] : [], withSynonyms ? ['Synonyms'] : [], ['Description', 'Term ID']),
                         (set.terms || []).map(function(t) {
-                            return withParents
-                                ? [t.termName, t.parentNames || 'Top level', t.termDescription || 'No description.', t.termId]
-                                : [t.termName, t.termDescription || 'No description.', t.termId];
+                            return [t.termName].concat(withParents ? [t.parentNames || 'Top level'] : [], withSynonyms ? [t.synonyms] : [],
+                                [t.termDescription || 'No description.', t.termId]);
                         }),
                         'This term set has no terms.') +
                     snaPrintTermSetUsageHtml(set, taxonomy);

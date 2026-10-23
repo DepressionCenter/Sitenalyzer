@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-22
+Last Modified: 2026-10-23
 Summary: Browser tests for Sitenalyzer. Each test opens the built app from dist/ on a pretend SharePoint
          site (see pretend-sharepoint.js) that blocks inline scripts the way SharePoint Online does.
 Notes: See README file for documentation and full license information.
@@ -27,7 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields, AGENT_ASSETS_ID, agentItems, skillItems } = require('./pretend-sharepoint');
+const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields, AGENT_ASSETS_ID, agentItems, skillItems, TAXONOMY_HIDDEN_LIST_ID } = require('./pretend-sharepoint');
 // The pretend site's one term set, Study Arms.
 const TERM_SET_ID = 'eeeeeeee-0000-4000-8000-000000000001';
 
@@ -156,6 +156,38 @@ async function downloadWorkbook(page, testInfo, buttonName) {
 // Returns a sheet as an array of rows, each an array of cell text.
 function sheetRows(workbook, sheetName) {
     return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' });
+}
+
+// The sheets of the data dictionary, format 1.1, in order.
+const DATA_DICTIONARY_SHEETS = ['Export_Info', 'Sources', 'Assets', 'Fields', 'Value_Sets', 'Value_Set_Definitions',
+    'Relationships', 'Dashboards', 'Visualizations', 'Stewards'];
+
+// Returns the data rows of a sheet as objects keyed by column name.
+function sheetObjects(workbook, sheetName) {
+    const rows = sheetRows(workbook, sheetName);
+    return rows.slice(1).map(function(row) {
+        const record = {};
+        rows[0].forEach(function(name, index) { record[name] = row[index]; });
+        return record;
+    });
+}
+
+// Returns the Value_Set_Definitions row of a value set.
+function valueSetDefinition(workbook, valueSetId) {
+    return sheetObjects(workbook, 'Value_Set_Definitions').filter(function(d) { return d.value_set_id === valueSetId; })[0];
+}
+
+// Checks the value set keys of a data dictionary: definition IDs are unique, every value_set_id in Fields and
+// Value_Sets has a definition, and every definition's asset is in Assets.
+function expectValueSetKeys(workbook) {
+    const definitions = sheetObjects(workbook, 'Value_Set_Definitions');
+    const ids = definitions.map(function(d) { return d.value_set_id; });
+    expect(new Set(ids).size).toBe(ids.length);
+    sheetObjects(workbook, 'Fields').concat(sheetObjects(workbook, 'Value_Sets')).forEach(function(row) {
+        if (row.value_set_id) { expect(ids).toContain(row.value_set_id); }
+    });
+    const assetIds = sheetObjects(workbook, 'Assets').map(function(a) { return a.asset_id; });
+    definitions.forEach(function(d) { expect(assetIds).toContain(d.asset_id); });
 }
 
 // Returns the addresses of the API requests, parsed, so tests can check paths and query values.
@@ -688,7 +720,7 @@ test('still reads and exports site skills when the lists could not be read', asy
     await gotoSection(page, 'Site review');
     await expect(page.getByRole('row', { name: /^Agents Not read/ })).toBeVisible();
     const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
-    expect(workbook.SheetNames).toEqual(['Export_Info', 'Sources', 'Assets', 'Fields', 'Value_Sets', 'Relationships', 'Dashboards', 'Visualizations', 'Stewards']);
+    expect(workbook.SheetNames).toEqual(DATA_DICTIONARY_SHEETS);
     const assets = sheetRows(workbook, 'Assets');
     expect(assets.filter(function(row) { return row[4] === 'Copilot in SharePoint Skill'; })).toHaveLength(1);
     expect(assets.find(function(row) { return row[4] === 'Copilot in SharePoint Skill'; })[3]).toBe('Weekly summary');
@@ -906,7 +938,7 @@ test('exports agents and site skills as Assets rows with the existing workbook c
     await openPretendSite(page);
     await extractSiteInformation(page);
     const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
-    expect(workbook.SheetNames).toEqual(['Export_Info', 'Sources', 'Assets', 'Fields', 'Value_Sets', 'Relationships', 'Dashboards', 'Visualizations', 'Stewards']);
+    expect(workbook.SheetNames).toEqual(DATA_DICTIONARY_SHEETS);
     const rows = sheetRows(workbook, 'Assets');
     expect(rows[0]).toEqual(['asset_id', 'source_id', 'asset_name', 'asset_display_name', 'asset_type', 'url', 'container',
         'qualified_path', 'description', 'grain', 'record_count', 'view_or_derivation_definition', 'source_or_derived', 'refresh_frequency',
@@ -2590,12 +2622,22 @@ test('exports the data dictionary as an Excel file', async function({ page }, te
 
     const { fileName, workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
     expect(fileName).toMatch(/^TestResearchSite_Data_Dictionary_.*\.xlsx$/);
-    expect(workbook.SheetNames).toEqual([
-        'Export_Info', 'Sources', 'Assets', 'Fields', 'Value_Sets', 'Relationships',
-        'Dashboards', 'Visualizations', 'Stewards'
-    ]);
+    expect(workbook.SheetNames).toEqual(DATA_DICTIONARY_SHEETS);
+    expect(sheetRows(workbook, 'Export_Info').filter(function(r) { return r[0] === 'format_version'; })[0][1]).toBe('1.1');
     expect(JSON.stringify(sheetRows(workbook, 'Fields'))).toContain('VisitDate');
     expect(JSON.stringify(sheetRows(workbook, 'Assets'))).toContain('Study Visits');
+
+    // The privacy columns of Fields line up with Sources and Assets.
+    const visitDate = sheetObjects(workbook, 'Fields').filter(function(r) { return r.internal_name === 'VisitDate'; })[0];
+    expect([visitDate.sensitivity, visitDate.contains_phi, visitDate.contains_pii]).toEqual(['', 'Unknown', 'Unknown']);
+    // The site's own term set is listed in full, and each choice column has its own value set in its list.
+    expect(valueSetDefinition(workbook, TERM_SET_ID)).toMatchObject({ value_set_name: 'Study Arms', values_listed: 'All',
+        hierarchy_listed: 'All', status: 'Active' });
+    expect(valueSetDefinition(workbook, TERM_SET_ID).asset_id).toMatch(/_termstore$/);
+    const studyArm = sheetObjects(workbook, 'Fields').filter(function(r) { return r.internal_name === 'StudyArm' && r.asset_id === LIST_ID; })[0];
+    expect(valueSetDefinition(workbook, studyArm.value_set_id)).toMatchObject({ value_set_name: 'Study Visits - Study Arm',
+        asset_id: LIST_ID, values_listed: 'All', hierarchy_listed: 'All' });
+    expectValueSetKeys(workbook);
 
     // Column filters cover the header row and every data row; widths fit the content within 12 to 60 characters.
     const fields = workbook.Sheets.Fields;
@@ -3341,7 +3383,7 @@ async function termRows(termSet) {
     return result;
 }
 
-test('shows the parent of each term, with a pinned term under both of its parents', async function({ page }) {
+test('shows the parent of each term, with a pinned term under both of its parents', async function({ page }, testInfo) {
     const record = await openPretendSite(page, {
         answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
             const withChildren = /children/.test(url.searchParams.get('$expand') || '');
@@ -3363,6 +3405,16 @@ test('shows the parent of each term, with a pinned term under both of its parent
     await gotoSection(page, 'Site review');
     await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ })).toContainText('Read');
     expect(record.unexpectedRequests).toEqual([]);
+
+    // The data dictionary gives each term's parent in tree order. The pinned term lists both parents, first the one
+    // it is listed under.
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    const values = sheetObjects(workbook, 'Value_Sets').filter(function(v) { return v.value_set_id === TERM_SET_ID; });
+    expect(values.map(function(v) { return [v.value_code, v.parent_value_code, v.display_order]; })).toEqual([
+        [TERM.other, '', '1'], [TERM.sharedVisit, TERM.other + '; ' + TERM.arm, '2'], [TERM.arm, '', '3'],
+        [TERM.treatmentA, TERM.arm, '4'], [TERM.dose1, TERM.treatmentA, '5']
+    ]);
+    expect(valueSetDefinition(workbook, TERM_SET_ID)).toMatchObject({ values_listed: 'All', hierarchy_listed: 'All', notes: '' });
 });
 
 test('finds parent terms one term at a time when the term set does not return children', async function({ page }) {
@@ -3394,7 +3446,7 @@ test('finds parent terms one term at a time when the term set does not return ch
     expect(record.unexpectedRequests).toEqual([]);
 });
 
-test('says when it could not read parent terms, and leaves out the parent column', async function({ page }) {
+test('says when it could not read parent terms, and leaves out the parent column', async function({ page }, testInfo) {
     await openPretendSite(page, {
         answerOverrides: [
             { pattern: TERMS_PATTERN, answer: function(url) {
@@ -3414,9 +3466,14 @@ test('says when it could not read parent terms, and leaves out the parent column
     const parentsRow = page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ });
     await expect(parentsRow).toContainText('Not read');
     await expect(parentsRow).toContainText('Sitenalyzer could not read which term each term sits under in 1 term set');
+
+    // The data dictionary says the parents weren't read, so a blank parent doesn't read as a top-level term.
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(valueSetDefinition(workbook, TERM_SET_ID)).toMatchObject({ values_listed: 'All', hierarchy_listed: 'None',
+        notes: 'Sitenalyzer could not read which term each term sits under.' });
 });
 
-test('reads every page of a term set, and stops at a next-batch link to another site', async function({ page }) {
+test('reads every page of a term set, and stops at a next-batch link to another site', async function({ page }, testInfo) {
     const record = await openPretendSite(page, {
         answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
             if (url.searchParams.get('$expand')) { return undefined; }
@@ -3435,9 +3492,12 @@ test('reads every page of a term set, and stops at a next-batch link to another 
     expect(apiUrls(record).filter(function(u) { return u.pathname.indexOf('/sites/othersite/') > -1; })).toEqual([]);
     await gotoSection(page, 'Site review');
     await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Term store/ })).toContainText('Partly read');
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(valueSetDefinition(workbook, TERM_SET_ID).values_listed).toBe('Some');
+    expect(valueSetDefinition(workbook, TERM_SET_ID).notes).toContain('Sitenalyzer stopped reading the terms of this term set');
 });
 
-test('says parent terms were read in part when a next-batch link with children points to another site', async function({ page }) {
+test('says parent terms were read in part when a next-batch link with children points to another site', async function({ page }, testInfo) {
     await openPretendSite(page, {
         answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
             if (!url.searchParams.get('$expand')) { return undefined; }
@@ -3451,6 +3511,8 @@ test('says parent terms were read in part when a next-batch link with children p
     await expect(termSet).toContainText('Sitenalyzer could not read which term every term sits under');
     await gotoSection(page, 'Site review');
     await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Parent terms/ })).toContainText('Partly read');
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(valueSetDefinition(workbook, TERM_SET_ID).hierarchy_listed).toBe('Some');
 });
 
 test('says parent terms were read in part when a term\'s children stop at a link to another site', async function({ page }) {
@@ -3619,6 +3681,390 @@ test('says it could not read where a term set is used when neither the lists nor
     await expect(termSet.locator('.sna-term-usage-table')).toHaveCount(0);
     await gotoSection(page, 'Site review');
     await expect(page.locator('.sna-coverage-table').getByRole('row', { name: /^Managed metadata columns/ })).toContainText('Not read');
+});
+
+// Managed metadata columns in Study Visits: one uses Study Arms, one uses a term set outside the site's term groups,
+// one uses a term set Sitenalyzer can't read, and Enterprise Keywords names no term set.
+const REGIONS_SET_ID = 'eeeeeeee-0000-4000-8000-000000000099';
+const UNREADABLE_SET_ID = 'eeeeeeee-0000-4000-8000-000000000098';
+const TERM_SET_COLUMNS = [
+    { Id: 'bbbbbbbb-0000-4000-8000-000000000021', InternalName: 'ArmTag', Title: 'Arm Tag', TypeAsString: 'TaxonomyFieldType', Description: '',
+      LookupList: '{' + TAXONOMY_HIDDEN_LIST_ID.toUpperCase() + '}', SchemaXml: taxonomySchemaXml(TERM_SET_ID, NO_ANCHOR) },
+    { Id: 'bbbbbbbb-0000-4000-8000-000000000022', InternalName: 'Region', Title: 'Region', TypeAsString: 'TaxonomyFieldType', Description: '',
+      LookupList: '{' + TAXONOMY_HIDDEN_LIST_ID + '}', SchemaXml: taxonomySchemaXml(REGIONS_SET_ID, NO_ANCHOR) },
+    { Id: 'bbbbbbbb-0000-4000-8000-000000000023', InternalName: 'Funder', Title: 'Funder', TypeAsString: 'TaxonomyFieldType', Description: '',
+      LookupList: '{' + TAXONOMY_HIDDEN_LIST_ID + '}', SchemaXml: taxonomySchemaXml(UNREADABLE_SET_ID, NO_ANCHOR) },
+    { Id: 'bbbbbbbb-0000-4000-8000-000000000024', InternalName: 'TaxKeyword', Title: 'Enterprise Keywords', TypeAsString: 'TaxonomyFieldTypeMulti', Description: '',
+      LookupList: '{' + TAXONOMY_HIDDEN_LIST_ID + '}', SchemaXml: taxonomySchemaXml(NO_ANCHOR, NO_ANCHOR) }
+];
+const TERM_SET_NAME_PATTERN = /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/sets\/([^/]+)$/;
+function termSetColumnAnswers() {
+    return [
+        { pattern: LIST_FIELDS_PATTERN, answer: function(url) {
+            if (/TaxonomyFieldType/.test(url.searchParams.get('$filter') || '')) { return { value: TERM_SET_COLUMNS }; }
+            return { value: fields.value.concat(TERM_SET_COLUMNS.map(function(c) {
+                return { Id: c.Id, InternalName: c.InternalName, Title: c.Title, TypeAsString: c.TypeAsString, Description: c.Description, LookupList: c.LookupList };
+            })) };
+        } },
+        { pattern: TERM_SET_NAME_PATTERN, answer: function(url, match) {
+            return match[1] === REGIONS_SET_ID ? { id: REGIONS_SET_ID, localizedNames: [{ name: 'Regions' }] } : reply(403, { error: 'Access denied' });
+        } }
+    ];
+}
+
+test('names the hidden list and the term set of managed metadata columns, and links to term sets in Taxonomy', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: termSetColumnAnswers() });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+    function cell(columnTitle, field) {
+        return detail.locator('.tabulator-row', { hasText: columnTitle }).locator('.tabulator-cell[tabulator-field="' + field + '"]');
+    }
+    await expect(detail.getByRole('columnheader', { name: 'Term set', exact: true })).toBeVisible();
+    await expect(cell('Arm Tag', 'lookupList')).toHaveText('TaxonomyHiddenList');
+    await expect(cell('Enterprise Keywords', 'lookupList')).toHaveText('TaxonomyHiddenList');
+    await expect(cell('Arm Tag', 'termSetName').getByRole('link', { name: 'Study Arms' })).toBeVisible();
+    // Term sets outside the site's term groups are named without a link, since Taxonomy doesn't show them.
+    await expect(cell('Region', 'termSetName')).toHaveText('Regions');
+    await expect(cell('Region', 'termSetName').getByRole('link')).toHaveCount(0);
+    await expect(cell('Funder', 'termSetName')).toHaveText('Not read');
+    await expect(cell('Enterprise Keywords', 'termSetName')).toHaveText('Keywords');
+    await expect(cell('Enterprise Keywords', 'termSetName').getByRole('link')).toHaveCount(0);
+    expect(await new AxeBuilder({ page }).include('#sp-results').withTags(WCAG_TAGS).analyze().then(function(r) { return r.violations; })).toEqual([]);
+
+    // Study Arms is named from the report; only the term sets outside it are read from the term store.
+    const nameReads = record.apiRequests.filter(function(address) {
+        return TERM_SET_NAME_PATTERN.test(decodeURIComponent(new URL(address).pathname).substring(SITE_PATH.length));
+    });
+    expect(nameReads.map(function(address) { return new URL(address).pathname.split('/').pop(); }).sort()).toEqual([UNREADABLE_SET_ID, REGIONS_SET_ID]);
+
+    // Technical details add the term set ID.
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    await expect(detail.getByRole('columnheader', { name: 'Term set ID' })).toBeVisible();
+    await expect(cell('Region', 'termSetId')).toContainText(REGIONS_SET_ID);
+
+    // A library with no managed metadata column has no Term set column.
+    const documents = await openListDetail(page, 'Documents', 'Columns');
+    await expect(documents.getByRole('columnheader', { name: 'Lookup list' })).toBeVisible();
+    await expect(documents.getByRole('columnheader', { name: 'Term set', exact: true })).toHaveCount(0);
+
+    // The link opens the term set in Taxonomy.
+    await openListDetail(page, 'Study Visits', 'Columns');
+    await cell('Arm Tag', 'termSetName').getByRole('link', { name: 'Study Arms' }).click();
+    expect(hashOf(page)).toBe('#sna/taxonomy/' + TERM_SET_ID);
+    await expect(page.locator('#sna-part-title')).toHaveText('Study Arms');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('prints the term set of each managed metadata column', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: termSetColumnAnswers() });
+    await extractSiteInformation(page);
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+
+    await page.emulateMedia({ media: 'print' });
+    const doc = printFrameDocument(page);
+    const visits = doc.getByRole('table', { name: 'Columns of Study Visits', exact: true });
+    await expect(visits.locator('thead th')).toHaveText(['Title', 'Data type', 'Required', 'Description', 'Choices', 'Lookup list', 'Term set']);
+    await expect(visits.locator('tbody tr', { hasText: 'Arm Tag' })).toContainText('TaxonomyHiddenList');
+    await expect(visits.locator('tbody tr', { hasText: 'Arm Tag' })).toContainText('Study Arms');
+    await expect(visits.locator('tbody tr', { hasText: 'Funder' })).toContainText('Not read');
+    await expect(doc.getByRole('table', { name: 'Columns of Documents', exact: true }).locator('thead th'))
+        .toHaveText(['Title', 'Data type', 'Required', 'Description', 'Choices', 'Lookup list']);
+    const technical = doc.getByRole('table', { name: 'Technical details of the columns of Study Visits' });
+    await expect(technical.locator('thead th')).toHaveText(['Title', 'Internal name', 'Column ID', 'Lookup target', 'Term set ID',
+        'Default value', 'Max length', 'Indexed', 'Formula']);
+    await expect(technical.locator('tbody tr', { hasText: 'Region' })).toContainText(REGIONS_SET_ID);
+    await expect(doc.getByRole('table', { name: 'Technical details of the columns of Documents' }).locator('thead th')).not.toContainText(['Term set ID']);
+});
+
+test('links each managed metadata column to TaxonomyHiddenList and to its value set in the data dictionary', async function({ page }, testInfo) {
+    await openPretendSite(page, { answerOverrides: termSetColumnAnswers() });
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+
+    // TaxonomyHiddenList is one asset, with a note that says what it is.
+    const assets = sheetRows(workbook, 'Assets');
+    const assetHeader = assets[0];
+    const hiddenListAssets = assets.filter(function(r) { return r[0] === TAXONOMY_HIDDEN_LIST_ID; });
+    expect(hiddenListAssets).toHaveLength(1);
+    const hiddenList = hiddenListAssets[0];
+    expect(hiddenList[assetHeader.indexOf('asset_display_name')]).toBe('TaxonomyHiddenList');
+    expect(hiddenList[assetHeader.indexOf('asset_type')]).toBe('SharePoint List');
+    expect(hiddenList[assetHeader.indexOf('url')]).toBe(new URL(SITE_URL).origin + SITE_PATH + '/Lists/TaxonomyHiddenList/AllItems.aspx');
+    expect(hiddenList[assetHeader.indexOf('record_count')]).toBe('2');
+    expect(hiddenList[assetHeader.indexOf('notes')]).toContain('Hidden list where SharePoint keeps a copy of each term');
+
+    // Each managed metadata column has one Lookup row to TaxonomyHiddenList; the multi-value column is M-M.
+    const fields = sheetObjects(workbook, 'Fields');
+    function field(internalName) { return fields.filter(function(r) { return r.internal_name === internalName; })[0]; }
+    const toHiddenList = sheetObjects(workbook, 'Relationships').filter(function(r) { return r.to_asset_id === TAXONOMY_HIDDEN_LIST_ID; });
+    expect(toHiddenList).toHaveLength(TERM_SET_COLUMNS.length);
+    TERM_SET_COLUMNS.forEach(function(column) {
+        const row = toHiddenList.filter(function(r) { return r.from_field_id === column.Id; })[0];
+        expect(row.relationship_type).toBe('Lookup');
+        expect(row.from_asset_id).toBe(LIST_ID);
+        expect(row.cardinality).toBe(column.TypeAsString === 'TaxonomyFieldTypeMulti' ? 'M-M' : 'M-1');
+    });
+
+    // Every column names its value set, and the notes stay empty. Only Study Arms, in the site's term groups, is listed.
+    fields.forEach(function(r) { expect(r.notes).toBe(''); });
+    expect(field('ArmTag').value_set_id).toBe(TERM_SET_ID);
+    expect(valueSetDefinition(workbook, TERM_SET_ID).values_listed).toBe('All');
+    expect(field('Region').value_set_id).toBe(REGIONS_SET_ID);
+    expect(valueSetDefinition(workbook, REGIONS_SET_ID)).toMatchObject({ value_set_name: 'Regions', values_listed: 'None', hierarchy_listed: '',
+        notes: 'This term set isn\'t in this site collection\'s term groups, so its terms aren\'t listed.' });
+    expect(field('Funder').value_set_id).toBe(UNREADABLE_SET_ID);
+    expect(valueSetDefinition(workbook, UNREADABLE_SET_ID)).toMatchObject({ value_set_name: '', values_listed: 'None' });
+    expect(valueSetDefinition(workbook, UNREADABLE_SET_ID).notes).toContain('Sitenalyzer could not read its name.');
+    expect(field('TaxKeyword').value_set_id).toMatch(/^VS_\d{6}$/);
+    expect(valueSetDefinition(workbook, field('TaxKeyword').value_set_id)).toMatchObject({ value_set_name: 'Keywords', values_listed: 'None' });
+    expect([field('TaxKeyword').multi_valued, field('TaxKeyword').allows_other_values]).toEqual(['Y', 'Y']);
+    expect([field('ArmTag').multi_valued, field('ArmTag').allows_other_values]).toEqual(['N', '']);
+    const valueSetNames = sheetObjects(workbook, 'Value_Sets').map(function(r) { return r.value_set_name; });
+    expect(valueSetNames).not.toContain('Regions');
+    expect(valueSetNames).not.toContain('Keywords');
+    expectValueSetKeys(workbook);
+});
+
+test('hides values in the term set names in the data dictionary', async function({ page }, testInfo) {
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: TERM_SET_NAME_PATTERN, answer: function(url, match) {
+            return match[1] === REGIONS_SET_ID ? { id: REGIONS_SET_ID, localizedNames: [{ name: 'Regions 734-555-0144' }] } : undefined;
+        } }
+    ].concat(termSetColumnAnswers()) });
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(valueSetDefinition(workbook, REGIONS_SET_ID).value_set_name).toBe('Regions [phone number hidden]');
+    DATA_DICTIONARY_SHEETS.forEach(function(name) { expect(JSON.stringify(sheetRows(workbook, name))).not.toContain('734-555-0144'); });
+});
+
+test('adds no TaxonomyHiddenList asset or managed metadata relationship to a site with no managed metadata column', async function({ page }, testInfo) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(sheetRows(workbook, 'Assets').filter(function(r) { return r[0] === TAXONOMY_HIDDEN_LIST_ID; })).toEqual([]);
+    expect(sheetObjects(workbook, 'Relationships').filter(function(r) { return r.to_asset_id === TAXONOMY_HIDDEN_LIST_ID; })).toEqual([]);
+});
+
+// Columns of Study Visits that hold several values, a choice column that takes other values, and a person column.
+const MULTI_VALUE_COLUMNS = [
+    { Id: 'bbbbbbbb-0000-4000-8000-000000000041', InternalName: 'VisitTags', Title: 'Visit Tags', TypeAsString: 'MultiChoice',
+      Description: '', Choices: ['Remote', 'In person'], FillInChoice: true },
+    { Id: 'bbbbbbbb-0000-4000-8000-000000000042', InternalName: 'VisitStaff', Title: 'Visit Staff', TypeAsString: 'UserMulti', Description: '' },
+    { Id: 'bbbbbbbb-0000-4000-8000-000000000043', InternalName: 'RelatedVisits', Title: 'Related Visits', TypeAsString: 'LookupMulti',
+      Description: '', LookupList: '{' + LIST_ID + '}', LookupField: 'Title', IsDependentLookup: false, ReadOnlyField: false },
+    { Id: 'bbbbbbbb-0000-4000-8000-000000000044', InternalName: 'Coordinator', Title: 'Coordinator', TypeAsString: 'User', Description: '' }
+];
+
+test('saves the data dictionary in format 1.1, with multi-value columns and choice columns that take other values', async function({ page }, testInfo) {
+    await openPretendSite(page, { answerOverrides: [{ pattern: LIST_FIELDS_PATTERN, body: { value: fields.value.concat(MULTI_VALUE_COLUMNS) } }] });
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+
+    expect(sheetRows(workbook, 'Fields')[0].slice(-3)).toEqual(['multi_valued', 'value_set_root_code', 'allows_other_values']);
+    expect(sheetRows(workbook, 'Value_Sets')[0].slice(-2)).toEqual(['parent_value_code', 'synonyms']);
+    expect(sheetRows(workbook, 'Value_Set_Definitions')[0]).toEqual(['value_set_id', 'value_set_name', 'description', 'asset_id',
+        'values_listed', 'hierarchy_listed', 'standard_code_system', 'status', 'notes']);
+
+    const fieldsInVisits = sheetObjects(workbook, 'Fields').filter(function(r) { return r.asset_id === LIST_ID; });
+    function field(internalName) { return fieldsInVisits.filter(function(r) { return r.internal_name === internalName; })[0]; }
+    expect(['VisitTags', 'VisitStaff', 'RelatedVisits', 'Coordinator', 'StudyArm'].map(function(name) { return field(name).multi_valued; }))
+        .toEqual(['Y', 'Y', 'Y', 'N', 'N']);
+    expect(['VisitTags', 'StudyArm', 'Coordinator'].map(function(name) { return field(name).allows_other_values; })).toEqual(['Y', 'N', '']);
+
+    const tags = valueSetDefinition(workbook, field('VisitTags').value_set_id);
+    expect(tags).toMatchObject({ value_set_name: 'Study Visits - Visit Tags', asset_id: LIST_ID, values_listed: 'All', hierarchy_listed: 'All' });
+    expect(sheetObjects(workbook, 'Value_Sets').filter(function(v) { return v.value_set_id === tags.value_set_id; })
+        .map(function(v) { return [v.value_code, v.parent_value_code]; })).toEqual([['Remote', ''], ['In person', '']]);
+    const related = sheetObjects(workbook, 'Relationships').filter(function(r) { return r.from_field_id === MULTI_VALUE_COLUMNS[2].Id; })[0];
+    expect(related).toMatchObject({ relationship_type: 'Lookup', to_asset_id: LIST_ID, cardinality: 'M-M' });
+    expectValueSetKeys(workbook);
+});
+
+test('shows and saves the term a managed metadata column starts at', async function({ page }, testInfo) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: taxonomyColumnAnswers() });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+    function termSetCell(title) { return detail.locator('.tabulator-row', { hasText: title }).locator('.tabulator-cell[tabulator-field="termSetName"]'); }
+    await expect(termSetCell('Arm Detail').getByRole('link', { name: 'Study Arms' })).toBeVisible();
+    await expect(termSetCell('Arm Detail').locator('.sna-term-start')).toHaveText('Starts at Treatment');
+    await expect(termSetCell('Arm Tag')).not.toContainText('Starts at');
+
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page).getByRole('table', { name: 'Columns of Study Visits', exact: true });
+    await expect(printed.locator('tbody tr', { hasText: 'Arm Detail' })).toContainText('Study Arms. Starts at Treatment');
+    await page.emulateMedia({ media: 'screen' });
+
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    const fieldsInVisits = sheetObjects(workbook, 'Fields').filter(function(r) { return r.asset_id === LIST_ID; });
+    function field(internalName) { return fieldsInVisits.filter(function(r) { return r.internal_name === internalName; })[0]; }
+    expect([field('ArmDetail').value_set_id, field('ArmDetail').value_set_root_code, field('ArmDetail').multi_valued])
+        .toEqual([TERM_SET_ID, TREATMENT_TERM_ID, 'Y']);
+    expect([field('ArmTag').value_set_id, field('ArmTag').value_set_root_code, field('ArmTag').multi_valued]).toEqual([TERM_SET_ID, '', 'N']);
+});
+
+test('gives a managed metadata column whose term set could not be read a value set of its own', async function({ page }, testInfo) {
+    await openPretendSite(page, { answerOverrides: taxonomyColumnAnswers({ listSchemaFails: true }) });
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    const armTag = sheetObjects(workbook, 'Fields').filter(function(r) { return r.internal_name === 'ArmTag'; })[0];
+    expect(armTag.value_set_id).toMatch(/^VS_\d{6}$/);
+    expect(armTag.value_set_root_code).toBe('');
+    expect(valueSetDefinition(workbook, armTag.value_set_id)).toMatchObject({ value_set_name: '', values_listed: 'None',
+        notes: 'Sitenalyzer could not read which term set this column uses.' });
+    // The site's own term set is still listed.
+    expect(valueSetDefinition(workbook, TERM_SET_ID).values_listed).toBe('All');
+    expectValueSetKeys(workbook);
+});
+
+test('adds the term store asset for the term sets that columns use when the term groups could not be read', async function({ page }, testInfo) {
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/v2\.1\/sites\/[^/]+\/termStore\/groups$/, body: reply(500, { error: 'Server error' }) }
+    ].concat(termSetColumnAnswers()) });
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(sheetObjects(workbook, 'Assets').filter(function(a) { return /_termstore$/.test(a.asset_id); })).toHaveLength(1);
+    expect(valueSetDefinition(workbook, REGIONS_SET_ID)).toMatchObject({ value_set_name: 'Regions', values_listed: 'None',
+        notes: 'Sitenalyzer could not read all of the term store, so this term set\'s terms aren\'t listed.' });
+    expect(valueSetDefinition(workbook, TERM_SET_ID).notes)
+        .toBe('Sitenalyzer could not read all of the term store, so this term set\'s terms aren\'t listed. Sitenalyzer could not read its name.');
+    expect(sheetObjects(workbook, 'Value_Sets').filter(function(v) { return v.value_set_id === TERM_SET_ID; })).toEqual([]);
+    expectValueSetKeys(workbook);
+});
+
+// Study Arms terms with labels in two languages. Control's French label comes first, and it has two English synonyms,
+// one of which looks like a phone number, and a French synonym.
+const SYNONYM_TERMS = [
+    { id: 'ffffffff-0000-4000-8000-000000000001', descriptions: [], labels: [
+        { name: 'Contrôle', isDefault: true, languageTag: 'fr-FR' },
+        { name: 'Control', isDefault: true, languageTag: 'en-US' },
+        { name: 'Placebo', isDefault: false, languageTag: 'en-US' },
+        { name: 'Call 734-555-0177', isDefault: false, languageTag: 'en-US' },
+        { name: 'Témoin', isDefault: false, languageTag: 'fr-FR' }
+    ] },
+    { id: TREATMENT_TERM_ID, descriptions: [], labels: [{ name: 'Treatment', isDefault: true }] }
+];
+
+test('names terms in the term store\'s default language and shows, finds, prints, and saves their synonyms', async function({ page }, testInfo) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: [{ pattern: TERMS_PATTERN, answer: function(url) {
+        const withChildren = /children/.test(url.searchParams.get('$expand') || '');
+        return { value: SYNONYM_TERMS.map(function(t) { return withChildren ? Object.assign({ children: [] }, t) : t; }) };
+    } }] });
+    await extractSiteInformation(page);
+    await openStudyArms(page);
+
+    const termSet = page.locator('#sna-taxonomy-section');
+    await expect(termSet.getByRole('columnheader', { name: 'Synonyms' })).toBeVisible();
+    const control = termSet.locator('.tabulator-row', { hasText: 'Control' });
+    await expect(control.locator('[tabulator-field="termName"]')).toContainText('Control');
+    await expect(control.locator('[tabulator-field="synonyms"]')).toHaveText('Placebo; Call [phone number hidden]');
+    await expect(termSet).not.toContainText('Contrôle');
+    await expect(termSet).not.toContainText('Témoin');
+    expect(await new AxeBuilder({ page }).include('#sp-results').withTags(WCAG_TAGS).analyze().then(function(r) { return r.violations; })).toEqual([]);
+
+    await searchReport(page, 'placebo');
+    const results = page.locator('#sp-results');
+    await expect(results.locator('.sna-search-item > a').first()).toHaveText('Control');
+    await expect(results).toContainText('Synonyms: Placebo');
+
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    await expect(printFrameDocument(page).getByRole('table', { name: 'Terms in Study Arms' }).locator('thead th'))
+        .toHaveText(['Term name', 'Parent term', 'Synonyms', 'Description', 'Term ID']);
+    await page.emulateMedia({ media: 'screen' });
+
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    const values = sheetObjects(workbook, 'Value_Sets').filter(function(v) { return v.value_set_id === TERM_SET_ID; });
+    expect(values.map(function(v) { return [v.value_label, v.synonyms]; })).toEqual([['Control', 'Placebo; Call [phone number hidden]'], ['Treatment', '']]);
+    DATA_DICTIONARY_SHEETS.forEach(function(name) { expect(JSON.stringify(sheetRows(workbook, name))).not.toContain('734-555-0177'); });
+});
+
+// A choice column with more choices than the columns table shows at first.
+const VISIT_SITE_CHOICES = ['Site 1', 'Site 2', 'Site 3', 'Site 4', 'Site 5', 'Site 6', 'Site 7'];
+function manyChoicesAnswers() {
+    return [{ pattern: LIST_FIELDS_PATTERN, body: { value: fields.value.concat([
+        { Id: 'bbbbbbbb-0000-4000-8000-000000000031', InternalName: 'VisitSite', Title: 'Visit Site', TypeAsString: 'Choice', Description: '', Choices: VISIT_SITE_CHOICES }
+    ]) } }];
+}
+
+test('shows choices only with technical details on, and the first 5 until Show all is selected', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: manyChoicesAnswers() });
+    await extractSiteInformation(page);
+    const detail = await openListDetail(page, 'Study Visits', 'Columns');
+    await expect(detail.getByRole('columnheader', { name: 'Choices' })).toHaveCount(0);
+
+    await page.getByRole('switch', { name: 'Show technical details' }).check();
+    await expect(detail.getByRole('columnheader', { name: 'Choices' })).toBeVisible();
+    function choicesOf(columnTitle) {
+        return detail.locator('.tabulator-row', { hasText: columnTitle }).locator('.tabulator-cell[tabulator-field="choices"]');
+    }
+    await expect(choicesOf('Study Arm')).toHaveText('Control; Treatment');
+    const choices = choicesOf('Visit Site');
+    await expect(choices).toContainText('Site 1; Site 2; Site 3; Site 4; Site 5; ...');
+    await expect(choices).not.toContainText('Site 6');
+
+    const showAll = choices.getByRole('button', { name: 'Show all 7 choices of Visit Site' });
+    await expect(showAll).toHaveAttribute('aria-expanded', 'false');
+    await showAll.click();
+    await expect(choices).toContainText('Site 6; Site 7');
+    const showFewer = choices.getByRole('button', { name: 'Show fewer choices of Visit Site' });
+    await expect(showFewer).toBeFocused();
+    await expect(showFewer).toHaveAttribute('aria-expanded', 'true');
+    expect(await new AxeBuilder({ page }).include('#sp-results').withTags(WCAG_TAGS).analyze().then(function(r) { return r.violations; })).toEqual([]);
+    await page.keyboard.press('Enter');
+    await expect(choices).not.toContainText('Site 6');
+    await expect(choices.getByRole('button', { name: 'Show all 7 choices of Visit Site' })).toBeFocused();
+
+    // The printed report shows every choice.
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    await expect(printFrameDocument(page).getByRole('table', { name: 'Columns of Study Visits', exact: true }).locator('tbody tr', { hasText: 'Visit Site' }))
+        .toContainText(VISIT_SITE_CHOICES.join('; '));
+});
+
+test('edits a list or library description from the Contents summary', async function({ page }, testInfo) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    await gotoSection(page, 'Contents');
+    const summary = page.locator('#sna-contents-detail');
+    await summary.getByRole('button', { name: 'Edit description of Study Visits' }).click();
+    const editor = summary.getByRole('textbox', { name: 'Description for Study Visits' });
+    await expect(editor).toHaveValue('Synthetic visit schedule.');
+    await editor.fill('Summary edit of the visit schedule.');
+    await editor.press('Enter');
+    await expect(summary.getByRole('button', { name: 'Edit description of Study Visits' })).toBeFocused();
+    await expect(summary.locator('.tabulator-row', { hasText: 'Study Visits' })).toContainText('Summary edit of the visit schedule.');
+    await expect(summary.getByRole('button', { name: 'Edit description of Documents' })).toBeVisible();
+
+    const write = record.writeRequests.filter(function(r) { return r.method === 'PATCH'; }).pop();
+    expect(new URL(write.url).pathname).toBe(SITE_PATH + "/_api/web/lists(guid'" + LIST_ID + "')");
+    expect(JSON.parse(write.body)).toEqual({ Description: 'Summary edit of the visit schedule.' });
+
+    // The list's own Overview and the data dictionary show the saved text.
+    const detail = await openListDetail(page, 'Study Visits');
+    await expect(detail.locator('.sna-facts')).toContainText('Summary edit of the visit schedule.');
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(JSON.stringify(sheetRows(workbook, 'Assets'))).toContain('Summary edit of the visit schedule.');
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('shows Contents summary descriptions without edit buttons to people who can\'t edit them', async function({ page }) {
+    await openPretendSite(page, {
+        answerOverrides: [{ pattern: /^\/_api\/web\/effectivebasePermissions$/, body: { High: '0', Low: '0' } }]
+    });
+    await extractSiteInformation(page);
+    await gotoSection(page, 'Contents');
+    const summary = page.locator('#sna-contents-detail');
+    await expect(summary.locator('.tabulator-row', { hasText: 'Study Visits' })).toContainText('Synthetic visit schedule.');
+    await expect(summary.locator('.sna-pencil-btn')).toHaveCount(0);
 });
 
 // ### Hidden Values ###
@@ -3898,16 +4344,16 @@ test('hides values in custom permission level names and descriptions in the perm
     expect(permissions + levels).not.toContain('555-014');
 });
 
-test('gives no value set to a column whose term set has no terms', async function({ page }, testInfo) {
+test('gives a column whose term set has no terms a value set with no values', async function({ page }, testInfo) {
     await openPretendSite(page, { answerOverrides: [{ pattern: TERMS_PATTERN, body: { value: [] } }].concat(taxonomyColumnAnswers()) });
     await extractSiteInformation(page);
 
     const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
-    const fieldRows = sheetRows(workbook, 'Fields');
-    const header = fieldRows[0];
-    const armTagRow = fieldRows.filter(function(r) { return r[header.indexOf('internal_name')] === 'ArmTag'; })[0];
-    expect(armTagRow[header.indexOf('value_set_id')]).toBe('');
-    expect(sheetRows(workbook, 'Value_Sets').filter(function(r) { return r[1] === 'Study Arms'; })).toEqual([]);
+    const armTag = sheetObjects(workbook, 'Fields').filter(function(r) { return r.internal_name === 'ArmTag'; })[0];
+    expect(armTag.value_set_id).toBe(TERM_SET_ID);
+    expect(valueSetDefinition(workbook, TERM_SET_ID)).toMatchObject({ value_set_name: 'Study Arms', values_listed: 'All', hierarchy_listed: 'All' });
+    expect(sheetObjects(workbook, 'Value_Sets').filter(function(r) { return r.value_set_id === TERM_SET_ID; })).toEqual([]);
+    expectValueSetKeys(workbook);
 });
 
 test('leaves out the parent column of a term set whose terms were never looked up because the lookup limit ran out', async function({ page }) {
