@@ -169,7 +169,7 @@ The `format_version` row of **Export_Info** gives the version, such as `1.1`.
 | status | Status | `Active` |
 | notes | Explanation for people | Blank |
 | multi_valued | `Y` when one record can hold more than one value in this field | `Y` for `MultiChoice`, `LookupMulti`, `UserMulti`, and `TaxonomyFieldTypeMulti` columns |
-| value_set_root_code | The `value_code` under which this field's values must be. Blank means it can use the whole value set. | The term a managed metadata column starts at |
+| value_set_root_code | The `value_code` under which this field's values must be. Only the values under it can be chosen, not that value itself. Blank means it can use the whole value set. | The term a managed metadata column starts at |
 | allows_other_values | `Y` when people can enter a value that isn't in the value set | From a choice column's fill-in setting; `Y` for Enterprise Keywords; blank for other columns |
 
 ### Value_Sets
@@ -254,7 +254,7 @@ Sitenalyzer makes a value set for each choice column and each term set a column 
 
 A managed metadata column also has these values:
 
-- `value_set_root_code`: the ID of the term the column starts at, when it offers only the terms under one term.
+- `value_set_root_code`: the ID of the term the column starts at, when it offers only the terms under one term. People can choose the terms under it, but not that term itself.
 - `multi_valued`: `Y` when it allows several values.
 - A **Relationships** row of type `Lookup`, to TaxonomyHiddenList. SharePoint saves each term in a column as a lookup to TaxonomyHiddenList, a hidden list with a copy of each term used in the site collection. The meaning of the values comes from the term set, not from that list. When a column points to it, TaxonomyHiddenList also has a row in **Assets**. On a subsite, its address is in the top-level site.
 
