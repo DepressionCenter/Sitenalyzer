@@ -310,16 +310,24 @@ const COPY_FAILURE_MESSAGE = "Couldn't copy the ID. Select the displayed ID and 
     });
 });
 
-test('clipboard copy: failure keeps the ID and accessible message available for manual copying', async function({ page }) {
+test('clipboard copy: failure message expires after ten seconds while the ID stays available', async function({ page }) {
     const copy = await prepareClipboardCopy(page, 'reject', false);
-    await page.clock.install();
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-01-01T00:00:01Z'));
     await copy.button.focus();
     await copy.button.press('Space');
     await expect(copy.toast).toHaveText(COPY_FAILURE_MESSAGE);
-    await page.clock.fastForward(6000);
+    await page.clock.fastForward(9999);
     await expect(copy.display).toBeVisible();
     await expect(copy.toast).toHaveClass(/visible/);
     await expect(copy.button).toBeFocused();
+    await page.clock.fastForward(1);
+    await expect(copy.toast).not.toHaveClass(/visible/);
+    await expect(copy.display).toHaveText(LIST_ID);
+    await expect(copy.display).toBeVisible();
+    await expect(copy.button).toBeFocused();
+    // Axe needs its own timers while checking the remaining manual-copy controls.
+    await page.clock.resume();
     await expectNoAxeViolations(page);
     await page.setViewportSize({ width: 320, height: 800 });
     await expect(copy.display).toBeVisible();
@@ -331,12 +339,18 @@ test('clipboard copy: failure keeps the ID and accessible message available for 
 
 test('clipboard copy: success still hides the revealed ID after five seconds', async function({ page }) {
     const copy = await prepareClipboardCopy(page, 'success', false);
-    await page.clock.install();
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-01-01T00:00:01Z'));
     await copy.button.focus();
     await copy.button.press('Enter');
     await expect(copy.toast).toHaveText('List ID copied!');
     await expect(copy.display).toBeVisible();
-    await page.clock.fastForward(5000);
+    await page.clock.fastForward(2199);
+    await expect(copy.toast).toHaveClass(/visible/);
+    await page.clock.fastForward(1);
+    await expect(copy.toast).not.toHaveClass(/visible/);
+    await expect(copy.display).toBeVisible();
+    await page.clock.fastForward(2800);
     await expect(copy.display).toBeHidden();
     await expect(copy.toast).not.toHaveClass(/visible/);
     await expect(copy.button).toBeFocused();
@@ -358,7 +372,8 @@ test('clipboard copy: a removed initiating control does not prevent fallback cle
 
 test('clipboard copy: later attempts replace feedback without an earlier timer hiding the error', async function({ page }) {
     const copy = await prepareClipboardCopy(page, 'success', false);
-    await page.clock.install();
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-01-01T00:00:01Z'));
     await copy.button.focus();
     await copy.button.press('Enter');
     await expect(copy.toast).toHaveText('List ID copied!');
@@ -368,7 +383,7 @@ test('clipboard copy: later attempts replace feedback without an earlier timer h
     });
     await copy.button.press('Enter');
     await expect(copy.toast).toHaveText(COPY_FAILURE_MESSAGE);
-    await page.clock.fastForward(6000);
+    await page.clock.fastForward(9000);
     await expect(copy.toast).toHaveClass(/visible/);
     await expect(copy.display).toBeVisible();
     await page.evaluate(function() {
@@ -377,9 +392,34 @@ test('clipboard copy: later attempts replace feedback without an earlier timer h
     await copy.button.press('Enter');
     await expect(copy.toast).toHaveText('List ID copied!');
     await expect(copy.toast).toHaveCSS('background-color', 'rgb(50, 49, 48)');
-    await page.clock.fastForward(5000);
+    await page.clock.fastForward(1000);
+    await expect(copy.toast).toHaveText('List ID copied!');
+    await expect(copy.toast).toHaveClass(/visible/);
+    await page.clock.fastForward(1200);
+    await expect(copy.toast).not.toHaveClass(/visible/);
+    await expect(copy.display).toBeVisible();
+    await page.clock.fastForward(2800);
     await expect(copy.display).toBeHidden();
     await expect(copy.toast).not.toHaveClass(/visible/);
+    await expect(copy.button).toBeFocused();
+});
+
+test('clipboard copy: a repeated error gets its own full timeout', async function({ page }) {
+    const copy = await prepareClipboardCopy(page, 'missing', false);
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-01-01T00:00:01Z'));
+    await copy.button.focus();
+    await copy.button.press('Enter');
+    await expect(copy.toast).toHaveText(COPY_FAILURE_MESSAGE);
+    await page.clock.fastForward(9000);
+    await copy.button.press('Enter');
+    await page.clock.fastForward(1000);
+    await expect(copy.toast).toHaveClass(/visible/);
+    await page.clock.fastForward(8999);
+    await expect(copy.toast).toHaveClass(/visible/);
+    await page.clock.fastForward(1);
+    await expect(copy.toast).not.toHaveClass(/visible/);
+    await expect(copy.display).toBeVisible();
     await expect(copy.button).toBeFocused();
 });
 
@@ -1154,10 +1194,17 @@ test('explains why a data dictionary cannot be saved when no columns or file ass
         skillLibraryAnswer(reply(404, { error: 'Library not found' }))
     ] });
     await extractSiteInformation(page);
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-01-01T00:00:01Z'));
     const downloads = [];
     page.on('download', function(download) { downloads.push(download); });
     await page.getByRole('button', { name: /Data dictionary/ }).click();
     await expect(page.locator('#sna-copy-toast')).toHaveText('No list, column, agent, or site skill data is available to export. Refresh the report to try again.');
+    const toast = page.locator('#sna-copy-toast');
+    await page.clock.fastForward(9999);
+    await expect(toast).toHaveClass(/visible/);
+    await page.clock.fastForward(1);
+    await expect(toast).not.toHaveClass(/visible/);
     expect(downloads).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
     expect(changeRequests(record)).toEqual([]);

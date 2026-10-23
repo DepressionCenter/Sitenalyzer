@@ -126,7 +126,8 @@ Above the tabs are the **ID**, **Open**, and **Permissions** buttons. **ID** cop
 
 After you select **ID**, the ID appears beside the button for five seconds. A status message confirms when copying succeeds.
 If copying fails, the message tells you to select the displayed ID and copy it manually.
-The ID and message stay visible so you have time to copy it. A later status message replaces the error.
+The message hides after about ten seconds, but the ID stays visible so you can still copy it.
+A later status message replaces the error. Success messages hide after about two seconds.
 Keyboard focus returns to the control you used if it is still on the page.
 
 #### Tables in the report
