@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-sharepoint.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-22
+Last Modified: 2026-10-23
 Summary: A pretend SharePoint Online site for the browser tests. Playwright answers every request to
          https://contoso.sharepoint.com itself: the page holds the code from dist/SitePages/sitenalyzer.html.txt,
          files under SiteAssets come from dist/SiteAssets, and REST API calls get the synthetic answers below.
@@ -135,6 +135,10 @@ const lists = {
         }
     ]
 };
+
+// Hidden lists that the report leaves out. Managed metadata columns read from TaxonomyHiddenList, which is in the top-level site.
+const TAXONOMY_HIDDEN_LIST_ID = 'aaaaaaaa-0000-4000-8000-000000000099';
+const hiddenLists = [{ Id: TAXONOMY_HIDDEN_LIST_ID, Title: 'TaxonomyHiddenList' }];
 
 const listRoleAssignments = {
     value: [
@@ -305,8 +309,10 @@ const API_ANSWERS = [
                     DefaultViewUrl: SITE_PATH + '/SitePages/Forms/AllItems.aspx' }
             ]) };
         }
+        if (filter === 'Hidden eq true') { return { value: hiddenLists }; }
         return lists;
     } },
+    { pattern: /^\/_api\/site\/rootweb\/lists$/, body: { value: hiddenLists } },
     { pattern: /^\/_api\/web\/GetList\(@listUrl\)$/, answer: function(url) {
         return url.searchParams.get('@listUrl') === "'" + SITE_PATH + "/Agent Assets'"
             ? { Id: AGENT_ASSETS_ID, Title: 'Agent Assets', BaseTemplate: 101, Hidden: true,
@@ -539,4 +545,4 @@ async function openPretendSite(page, options) {
     return record;
 }
 
-module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields, AGENT_ASSETS_ID, agentItems, skillItems };
+module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields, AGENT_ASSETS_ID, agentItems, skillItems, TAXONOMY_HIDDEN_LIST_ID };

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-22
+Last Modified: 2026-10-23
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -175,7 +175,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = 'f9dbda48cb5f';
+var SNA_ASSET_VERSION = 'bb8972775936';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
@@ -202,6 +202,12 @@ var SNA_SKILL_TEXT_MAX_CHARS = 65536; // Characters inspected at the start of ea
 // are read one term at a time only when SharePoint doesn't return each term's children with the term set's terms.
 var SNA_TERMS_PER_SET_MAX = 10000;
 var SNA_TERM_CHILD_LOOKUPS = 1000;
+
+// Most term sets named from the term store in each report, for columns whose term set isn't in the site's term groups.
+var SNA_TERM_SET_NAME_LOOKUPS = 50;
+
+// Choices shown for a column before its Show all button. The printed report shows every choice.
+var SNA_CHOICES_SHOWN = 5;
 
 // Most requests that run at the same time, such as group member lookups. Keeps large sites from being throttled.
 var SNA_MAX_PARALLEL_REQUESTS = 6;
@@ -340,6 +346,7 @@ function snaGetFieldTypeIcon(spType, calcType) {
 var _snaTablesQueue = [];
 var _snaTabInstances = {};
 var _snaTableFilters = {};
+var _snaOpenChoices = {};         // Columns whose choices are all shown, by the column's key from snaRowEditKey
 var _snaTabMeta = {};             // The _snaTablesQueue entry each table was built from, by element id
 
 // Fields that hold a person's or group's name, email, or sign-in name, by table type. They are shown as they are
@@ -467,10 +474,18 @@ function snaTableColumnSettings(type, tbl) {
         }
       },
       { title: 'Required', field: 'required', sorter: 'boolean', width: 120, formatter: yesFormatter },
-      { title: 'Choices', field: 'choices', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
       { title: 'Lookup list', field: 'lookupList', sorter: 'string', widthGrow: 1.5, minWidth: 110 },
+      {
+        title: 'Term set', field: 'termSetName', sorter: 'string', widthGrow: 1.5, minWidth: 110, visible: !!tbl.hasTermSets,
+        formatter: function(cell) { return snaColumnTermSetHtml(cell.getRow().getData()); }
+      },
+      {
+        title: 'Choices', field: 'choices', sorter: 'string', widthGrow: 2, minWidth: 140, visible: technical,
+        formatter: function(cell) { return snaChoicesHtml(cell.getRow().getData()); }
+      },
       { title: 'Internal name', field: 'internalName', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical },
       { title: 'Lookup target', field: 'lookupTarget', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter },
+      { title: 'Term set ID', field: 'termSetId', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical && !!tbl.hasTermSets, formatter: idFormatter },
       { title: 'Column ID', field: 'fieldId', sorter: 'string', widthGrow: 2, minWidth: 130, visible: technical, formatter: idFormatter },
       { title: 'Default value', field: 'defaultValue', sorter: 'string', widthGrow: 1.5, minWidth: 110, visible: technical },
       { title: 'Max length', field: 'maxLength', sorter: 'number', width: 110, visible: technical },
@@ -530,7 +545,13 @@ function snaTableColumnSettings(type, tbl) {
           return '<a href="' + snaEscapeHtml(rowData.route) + '" data-nav-focus="detail">' + snaEscapeHtml(cell.getValue()) + '</a>';
         }
       },
-      { title: 'Description', field: 'description', sorter: 'string', widthGrow: 3, minWidth: 120, formatter: 'textarea' },
+      {
+        title: 'Description', field: 'description', sorter: 'string', widthGrow: 3, minWidth: 120,
+        formatter: function(cell) {
+          var row = cell.getRow().getData();
+          return renderAdminDescWrap(cell.getValue(), snaRowEditKey('lists', tbl, row), row.title);
+        }
+      },
       { title: 'Items', field: 'items', sorter: 'number', width: 90, hozAlign: 'right' },
       { title: 'Columns', field: 'columns', sorter: 'number', width: 125, hozAlign: 'right' },
       {
@@ -693,11 +714,65 @@ function snaQueueTableHtml(entry, className) {
   return '<div id="' + snaEscapeHtml(entry.id) + '"' + (className ? ' class="' + className + '"' : '') + '></div>';
 }
 
-// Returns the description key of a row in a columns or terms table, the same key snaSaveDescription takes, or ''.
+// Returns the description key of a row in a lists, columns, or terms table, the same key snaSaveDescription takes, or ''.
 function snaRowEditKey(type, tbl, row) {
+  if (type === 'lists') { return 'list:' + (row.id || ''); }
   if (type === 'fields') { return 'column:' + (row.listId || '') + ':' + (row.fieldId || row.internalName || ''); }
   if (type === 'terms') { return 'term:' + ((tbl && tbl.setId) || '') + ':' + (row.termId || ''); }
   return '';
+}
+
+// Returns the choices of a column in the columns table. A column with more than SNA_CHOICES_SHOWN choices shows the
+// first ones and a button that shows all of them, or fewer again.
+function snaChoicesHtml(row) {
+  var choices = row.choiceList || [];
+  if (choices.length <= SNA_CHOICES_SHOWN) { return snaEscapeHtml(choices.join('; ')); }
+  var key = snaRowEditKey('fields', null, row);
+  var open = !!_snaOpenChoices[key];
+  var shown = open ? choices : choices.slice(0, SNA_CHOICES_SHOWN);
+  return '<span class="sna-choices-text">' + snaEscapeHtml(shown.join('; ') + (open ? '' : '; ...')) + '</span> ' +
+    '<button type="button" class="sna-link-btn sna-choices-btn hide-on-print" data-action="toggle-choices" data-choices-key="' + snaEscapeHtml(key) + '"' +
+      ' aria-expanded="' + (open ? 'true' : 'false') + '">' +
+      (open ? 'Show fewer' : 'Show all ' + choices.length) +
+      '<span class="sna-visually-hidden"> choices of ' + snaEscapeHtml(row.title || row.internalName) + '</span></button>';
+}
+
+// Shows all of a column's choices, or the first ones again, and keeps focus on the button.
+function snaToggleChoices(button) {
+  var key = button.getAttribute('data-choices-key') || '';
+  if (_snaOpenChoices[key]) { delete _snaOpenChoices[key]; } else { _snaOpenChoices[key] = true; }
+  var tableEl = button.closest('.tabulator');
+  var table = tableEl ? _snaTabInstances[tableEl.id] : null;
+  var rowEl = button.closest('.tabulator-row');
+  var row = (table && rowEl) ? table.getRows().filter(function(r) { return r.getElement() === rowEl; })[0] : null;
+  if (!row) { return; }
+  row.reformat();
+  // The table keeps the height it had when it was drawn, so it is drawn again to fit the row's new height.
+  requestAnimationFrame(function() {
+    row.normalizeHeight();
+    table.redraw();
+    var again = Array.prototype.filter.call(row.getElement().querySelectorAll('.sna-choices-btn'), function(b) {
+      return b.getAttribute('data-choices-key') === key;
+    })[0];
+    if (again) { again.focus(); }
+  });
+}
+
+// Returns the name of the term set a managed metadata column uses, 'Not read' when Sitenalyzer could not read it,
+// or '' for other columns.
+function snaColumnTermSetText(column) {
+  if (!column.isTaxonomy) { return ''; }
+  return column.termSetName || 'Not read';
+}
+
+// Returns the term set of a column in the columns table. A term set in this site collection's term groups links to it
+// in Taxonomy. Others, such as the Keywords term set of the Enterprise Keywords column, are named without a link.
+function snaColumnTermSetHtml(row) {
+  if (!row.isTaxonomy) { return ''; }
+  if (!row.termSetName) { return '<span class="sna-muted">Not read</span>'; }
+  if (!row.termSetLinked) { return snaEscapeHtml(row.termSetName); }
+  return '<a href="' + snaEscapeHtml(snaRouteHash({ section: 'taxonomy', anchor: snaCleanListId(row.termSetId) })) + '">' +
+    snaEscapeHtml(row.termSetName) + '</a>';
 }
 
 // Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
@@ -3168,6 +3243,7 @@ function snaHandleAppClick(e) {
     else if (action === 'close-site-dialog') { snaCloseSiteDialog(); }
     else if (action === 'choose-site') { snaOpenSite(target.getAttribute('data-url')); }
     else if (action === 'refresh-sites') { snaRefreshSiteChoices(); }
+    else if (action === 'toggle-choices') { snaToggleChoices(target); }
     else if (action === 'start-over') { if (snaConfirmDiscardDrafts('Start over')) { startOver(false); } }
     else if (action === 'refresh-report') { snaRefreshReport(); }
     else if (action === 'scroll-top') { snaScrollToNav(); }
@@ -3297,6 +3373,7 @@ function snaClearReport() {
     _snaTablesQueue = [];
     _snaTabInstances = {};
     _snaTableFilters = {};
+    _snaOpenChoices = {};
     _snaSearchIndex = [];
     snaResetPermissionState();
     _snaTaxonomyData     = [];
@@ -3435,11 +3512,8 @@ async function collectReport(targetUrl, onProgress, token) {
     stillWanted();
     _snaAllListsMeta = (allLists && allLists.value) ? allLists.value : [];
 
-    // Build a map of list GUID -> Title for lookup field resolution
-    var listIdMap = {};
-    _snaAllListsMeta.forEach(function(lst) {
-        listIdMap[snaCleanListId(lst.Id)] = lst.Title;
-    });
+    var listIdMap = await snaFetchListNames(targetUrl, _snaAllListsMeta);
+    stillWanted();
 
     var lists = [];
     for (var i = 0; i < _snaAllListsMeta.length; i++) {
@@ -3462,6 +3536,8 @@ async function collectReport(targetUrl, onProgress, token) {
     _snaTaxonomyData     = taxonomy.groups;
     _snaSiteCollectionId = taxonomy.siteCollectionId;
     _snaTermStoreId      = taxonomy.termStoreId;
+    await snaNameColumnTermSets(targetUrl, lists, taxonomy);
+    stillWanted();
     await snaExpandGroups(targetUrl);
     var sitePages = await sitePagesPromise;
     var siteAgents = await siteAgentsPromise;
@@ -3548,13 +3624,80 @@ function snaItemTotal(lists) {
     return lists.reduce(function(total, l) { return total + (Number(l.itemCount) || 0); }, 0);
 }
 
+// Returns a map of lowercase list ID to list title, for naming the list a lookup column reads from. lists are the lists
+// in the report. Lookup columns can also read from hidden lists that the report leaves out: managed metadata columns
+// read from TaxonomyHiddenList, which on a subsite is in the top-level site. A failed read leaves those lists unnamed.
+async function snaFetchListNames(targetUrl, lists) {
+    var names = {};
+    lists.forEach(function(lst) { names[snaCleanListId(lst.Id)] = lst.Title; });
+    var hiddenListsUrls = [
+        targetUrl + '/_api/web/lists?$select=Id,Title&$filter=Hidden eq true',
+        targetUrl + "/_api/site/rootweb/lists?$select=Id,Title&$filter=Title eq 'TaxonomyHiddenList'"
+    ];
+    var responses = await Promise.all(hiddenListsUrls.map(function(url) {
+        return spFetch(url).catch(function(e) {
+            console.warn('Sitenalyzer: could not read the names of hidden lists:', e);
+            return null;
+        });
+    }));
+    responses.forEach(function(resp) {
+        ((resp && resp.value) ? resp.value : []).forEach(function(lst) {
+            var id = snaCleanListId(lst.Id);
+            if (id && !names[id]) { names[id] = lst.Title || ''; }
+        });
+    });
+    return names;
+}
+
+// Names the term set of each managed metadata column in lists. A term set in one of the site collection's term groups
+// (taxonomy.groups) is named from the report, and Taxonomy can show it. Other term sets, such as ones every site can
+// use, are read from the term store, up to SNA_TERM_SET_NAME_LOOKUPS of them. A term set that can't be read stays unnamed.
+async function snaNameColumnTermSets(targetUrl, lists, taxonomy) {
+    var inReport = {};
+    (taxonomy.groups || []).forEach(function(group) {
+        (group.termSets || []).forEach(function(set) { inReport[snaCleanListId(set.setId)] = set.setName || ''; });
+    });
+    var columns = [];
+    lists.forEach(function(list) { list.columns.forEach(function(c) { if (c.isTaxonomy) { columns.push(c); } }); });
+
+    var otherNames = {};
+    var toRead = [];
+    columns.forEach(function(c) {
+        var id = snaCleanListId(c.termSetId);
+        if (id && !(id in inReport) && toRead.indexOf(id) === -1) { toRead.push(id); }
+    });
+    if (taxonomy.siteCollectionId && toRead.length > 0) {
+        var termBase = targetUrl + '/_api/v2.1/sites/' + taxonomy.siteCollectionId + '/termStore/sets/';
+        await snaMapWithLimit(toRead.slice(0, SNA_TERM_SET_NAME_LOOKUPS), SNA_MAX_PARALLEL_REQUESTS, async function(id) {
+            try {
+                var set = await spFetch(termBase + id);
+                var name = (set && set.localizedNames && set.localizedNames[0]) ? set.localizedNames[0].name : '';
+                if (name) { otherNames[id] = name; }
+            } catch(e) { /* The column's term set stays unnamed. */ }
+        });
+    }
+
+    columns.forEach(function(c) {
+        var id = snaCleanListId(c.termSetId);
+        if (id && inReport[id]) {
+            c.termSetName = inReport[id];
+            c.termSetLinked = true;
+        } else if (id && otherNames[id]) {
+            c.termSetName = otherNames[id];
+        } else if (!id && c.internalName === 'TaxKeyword') {
+            // The Enterprise Keywords column doesn't name a term set; SharePoint saves its values in the term store's Keywords term set.
+            c.termSetName = 'Keywords';
+        }
+    });
+}
+
 // Reads one list or library: its permissions when it has its own, its columns, and, for document libraries, its
 // top-level folders. Adds its columns to globalExportedData and its permissions to the access list.
 // Returns { id, routeId, title, internalName, description, itemCount, isLib, isSystem, baseTemplate, url, lastModified,
 // versioning { enabled, minor, majorLimit }, raw, permissions { inherits, rolesRead, roleAssignments },
 // columns [], columnsStatus 'read'|'empty'|'failed', termSetsStatus 'read'|'failed'|'' (no managed metadata column),
 // folders [], foldersStatus 'read'|'empty'|'failed'|'' (lists) }. A managed metadata column also has termSetId and
-// anchorTermId, lowercase GUIDs or '', and allowsSeveral.
+// anchorTermId, lowercase GUIDs or '', and allowsSeveral. snaNameColumnTermSets adds termSetName and termSetLinked.
 async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
     var isDocLib = list.BaseTemplate === 101;
     var listTypeLabel = isDocLib ? "Document Library" : "List";
@@ -3635,6 +3778,7 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 fieldId:      f.Id || '',
                 required:     f.Required ? true : false,
                 choices:      choices.join('; '),
+                choiceList:   choices.slice(),
                 defaultValue: f.DefaultValue ? String(f.DefaultValue) : '',
                 maxLength:    maxLength,
                 indexed:      f.Indexed ? true : false,
@@ -3643,7 +3787,9 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
                 isTaxonomy:   SNA_TAXONOMY_FIELD_TYPES.indexOf(f.TypeAsString) > -1,
                 allowsSeveral: f.TypeAsString === 'TaxonomyFieldTypeMulti',
                 termSetId:    '',
-                anchorTermId: ''
+                anchorTermId: '',
+                termSetName:  '',
+                termSetLinked: false
             });
             globalExportedData.push({
                 ListTitle:    list.Title,
@@ -6239,7 +6385,8 @@ function snaRenderListTab(list, tab) {
         if (list.columnsStatus === 'failed') { return '<p class="sna-error-text">Sitenalyzer could not read the columns. Refresh the report to try again.</p>'; }
         if (list.columns.length === 0) { return '<p class="sna-muted">No visible columns found.</p>'; }
         var columnsId = 'sna-tbl-f-' + list.routeId;
-        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', label: 'Columns of ' + list.title, data: list.columns });
+        _snaTablesQueue.push({ id: columnsId, type: 'fields', searchLabel: 'columns', label: 'Columns of ' + list.title, data: list.columns,
+            hasTermSets: list.columns.some(function(c) { return c.isTaxonomy; }) });
         return '<div id="' + columnsId + '" class="sna-fields-table"></div>';
     }
     if (tab === 'folders') {
@@ -6834,9 +6981,12 @@ function snaPrintListHtml(list) {
         html += '<p>No visible columns found.</p>';
     } else {
         // The columns are in two tables so that each one fits the width of a page.
-        html += snaPrintTableHtml('Columns of ' + list.title, ['Title', 'Data type', 'Required', 'Description', 'Choices', 'Lookup list'],
+        var hasTermSets = list.columns.some(function(c) { return c.isTaxonomy; });
+        html += snaPrintTableHtml('Columns of ' + list.title,
+            ['Title', 'Data type', 'Required', 'Description', 'Choices', 'Lookup list'].concat(hasTermSets ? ['Term set'] : []),
             list.columns.map(function(c) {
-                return [c.title, c.dataType, c.required ? 'Yes' : 'No', c.description || 'No description.', c.choices, c.lookupList];
+                return [c.title, c.dataType, c.required ? 'Yes' : 'No', c.description || 'No description.', c.choices, c.lookupList]
+                    .concat(hasTermSets ? [snaColumnTermSetText(c)] : []);
             }), '') +
             snaPrintTableHtml('Technical details of the columns of ' + list.title,
                 ['Title', 'Internal name', 'Column ID', 'Lookup target', 'Default value', 'Max length', 'Indexed', 'Formula'],

@@ -103,7 +103,7 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 
 #### Contents summary
 
-The **Contents summary** shows the number of items in all lists and libraries, not counting system lists, the number of columns and top-level folders, and how many lists and libraries have their own permissions. It also says where and when the most recent change happened: the last time an item, file, or page was added, changed, or deleted in any list or library. Under that are tables of every document library and list, with each one's description, number of items and columns, last change, and whether it has its own permissions. Select a name to open its details. **Contents summary** at the top of the list brings the summary back.
+The **Contents summary** shows the number of items in all lists and libraries, not counting system lists, the number of columns and top-level folders, and how many lists and libraries have their own permissions. It also says where and when the most recent change happened: the last time an item, file, or page was added, changed, or deleted in any list or library. Under that are tables of every document library and list, with each one's description, number of items and columns, last change, and whether it has its own permissions. If you can manage the site, you can edit each description right in these tables. See [Edit a description](#edit-a-description). Select a name to open its details. **Contents summary** at the top of the list brings the summary back.
 
 #### System lists
 
@@ -115,8 +115,12 @@ The details of a list or library have these tabs:
 
 - **Overview**: its description, number of items, last change, version history setting, and whether it has its own permissions.
 - **Folders**, for document libraries: its top-level folders, with the number of items in each.
-- **Columns**: each column's title, data type, description, whether it is required, its choices, and the list a lookup column reads from.
+- **Columns**: each column's title, data type, description, whether it is required, the list a lookup column reads from, and the term set a managed metadata column uses.
 - **Permissions**: the people and groups with permissions on it, or a note that it uses the site's permissions.
+
+Managed metadata columns offer terms from the term store. Their lookup list is a hidden list named TaxonomyHiddenList, and their **Term set** shows the term set they use, such as "Study Arms". Select a term set to open it in **Taxonomy**. A term set that isn't in this site collection's term groups has no link, because **Taxonomy** doesn't show it. One example is the Keywords term set of the **Enterprise Keywords** column. If Sitenalyzer couldn't read a term set, it shows **Not read**.
+
+With **Show technical details** on, the **Columns** tab also shows the choices of each choice column. If a column has more than 5 choices, the tab shows the first 5. Select **Show all** to see every choice, and **Show fewer** to hide the rest again. The printed report always shows every choice.
 
 Above the tabs are the **ID**, **Open**, and **Permissions** buttons. **ID** copies the list or library ID. **Permissions** opens SharePoint's own permissions page for it. On a narrow screen, the details replace the list; select **Back to results** to return to it.
 
@@ -144,7 +148,7 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 ### Technical details
 
-**Show technical details** is off at first. When you turn it on, every section adds the values developers need: internal names, list, library, column, folder, term, term set, term group, and term store IDs, lookup targets, default values, maximum lengths, indexed columns, and calculation formulas. The site ID appears under the site's address, with a **Copy** button. Search finds these values even when the switch is off, and the workbooks and the printed report always include them.
+**Show technical details** is off at first. When you turn it on, every section adds the values developers need: internal names, list, library, column, folder, term, term set, term group, and term store IDs, column choices, lookup targets, default values, maximum lengths, indexed columns, and calculation formulas. The site ID appears under the site's address, with a **Copy** button. Search finds these values even when the switch is off, and the workbooks and the printed report always include them.
 
 Sitenalyzer remembers the setting in this browser. See [Browser storage](architecture.md#browser-storage).
 
@@ -279,7 +283,7 @@ The printed report is built from everything Sitenalyzer read, not from what is o
 
 1. The site's name, address, description, ID, when the report was collected, and who collected it.
 2. **Contents**: a table of every list and library.
-3. **Document libraries**, **Lists**, and **System lists**, when the site has any: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, and descriptions, and one with internal names, IDs, and other technical details.
+3. **Document libraries**, **Lists**, and **System lists**, when the site has any: each one's details, top-level folders, columns, and permissions. Columns are in two tables, so each fits a page: one with titles, types, descriptions, choices, lookup lists, and term sets, and one with internal names, IDs, and other technical details.
 4. **Site pages**.
 5. **Agents and skills**.
 6. **Permissions**: the access findings, site permissions, people and groups with their members, the result of **Check a person's access** if you ran one, lists and libraries with their own permissions, sharing links, and apps.

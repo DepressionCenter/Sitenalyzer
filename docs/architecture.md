@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/architecture.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-22
+Last Modified: 2026-10-23
 Summary: How Sitenalyzer's files fit together, how it starts on a SharePoint page, and why it is built this way.
 Notes: See README file for documentation and full license information.
 
@@ -89,6 +89,8 @@ Every request is a read made with the signed-in person's own permissions. The on
 | Fields, root folders, and the term store (`/_api/v2.1/sites/…/termStore`) | Columns, top-level folders, and terms for the data dictionary. |
 | `…/termStore/sets/<ID>/terms?$expand=children`, and `…/terms/<ID>/children` when needed | Which term each term sits under. See [Parent terms and term set use](#parent-terms-and-term-set-use). |
 | `/_api/web/lists(guid'…')/fields` and `/_api/web/fields`, each filtered to managed metadata columns, with `SchemaXml` | Which columns use each term set. A list sends this request only when it has a managed metadata column. |
+| `/_api/web/lists?$filter=Hidden eq true` and `/_api/site/rootweb/lists?$filter=Title eq 'TaxonomyHiddenList'` | Names of hidden lists that lookup columns read from. Managed metadata columns read from TaxonomyHiddenList, which on a subsite is in the top-level site. A failed read leaves the list ID in **Lookup list**. |
+| `…/termStore/sets/<ID>` | Names of term sets that managed metadata columns use but that aren't in the site collection's term groups, such as term sets every site can use. Up to `SNA_TERM_SET_NAME_LOOKUPS` (50) are read. |
 
 Group member lookups and person checks run at most 6 at a time (`SNA_MAX_PARALLEL_REQUESTS`), so large sites aren't slowed down by SharePoint's request limits.
 
