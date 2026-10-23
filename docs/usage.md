@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/usage.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-21
+Last Modified: 2026-10-22
 Summary: How to install, update, and use Sitenalyzer on a SharePoint Online site.
 Notes: See README file for documentation and full license information.
 
@@ -257,7 +257,7 @@ Sitenalyzer reads Site Pages 2,000 items at a time, up to 10,000 items. If the l
 
 Select **Agents and skills** in **Contents** to see two tables. **Agents** lists the `.agent` files you can read in the site's document libraries. Each row shows its library, folder, last change, creator, and permissions. Select its name to open the file. Select **Permissions** beside **Own permissions** to open that file's permissions page.
 
-In both tables, **Inherited permissions** means the file uses its parent folder's or library's permissions. Sitenalyzer does not check which parent supplies them.
+In both tables, a file without its own permissions says **Uses the library's permissions** when it is at the top of its library, or **Uses its folder's permissions** when it is in a folder.
 
 **Site skills** lists each `SKILL.md` at `Agent Assets/Skills/<name>/SKILL.md`. It shows the name and description from the text at the start of the file. If that text is missing or unreadable, the folder name is shown instead. Sitenalyzer reads text for up to 200 site skills. **Report coverage** says when a library or file could not be read.
 
@@ -320,7 +320,6 @@ You can now install Sitenalyzer on a site, use it to document the site and its p
 ### Additional resources
 
 - [Upgrade agents in SharePoint and OneDrive](https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents)
-
 - [Troubleshooting](troubleshooting.md)
 - [Sitenalyzer architecture](architecture.md)
 - [Modern Script Editor web part](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor)
