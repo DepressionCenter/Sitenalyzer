@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-22
+Last Modified: 2026-10-23
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -120,6 +120,7 @@ The tests check that:
 - **Show technical details** is off at first, shows internal names and IDs when on, including the site ID under the site's address, returns focus to the switch, and is remembered under `sitenalyzer:technical-details`.
 - Search results are grouped by kind with columns first, quoted phrases and too-short searches work, internal names are found but shown only with technical details on, and a column result opens its Columns tab.
 - A missing script or style sheet shows a message that names the file.
+- ID copying reports success once, only after the Clipboard API or the legacy copy command succeeds. Missing, unusable, rejected, or synchronously failing Clipboard API calls try the legacy command. A false return value or exception means failure. Tests check exact copied IDs, temporary textarea cleanup, keyboard focus, and a removed initiating control. Failed copies keep the ID and manual-copy instructions visible in the existing live status. Successful copies still hide the revealed ID after five seconds. The failure view passes axe, and ID text is never interpreted as markup.
 - axe finds no WCAG 2.2 AA problems on the start screen, in any section or part of the report screen, in an open description editor, or in **Choose a site**.
 
 The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresses, and IDs are made up. `openPretendSite(page, options)` takes these options:

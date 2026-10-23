@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-22
+Last Modified: 2026-10-23
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -3098,45 +3098,62 @@ function exportPermissionsToXLSX() {
     snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(siteTitle)) + '_Permissions_' + snaDateStamp(now) + '.xlsx');
 }
 
-// Copies text to clipboard and shows a brief toast notification; falls back to execCommand if needed.
-function snaCopyToClipboard(text, label) {
-    var toast = document.getElementById('sna-copy-toast');
-    navigator.clipboard.writeText(text).then(function() {
-        if (toast) {
-            toast.textContent = (label || 'ID') + ' copied!';
-            toast.classList.add('visible');
-            setTimeout(function() { toast.classList.remove('visible'); }, 1800);
+/**
+ * Copies an ID with the Clipboard API or the legacy copy command and announces the result in the live status.
+ * Clipboard access may be denied by the browser. The legacy attempt removes its textarea and restores focus.
+ * @param {string} text Exact ID to copy.
+ * @param {string} label Name used in the success message, or ID when omitted.
+ * @returns {Promise<boolean>} Whether a copy method reported success. Copy failures show manual-copy instructions.
+ */
+async function snaCopyToClipboard(text, label) {
+    var previousFocus = document.activeElement;
+    var copied = false;
+    try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(text);
+            copied = true;
         }
-    }, function() {
-        // Fallback for browsers without clipboard API
+    } catch (e) {
+        // A browser can deny Clipboard API access while still allowing the legacy copy command.
+    }
+    if (!copied) {
         var ta = document.createElement('textarea');
         ta.value = text;
         ta.style.position = 'fixed';
         ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        try { document.execCommand('copy'); } catch(e) { /* ignore */ }
-        document.body.removeChild(ta);
-        if (toast) {
-            toast.textContent = (label || 'ID') + ' copied!';
-            toast.classList.add('visible');
-            setTimeout(function() { toast.classList.remove('visible'); }, 1800);
+        try {
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            copied = document.execCommand('copy') === true;
+        } catch (e) {
+            copied = false;
+        } finally {
+            ta.remove();
+            if (previousFocus && previousFocus.isConnected && typeof previousFocus.focus === 'function') {
+                previousFocus.focus({ preventScroll: true });
+            }
         }
-    });
+    }
+    snaShowToast(copied ? (label || 'ID') + ' copied!' :
+        "Couldn't copy the ID. Select the displayed ID and copy it manually.", !copied, !copied);
+    return copied;
 }
 
-// Shows a brief bottom-center toast notification; pass isError=true for a red error style.
-function snaShowToast(msg, isError) {
+// Shows text in the live status. Errors use a red background; persistent messages remain until the next message.
+function snaShowToast(msg, isError, persistent) {
     var toast = document.getElementById('sna-copy-toast');
     if (!toast) { return; }
+    if (toast._snaHideTimer) { clearTimeout(toast._snaHideTimer); }
     toast.textContent = msg;
     toast.style.background = isError ? '#a4262c' : '#323130';
     toast.classList.add('visible');
-    setTimeout(function() {
-        toast.classList.remove('visible');
-        toast.style.background = '';
-    }, 2200);
+    if (!persistent) {
+        toast._snaHideTimer = setTimeout(function() {
+            toast.classList.remove('visible');
+            toast.style.background = '';
+        }, 2200);
+    }
 }
 
 // One click handler for the whole app: links to report views (#sna/...) and every button or link with data-action.
@@ -3253,15 +3270,19 @@ function snaScrollParent(el) {
     return document.scrollingElement || document.documentElement;
 }
 
-// Copy ID to clipboard and temporarily reveal it as small text next to the button.
-function snaCopyAndShowId(id, label, displayId) {
-    snaCopyToClipboard(id, label);
+// Reveals the ID beside its button for five seconds, or leaves it available for manual copying after a failure.
+async function snaCopyAndShowId(id, label, displayId) {
     var el = displayId ? document.getElementById(displayId) : null;
     if (el) {
         el.textContent = id;
         el.hidden = false;
         if (el._snaHideTimer) { clearTimeout(el._snaHideTimer); }
         el._snaHideTimer = setTimeout(function() { el.hidden = true; }, 5000);
+    }
+    var copied = await snaCopyToClipboard(id, label);
+    if (!copied && el && el.isConnected) {
+        clearTimeout(el._snaHideTimer);
+        el.hidden = false;
     }
 }
 
