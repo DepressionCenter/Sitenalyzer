@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/troubleshooting.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-21
+Last Modified: 2026-10-23
 Summary: Problems people can run into when installing or using Sitenalyzer, with causes and fixes.
 Notes: See README file for documentation and full license information.
 
@@ -120,6 +120,14 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 **Cause:** Sitenalyzer could not read the Agent Assets library or its items. This does not mean the site has no site skills.
 
 **Fix:** Select **Refresh report**. If it still fails, ask a site owner to check your access to Agent Assets. If only a site skill's text failed, its folder name is shown and its description is empty.
+
+### The console shows a 404 message for Agent Assets
+
+**Problem:** The browser console shows a red message with the status 404 for an address that includes `Agent%20Assets`, but Sitenalyzer works.
+
+**Cause:** Sitenalyzer looks for the site's Agent Assets library, where site skills are saved. A site with no site skills has no such library, so SharePoint answers that it doesn't exist. The browser shows that answer in the console, and Sitenalyzer can't hide it.
+
+**Fix:** Nothing is broken, and there is nothing to do. **Agents and skills** says "This site has no Agent Assets library, so it has no site skills."
 
 ### An old version still shows after an update
 

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 README.md - Main README file with overview, quick start guide and license information.
 Author(s): Gabriel Mongefranco
 Created: 2026-04-20
-Last Modified: 2026-10-21
+Last Modified: 2026-10-23
 Summary: Provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -42,17 +42,18 @@ With Sitenalyzer, you can:
 
 
 ## Quick Start Guide
-+ First, make sure the "Modern Script Editor" app is installed. If it isn't available, ask your site administrator to install it.
++ First, make sure the Modern Script Editor web part is installed. If it isn't available, ask your site administrator to install it.
++ Download the files: on this repository's GitHub page, select **Code** > **Download ZIP**, then unzip the file. You need the `dist` folder inside it.
 + In your site's Site Assets library (Settings > Site contents > Site Assets), create two folders named `scripts` and `styles`.
-+ Copy every file from [dist/SiteAssets/scripts/](dist/SiteAssets/scripts/) to your site's `SiteAssets/scripts` folder.
-+ Copy every file from [dist/SiteAssets/styles/](dist/SiteAssets/styles/) to your site's `SiteAssets/styles` folder.
-+ Go to your site's home page and create a new page from the Modern Script Editor template (Home > New > Page > Modern Script Editor). Use `sitenalyzer` for the page title, so the page address ends in `/SitePages/sitenalyzer.aspx`.
++ Upload every file from [dist/SiteAssets/scripts/](dist/SiteAssets/scripts/) to your site's `SiteAssets/scripts` folder.
++ Upload every file from [dist/SiteAssets/styles/](dist/SiteAssets/styles/) to your site's `SiteAssets/styles` folder.
++ Go to your site's home page and create a new page from the Modern Script Editor template (Home > New > Page > Modern Script Editor). Use `sitenalyzer` for the page title, so the page address ends in `/SitePages/sitenalyzer.aspx`. Keep the page in Site Pages itself, not in a folder inside it.
 + Select the "{ }" button under Edit HTML Code to open the code editor. Copy the contents of [dist/SitePages/sitenalyzer.html.txt](dist/SitePages/sitenalyzer.html.txt) and paste them into the code editor. Select Save in the code editor to close it, then select Save on the page to leave edit mode.
 + Refresh the page.
 + Enter a site address, or keep the current site's address in the box, and select **Extract site information**.
 + To save the data dictionary as a spreadsheet, select **Data dictionary (.xlsx)**. To save every permission, select **Permissions workbook (.xlsx)**.
 
-To install a newer version, copy the files from `dist/SiteAssets` again and replace the old ones. You don't need to change the page.
+To install a newer version, download the files again and upload the files from `dist/SiteAssets` to the same folders, replacing the old ones. You don't need to change the page. For the full steps, see [Installing and using Sitenalyzer](docs/usage.md).
 
 
 
