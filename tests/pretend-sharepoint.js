@@ -138,7 +138,10 @@ const lists = {
 
 // Hidden lists that the report leaves out. Managed metadata columns read from TaxonomyHiddenList, which is in the top-level site.
 const TAXONOMY_HIDDEN_LIST_ID = 'aaaaaaaa-0000-4000-8000-000000000099';
-const hiddenLists = [{ Id: TAXONOMY_HIDDEN_LIST_ID, Title: 'TaxonomyHiddenList' }];
+const hiddenLists = [{
+    Id: TAXONOMY_HIDDEN_LIST_ID, Title: 'TaxonomyHiddenList', EntityTypeName: 'TaxonomyHiddenListList', Description: '', ItemCount: 2,
+    DefaultViewUrl: SITE_PATH + '/Lists/TaxonomyHiddenList/AllItems.aspx', ParentWebUrl: SITE_PATH
+}];
 
 const listRoleAssignments = {
     value: [

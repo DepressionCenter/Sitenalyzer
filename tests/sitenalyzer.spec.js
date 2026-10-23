@@ -3709,6 +3709,82 @@ test('prints the term set of each managed metadata column', async function({ pag
     await expect(visits.locator('tbody tr', { hasText: 'Funder' })).toContainText('Not read');
     await expect(doc.getByRole('table', { name: 'Columns of Documents', exact: true }).locator('thead th'))
         .toHaveText(['Title', 'Data type', 'Required', 'Description', 'Choices', 'Lookup list']);
+    const technical = doc.getByRole('table', { name: 'Technical details of the columns of Study Visits' });
+    await expect(technical.locator('thead th')).toHaveText(['Title', 'Internal name', 'Column ID', 'Lookup target', 'Term set ID',
+        'Default value', 'Max length', 'Indexed', 'Formula']);
+    await expect(technical.locator('tbody tr', { hasText: 'Region' })).toContainText(REGIONS_SET_ID);
+    await expect(doc.getByRole('table', { name: 'Technical details of the columns of Documents' }).locator('thead th')).not.toContainText(['Term set ID']);
+});
+
+test('links each managed metadata column to TaxonomyHiddenList and names its term set in the data dictionary', async function({ page }, testInfo) {
+    await openPretendSite(page, { answerOverrides: termSetColumnAnswers() });
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+
+    // TaxonomyHiddenList is one asset, with a note that says what it is.
+    const assets = sheetRows(workbook, 'Assets');
+    const assetHeader = assets[0];
+    const hiddenListAssets = assets.filter(function(r) { return r[0] === TAXONOMY_HIDDEN_LIST_ID; });
+    expect(hiddenListAssets).toHaveLength(1);
+    const hiddenList = hiddenListAssets[0];
+    expect(hiddenList[assetHeader.indexOf('asset_display_name')]).toBe('TaxonomyHiddenList');
+    expect(hiddenList[assetHeader.indexOf('asset_type')]).toBe('SharePoint List');
+    expect(hiddenList[assetHeader.indexOf('url')]).toBe(new URL(SITE_URL).origin + SITE_PATH + '/Lists/TaxonomyHiddenList/AllItems.aspx');
+    expect(hiddenList[assetHeader.indexOf('record_count')]).toBe('2');
+    expect(hiddenList[assetHeader.indexOf('notes')]).toContain('Hidden list where SharePoint keeps a copy of each term');
+
+    // Each managed metadata column has one Relationships row to TaxonomyHiddenList; the multi-value column is M-M.
+    const fieldRows = sheetRows(workbook, 'Fields');
+    const fieldHeader = fieldRows[0];
+    function fieldRow(internalName) { return fieldRows.filter(function(r) { return r[fieldHeader.indexOf('internal_name')] === internalName; })[0]; }
+    const relationships = sheetRows(workbook, 'Relationships');
+    const relHeader = relationships[0];
+    const managed = relationships.filter(function(r) { return r[relHeader.indexOf('relationship_type')] === 'Managed metadata'; });
+    expect(managed).toHaveLength(TERM_SET_COLUMNS.length);
+    TERM_SET_COLUMNS.forEach(function(column) {
+        const row = managed.filter(function(r) { return r[relHeader.indexOf('from_field_id')] === column.Id; })[0];
+        expect(row[relHeader.indexOf('from_asset_id')]).toBe(LIST_ID);
+        expect(row[relHeader.indexOf('to_asset_id')]).toBe(TAXONOMY_HIDDEN_LIST_ID);
+        expect(row[relHeader.indexOf('cardinality')]).toBe(column.TypeAsString === 'TaxonomyFieldTypeMulti' ? 'M-M' : 'M-1');
+    });
+
+    // The notes name each term set. Only Study Arms, in the site's term groups, has a value set.
+    const notes = fieldHeader.indexOf('notes');
+    const valueSetId = fieldHeader.indexOf('value_set_id');
+    expect(fieldRow('ArmTag')[notes]).toBe('Term set: Study Arms (ID ' + TERM_SET_ID + ').');
+    expect(fieldRow('ArmTag')[valueSetId]).not.toBe('');
+    const notListed = ' Its terms aren\'t listed in Value_Sets, because the term set isn\'t in this site collection\'s term groups.';
+    expect(fieldRow('Region')[notes]).toBe('Term set: Regions (ID ' + REGIONS_SET_ID + ').' + notListed);
+    expect(fieldRow('Region')[valueSetId]).toBe('');
+    expect(fieldRow('TaxKeyword')[notes]).toBe('Term set: Keywords.' + notListed);
+    expect(fieldRow('TaxKeyword')[valueSetId]).toBe('');
+    expect(fieldRow('Funder')[notes]).toBe('Term set ID: ' + UNREADABLE_SET_ID + '. Sitenalyzer could not read the term set\'s name.');
+    expect(fieldRow('VisitDate')[notes]).toBe('');
+    const valueSetNames = sheetRows(workbook, 'Value_Sets').map(function(r) { return r[1]; });
+    expect(valueSetNames).not.toContain('Regions');
+    expect(valueSetNames).not.toContain('Keywords');
+});
+
+test('hides values in the term set names in the data dictionary notes', async function({ page }, testInfo) {
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: TERM_SET_NAME_PATTERN, answer: function(url, match) {
+            return match[1] === REGIONS_SET_ID ? { id: REGIONS_SET_ID, localizedNames: [{ name: 'Regions 734-555-0144' }] } : undefined;
+        } }
+    ].concat(termSetColumnAnswers()) });
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    const fieldRows = sheetRows(workbook, 'Fields');
+    const regionRow = fieldRows.filter(function(r) { return r[fieldRows[0].indexOf('internal_name')] === 'Region'; })[0];
+    expect(regionRow[fieldRows[0].indexOf('notes')]).toContain('Term set: Regions [phone number hidden] (ID ' + REGIONS_SET_ID + ').');
+    expect(JSON.stringify(fieldRows)).not.toContain('734-555-0144');
+});
+
+test('adds no TaxonomyHiddenList asset or managed metadata relationship to a site with no managed metadata column', async function({ page }, testInfo) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    const { workbook } = await downloadWorkbook(page, testInfo, 'Data dictionary (.xlsx)');
+    expect(sheetRows(workbook, 'Assets').filter(function(r) { return r[0] === TAXONOMY_HIDDEN_LIST_ID; })).toEqual([]);
+    expect(sheetRows(workbook, 'Relationships').filter(function(r) { return r[1] === 'Managed metadata'; })).toEqual([]);
 });
 
 // A choice column with more choices than the columns table shows at first.

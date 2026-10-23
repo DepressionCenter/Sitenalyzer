@@ -276,6 +276,7 @@ var _snaRequestDigest       = null;
 var _snaRequestDigestExpiry = 0;
 var _snaSiteInfo            = null;  // Site metadata from _api/web; used by XLSX export
 var _snaAllListsMeta        = [];    // Raw allLists.value objects; used by XLSX export
+var _snaHiddenListsMeta     = {};    // Hidden lists that lookup columns can read from, such as TaxonomyHiddenList, by lowercase list ID; used by XLSX export
 var _snaCurrentUser         = null;  // Logged-in user { name, email, loginName } fetched at analysis time
 
 // Permission state, filled while the site is read. The access list and the permissions workbook use it.
@@ -2526,6 +2527,22 @@ function xlsxCleanGuid(s) {
     return String(s || '').toLowerCase().split('{').join('').split('}').join('');
 }
 
+// Returns the Fields notes of a data dictionary row: for a managed metadata column, the name and ID of its term set,
+// such as "Term set: Study Arms (ID <term set ID>)."; '' for other columns. f is a globalExportedData row.
+// Value_Sets lists the terms of the term sets in this site collection's term groups only, so the note says so for others.
+function xlsxTermSetNote(f) {
+    if (SNA_TAXONOMY_FIELD_TYPES.indexOf(f.Type) === -1) { return ''; }
+    var name = f.TermSetName ? snaMaskText(f.TermSetName) : '';
+    var id = f.TermSetId ? xlsxCleanGuid(f.TermSetId) : '';
+    if (!name && !id) { return 'Sitenalyzer could not read this column\'s term set.'; }
+    if (!name) { return 'Term set ID: ' + id + '. Sitenalyzer could not read the term set\'s name.'; }
+    var note = 'Term set: ' + name + (id ? ' (ID ' + id + ').' : '.');
+    if (!f.TermSetInReport) {
+        note += ' Its terms aren\'t listed in Value_Sets, because the term set isn\'t in this site collection\'s term groups.';
+    }
+    return note;
+}
+
 // Removes trailing forward slashes from a URL string.
 function xlsxStripSlash(s) {
     var r = String(s || '');
@@ -2672,8 +2689,9 @@ function exportToXLSX() {
     var assetsRows = [];
     var origin = siteUrl ? (siteUrl.match(/^(https?:\/\/[^\/]+)/) || ['', ''])[1] : '';
 
-    for (i = 0; i < _snaAllListsMeta.length; i++) {
-        list    = _snaAllListsMeta[i];
+    // Adds one Assets row for a list or library, as SharePoint returns it. webUrl is the address of the site it is in,
+    // used when the list has no default view address.
+    function pushListAsset(list, webUrl, notes) {
         cleanId = xlsxCleanGuid(list.Id);
         astId   = cleanId;
         listGuidToAstId[cleanId] = astId;
@@ -2693,16 +2711,16 @@ function exportToXLSX() {
             qualifiedPath = dvParts.join('/');
         }
         if (!qualifiedPath) {
-            qualifiedPath = xlsxStripSlash(siteUrl) + '/' + (list.EntityTypeName || '');
+            qualifiedPath = xlsxStripSlash(webUrl) + '/' + (list.EntityTypeName || '');
         }
 
         listUrl = list.DefaultViewUrl
             ? (origin + list.DefaultViewUrl)
-            : (xlsxStripSlash(siteUrl) + '/' + (list.EntityTypeName || ''));
+            : (xlsxStripSlash(webUrl) + '/' + (list.EntityTypeName || ''));
 
         qparts    = qualifiedPath.split('/');
         qparts.pop();
-        container = qparts.join('/') || siteUrl;
+        container = qparts.join('/') || webUrl;
 
         itemCount = (list.ItemCount !== undefined && list.ItemCount !== null)
             ? String(list.ItemCount) : '';
@@ -2717,8 +2735,24 @@ function exportToXLSX() {
             '', itemCount, '',
             'Source', 'Real-time',
             'Unknown', 'Unknown', '',
-            '', techStewardId, 'Active', ''
+            '', techStewardId, 'Active', notes || ''
         ]);
+    }
+
+    for (i = 0; i < _snaAllListsMeta.length; i++) {
+        pushListAsset(_snaAllListsMeta[i], siteUrl, '');
+    }
+
+    // The hidden list each managed metadata column reads from, such as TaxonomyHiddenList, is added once, so the column's
+    // row in Relationships names an asset in this workbook.
+    for (i = 0; i < globalExportedData.length; i++) {
+        f = globalExportedData[i];
+        if (SNA_TAXONOMY_FIELD_TYPES.indexOf(f.Type) === -1 || !f.LookupList) { continue; }
+        tgtClean = xlsxCleanGuid(f.LookupList);
+        list = _snaHiddenListsMeta[snaCleanListId(tgtClean)];
+        if (!list || listGuidToAstId[tgtClean]) { continue; }
+        pushListAsset(list, list.ParentWebUrl ? origin + list.ParentWebUrl : siteUrl,
+            'Hidden list where SharePoint keeps a copy of each term used in this site collection\'s managed metadata columns.');
     }
 
     var termStoreAstId = '';
@@ -2838,8 +2872,19 @@ function exportToXLSX() {
             '',
             'Unknown', 'Unknown', '',
             '', '', '', '',
-            'Active', ''
+            'Active', xlsxTermSetNote(f)
         ]);
+
+        // A managed metadata column is a lookup to the hidden list that holds the terms, usually TaxonomyHiddenList.
+        if (SNA_TAXONOMY_FIELD_TYPES.indexOf(f.Type) > -1 && f.LookupList) {
+            relationshipsRows.push([
+                xlsxNid(ec, 'REL_', 'rel'),
+                'Managed metadata', fieldAstId, fldId,
+                xlsxCleanGuid(f.LookupList), '',
+                f.Type === 'TaxonomyFieldTypeMulti' ? 'M-M' : 'M-1', 'Lookup', 'Y',
+                f.Description || ''
+            ]);
+        }
 
         if (f.Type === 'Lookup' || f.Type === 'LookupMulti') {
             tgtClean      = xlsxCleanGuid(f.LookupList);
@@ -3275,6 +3320,7 @@ function snaClearReport() {
     _snaTargetUrl        = '';
     _snaSiteInfo         = null;
     _snaAllListsMeta     = [];
+    _snaHiddenListsMeta  = {};
     _snaCurrentUser      = null;
     _snaRequestDigest    = null;
     _snaRequestDigestExpiry = 0;
@@ -3404,8 +3450,10 @@ async function collectReport(targetUrl, onProgress, token) {
     stillWanted();
     _snaAllListsMeta = (allLists && allLists.value) ? allLists.value : [];
 
-    var listIdMap = await snaFetchListNames(targetUrl, _snaAllListsMeta);
+    var listNames = await snaFetchListNames(targetUrl, _snaAllListsMeta);
     stillWanted();
+    var listIdMap = listNames.names;
+    _snaHiddenListsMeta = listNames.hidden;
 
     var lists = [];
     for (var i = 0; i < _snaAllListsMeta.length; i++) {
@@ -3516,15 +3564,18 @@ function snaItemTotal(lists) {
     return lists.reduce(function(total, l) { return total + (Number(l.itemCount) || 0); }, 0);
 }
 
-// Returns a map of lowercase list ID to list title, for naming the list a lookup column reads from. lists are the lists
-// in the report. Lookup columns can also read from hidden lists that the report leaves out: managed metadata columns
-// read from TaxonomyHiddenList, which on a subsite is in the top-level site. A failed read leaves those lists unnamed.
+// Reads the names of the lists a lookup column can read from. lists are the lists in the report. Lookup columns can also
+// read from hidden lists that the report leaves out: managed metadata columns read from TaxonomyHiddenList, which on a
+// subsite is in the top-level site. Returns { names, hidden }: names maps a lowercase list ID to its title, and hidden
+// maps the ID of each hidden list to its details for the data dictionary. A failed read leaves those lists out of both.
 async function snaFetchListNames(targetUrl, lists) {
     var names = {};
+    var hidden = {};
     lists.forEach(function(lst) { names[snaCleanListId(lst.Id)] = lst.Title; });
+    var select = '$select=Id,Title,EntityTypeName,Description,ItemCount,DefaultViewUrl,ParentWebUrl';
     var hiddenListsUrls = [
-        targetUrl + '/_api/web/lists?$select=Id,Title&$filter=Hidden eq true',
-        targetUrl + "/_api/site/rootweb/lists?$select=Id,Title&$filter=Title eq 'TaxonomyHiddenList'"
+        targetUrl + '/_api/web/lists?' + select + '&$filter=Hidden eq true',
+        targetUrl + '/_api/site/rootweb/lists?' + select + "&$filter=Title eq 'TaxonomyHiddenList'"
     ];
     var responses = await Promise.all(hiddenListsUrls.map(function(url) {
         return spFetch(url).catch(function(e) {
@@ -3535,15 +3586,18 @@ async function snaFetchListNames(targetUrl, lists) {
     responses.forEach(function(resp) {
         ((resp && resp.value) ? resp.value : []).forEach(function(lst) {
             var id = snaCleanListId(lst.Id);
-            if (id && !names[id]) { names[id] = lst.Title || ''; }
+            if (!id || names[id]) { return; }
+            names[id] = lst.Title || '';
+            hidden[id] = lst;
         });
     });
-    return names;
+    return { names: names, hidden: hidden };
 }
 
 // Names the term set of each managed metadata column in lists. A term set in one of the site collection's term groups
 // (taxonomy.groups) is named from the report, and Taxonomy can show it. Other term sets, such as ones every site can
 // use, are read from the term store, up to SNA_TERM_SET_NAME_LOOKUPS of them. A term set that can't be read stays unnamed.
+// The column's rows in globalExportedData get the same name in TermSetName, and TermSetInReport, for the data dictionary.
 async function snaNameColumnTermSets(targetUrl, lists, taxonomy) {
     var inReport = {};
     (taxonomy.groups || []).forEach(function(group) {
@@ -3569,6 +3623,8 @@ async function snaNameColumnTermSets(targetUrl, lists, taxonomy) {
         });
     }
 
+    var exportRows = {};
+    globalExportedData.forEach(function(row) { exportRows[snaCleanListId(row.ListGuid) + '|' + String(row.FieldId || '').toLowerCase()] = row; });
     columns.forEach(function(c) {
         var id = snaCleanListId(c.termSetId);
         if (id && inReport[id]) {
@@ -3577,8 +3633,13 @@ async function snaNameColumnTermSets(targetUrl, lists, taxonomy) {
         } else if (id && otherNames[id]) {
             c.termSetName = otherNames[id];
         } else if (!id && c.internalName === 'TaxKeyword') {
-            // The Enterprise Keywords column doesn't name a term set; SharePoint saves its values in the term store's Keywords term set.
+            // When the Enterprise Keywords column names no term set, its values are in the term store's Keywords term set.
             c.termSetName = 'Keywords';
+        }
+        var row = exportRows[snaCleanListId(c.listId) + '|' + String(c.fieldId || '').toLowerCase()];
+        if (row) {
+            row.TermSetName = c.termSetName;
+            row.TermSetInReport = c.termSetLinked;
         }
     });
 }
@@ -6881,10 +6942,12 @@ function snaPrintListHtml(list) {
                     .concat(hasTermSets ? [snaColumnTermSetText(c)] : []);
             }), '') +
             snaPrintTableHtml('Technical details of the columns of ' + list.title,
-                ['Title', 'Internal name', 'Column ID', 'Lookup target', 'Default value', 'Max length', 'Indexed', 'Formula'],
+                ['Title', 'Internal name', 'Column ID', 'Lookup target'].concat(hasTermSets ? ['Term set ID'] : [],
+                    ['Default value', 'Max length', 'Indexed', 'Formula']),
                 list.columns.map(function(c) {
                     var maxLength = (c.maxLength === null || c.maxLength === undefined) ? '' : String(c.maxLength);
-                    return [c.title, c.internalName, c.fieldId, c.lookupTarget, c.defaultValue, maxLength, c.indexed ? 'Yes' : 'No', c.formula];
+                    return [c.title, c.internalName, c.fieldId, c.lookupTarget].concat(hasTermSets ? [c.termSetId] : [],
+                        [c.defaultValue, maxLength, c.indexed ? 'Yes' : 'No', c.formula]);
                 }), '');
     }
 
