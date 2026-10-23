@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/usage.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-22
+Last Modified: 2026-10-23
 Summary: How to install, update, and use Sitenalyzer on a SharePoint Online site.
 Notes: See README file for documentation and full license information.
 
@@ -95,7 +95,7 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 
 | Section | Description |
 | --- | --- |
-| **Overview** | Counts of document libraries, lists, system lists, site pages, agents, term sets, and sharing links, each linked to the section that lists them. The document library, list, and system list counts also say how many items they hold. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
+| **Overview** | Counts of document libraries, lists, system lists, site pages, agents and site skills, term sets, and sharing links, each linked to the section that lists them. The document library, list, and system list counts also say how many items they hold. A count that Sitenalyzer could not read says **Not read** instead of 0. Cards below the counts link to each section; the Permissions card also shows how many people and groups, lists and libraries with their own permissions, sharing links, and apps it found. |
 | **Contents** | Document libraries, lists, system lists, Site pages, and Agents and skills on the left, and the **Contents summary** on the right until you select a name. See [Contents summary](#contents-summary). **Filter by name** narrows the list. |
 | **Permissions** | Access to the site, its lists, and its libraries. See [Permissions](#permissions). |
 | **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
@@ -255,15 +255,15 @@ Sitenalyzer reads Site Pages 2,000 items at a time, up to 10,000 items. If the l
 
 ### Agents and skills
 
-Select **Agents and skills** in **Contents** to see two tables. **Agents** lists the `.agent` files you can read in the site's document libraries. Each row shows its library, folder, last change, creator, and permissions. Select its name to open the file. Select **Permissions** beside **Own permissions** to open that file's permissions page.
+Select **Agents and skills** in **Contents** to see two tables. **Agents** lists the `.agent` files you can read in the site's document libraries. Each row shows its library, folder, last change, creator, and permissions. Select its name to open the file.
 
-In both tables, a file without its own permissions says **Uses the library's permissions** when it is at the top of its library, or **Uses its folder's permissions** when it is in a folder.
+In both tables, a file with its own permissions shows **Own permissions** and a **Permissions** button. Select **Permissions** to open that file's permissions page in SharePoint. A file without its own permissions says **Uses the library's permissions** when it is at the top of its library, or **Uses its folder's permissions** when it is in a folder.
 
 **Site skills** lists each `SKILL.md` at `Agent Assets/Skills/<name>/SKILL.md`. It shows the name and description from the text at the start of the file. If that text is missing or unreadable, the folder name is shown instead. Sitenalyzer reads text for up to 200 site skills. **Report coverage** says when a library or file could not be read.
 
 If a later batch of site skills cannot be read, the earlier rows remain in the report and data dictionary. **Report coverage** says **Partly read**, and the section warns that some site skills may be missing. Select **Refresh report** to try again.
 
-The **Agents** count on the Overview links to these tables and includes the number of site skills. **Search this report** finds their names and descriptions. Names and descriptions that look like personal information are hidden; **Created by** remains visible. **Show technical details** adds file addresses.
+**Agents and skills** on the Overview shows the number of agents and site skills, such as "3 agents, 1 site skill", and links to these tables. **Search this report** finds their names and descriptions. Names and descriptions that look like personal information are hidden; **Created by** remains visible. **Show technical details** adds file addresses.
 
 When SharePoint cannot filter a library by file type, Sitenalyzer uses SharePoint search for that library. This can happen above 5,000 items. Search results can be a few minutes behind, so a new agent may be missing temporarily. The section names the affected libraries, and **Report coverage** says **Partly read**. Their **Permissions** cells say **Not checked**. If search also fails, the report says which libraries could not be checked.
 
@@ -307,8 +307,8 @@ The workbook doesn't include permissions on single files, folders, or items, or 
 
 ### Update to a newer version
 
-1. Download the latest `dist` folder from this repository.
-2. Upload the files from `dist/SiteAssets/scripts` and `dist/SiteAssets/styles` again, replacing the old ones.
+1. Download the latest files from this repository's GitHub page with **Code** > **Download ZIP**, then unzip the file.
+2. Upload every file from `dist/SiteAssets/scripts` to `SiteAssets/scripts`, and every file from `dist/SiteAssets/styles` to `SiteAssets/styles`, replacing the old ones.
 3. Refresh the `sitenalyzer` page. If the old version still shows, press Ctrl+F5 to reload without the browser's saved copy. Sitenalyzer adds a version to the address of each style sheet and library it loads, so a new `sitenalyzer.js` always gets its own style sheets.
 
 You don't need to change the page unless the release notes say so.
