@@ -4820,14 +4820,16 @@ function snaAgentPermissionsText(asset) {
 }
 
 // Draws permissions and an optional item permissions button using validated library and item IDs. The button names
-// the file, because a table can hold several of these buttons.
+// the file and its library and folder, because two files in a table can have the same name, but not the same place.
 function snaAgentPermissionsHtml(asset) {
     if (!asset.ownPermissions) { return snaEscapeHtml(snaAgentPermissionsText(asset)); }
     var html = '<span class="sna-badge sna-badge-own">Own permissions</span>';
     if (SNA_GUID_PATTERN.test(asset.libraryId) && /^\d+$/.test(asset.itemId)) {
         var url = _snaTargetUrl + '/_layouts/15/user.aspx?obj={' + asset.libraryId + '},' + asset.itemId + ',LISTITEM&List={' + asset.libraryId + '}';
+        var place = asset.libraryTitle + (asset.folder ? '/' + asset.folder : '');
         html += ' <button type="button" class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(url) +
-            '" aria-label="Permissions: open the SharePoint permissions page for ' + snaEscapeHtml(asset.name) + ' in a new window">Permissions</button>';
+            '" aria-label="Permissions for ' + snaEscapeHtml(asset.name) + ' in ' + snaEscapeHtml(place) +
+            ': open the SharePoint permissions page in a new window">Permissions</button>';
     }
     return html;
 }

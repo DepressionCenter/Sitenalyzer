@@ -222,9 +222,9 @@ test('lists agents and site skills in Contents with file and permissions links',
     await expect(helper).toContainText('Test Owner');
     await expect(helper.locator('[tabulator-field="folder"]')).toHaveText('');
     await expect(helper).toContainText('Own permissions');
-    await expect(helper.getByRole('button', { name: /^Permissions:/ })).toHaveAttribute('data-url', SITE_URL + '/_layouts/15/user.aspx?obj={' + LIBRARY_ID + '},21,LISTITEM&List={' + LIBRARY_ID + '}');
-    // Every Permissions button in the table names its file, so the buttons can be told apart.
-    await expect(helper.getByRole('button', { name: 'Permissions: open the SharePoint permissions page for Study Visits Helper in a new window', exact: true })).toBeVisible();
+    await expect(helper.getByRole('button', { name: /^Permissions for / })).toHaveAttribute('data-url', SITE_URL + '/_layouts/15/user.aspx?obj={' + LIBRARY_ID + '},21,LISTITEM&List={' + LIBRARY_ID + '}');
+    // Every Permissions button in the table names its file and where it is, so the buttons can be told apart.
+    await expect(helper.getByRole('button', { name: 'Permissions for Study Visits Helper in Documents: open the SharePoint permissions page in a new window', exact: true })).toBeVisible();
     const reviewer = agents.getByRole('row', { name: /Protocol Reviewer/ });
     await expect(reviewer).toContainText('Protocols');
     await expect(reviewer).toContainText("Uses its folder's permissions");
@@ -269,7 +269,7 @@ test('finds agents in a hidden library and includes them in print and export', a
     await expect(row).toContainText('Hidden Helper');
     await expect(row.locator('[tabulator-field="libraryTitle"]')).toHaveText('Agent Assets');
     await expect(row.locator('[tabulator-field="libraryTitle"] a')).toHaveCount(0);
-    await expect(row.getByRole('button', { name: /^Permissions:/ })).toHaveAttribute('data-url', SITE_URL + '/_layouts/15/user.aspx?obj={' + AGENT_ASSETS_ID + '},21,LISTITEM&List={' + AGENT_ASSETS_ID + '}');
+    await expect(row.getByRole('button', { name: /^Permissions for / })).toHaveAttribute('data-url', SITE_URL + '/_layouts/15/user.aspx?obj={' + AGENT_ASSETS_ID + '},21,LISTITEM&List={' + AGENT_ASSETS_ID + '}');
     await searchReport(page, 'Hidden Helper');
     await expect(page.locator('#sp-results')).toContainText('Hidden Helper');
     const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
@@ -407,6 +407,21 @@ test('reports unread site skills without hiding agents', async function({ page }
     await expect(section).not.toContainText('No site skills found.');
     await gotoSection(page, 'Site review');
     await expect(page.getByRole('row', { name: /^Site skills Not read/ })).toBeVisible();
+});
+
+test('names the library and folder in the Permissions buttons of agents that share a name', async function({ page }) {
+    const items = [
+        Object.assign({}, agentItems[0], { FileLeafRef: 'Helper.agent', FileRef: SITE_PATH + '/Shared Documents/Helper.agent' }),
+        Object.assign({}, agentItems[1], { Id: 23, UniqueId: 'bbbbbbbb-0000-4000-8000-000000000023', FileLeafRef: 'Helper.agent',
+            FileRef: SITE_PATH + '/Shared Documents/Protocols/Helper.agent', HasUniqueRoleAssignments: true })
+    ];
+    const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: items })] });
+    await extractSiteInformation(page);
+    const section = await openAgents(page);
+    await expect(section.getByRole('button', { name: 'Permissions for Helper in Documents: open the SharePoint permissions page in a new window', exact: true })).toHaveCount(1);
+    await expect(section.getByRole('button', { name: 'Permissions for Helper in Documents/Protocols: open the SharePoint permissions page in a new window', exact: true })).toHaveCount(1);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
 });
 
 test('reports no site skills when Agent Assets does not exist', async function({ page }) {
@@ -712,7 +727,7 @@ test('uses SharePoint search when a library cannot be filtered and checks every 
     await expect(section).toContainText('Not checked');
     await expect(section).toContainText('could not filter Documents by file type, so Sitenalyzer used SharePoint search for it.');
     await expect(section).toContainText('Search results can be a few minutes behind');
-    await expect(section.getByRole('button', { name: /^Permissions:/ })).toHaveCount(0);
+    await expect(section.getByRole('button', { name: /^Permissions for / })).toHaveCount(0);
     await gotoSection(page, 'Site review');
     await expect(page.getByRole('row', { name: /^Agents Partly read/ })).toContainText('Search results can be a few minutes behind');
     const requests = record.apiRequests.map(function(url) { return new URL(url); }).filter(function(url) {
@@ -968,6 +983,8 @@ test('limits site skill text reads and rejects paths outside a single skill fold
     await expect(section).toContainText('read the text of the first 200 site skills only, so the rest show their folder names and no descriptions.');
     await expect(section.getByRole('grid', { name: 'Site skills', exact: true })).toContainText('skill-000');
     await expect(section).not.toContainText('Do not use multiline metadata');
+    await expect(section.locator('#sna-tbl-skills button[data-action="open-url"]')).toHaveAttribute('aria-label',
+        'Permissions for skill-000 in Agent Assets/Skills/skill-000: open the SharePoint permissions page in a new window');
     await expect(section.locator('#sna-tbl-skills button[data-action="open-url"]')).toHaveAttribute('data-url',
         SITE_URL + '/_layouts/15/user.aspx?obj={' + AGENT_ASSETS_ID + '},100,LISTITEM&List={' + AGENT_ASSETS_ID + '}');
     const textReads = record.apiRequests.filter(function(url) { return url.endsWith('/$value'); });
