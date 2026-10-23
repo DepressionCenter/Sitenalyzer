@@ -332,7 +332,7 @@ function snaTableColumnSettings(type, tbl) {
         formatter: function(cell) { return snaPersonHtml(cell.getValue()); } });
     }
     assetColumns.push({ title: 'Permissions', field: 'ownPermissions', minWidth: 185,
-      formatter: function(cell) { return snaAgentPermissionsHtml(cell.getRow().getData(), type); } },
+      formatter: function(cell) { return snaAgentPermissionsHtml(cell.getRow().getData()); } },
       { title: 'Address', field: 'url', sorter: 'string', widthGrow: 3, minWidth: 180, visible: technical,
         formatter: function(cell) { return snaEscapeHtml(snaFileAddressText(cell.getValue())); } });
     return assetColumns;
@@ -1077,7 +1077,7 @@ function snaHiddenValueSet(report) {
     });
     (report.pages.pages || []).forEach(function(page) { [page.name, page.fileName].forEach(check); });
     if (report.agents) {
-        report.agents.agents.forEach(function(agent) { [agent.name, agent.folder].forEach(check); });
+        report.agents.agents.forEach(function(agent) { [agent.name, agent.folder, agent.libraryTitle].forEach(check); });
         report.agents.skills.forEach(function(skill) { [skill.name, skill.description, skill.folderName].forEach(check); });
     }
     (report.permissions.sharingLinks.links || []).forEach(function(l) { check(l.name); });
@@ -3913,7 +3913,7 @@ function buildSearchIndex() {
             var detail = kind === 'agents' ? asset.libraryTitle + (asset.folder ? '/' + asset.folder : '') : asset.description;
             _snaSearchIndex.push({ kind: 'agent', icon: '🤖', type: kind === 'agents' ? 'Agent' : 'Site skill',
                 label: asset.name, sublabel: detail, sublabelIsName: true, breadcrumb: 'Agents and skills',
-                route: '#sna/contents/agents', summary: 'Agents and skills / ' + detail, technicalText: snaFileAddressText(asset.url), technicalTextIsName: true,
+                route: '#sna/contents/agents', summary: 'Agents and skills' + (detail ? ' / ' + detail : ''), technicalText: snaFileAddressText(asset.url), technicalTextIsName: true,
                 filterTable: assets.length > SNA_TABLE_FILTER_MIN_ROWS ? 'sna-tbl-' + kind : '', filterText: asset.name });
         });
     });
@@ -4771,13 +4771,16 @@ function snaAgentCoverage(assets) {
     } else if (assets.collectionFailed) {
         agentNotes.push('Sitenalyzer could not look for agents. Refresh the report to try again.');
     } else if (assets.libraries.failed.length) {
-        var names = assets.libraries.failed.length === 1 ? assets.libraries.failed[0] :
-            assets.libraries.failed.slice(0, -1).join(', ') + ' and ' + assets.libraries.failed[assets.libraries.failed.length - 1];
+        // Library reads finish in any order, so the names are sorted to keep the note the same on every refresh.
+        var failed = assets.libraries.failed.slice().sort(function(a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); });
+        var names = failed.length === 1 ? failed[0] : failed.slice(0, -1).join(', ') + ' and ' + failed[failed.length - 1];
+        var them = failed.length === 1 ? 'it' : 'them';
         if (assets.searched && !assets.searchFailed) {
-            agentNotes.push('SharePoint could not filter ' + names + ' by file type, so Sitenalyzer used SharePoint search for them. ' +
+            agentNotes.push('SharePoint could not filter ' + names + ' by file type, so Sitenalyzer used SharePoint search for ' + them + '. ' +
                 'Search results can be a few minutes behind, so a new agent may be missing for a while. Try refreshing the report later.');
         } else {
-            agentNotes.push('Sitenalyzer could not check ' + names + ' and SharePoint search did not answer, so agents in them are missing. Refresh the report to try again.');
+            agentNotes.push('Sitenalyzer could not check ' + names + ' and SharePoint search did not answer, so any agents in ' + them +
+                ' are not listed. Refresh the report to try again.');
         }
     }
     if (assets.truncated) { agentNotes.push('Sitenalyzer read the first ' + SNA_AGENTS_MAX.toLocaleString('en-US') + ' agents only.'); }
@@ -4789,9 +4792,12 @@ function snaAgentCoverage(assets) {
     }
     if (assets.skillTextFailed) {
         skillNotes.push('Sitenalyzer could not read the text of ' + snaCountText(assets.skillTextFailed, 'site skill', 'site skills') +
-            ', so their names come from their folders and their descriptions are empty. Refresh the report to try again.');
+            (assets.skillTextFailed === 1 ? ', so its name comes from its folder and its description is empty.'
+                : ', so their names come from their folders and their descriptions are empty.') + ' Refresh the report to try again.');
     }
-    if (assets.skillTextSkipped) { skillNotes.push('Sitenalyzer read the text of the first ' + SNA_SKILL_TEXT_LOOKUPS + ' site skills only.'); }
+    if (assets.skillTextSkipped) {
+        skillNotes.push('Sitenalyzer read the text of the first ' + SNA_SKILL_TEXT_LOOKUPS + ' site skills only, so the rest show their folder names and no descriptions.');
+    }
     if (assets.skillsTruncated) { skillNotes.push('Sitenalyzer read the first ' + SNA_AGENTS_MAX.toLocaleString('en-US') + ' site skills only.'); }
     return [{ area: 'Agents', status: snaAgentsNotRead(assets) || (assets.searchFailed && !assets.agents.length) ? 'failed' :
             (agentNotes.length ? 'partial' : 'read'), note: agentNotes.join(' ') },
@@ -4805,32 +4811,38 @@ function snaFileAddressText(address) {
     try { return decodeURIComponent(String(address || '')); } catch(e) { return String(address || ''); }
 }
 
-// Inherited permissions may come from a folder or library. Search does not check file permissions.
+// A file without its own permissions uses its parent's: the library's at the top of the library, or its folder's
+// inside a folder. Search results don't say whether a file has its own permissions.
 function snaAgentPermissionsText(asset) {
-    return asset.ownPermissions === null ? 'Not checked' : (asset.ownPermissions ? 'Own permissions' : 'Inherited permissions');
+    if (asset.ownPermissions === null) { return 'Not checked'; }
+    if (asset.ownPermissions) { return 'Own permissions'; }
+    return asset.folder ? "Uses its folder's permissions" : "Uses the library's permissions";
 }
 
-// Draws permissions and an optional item permissions button using validated library and item IDs.
-function snaAgentPermissionsHtml(asset, type) {
+// Draws permissions and an optional item permissions button using validated library and item IDs. The button names
+// the file, because a table can hold several of these buttons.
+function snaAgentPermissionsHtml(asset) {
     if (!asset.ownPermissions) { return snaEscapeHtml(snaAgentPermissionsText(asset)); }
     var html = '<span class="sna-badge sna-badge-own">Own permissions</span>';
     if (SNA_GUID_PATTERN.test(asset.libraryId) && /^\d+$/.test(asset.itemId)) {
         var url = _snaTargetUrl + '/_layouts/15/user.aspx?obj={' + asset.libraryId + '},' + asset.itemId + ',LISTITEM&List={' + asset.libraryId + '}';
         html += ' <button type="button" class="sna-action-btn" data-action="open-url" data-url="' + snaEscapeHtml(url) +
-            '" aria-label="Permissions: open the SharePoint permissions page for this ' + (type === 'agents' ? 'agent' : 'site skill') + ' in a new window">Permissions</button>';
+            '" aria-label="Permissions: open the SharePoint permissions page for ' + snaEscapeHtml(asset.name) + ' in a new window">Permissions</button>';
     }
     return html;
 }
 
 // Draws notes and queued tables, or plain tables with every row when forPrint is true. Callers provide the heading.
+// Each table's notes go under its own heading. A "none found" line appears only when the read finished, and not when
+// the note already says the site has no Agent Assets library.
 function snaRenderAgentsSection(assets, forPrint) {
-    var html = '<div class="info-card"><p class="sna-note">Agents saved on this site as .agent files, and the site skills in its Agent Assets library. ' +
+    var html = '<div class="info-card"><p class="sna-note">Sitenalyzer lists the agents saved on this site as .agent files, and the site skills in its Agent Assets library. ' +
         "Agents made with Microsoft Copilot Agent Builder, agents saved on other sites, and usage numbers are not stored on the site, so Sitenalyzer can't list them. " +
         "Sitenalyzer also can't read the site's main agent setting.</p>";
     var coverage = snaAgentCoverage(assets);
-    coverage.forEach(function(row) { if (row.note) { html += '<p class="sna-note">' + snaEscapeHtml(row.note) + '</p>'; } });
+    function noteHtml(row) { return row.note ? '<p class="sna-note">' + snaEscapeHtml(row.note) + '</p>' : ''; }
     var headingTag = forPrint ? 'h3' : 'h4';
-    html += '<' + headingTag + ' class="sna-subsection-title">Agents</' + headingTag + '>';
+    html += '<' + headingTag + ' class="sna-subsection-title">Agents</' + headingTag + '>' + noteHtml(coverage[0]);
     if (assets.agents.length) {
         html += forPrint ? snaPrintTableHtml('Agents', ['Agent', 'Library', 'Folder', 'Last changed', 'Created by', 'Permissions', 'Address'],
             assets.agents.map(function(asset) {
@@ -4838,13 +4850,13 @@ function snaRenderAgentsSection(assets, forPrint) {
             }), 'No agents found.') : snaQueueTableHtml({ id: 'sna-tbl-agents', type: 'agents', label: 'Agents', searchLabel: 'agents', data: assets.agents });
         html += '<p class="sna-note">Agents saved as .agent files stop working after March 2027. Microsoft asks site owners to upgrade or delete each one. ' +
             snaLinkHtml('https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents', 'Upgrade agents in SharePoint and OneDrive') + '.</p>';
-    } else if (coverage[0].status === 'read') { html += '<p>No agents found.</p>'; }
-    html += '<' + headingTag + ' class="sna-subsection-title">Site skills</' + headingTag + '>';
+    } else if (coverage[0].status !== 'failed') { html += '<p>No agents found.</p>'; }
+    html += '<' + headingTag + ' class="sna-subsection-title">Site skills</' + headingTag + '>' + noteHtml(coverage[1]);
     if (assets.skills.length) {
         html += forPrint ? snaPrintTableHtml('Site skills', ['Site skill', 'Description', 'Last changed', 'Permissions', 'Address'],
             assets.skills.map(function(asset) { return [asset.name, asset.description, asset.modified, snaAgentPermissionsText(asset), snaFileAddressText(asset.url)]; }),
             'No site skills found.') : snaQueueTableHtml({ id: 'sna-tbl-skills', type: 'skills', label: 'Site skills', searchLabel: 'site skills', data: assets.skills });
-    } else if (assets.skillsStatus !== 'failed') { html += '<p>No site skills found.</p>'; }
+    } else if (assets.skillsStatus !== 'failed' && assets.skillsStatus !== 'none') { html += '<p>No site skills found.</p>'; }
     return html + '</div>';
 }
 

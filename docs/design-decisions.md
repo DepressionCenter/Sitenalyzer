@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/design-decisions.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-20
-Last Modified: 2026-10-21
+Last Modified: 2026-10-22
 Summary: The design decisions behind the Sitenalyzer report screen, as built, and the reason for each.
 Notes: See README file for documentation and full license information.
 
@@ -49,7 +49,6 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 - **The same layout in Permissions and Taxonomy.** Their parts or term sets are on the left, and the one you selected is on the right.
 - **No About this site card.** With technical details on, the site ID and a **Copy** button appear under the site's address in the header.
 - **Parent terms and term set use.** A term set shows each term's parent term in a column, and the terms are listed in tree order, with each term right after the term it sits under. The terms aren't indented, so the table still sorts and filters like the others. Below the terms, **Columns that use this term set** lists the columns that use the set and links to their **Columns** tab.
-
 - **Agents from the site's files.** Sitenalyzer lists `.agent` files and site skills saved on the site with the person's own access. This needs no new permission or app. Agents made with Microsoft Copilot Agent Builder are stored elsewhere, so the section explains that it cannot list them.
 - **Search when a library cannot be filtered.** SharePoint can reject file-type filters above 5,000 items. One site search, read in batches, covers the affected libraries. The report names them and says search can be minutes behind. Search does not supply checked file permissions.
 

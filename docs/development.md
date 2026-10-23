@@ -82,8 +82,11 @@ The tests check that:
 - When a library rejects the file-type filter, a site search supplies its agents with **Not checked** permissions. Tests reject results on another site or in another library, keep files already read without duplicates, read later search rows, and report failed searches.
 - Search stops after 5,000 rows and reports the limit. Site skill text reads stop after 200 files. Tests reject parent-folder paths and multi-line metadata, and check a permissions link when the library ID includes braces.
 - Print includes every agent and site skill even when tables are filtered. **Assets** adds file rows with the existing columns and sheet list. Hidden-value checks cover names, displayed addresses, technical search text, print, and workbook display names. Creators remain visible in the report and are absent from the workbook.
-- Files without their own permissions say **Inherited permissions** on screen and in print. A failed later site skill batch keeps earlier rows in the report, print, and workbook, with **Partly read** coverage. A failed read with no usable rows still says **Not read**.
-- Quoted site skill names and descriptions decode doubled apostrophes, backslash escapes, and Unicode escapes before display, search, print, and export. Tests preserve quoted spaces, reject malformed values, and check that decoded markup stays text and personal values stay hidden.
+- Files without their own permissions say **Uses the library's permissions** or **Uses its folder's permissions** on screen and in print, and each **Permissions** button names its file. A failed later site skill batch keeps earlier rows in the report, print, and workbook, with **Partly read** coverage. A failed read with no usable rows still says **Not read**.
+- Each table's notes are under its own heading. When search finds no agents, **No agents found.** appears under the note. Notes use "it" for one library and "them" for several, and list several libraries in alphabetical order. A note about one site skill whose text can't be read uses the singular.
+- Quoted site skill names and descriptions decode doubled apostrophes, backslash escapes, and Unicode escapes before display, search, print, and export. Tests preserve quoted spaces, reject malformed values, and check that decoded markup stays text and personal values stay hidden. Site skill text checks also cover plain comments and literal hashes in the tables, report search, print, and data dictionary.
+- Agents are found in hidden and visible libraries, including hidden Agent Assets and Site Pages, and in libraries whose titles changed. Tests check hidden agents in search, print, and export, library paging without duplicate scans, rejected links to other sites, missing libraries, denied reads, and incomplete library discovery. A failed Contents listing does not stop the separate listing of libraries for agents.
+- Search tests include creators with trailing account data and missing email or name values. Export tests cover site skills collected after a failed lists request, agents without list columns, and a report with nothing to export.
 - System lists, such as the User Information List, have their own count and item total on the Overview, their own group and table in Contents, and their own part of the print document. Site review and the largest lists leave them out, and search labels them **System list**. A list named Events that isn't made from the events template stays an ordinary list. **Back to top** on Search results puts focus on the first section link.
 - Opening any section, including a Taxonomy view shorter than the window, scrolls the section links to the top of the window. **Back to top** sits on the left and does the same with one click, and puts focus on the open section's link. With a fixed bar over the top of the page, like SharePoint's page bar, both stop with the section links just below the bar. The report opens at the top, with the site's name.
 - The column filter box appears only above tables with more than 10 rows, shows a row count, and keeps its text; the Contents name filter keeps its text too.
@@ -132,15 +135,9 @@ The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresse
 
 The pretend site also answers the request digest (`POST /_api/contextinfo`), and answers description saves (`PATCH` on the site, a list, or a column) with 204 No Content. Term requests with `$expand=children` get each term with an empty list of children, `…/terms/<ID>/children` gets an empty list, and `/_api/web/fields` has no managed metadata columns, so the standard answers have no parent terms and no term set use. It answers `POST /_api/$batch` by answering each GET inside the batch from the same answers, and sends them back as one `multipart/mixed` answer. It returns lists the test can check afterward: `consoleErrors`, `unexpectedRequests`, `siteAssetsRequests`, `apiRequests`, `otherOriginRequests`, and `writeRequests`, which holds every request that is not a GET. `apiRequests` also holds each request inside a batch. In the tests, `changeRequests(record)` leaves out the request digest and batches that hold only GET requests to the site, so it lists only requests that could change the site. Requests to any other host are refused, so tests never reach the internet.
 
+The pretend site also has two agents in Documents and one site skill in hidden Agent Assets. A second `SKILL.md` has the wrong folder depth and must be ignored. The fixtures answer the listing of document libraries for agents, which includes hidden Agent Assets and Site Pages, the separate Agent Assets lookup, agent and site skill items requests, and the text request for `SKILL.md`. Search queries for `FileExtension:agent` return no rows unless a test supplies them; the site's existing search answers remain available for choosing a site.
+
 Automated checks find only part of all accessibility problems. Check keyboard use, zoom to 200%, and a screen reader by hand when you change the interface.
-
-The pretend site also has two agents in Documents and one site skill in hidden Agent Assets. A second `SKILL.md` has the wrong folder depth and must be ignored. The fixtures answer the separate Agent Assets lookup, agent and site skill items requests, and the text request for `SKILL.md`. Search queries for `FileExtension:agent` return no rows unless a test supplies them; the site's existing search answers remain available for choosing a site.
-
-Tests also cover changed library titles, hidden and visible libraries, missing libraries, and denied reads. Site skill text checks cover quoted escapes, plain comments, and literal hashes in the tables, report search, print, and data dictionary.
-
-Search tests include creators with trailing account data and missing email or name values. Export tests cover site skills collected after a failed lists request, agents without list columns, and a report with nothing to export.
-
-The agent library listing includes hidden Agent Assets and Site Pages. Tests check hidden agents in search, print, and export, library paging without duplicate scans, rejected links to other sites, and incomplete library discovery. A failed Contents listing does not prevent the separate agent library listing.
 
 #### Checks on a real site
 
@@ -150,9 +147,10 @@ The fixtures cannot confirm these service details. Check them on a SharePoint On
    Check a readable hidden document library too, including one that needs the search fallback.
 2. A library above 5,000 items triggers the search path when filtering fails. Check that search returns its files and that the first two `AuthorOWSUSER` parts supply the email and name, with any trailing account data ignored.
 3. The fixed `/Agent Assets` address finds the library when its title is renamed or shown in another language, whether hidden or visible.
-4. `GetFileByServerRelativePath(...)/$value` returns the site skill text, with `name:` and `description:` at the start.
-5. The item permissions link opens the correct file's permissions page.
-6. Check whether the ready-made agent appears as a file; this inventory counts only files it can read.
+4. On a site with no site skills, the `/Agent Assets` lookup answers 404 Not Found, so **Site skills** says the site has none. Any other answer makes it say **Not read**. The browser console lists that 404 as a failed request.
+5. `GetFileByServerRelativePath(...)/$value` returns the site skill text, with `name:` and `description:` at the start.
+6. The item permissions link opens the correct file's permissions page.
+7. Check whether the ready-made agent appears as a file; this inventory counts only files it can read.
 
 Also check the two tables and their Permissions buttons with a screen reader, keyboard only, and 200% zoom. Open the real page with `?csp=enforce` and check for Content Security Policy violations. These checks have not been completed by the pretend-site tests.
 

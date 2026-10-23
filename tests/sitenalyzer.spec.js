@@ -223,13 +223,15 @@ test('lists agents and site skills in Contents with file and permissions links',
     await expect(helper.locator('[tabulator-field="folder"]')).toHaveText('');
     await expect(helper).toContainText('Own permissions');
     await expect(helper.getByRole('button', { name: /^Permissions:/ })).toHaveAttribute('data-url', SITE_URL + '/_layouts/15/user.aspx?obj={' + LIBRARY_ID + '},21,LISTITEM&List={' + LIBRARY_ID + '}');
+    // Every Permissions button in the table names its file, so the buttons can be told apart.
+    await expect(helper.getByRole('button', { name: 'Permissions: open the SharePoint permissions page for Study Visits Helper in a new window', exact: true })).toBeVisible();
     const reviewer = agents.getByRole('row', { name: /Protocol Reviewer/ });
     await expect(reviewer).toContainText('Protocols');
-    await expect(reviewer).toContainText('Inherited permissions');
+    await expect(reviewer).toContainText("Uses its folder's permissions");
     const skills = section.getByRole('grid', { name: 'Site skills', exact: true });
     await expect(skills).toContainText('Weekly summary');
     await expect(skills).toContainText("Summarizes the week's visit notes.");
-    await expect(skills).toContainText('Inherited permissions');
+    await expect(skills).toContainText("Uses its folder's permissions");
     await expect(skills.locator('.tabulator-row')).toHaveCount(1);
     const requests = record.apiRequests.map(function(url) { return new URL(url); });
     const agentRequests = requests.filter(function(url) { return (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'"); });
@@ -410,7 +412,9 @@ test('reports unread site skills without hiding agents', async function({ page }
 test('reports no site skills when Agent Assets does not exist', async function({ page }) {
     const record = await openPretendSite(page, { answerOverrides: [skillLibraryAnswer(reply(404, { error: 'Library not found' }))] });
     await extractSiteInformation(page);
-    await expect(await openAgents(page)).toContainText('No site skills found.');
+    const section = await openAgents(page);
+    await expect(section).toContainText('This site has no Agent Assets library, so it has no site skills.');
+    await expect(section).not.toContainText('No site skills found.');
     await gotoSection(page, 'Site review');
     await expect(page.getByRole('row', { name: /^Site skills Read/ })).toContainText('no Agent Assets library');
     expect(record.unexpectedRequests).toEqual([]);
@@ -485,7 +489,7 @@ test('uses site skill folders when text cannot be read or has no front matter', 
         await gotoSection(page, 'Site review');
         const coverage = page.getByRole('row', { name: /^Site skills (Read|Partly read)/ });
         await expect(coverage).toContainText(body === cases[0] ? 'Partly read' : 'Read');
-        if (body === cases[0]) { await expect(coverage).toContainText('1 site skill'); }
+        if (body === cases[0]) { await expect(coverage).toContainText('could not read the text of 1 site skill, so its name comes from its folder and its description is empty.'); }
     }
 });
 
@@ -706,7 +710,7 @@ test('uses SharePoint search when a library cannot be filtered and checks every 
     await expect(section).toContainText('Study Visits Helper');
     await expect(section).toContainText('Test Owner');
     await expect(section).toContainText('Not checked');
-    await expect(section).toContainText('could not filter Documents by file type');
+    await expect(section).toContainText('could not filter Documents by file type, so Sitenalyzer used SharePoint search for it.');
     await expect(section).toContainText('Search results can be a few minutes behind');
     await expect(section.getByRole('button', { name: /^Permissions:/ })).toHaveCount(0);
     await gotoSection(page, 'Site review');
@@ -784,6 +788,25 @@ test('uses search for agents in hidden libraries when their item read fails', as
     expect(record.unexpectedRequests).toEqual([]);
 });
 
+test('names every library that needed search and says no agents were found when search finds none', async function({ page }) {
+    const record = await openPretendSite(page, { answerOverrides: [
+        { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/items$/, answer: function(url, match) {
+            return [LIBRARY_ID, AGENT_ASSETS_ID].includes(match[1]) && (url.searchParams.get('$filter') || '').includes("File_x0020_Type eq 'agent'")
+                ? reply(500, { error: 'Threshold exceeded' }) : undefined;
+        } }
+    ] });
+    await extractSiteInformation(page);
+    const section = await openAgents(page);
+    await expect(section.locator('#sna-detail-title .item-count-badge')).toHaveText('0 agents');
+    const note = 'SharePoint could not filter Agent Assets and Documents by file type, so Sitenalyzer used SharePoint search for them.';
+    // The note and the empty result are under the Agents heading, so the heading is never left empty.
+    await expect(section.locator('h4.sna-subsection-title + p.sna-note').first()).toContainText(note);
+    await expect(section).toContainText('No agents found.');
+    await gotoSection(page, 'Site review');
+    await expect(page.getByRole('row', { name: /^Agents Partly read/ })).toContainText(note);
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
 test('reports agents as not read when the library and search both fail', async function({ page }) {
     const record = await openPretendSite(page, { answerOverrides: [agentAnswer(reply(500, { error: 'Threshold exceeded' })),
         { pattern: /^\/_api\/search\/query$/, answer: function(url) {
@@ -793,7 +816,7 @@ test('reports agents as not read when the library and search both fail', async f
     await extractSiteInformation(page);
     await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('AgentsNot read');
     const section = await openAgents(page);
-    await expect(section).toContainText('could not check Documents and SharePoint search did not answer');
+    await expect(section).toContainText('could not check Documents and SharePoint search did not answer, so any agents in it are not listed.');
     await expect(section).not.toContainText('No agents found.');
     await expect(section.locator('#sna-detail-title .item-count-badge')).toHaveText('Agents not read');
     await gotoSection(page, 'Site review');
@@ -840,7 +863,8 @@ test('reads later search rows without duplicating agents already read from a lib
 test('prints every agent and site skill in plain tables even when their screen table is filtered', async function({ page }) {
     await stubPrint(page);
     const items = agentItems.concat(Array.from({ length: 10 }, function(_, n) {
-        return Object.assign({}, agentItems[0], { Id: n + 100, FileLeafRef: 'Sample ' + n + '.agent', FileRef: SITE_PATH + '/Shared Documents/Sample ' + n + '.agent' });
+        return Object.assign({}, agentItems[0], { Id: n + 100, FileLeafRef: 'Sample ' + n + '.agent', FileRef: SITE_PATH + '/Shared Documents/Sample ' + n + '.agent',
+            HasUniqueRoleAssignments: n !== 0 });
     }));
     const record = await openPretendSite(page, { answerOverrides: [agentAnswer({ value: items })] });
     await extractSiteInformation(page);
@@ -853,8 +877,10 @@ test('prints every agent and site skill in plain tables even when their screen t
     await expect(printed.getByRole('heading', { name: 'Agents and skills', exact: true })).toBeAttached();
     await expect(printed.getByRole('table', { name: 'Agents', exact: true }).locator('tbody tr')).toHaveCount(12);
     await expect(printed.getByRole('table', { name: 'Site skills', exact: true })).toContainText('Weekly summary');
-    await expect(printed.getByRole('table', { name: 'Agents', exact: true }).getByRole('row', { name: /Protocol Reviewer/ })).toContainText('Inherited permissions');
-    await expect(printed.getByRole('table', { name: 'Site skills', exact: true })).toContainText('Inherited permissions');
+    await expect(printed.getByRole('table', { name: 'Agents', exact: true }).getByRole('row', { name: /Protocol Reviewer/ })).toContainText("Uses its folder's permissions");
+    await expect(printed.getByRole('table', { name: 'Agents', exact: true }).getByRole('row', { name: /Study Visits Helper/ })).toContainText('Own permissions');
+    await expect(printed.getByRole('table', { name: 'Agents', exact: true }).getByRole('row', { name: /Sample 0/ })).toContainText("Uses the library's permissions");
+    await expect(printed.getByRole('table', { name: 'Site skills', exact: true })).toContainText("Uses its folder's permissions");
     await expect(printed).toContainText('Test Owner');
     await expect(printed.locator('button, input, .tabulator')).toHaveCount(0);
     expect(record.unexpectedRequests).toEqual([]);
@@ -939,7 +965,7 @@ test('limits site skill text reads and rejects paths outside a single skill fold
     await extractSiteInformation(page);
     await expect(page.locator('.sna-stat a[href="#sna/contents/agents"]')).toContainText('201 site skills');
     const section = await openAgents(page);
-    await expect(section).toContainText('read the text of the first 200 site skills only');
+    await expect(section).toContainText('read the text of the first 200 site skills only, so the rest show their folder names and no descriptions.');
     await expect(section.getByRole('grid', { name: 'Site skills', exact: true })).toContainText('skill-000');
     await expect(section).not.toContainText('Do not use multiline metadata');
     await expect(section.locator('#sna-tbl-skills button[data-action="open-url"]')).toHaveAttribute('data-url',
