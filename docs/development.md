@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-23
+Last Modified: 2026-10-27
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -71,6 +71,8 @@ npx playwright test
 ```
 
 The tests check that:
+
+- Folder search results open with the selected name in tables that have a filter box, replacing a previous filter. Tests cover 10, 11, and 51 folders, keyboard navigation, quoted names, and accessibility checks.
 
 - The app appears in the page with no console errors and no Content Security Policy violations.
 - The libraries and style sheets load from Site Assets with the build's version in their addresses, and the app adds no global names to the page.

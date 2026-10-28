@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-23
+Last Modified: 2026-10-27
 Summary: Browser tests for Sitenalyzer. Each test opens the built app from dist/ on a pretend SharePoint
          site (see pretend-sharepoint.js) that blocks inline scripts the way SharePoint Online does.
 Notes: See README file for documentation and full license information.
@@ -1623,6 +1623,75 @@ test('shows a list\'s overview, folders, and permissions in its tabs', async fun
     await expect(detail.locator('.tabulator')).not.toContainText('Forms');
     await detail.locator('.sna-detail-tabs').getByRole('link', { name: 'Permissions' }).click();
     await expect(detail).toContainText('Uses the site\'s permissions.');
+});
+
+for (const folderCount of [10, 11, 51]) {
+    test('opens a folder search result in a table with ' + folderCount + ' folders', async function({ page }) {
+        const targetName = 'Selected & "quoted" <img id="folder-injection" src="x"> folder';
+        const folders = Array.from({ length: folderCount }, function(_, index) {
+            const name = index === folderCount - 1 ? targetName : 'Folder ' + String(index + 1).padStart(3, '0');
+            return { Name: name, UniqueId: 'synthetic-folder-' + index, ItemCount: 1,
+                ServerRelativeUrl: SITE_PATH + '/Shared Documents/' + encodeURIComponent(name) };
+        });
+        const record = await openPretendSite(page, { answerOverrides: [
+            { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIBRARY_ID + "'\\)/RootFolder/Folders$"), body: { value: folders } }
+        ] });
+        await extractSiteInformation(page);
+        const detail = await openListDetail(page, 'Documents', 'Folders');
+        const filter = detail.getByRole('searchbox', { name: 'Filter folders' });
+        if (folderCount > 50) {
+            await expect(detail.locator('.tabulator').getByRole('link', { name: targetName, exact: true })).toHaveCount(0);
+        }
+        if (folderCount > 10) {
+            await filter.fill('Folder 001');
+            await expect(detail.locator('.sna-table-count')).toHaveText('Showing 1 of ' + folderCount + ' folders.');
+        }
+        await searchReport(page, 'Selected');
+        const result = page.locator('.sna-search-list').getByRole('link', { name: targetName, exact: true });
+        if (folderCount > 10) {
+            await expect(result).toHaveAttribute('data-filter-text', targetName);
+        } else {
+            await expect(result).not.toHaveAttribute('data-filter-table');
+        }
+        await result.focus();
+        await result.press('Enter');
+        await expect(page.locator('#sna-section-title')).toBeFocused();
+        await expect(detail.locator('.tabulator').getByRole('link', { name: targetName, exact: true })).toBeVisible();
+        if (folderCount > 10) {
+            await expect(filter).toHaveValue(targetName);
+            await expect(detail.locator('.sna-table-count')).toHaveText('Showing 1 of ' + folderCount + ' folders.');
+        } else {
+            await expect(filter).toHaveCount(0);
+        }
+        await expectNoAxeViolations(page);
+        await expect(page.locator('#folder-injection')).toHaveCount(0);
+        expect(changeRequests(record)).toEqual([]);
+        expect(record.consoleErrors).toEqual([]);
+        expect(await page.evaluate(function() { return window.__cspViolations; })).toEqual([]);
+    });
+}
+
+test('keeps hidden values out of a folder search destination filter', async function({ page }) {
+    const folders = Array.from({ length: 11 }, function(_, index) {
+        return { Name: index === 10 ? 'Selected MRN 2345678' : 'Folder ' + index,
+            UniqueId: 'synthetic-hidden-folder-' + index, ItemCount: 1,
+            ServerRelativeUrl: SITE_PATH + '/Shared Documents/Folder' + index };
+    });
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIBRARY_ID + "'\\)/RootFolder/Folders$"), body: { value: folders } }
+    ] });
+    await extractSiteInformation(page);
+    await searchReport(page, 'Selected');
+    const result = page.locator('.sna-search-list').getByRole('link', { name: /^Selected/ });
+    const displayedName = await result.innerText();
+    expect(displayedName).not.toContain('2345678');
+    await expect(result).toHaveAttribute('data-filter-text', displayedName);
+    await result.click();
+    const detail = page.locator('#sna-contents-detail');
+    await expect(detail.getByRole('searchbox', { name: 'Filter folders' })).toHaveValue(displayedName);
+    await expect(detail.locator('.tabulator').getByRole('link', { name: displayedName, exact: true })).toBeVisible();
+    expect(page.url()).not.toContain('2345678');
+    await expect(page.locator('#sitenalyzer-app')).not.toContainText('2345678');
 });
 
 test('shows a filter box only above tables with more than 10 rows, and keeps its text', async function({ page }) {
