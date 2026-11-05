@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/usage.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-27
+Last Modified: 2026-11-05
 Summary: How to install, update, and use Sitenalyzer on a SharePoint Online site.
 Notes: See README file for documentation and full license information.
 
@@ -125,7 +125,7 @@ With **Show technical details** on, the **Columns** tab also shows the choices o
 Above the tabs are the **ID**, **Open**, and **Permissions** buttons. **ID** copies the list or library ID. **Permissions** opens SharePoint's own permissions page for it. On a narrow screen, the details replace the list; select **Back to results** to return to it.
 
 After you select **ID**, the ID appears beside the button for five seconds. A status message confirms when copying succeeds.
-If copying fails, the message tells you to select the displayed ID and copy it manually.
+If copying fails, the message tells you to select the ID shown and press Ctrl+C (Cmd+C on a Mac).
 The message hides after about ten seconds, but the ID stays visible so you can still copy it.
 A later status message replaces the error. Success messages hide after about two seconds.
 Keyboard focus returns to the control you used if it is still on the page.

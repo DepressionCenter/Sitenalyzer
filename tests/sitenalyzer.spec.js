@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-27
+Last Modified: 2026-11-05
 Summary: Browser tests for Sitenalyzer. Each test opens the built app from dist/ on a pretend SharePoint
          site (see pretend-sharepoint.js) that blocks inline scripts the way SharePoint Online does.
 Notes: See README file for documentation and full license information.
@@ -276,7 +276,7 @@ async function prepareClipboardCopy(page, clipboardMode, fallbackResult) {
     return { record, button, display: page.locator('#' + displayId), toast: page.locator('#sna-copy-toast'), textareaCount };
 }
 
-const COPY_FAILURE_MESSAGE = "Couldn't copy the ID. Select the displayed ID and copy it manually.";
+const COPY_FAILURE_MESSAGE = "Couldn't copy the ID. Select the ID shown and press Ctrl+C (Cmd+C on a Mac).";
 [
     { name: 'Clipboard API success', mode: 'success', fallback: false, copied: true },
     { name: 'missing Clipboard API uses a successful fallback', mode: 'missing', fallback: true, copied: true },

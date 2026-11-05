@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-27
+Last Modified: 2026-11-05
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -3356,7 +3356,7 @@ async function snaCopyToClipboard(text, label) {
         }
     }
     snaShowToast(copied ? (label || 'ID') + ' copied!' :
-        "Couldn't copy the ID. Select the displayed ID and copy it manually.", !copied);
+        "Couldn't copy the ID. Select the ID shown and press Ctrl+C (Cmd+C on a Mac).", !copied);
     return copied;
 }
 
