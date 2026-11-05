@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 build.ps1
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-19
+Last Modified: 2026-11-05
 Summary: Builds the files that site owners copy to SharePoint. Reads src/ and writes dist/.
          Runs with the Windows PowerShell 5.1 that comes with Windows, or with PowerShell 7 on
          any system. build.sh does the same work in bash, and both scripts must write identical
@@ -37,6 +37,7 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = $PSScriptRoot
 $SrcDir = Join-Path $RepoRoot 'src'
 $LibDir = Join-Path $SrcDir 'lib'
+$ToolsDir = Join-Path $SrcDir 'tools'
 $DistDir = Join-Path $RepoRoot 'dist'
 $ScriptsOut = Join-Path (Join-Path $DistDir 'SiteAssets') 'scripts'
 $StylesOut = Join-Path (Join-Path $DistDir 'SiteAssets') 'styles'
@@ -46,6 +47,11 @@ $ChecksumFile = Join-Path $LibDir 'sha256sums.txt'
 $AppHtmlMarker = 'var SNA_APP_HTML = [];'
 # The build replaces this exact line in src/sitenalyzer.js with the version of the style sheets and libraries.
 $AssetVersionMarker = "var SNA_ASSET_VERSION = '';"
+# The build replaces this exact line in src/sitenalyzer.js with the files from src/tools/, in this order, with one empty
+# line between files. They are inside the function that holds all of sitenalyzer.js, so they can use its helpers.
+# build.sh lists the same files in the same order.
+$ToolsMarker = '// The build places the files from src/tools/ here, in the order listed in build.sh and build.ps1.'
+$ToolsFiles = @('core.js', 'plan.js', 'workbook.js', 'taxonomy.js', 'lists.js', 'files.js', 'permissions.js', 'verify.js', 'runner.js', 'ui.js')
 # UTF-8 without a byte order mark, so the output matches build.sh byte for byte.
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:FilesWritten = 0
@@ -105,6 +111,15 @@ if ($markerCount -ne 1) {
 $versionMarkerCount = @($appLines | Where-Object { $_ -ceq $AssetVersionMarker }).Count
 if ($versionMarkerCount -ne 1) {
     Stop-Build "src/sitenalyzer.js must contain the line '$AssetVersionMarker' exactly once, but it appears $versionMarkerCount times."
+}
+$toolsMarkerCount = @($appLines | Where-Object { $_ -ceq $ToolsMarker }).Count
+if ($toolsMarkerCount -ne 1) {
+    Stop-Build "src/sitenalyzer.js must contain the line '$ToolsMarker' exactly once, but it appears $toolsMarkerCount times. Keep that one line where the files from src/tools/ go, then run the build again."
+}
+foreach ($toolsFile in $ToolsFiles) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ToolsDir $toolsFile) -PathType Leaf)) {
+        Stop-Build "src/tools/$toolsFile is missing. Restore it from git, or remove it from the list in both build.sh and build.ps1, then run the build again."
+    }
 }
 
 # Only files listed in sha256sums.txt are copied, so an unexpected or changed library never reaches dist/.
@@ -178,9 +193,19 @@ for ($i = 0; $i -lt $markupLines.Length; $i++) {
     $quotedMarkup.Add('    "' + $escaped + '",')
 }
 
+# Join the files from src/tools/ as they are, with carriage returns removed and one empty line between files.
+# build.sh joins them the same way.
+$toolsLines = New-Object System.Collections.Generic.List[string]
+for ($i = 0; $i -lt $ToolsFiles.Length; $i++) {
+    if ($i -gt 0) { $toolsLines.Add('') }
+    foreach ($toolsLine in (Read-TextLines (Join-Path $ToolsDir $ToolsFiles[$i]))) { $toolsLines.Add($toolsLine) }
+}
+
 $builtApp = New-Object System.Collections.Generic.List[string]
 foreach ($line in $appLines) {
-    if ($line -ceq $AppHtmlMarker) {
+    if ($line -ceq $ToolsMarker) {
+        foreach ($toolsLine in $toolsLines) { $builtApp.Add($toolsLine) }
+    } elseif ($line -ceq $AppHtmlMarker) {
         $builtApp.Add('var SNA_APP_HTML = [')
         foreach ($quotedLine in $quotedMarkup) { $builtApp.Add($quotedLine) }
         $builtApp.Add('];')

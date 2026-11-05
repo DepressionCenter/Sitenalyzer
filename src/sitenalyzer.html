@@ -63,6 +63,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 						<li><a href="#sna/permissions" data-section="permissions"><span data-icon="shield"></span>Permissions</a></li>
 						<li><a href="#sna/taxonomy" data-section="taxonomy"><span data-icon="tag"></span>Taxonomy</a></li>
 						<li><a href="#sna/review" data-section="review"><span data-icon="check"></span>Site review</a></li>
+						<li><a href="#sna/tools" data-section="tools"><span data-icon="tools"></span>Tools</a></li>
 					</ul>
 				</nav>
 				<div class="sna-switches">
@@ -102,7 +103,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 				<h2 id="sna-site-dialog-title" class="sna-dialog-title">Choose a site</h2>
 				<button type="button" class="sna-btn sna-btn-outline sna-btn-small" data-action="close-site-dialog">Close</button>
 			</div>
-			<p>Open the report of another site. Sitenalyzer reads it with your own access.</p>
+			<p id="sna-site-dialog-intro">Open the report of another site. Sitenalyzer reads it with your own access.</p>
 			<label for="sna-site-find" class="sna-field-label">Find a site</label>
 			<input type="search" id="sna-site-find" class="sna-table-search" autocomplete="off" spellcheck="false" aria-describedby="sna-site-find-status">
 			<p class="sna-dialog-refresh"><button type="button" class="sna-link-btn" data-action="refresh-sites">Refresh sites list</button></p>
@@ -112,7 +113,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 				<label for="sna-site-address" class="sna-field-label">Or enter a site address</label>
 				<div class="sna-url-row">
 					<input type="text" id="sna-site-address" autocomplete="off" spellcheck="false" placeholder="https://your-tenant.sharepoint.com/sites/your-site" aria-describedby="sna-site-address-message">
-					<button type="submit" class="sna-btn sna-btn-primary">Open site report</button>
+					<button type="submit" id="sna-site-address-submit" class="sna-btn sna-btn-primary">Open site report</button>
 				</div>
 				<p id="sna-site-address-message" class="sna-error-text" role="alert" hidden></p>
 			</form>

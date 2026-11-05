@@ -25,6 +25,7 @@ This page explains how to change Sitenalyzer, build the files that site owners c
 ### Folders
 
 - `src/` holds the source files. Edit these.
+- `src/tools/` holds the code of the Tools section, one file for each part of the work. The build puts these files inside `sitenalyzer.js`. See [Tools in the architecture page](architecture.md#tools).
 - `src/lib/` holds unchanged copies of SheetJS and Tabulator, their license texts, and `sha256sums.txt`, which lists a checksum for each library file.
 - `dist/` holds the build results that site owners copy to SharePoint. Don't edit it by hand, because the next build replaces it.
 - `tests/` holds the browser tests.
@@ -53,7 +54,10 @@ The build does these steps:
 2. Deletes `dist/` and creates it again.
 3. Copies the libraries and license texts to `dist/SiteAssets`.
 4. Writes `dist/SiteAssets/scripts/sitenalyzer.js`, with the markup from `src/sitenalyzer.html` in place of the line `var SNA_APP_HTML = [];`, and the version of the style sheets and libraries in place of the line `var SNA_ASSET_VERSION = '';`. The version is the first 12 characters of the SHA-256 checksum of `src/sitenalyzer.css` followed by `src/lib/sha256sums.txt`, with carriage returns removed, so it changes whenever the app styles or a library change.
-5. Copies `src/sitenalyzer.css` and `src/sitenalyzer.html.txt` to `dist`.
+5. Puts the files from `src/tools/` in place of the line `// The build places the files from src/tools/ here, in the order listed in build.sh and build.ps1.`, in this order: `core.js`, `plan.js`, `workbook.js`, `taxonomy.js`, `lists.js`, `files.js`, `permissions.js`, `verify.js`, `runner.js`, and `ui.js`. Each file goes in as it is, with carriage returns removed, and one empty line between files. The build stops with a message if that line is missing or appears more than once, or if one of the files is missing.
+6. Copies `src/sitenalyzer.css` and `src/sitenalyzer.html.txt` to `dist`.
+
+To add a file to `src/tools/`, add its name to the list in both `build.sh` (`TOOLS_FILES`) and `build.ps1` (`$ToolsFiles`), in the same place. Save it as UTF-8 without a byte order mark, and start it with the license comment the other files have.
 
 The output always uses UTF-8 and LF line endings, with no dates or commit numbers. The same source files always produce the same bytes, so you can compare builds with `git diff`.
 
@@ -136,6 +140,17 @@ The tests check that:
 - ID copying reports success once, only after the Clipboard API or the legacy copy command succeeds. Missing, unusable, rejected, or synchronously failing Clipboard API calls try the legacy command. A false return value or exception means failure. Tests check exact copied IDs, temporary textarea cleanup, keyboard focus, and a removed initiating control. Failed copies keep the ID visible for manual copying. Error messages in the existing live status hide after ten seconds; other messages hide after 2.2 seconds. New messages replace earlier messages and cancel their timers. Successful copies still hide the revealed ID after five seconds. The failure view passes axe, and ID text is never interpreted as markup.
 - axe finds no WCAG 2.2 AA problems on the start screen, in any section or part of the report screen, in an open description editor, or in **Choose a site**.
 
+The tests of the Tools section are in `tests/tools.spec.js`, and the other tests are in `tests/sitenalyzer.spec.js`. To run only the Tools tests, use `npx playwright test tools.spec.js`. The Tools tests check that:
+
+- **Tools** is in the section navigation, `#sna/tools` and `#sna/tools/copy` open **Copy site structure**, an unknown part of Tools opens the Overview, and the printed report leaves Tools out.
+- **Check destination** accepts a site where the person is a site collection administrator, and refuses a site where they aren't, an address on another host (without sending it any request), an `http://` address, an address that isn't a web address, and a site that doesn't exist. Focus stays on the button.
+- **Choose a site** fills the destination box, returns focus to it, and doesn't open another report. **Change site** opens reports again afterwards.
+- The table of lists and libraries has a checkbox, a **Name** box, and an **Address** box for each, with messages for an empty name, an address with other characters, an address or name used twice, and a name the destination already has. **Select all** and **Clear all** work, and **Copy to destination** stays off until every chosen row is fixed.
+- A data dictionary file turns off and disables the four switches, and **Permissions** is off by default.
+- A copy of one list runs from start to end against the pretend destination: the list is created with its address as its first title and then renamed, every write uses the destination's own request digest, nothing changes on the source site, and the results show the list as **Copied** and the parts that aren't built yet as **Skipped**. **Save results (.xlsx)** saves the same rows.
+- A refused list is **Failed** with SharePoint's reason, a refused digest is replaced once, **Stop copying** sends nothing after the request already on its way, cancelling the confirmation copies nothing, and **Start over** clears every choice.
+- Keyboard-only use works from the destination box to the results, and axe finds no WCAG 2.2 AA problems in Tools at 1280 and 320 pixels wide, with problems marked, with a data dictionary file chosen, and with results. At 320 pixels, nothing but the table of lists scrolls sideways.
+
 The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresses, and IDs are made up. `openPretendSite(page, options)` takes these options:
 
 | Option | Effect |
@@ -146,10 +161,28 @@ The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresse
 | `extraLists` | Adds lists to the site's list of lists. |
 | `answerOverrides` | Answers checked before the standard ones: `{ pattern, body }` or `{ pattern, answer(url, match, request) }`. Use `reply(403, body)` for an error, and `rawReply(200, contentType, text)` for an answer that isn't JSON. An `answer` function that returns `undefined` passes the request on to the standard answers. Add `method: 'PATCH'` or another method for requests that are not GET. Overrides also answer the GET requests inside a `$batch`. |
 | `addressSuffix` | Adds text to the page address, such as `?siteUrl=...#sna/taxonomy`. |
+| `destination` | Adds the pretend destination site for the Tools tests: `true`, or an object with the options in the next section. |
 
 The pretend site also answers the request digest (`POST /_api/contextinfo`), and answers description saves (`PATCH` on the site, a list, or a column) with 204 No Content. Term requests with `$expand=children` get each term with an empty list of children, `…/terms/<ID>/children` gets an empty list, and `/_api/web/fields` has no managed metadata columns, so the standard answers have no parent terms and no term set use. It answers `POST /_api/$batch` by answering each GET inside the batch from the same answers, and sends them back as one `multipart/mixed` answer. It returns lists the test can check afterward: `consoleErrors`, `unexpectedRequests`, `siteAssetsRequests`, `apiRequests`, `otherOriginRequests`, and `writeRequests`, which holds every request that is not a GET. `apiRequests` also holds each request inside a batch. In the tests, `changeRequests(record)` leaves out the request digest and batches that hold only GET requests to the site, so it lists only requests that could change the site. Requests to any other host are refused, so tests never reach the internet.
 
 The pretend site also has two agents in Documents and one site skill in hidden Agent Assets. A second `SKILL.md` has the wrong folder depth and must be ignored. The fixtures answer the listing of document libraries for agents, which includes hidden Agent Assets and Site Pages, the separate Agent Assets lookup, agent and site skill items requests, and the text request for `SKILL.md`. Search queries for `FileExtension:agent` return no rows unless a test supplies them; the site's existing search answers remain available for choosing a site.
+
+The pretend site also answers the reads that the copy plan in Tools makes: a list's full settings (`/_api/web/lists(guid'…')`), its columns with their definitions (`SchemaXml`) when the request's `$select` names `FromBaseType`, one default view, the Item content type, and the site's content types, which hold only SharePoint's own Item. The report's own reads of the same addresses get the same answers as before. To add an answer for a new read, add an entry to `API_ANSWERS` before any entry whose pattern also matches the address, and return `undefined` from its `answer` function for the report's own queries.
+
+#### The pretend destination
+
+`tests/pretend-destination.js` is a second pretend site, the destination of a copy, at `https://contoso.sharepoint.com/sites/targetsite`, named Study Two. It keeps an in-memory model of the site: its lists and libraries with their columns, views, and content types (it starts with Documents, Site Pages, Site Assets, and hidden Agent Assets), site columns and content types, a term store with no term group of its own, files, folders, groups, permission levels, and permissions. It answers the reads that **Check destination** and `verify.js` make, and changes the model for list creation, a MERGE or DELETE of a list, and column creation with `createfieldasxml`. It refuses every write that doesn't carry its own request digest, `TARGET-DIGEST-0001`, with the 403 answer SharePoint gives, so a test fails if Tools sends the source site's digest. A CSOM request that no answer handles gets an error in its answer.
+
+The record that `openPretendSite` returns has `record.destination`, the model, so a test can check what was made. Requests to the destination are in `apiRequests` and `writeRequests` too. The `destination` option takes these options:
+
+| Option | Effect |
+| --- | --- |
+| `notSiteAdmin` | The person isn't a site collection administrator of the destination. |
+| `termStoreRefusesRest`, `termStoreRefusesAll`, `noAgentAssets`, `copyFileRefused` | Refusals for the tests of each part of the copy. The model holds them in `model.options` for the answers of those parts to read. `noAgentAssets` also leaves Agent Assets out of the model. |
+| `handlers` | More answers for one test, checked before every other answer. |
+| `setup(model)` | Changes the model before the page opens, such as adding a list with `model.addList(title, template, address)`. |
+
+Each answer is `{ method, pattern, answer(ctx) }`, where `pattern` is matched against the decoded address after `/sites/targetsite`, such as `/_api/web/lists`. `answer` returns a plain object for 200 OK, `ctx.reply(status, body)`, `ctx.rawReply(status, contentType, text)`, or `ctx.spError(status, message)` for an error in SharePoint's format, or `undefined` to pass the request on. `ctx` also holds the request's `body` as JSON, its `headers`, `xHttpMethod`, and the `model`. To add answers for one part of the copy, such as term sets, put them in a file named `tests/pretend-destination-<part>.js`, such as `pretend-destination-taxonomy.js`, that calls `addDestinationHandlers([...])` from `require('./pretend-destination')`. `pretend-destination.js` loads every file with that name when it loads, and their answers are checked before the standard ones.
 
 Automated checks find only part of all accessibility problems. Check keyboard use, zoom to 200%, and a screen reader by hand when you change the interface.
 
@@ -166,6 +199,12 @@ The fixtures cannot confirm these service details. Check them on a SharePoint On
 6. The item permissions link opens the correct file's permissions page.
 7. Check whether the ready-made agent appears as a file; this inventory counts only files it can read.
 
+For **Copy site structure** in Tools, also check on a real tenant, with a destination site you can throw away:
+
+1. **Check destination** says you're a site collection administrator of a site where you are, and refuses one where you aren't.
+2. A copied list gets the address you chose and then the name you chose, and the destination's own request digest is accepted.
+3. Every read the copy plan makes answers without a 400, especially the `$select` of list settings, columns, views, and content types. If SharePoint refuses a name, the plan reads again with a shorter `$select`.
+
 Also check the two tables and their Permissions buttons with a screen reader, keyboard only, and 200% zoom. Open the real page with `?csp=enforce` and check for Content Security Policy violations. These checks have not been completed by the pretend-site tests.
 
 ### Update a library
@@ -181,7 +220,7 @@ Also check the two tables and their Permissions buttons with a screen reader, ke
 
 The CI workflow in `.github/workflows/ci.yml` runs on every pull request and on every push to `main`.
 
-- **Build on Linux** runs ShellCheck on `build.sh` and searches `src/` for inline scripts and inline event handlers. It then builds with `build.sh` and with PowerShell 7 and fails if the two builds differ.
+- **Build on Linux** runs ShellCheck on `build.sh` and searches `src/`, including `src/tools/`, for inline scripts and inline event handlers. It then builds with `build.sh` and with PowerShell 7 and fails if the two builds differ.
 - **Build on Windows** builds with Windows PowerShell 5.1 and fails if the result differs from the Linux build.
 - **Browser tests** run the Playwright tests against the files built in that run.
 - **Commit rebuilt dist** runs only after a merge to `main`. It builds again and, if `dist/` changed, commits it as `github-actions[bot]` with the message "Rebuild dist from src". You can commit `dist/` yourself in a pull request, or leave it to this job. If branch protection on `main` stops the bot from pushing, this job fails with an error. Either allow `github-actions[bot]` to push, or build and commit `dist/` yourself.

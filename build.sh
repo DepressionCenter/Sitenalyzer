@@ -3,7 +3,7 @@
 # build.sh
 # Author(s): Gabriel Mongefranco.
 # Created: 2026-10-14
-# Last Modified: 2026-10-19
+# Last Modified: 2026-11-05
 # Summary: Builds the files that site owners copy to SharePoint. Reads src/ and writes dist/.
 #          Needs only bash and standard tools (sed, awk, and sha256sum or shasum), so it runs on
 #          Linux, macOS, and Git Bash on Windows. build.ps1 does the same work in PowerShell, and
@@ -31,6 +31,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$REPO_ROOT/src"
 LIB_DIR="$SRC_DIR/lib"
+TOOLS_DIR="$SRC_DIR/tools"
 DIST_DIR="$REPO_ROOT/dist"
 SCRIPTS_OUT="$DIST_DIR/SiteAssets/scripts"
 STYLES_OUT="$DIST_DIR/SiteAssets/styles"
@@ -40,6 +41,11 @@ CHECKSUM_FILE="$LIB_DIR/sha256sums.txt"
 APP_HTML_MARKER='var SNA_APP_HTML = [];'
 # The build replaces this exact line in src/sitenalyzer.js with the version of the style sheets and libraries.
 ASSET_VERSION_MARKER="var SNA_ASSET_VERSION = '';"
+# The build replaces this exact line in src/sitenalyzer.js with the files from src/tools/, in this order, with one empty
+# line between files. They are inside the function that holds all of sitenalyzer.js, so they can use its helpers.
+# build.ps1 lists the same files in the same order.
+TOOLS_MARKER='// The build places the files from src/tools/ here, in the order listed in build.sh and build.ps1.'
+TOOLS_FILES=(core.js plan.js workbook.js taxonomy.js lists.js files.js permissions.js verify.js runner.js ui.js)
 TAB="$(printf '\t')"
 FILES_WRITTEN=0
 
@@ -79,6 +85,11 @@ marker_count="$(tr -d '\r' < "$SRC_DIR/sitenalyzer.js" | grep -cxF "$APP_HTML_MA
 [ "$marker_count" = "1" ] || fail "src/sitenalyzer.js must contain the line '$APP_HTML_MARKER' exactly once, but it appears $marker_count times."
 version_marker_count="$(tr -d '' < "$SRC_DIR/sitenalyzer.js" | grep -cxF "$ASSET_VERSION_MARKER" || true)"
 [ "$version_marker_count" = "1" ] || fail "src/sitenalyzer.js must contain the line '$ASSET_VERSION_MARKER' exactly once, but it appears $version_marker_count times."
+tools_marker_count="$(tr -d '\r' < "$SRC_DIR/sitenalyzer.js" | grep -cxF "$TOOLS_MARKER" || true)"
+[ "$tools_marker_count" = "1" ] || fail "src/sitenalyzer.js must contain the line '$TOOLS_MARKER' exactly once, but it appears $tools_marker_count times. Keep that one line where the files from src/tools/ go, then run the build again."
+for tools_file in "${TOOLS_FILES[@]}"; do
+  [ -f "$TOOLS_DIR/$tools_file" ] || fail "src/tools/$tools_file is missing. Restore it from git, or remove it from the list in both build.sh and build.ps1, then run the build again."
+done
 
 # Only files listed in sha256sums.txt are copied, so an unexpected or changed library never reaches dist/.
 library_files=()
@@ -127,7 +138,8 @@ done
 # the same value.
 asset_version="$( { tr -d '' < "$SRC_DIR/sitenalyzer.css"; tr -d '' < "$CHECKSUM_FILE"; } | stdin_sha256 | cut -c 1-12)"
 markup_lines="$(mktemp)"
-trap 'rm -f "$markup_lines"' EXIT
+tools_lines="$(mktemp)"
+trap 'rm -f "$markup_lines" "$tools_lines"' EXIT
 
 # Drop the license comment at the top of the markup, then turn each line into a quoted JavaScript
 # string. Escaping rules, shared with build.ps1: \ becomes \\, " becomes \", and a tab becomes \t.
@@ -136,8 +148,22 @@ tr -d '\r' < "$SRC_DIR/sitenalyzer.html" \
   | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$TAB/\\\\t/g" -e 's/^/    "/' -e 's/$/",/' \
   > "$markup_lines"
 
+# Join the files from src/tools/ as they are, with carriage returns removed and one empty line between files. Every
+# line ends in LF, including a last line that has no line ending in its file. build.ps1 joins them the same way.
+tools_count=0
+for tools_file in "${TOOLS_FILES[@]}"; do
+  [ "$tools_count" -eq 0 ] || echo >> "$tools_lines"
+  awk '{ gsub(/\r/, ""); print }' "$TOOLS_DIR/$tools_file" >> "$tools_lines"
+  tools_count=$((tools_count + 1))
+done
+
 tr -d '\r' < "$SRC_DIR/sitenalyzer.js" \
-  | awk -v marker="$APP_HTML_MARKER" -v version_marker="$ASSET_VERSION_MARKER" -v version="$asset_version" -v quote="'" -v markup_file="$markup_lines" '
+  | awk -v marker="$APP_HTML_MARKER" -v version_marker="$ASSET_VERSION_MARKER" -v version="$asset_version" -v quote="'" \
+      -v markup_file="$markup_lines" -v tools_marker="$TOOLS_MARKER" -v tools_file="$tools_lines" '
+      $0 == tools_marker {
+        while ((getline tools_line < tools_file) > 0) { print tools_line }
+        next
+      }
       $0 == marker {
         print "var SNA_APP_HTML = ["
         while ((getline markup_line < markup_file) > 0) { print markup_line }

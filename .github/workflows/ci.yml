@@ -2,7 +2,7 @@
 # ci.yml
 # Author(s): Gabriel Mongefranco.
 # Created: 2026-10-14
-# Last Modified: 2026-10-14
+# Last Modified: 2026-11-05
 # Summary: Builds Sitenalyzer with build.sh, PowerShell 7, and Windows PowerShell 5.1, checks that all three
 #          write identical files, runs the browser tests, and after a merge to main commits the rebuilt dist/.
 # Notes: See README file for documentation and full license information.
@@ -55,8 +55,8 @@ jobs:
         # SharePoint Online blocks these under its Content Security Policy.
         run: |
           if grep -nE "on[a-z]+=|javascript:|document\.write\(|setAttribute\([[:space:]]*['\"]on|<script>" \
-              src/sitenalyzer.js src/sitenalyzer.html src/sitenalyzer.html.txt; then
-            echo "::error::Found inline script code in src/. SharePoint blocks it. Use addEventListener in sitenalyzer.js instead."
+              src/sitenalyzer.js src/sitenalyzer.html src/sitenalyzer.html.txt src/tools/*.js; then
+            echo "::error::Found inline script code in src/. SharePoint blocks it. Use addEventListener in sitenalyzer.js or src/tools/ instead."
             exit 1
           fi
 
