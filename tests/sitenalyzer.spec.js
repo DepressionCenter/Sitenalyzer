@@ -2800,6 +2800,142 @@ test('reads a batch answer with LF line endings, parts in quotes, and a part tha
     expect(record.consoleErrors).toEqual([]);
 });
 
+// Names with characters that have a meaning in a web address. SharePoint returns each path with the name as typed,
+// so a link must encode the name, or the browser would read # as the start of a fragment and % as an escape.
+const SPECIAL_NAMES = [
+    { name: 'Research #1', encoded: 'Research%20%231' },
+    { name: '100% done', encoded: '100%25%20done' },
+    { name: 'Study%23A', encoded: 'Study%2523A' },
+    { name: "Ana's Café", encoded: "Ana's%20Caf%C3%A9" }
+];
+const SPECIAL_FILE_ID = '44444444-0000-4000-8000-000000000021';
+const SPECIAL_FOLDER_ID = '44444444-0000-4000-8000-000000000022';
+
+// Checks that href is on the pretend site, holds the whole path with the expected encoding, and has no fragment.
+function expectEncodedAddress(href, folder, name, encoded) {
+    const address = new URL(href);
+    expect(address.hash).toBe('');
+    expect(address.search).toBe('');
+    expect(address.href).toBe(SITE_URL + '/' + encodeURIComponent(folder) + '/' + encoded);
+    expect(decodeURIComponent(address.pathname)).toBe(SITE_PATH + '/' + folder + '/' + name);
+}
+
+test('links pages, folders, and shared items whose names have #, %, spaces, apostrophes, and accents', async function({ page }) {
+    const pages = SPECIAL_NAMES.map(function(item, index) {
+        return { Id: index + 1, Title: item.name, FileLeafRef: item.name + '.aspx', FileRef: SITE_PATH + '/SitePages/' + item.name + '.aspx',
+            FSObjType: 0, Modified: '2026-09-01T10:00:00Z' };
+    }).concat([
+        { Id: 9, Title: 'Elsewhere', FileLeafRef: 'Elsewhere.aspx', FileRef: '/sites/othersite/SitePages/Elsewhere.aspx', FSObjType: 0, Modified: '2026-09-01T10:00:00Z' }
+    ]);
+    const folders = SPECIAL_NAMES.map(function(item, index) {
+        return { Name: item.name, UniqueId: 'cccccccc-0000-4000-8000-0000000000' + (31 + index), ItemCount: 1,
+            ServerRelativeUrl: SITE_PATH + '/Shared Documents/' + item.name };
+    }).concat([
+        { Name: 'Other site folder', UniqueId: 'cccccccc-0000-4000-8000-000000000039', ItemCount: 1, ServerRelativeUrl: '/sites/othersite/Shared Documents/Other site folder' }
+    ]);
+    await stubPrint(page);
+    const record = await openPretendSite(page, { answerOverrides: OWNERS_ONLY_ANSWERS.concat([
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: function(url) {
+            return url.searchParams.get('$filter') ? undefined : { value: pages };
+        } },
+        // None of these pages has an image, so opening their details adds no failed image lookups to the console.
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\(\\d+\\)$"), body: { BannerImageUrl: null } },
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIBRARY_ID + "'\\)/RootFolder/Folders$"), body: { value: folders } },
+        { pattern: /^\/_api\/web\/sitegroups$/, body: { value: [
+            { Id: 61, Title: 'SharingLinks.' + SPECIAL_FILE_ID + '.OrganizationView.66666666-0000-4000-8000-000000000021' },
+            { Id: 62, Title: 'SharingLinks.' + SPECIAL_FOLDER_ID + '.OrganizationEdit.66666666-0000-4000-8000-000000000022' }
+        ] } },
+        { pattern: /^\/_api\/web\/GetFileById\('([^']+)'\)$/, answer: function(url, match) {
+            return match[1] === SPECIAL_FILE_ID
+                ? { Name: 'Research #1.docx', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Research #1.docx' }
+                : reply(404, { error: 'File not found' });
+        } },
+        { pattern: /^\/_api\/web\/GetFolderById\('([^']+)'\)$/, answer: function(url, match) {
+            return match[1] === SPECIAL_FOLDER_ID ? { Name: 'Study%23A', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Study%23A' } : undefined;
+        } }
+    ]) });
+    await extractSiteInformation(page);
+
+    // Site pages shows each address with the names as typed, and the page's details open it with the whole file name
+    // in the path.
+    const pagesTable = (await openSitePages(page)).locator('#sna-tbl-pages');
+    for (const item of SPECIAL_NAMES) {
+        await expect(pagesTable.getByRole('row', { name: new RegExp(escapeRegExp(item.name + '.aspx')) })).toContainText(SITE_URL + '/SitePages/' + item.name + '.aspx');
+    }
+    for (const item of SPECIAL_NAMES) {
+        const detail = await openPageDetail(page, item.name);
+        const openPage = detail.getByRole('link', { name: 'Open page (opens in a new window)' });
+        expectEncodedAddress(await openPage.getAttribute('href'), 'SitePages', item.name + '.aspx', item.encoded + '.aspx');
+        await expect(detail).toContainText(SITE_URL + '/SitePages/' + item.name + '.aspx');
+        await detail.getByRole('link', { name: 'Back to Site pages' }).click();
+    }
+    const elsewhere = await openPageDetail(page, 'Elsewhere');
+    await expect(elsewhere.getByRole('link', { name: 'Open page (opens in a new window)' })).toHaveCount(0);
+    await expect(elsewhere).toContainText('Not available.');
+
+    // Top-level folders link to the folder, and a folder on another site has no link.
+    const foldersTable = (await openListDetail(page, 'Documents', 'Folders')).locator('.tabulator');
+    for (const item of SPECIAL_NAMES) {
+        const link = foldersTable.getByRole('link', { name: item.name, exact: true });
+        await expect(link).toHaveText(item.name);
+        expectEncodedAddress(await link.getAttribute('href'), 'Shared Documents', item.name, item.encoded);
+    }
+    await expect(foldersTable).toContainText('Other site folder');
+    await expect(foldersTable.getByRole('link', { name: 'Other site folder' })).toHaveCount(0);
+
+    // Shared files and folders keep the # and % of their names in the path.
+    const sharing = await openPermissionPart(page, 'Sharing links (2)');
+    expectEncodedAddress(await sharing.getByRole('link', { name: 'Research #1.docx' }).getAttribute('href'), 'Shared Documents', 'Research #1.docx', 'Research%20%231.docx');
+    expectEncodedAddress(await sharing.getByRole('link', { name: 'Study%23A' }).getAttribute('href'), 'Shared Documents', 'Study%23A', 'Study%2523A');
+    await expect(sharing.getByRole('row', { name: /Study%23A/ })).toContainText('Study%23A (folder)');
+
+    // The print document shows the same addresses as the screen.
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page);
+    const printedPages = printed.getByRole('table', { name: 'Site pages' });
+    for (const item of SPECIAL_NAMES) {
+        await expect(printedPages).toContainText(SITE_URL + '/SitePages/' + item.name + '.aspx');
+    }
+    expectEncodedAddress(await printed.getByRole('link', { name: 'Research #1.docx' }).getAttribute('href'), 'Shared Documents', 'Research #1.docx', 'Research%20%231.docx');
+    expectEncodedAddress(await printed.getByRole('link', { name: 'Study%23A' }).getAttribute('href'), 'Shared Documents', 'Study%23A', 'Study%2523A');
+    expect(record.consoleErrors).toEqual([]);
+    expect(record.otherOriginRequests).toEqual([]);
+});
+
+test('hides an email address in a site page file name in the page address, on screen and in print', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: function(url) {
+            return url.searchParams.get('$filter') ? undefined : { value: [
+                { Id: 1, Title: 'Contact page', FileLeafRef: 'pat.example@example.org.aspx', FileRef: SITE_PATH + '/SitePages/pat.example@example.org.aspx',
+                    FSObjType: 0, Modified: '2026-09-01T10:00:00Z' }
+            ] };
+        } },
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\(\\d+\\)$"), body: { BannerImageUrl: null } }
+    ] });
+    await extractSiteInformation(page);
+
+    const pagesTable = (await openSitePages(page)).locator('#sna-tbl-pages');
+    await expect(pagesTable).toContainText('[email address hidden]');
+    await expect(pagesTable).not.toContainText('pat.example');
+    const detail = await openPageDetail(page, 'Contact page');
+    await expect(detail).not.toContainText('pat.example');
+    await expect(detail).not.toContainText('%40');
+    // The link still opens the page, with the @ encoded in its path.
+    const href = await detail.getByRole('link', { name: 'Open page (opens in a new window)' }).getAttribute('href');
+    expect(new URL(href).pathname).toBe(SITE_PATH + '/SitePages/pat.example%40example.org.aspx');
+
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    const printedPages = printFrameDocument(page).getByRole('table', { name: 'Site pages' });
+    await expect(printedPages).toContainText('[email address hidden]');
+    await expect(printedPages).not.toContainText('pat.example');
+    await expect(printedPages).not.toContainText('%40');
+});
+
 // Answers the site groups request in pages, as SharePoint does with $top and $skip. Group IDs start at 1000.
 // failAfter makes every request that skips that many groups or more fail.
 function pagedSiteGroups(titles, failAfter) {

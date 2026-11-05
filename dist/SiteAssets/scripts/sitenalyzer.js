@@ -597,7 +597,8 @@ function snaTableColumnSettings(type, tbl) {
       },
       { title: 'File name', field: 'fileName', sorter: 'string', widthGrow: 2 },
       { title: 'Last changed', field: 'modified', sorter: 'string', width: 130 },
-      { title: 'Address', field: 'url', sorter: 'string', widthGrow: 3, formatter: idFormatter }
+      // The address is plain text, not an ID, so a value in a file name, such as an email address, is hidden.
+      { title: 'Address', field: 'address', sorter: 'string', widthGrow: 3, formatter: function(cell) { return snaEscapeHtml(cell.getValue()); } }
     ];
   }
   function listLinkFormatter(cell) {
@@ -1324,6 +1325,15 @@ function snaCountText(count, singular, plural) {
 // Returns the scheme and host of an address, such as https://contoso.sharepoint.com, or '' when it is not a web address.
 function snaOrigin(address) {
     try { return new URL(address).origin; } catch(e) { return ''; }
+}
+
+// Returns a server-relative path from SharePoint, such as /sites/example/Shared Documents/Study #1, as the path part of
+// an address, with each folder and file name encoded and the slashes between them kept. SharePoint's FileRef and
+// ServerRelativeUrl values hold the names as typed, so a # or % in a name must be encoded here, or the browser would
+// read it as the start of a fragment or of an escape. Use it only on such paths, never on an address SharePoint has
+// already formed, such as DefaultViewUrl, because that would encode its escapes a second time.
+function snaEncodeServerRelativePath(path) {
+    return String(path || '').split('/').map(encodeURIComponent).join('/');
 }
 
 // True when address is a page or file inside the site at siteUrl (same scheme, host, and site path).
@@ -2467,7 +2477,7 @@ async function snaLookUpSharedItems(targetUrl, itemIds, method, itemType, found)
         parts.forEach(function(part, index) {
             var id = batchIds[index];
             if (part.status === 200 && part.body && part.body.Name) {
-                var itemUrl = snaOrigin(targetUrl) + encodeURI(part.body.ServerRelativeUrl || '');
+                var itemUrl = snaOrigin(targetUrl) + snaEncodeServerRelativePath(part.body.ServerRelativeUrl);
                 found[id] = { name: String(part.body.Name), url: snaIsSameSiteUrl(itemUrl, targetUrl) ? itemUrl : '', itemType: itemType };
             } else if (part.status === 404) {
                 notFound.push(id);
@@ -4047,17 +4057,15 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
         if (entry.foldersStatus !== 'failed') {
             var validFolders = ((folders && folders.value) ? folders.value : []).filter(function(fldr) { return fldr.Name !== 'Forms'; });
             validFolders.forEach(function(fldr) {
-                // Build folder URL from ServerRelativeUrl (preferred) or fallback construction
-                var folderUrl = '';
-                if (fldr.ServerRelativeUrl) {
-                    folderUrl = targetUrl.replace(/\/+$/, '').split('/').slice(0, 3).join('/') + fldr.ServerRelativeUrl;
-                } else {
-                    folderUrl = targetUrl.replace(/\/+$/, '') + '/' + list.EntityTypeName + '/' + encodeURIComponent(fldr.Name || '');
-                }
+                // The folder's own path from SharePoint is preferred; without one, a likely address comes from the library's
+                // internal name. Either way the link is kept only when it is inside the site being read.
+                var folderUrl = fldr.ServerRelativeUrl
+                    ? snaOrigin(targetUrl) + snaEncodeServerRelativePath(fldr.ServerRelativeUrl)
+                    : xlsxStripSlash(targetUrl) + '/' + list.EntityTypeName + '/' + encodeURIComponent(fldr.Name || '');
                 entry.folders.push({
                     icon:      '📂',
                     name:      fldr.Name || '',
-                    folderUrl: folderUrl,
+                    folderUrl: snaIsSameSiteUrl(folderUrl, targetUrl) ? folderUrl : '',
                     items:     (fldr.ItemCount !== undefined && fldr.ItemCount !== null) ? fldr.ItemCount : null,
                     folderId:  fldr.UniqueId || ''
                 });
@@ -4880,12 +4888,16 @@ async function snaFetchSitePages(targetUrl) {
                     var fileName = String(item.FileLeafRef || fileRef.split('/').pop() || '');
                     var isFolder = item.FSObjType === 1 || item.FSObjType === '1';
                     if (isFolder || !fileRef || !/\.aspx$/i.test(fileName)) { return; }
-                    var pageUrl = origin + encodeURI(fileRef);
+                    var pageUrl = origin + snaEncodeServerRelativePath(fileRef);
                     var itemId = /^\d+$/.test(String(item.Id)) ? String(item.Id) : '';
+                    var sameSite = snaIsSameSiteUrl(pageUrl, targetUrl);
+                    // url is for links. address is the same address as people read it, with the names as typed, so
+                    // a value in a file name, such as an email address, is hidden like any other text.
                     result.pages.push({
                         name:      (item.Title && String(item.Title).trim()) ? String(item.Title).trim() : fileName,
                         fileName:  fileName,
-                        url:       snaIsSameSiteUrl(pageUrl, targetUrl) ? pageUrl : '',
+                        url:       sameSite ? pageUrl : '',
+                        address:   sameSite ? snaFileAddressText(pageUrl) : '',
                         modified:  item.Modified ? String(item.Modified).substring(0, 10) : '',
                         id:        itemId,
                         libraryId: libraryId,
@@ -5032,7 +5044,7 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
 
     function fileRow(item, library) {
         var fileRef = String(item.FileRef || '');
-        var url = origin + fileRef.split('/').map(encodeURIComponent).join('/');
+        var url = origin + snaEncodeServerRelativePath(fileRef);
         var root = snaAgentLibraryRoot(library, fileRef, targetUrl);
         var dir = String(item.FileDirRef || fileRef.substring(0, fileRef.lastIndexOf('/')));
         var author = item.Author || {};
@@ -6820,7 +6832,7 @@ function snaRenderPageDetail(page) {
         '<dl class="sna-facts">' +
             '<dt>File name</dt><dd>' + snaEscapeHtml(page.fileName) + '</dd>' +
             '<dt>Last changed</dt><dd>' + snaEscapeHtml(page.modified || 'Not reported.') + '</dd>' +
-            '<dt>Address</dt><dd class="sna-break-anywhere">' + snaEscapeHtml(page.url || 'Not available.') + '</dd>' +
+            '<dt>Address</dt><dd class="sna-break-anywhere">' + snaEscapeHtml(page.address || 'Not available.') + '</dd>' +
         '</dl>' +
         '<h4 class="sna-subsection-title">Page image</h4>' +
         '<div id="sna-page-image-area" class="sna-page-image-area" role="status" data-page-key="' + snaEscapeHtml(page.key) + '">' +
@@ -7261,7 +7273,7 @@ function snaBuildPrintDocument(report) {
     html += '<section class="sna-print-section"><h2>Site pages</h2>' +
         pageNotes.map(function(n) { return '<p>' + snaEscapeHtml(n) + '</p>'; }).join('') +
         snaPrintTableHtml('Site pages', ['Page', 'File name', 'Last changed', 'Address'],
-            pages.pages.map(function(p) { return [p.name, p.fileName, p.modified, p.url]; }), 'No site pages found.') + '</section>';
+            pages.pages.map(function(p) { return [p.name, p.fileName, p.modified, p.address]; }), 'No site pages found.') + '</section>';
 
     html += '<section class="sna-print-section"><h2>Agents and skills</h2>' + snaRenderAgentsSection(report.agents, true) + '</section>';
 
