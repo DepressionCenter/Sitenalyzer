@@ -1923,6 +1923,118 @@ test('sorts a table from its column headings with the keyboard on a 320 pixel wi
     await expect.poll(shownTypes).toEqual(ascending.slice().reverse());
 });
 
+// Returns the values of one column of the columns table in the details panel, in the order the table shows them.
+function shownColumnValues(detail, field) {
+    return detail.locator('.tabulator-row .tabulator-cell[tabulator-field="' + field + '"]').allInnerTexts();
+}
+
+// Returns the values in the order Tabulator's string sorter puts them, Z to A when descending is true.
+function sortedValues(values, descending) {
+    const sorted = values.slice().sort(function(a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); });
+    return descending ? sorted.reverse() : sorted;
+}
+
+// Sorts the table in the details panel by a column heading from the keyboard: Enter sorts A to Z, Space then Z to A.
+async function sortDescendingByHeading(page, heading) {
+    await heading.focus();
+    await page.keyboard.press('Enter');
+    await expect(heading).toHaveAttribute('aria-sort', 'ascending');
+    await page.keyboard.press(' ');
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+}
+
+test('keeps a table\'s sort order and filter while other views open, without touching other tables', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    let detail = await openListDetail(page, 'Study Visits', 'Columns');
+    const visitTypes = await shownColumnValues(detail, 'dataType');
+
+    detail = await openListDetail(page, 'Documents', 'Columns');
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Visit');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType').then(function(v) { return v.length; }); }).toBeLessThan(visitTypes.length);
+    const matching = await shownColumnValues(detail, 'dataType');
+    expect(new Set(matching).size).toBeGreaterThan(1);
+    const descending = sortedValues(matching, true);
+    await sortDescendingByHeading(page, detail.getByRole('columnheader', { name: 'Data type' }));
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(descending);
+
+    // The table comes back in the same order, with the same sort indicator and the same filter text.
+    await gotoSection(page, 'Overview');
+    detail = await openListDetail(page, 'Documents', 'Columns');
+    const heading = detail.getByRole('columnheader', { name: 'Data type' });
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect(detail.getByRole('searchbox', { name: 'Filter columns' })).toHaveValue('Visit');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(descending);
+
+    // The heading still sorts from the keyboard, the other way round from the restored order.
+    await heading.focus();
+    await page.keyboard.press('Enter');
+    await expect(heading).toHaveAttribute('aria-sort', 'ascending');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(sortedValues(matching, false));
+
+    // Another list's columns table is still in its usual order.
+    detail = await openListDetail(page, 'Study Visits', 'Columns');
+    await expect(detail.getByRole('columnheader', { name: 'Data type' })).toHaveAttribute('aria-sort', 'none');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(visitTypes);
+
+    // The sort order is kept in memory only.
+    const keys = await page.evaluate(function() { return Object.keys(window.localStorage).concat(Object.keys(window.sessionStorage)); });
+    expect(keys).toEqual(['sitenalyzer:sites-cache']);
+});
+
+test('keeps a sort by a technical column while Show technical details is off', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    const technicalSwitch = page.getByRole('switch', { name: 'Show technical details' });
+    await technicalSwitch.check();
+    const detail = await openListDetail(page, 'Documents', 'Columns');
+    const heading = detail.getByRole('columnheader', { name: 'Internal name' });
+    const usualTitles = await shownColumnValues(detail, 'title');
+    const descending = sortedValues(await shownColumnValues(detail, 'internalName'), true);
+    await sortDescendingByHeading(page, heading);
+    await expect.poll(function() { return shownColumnValues(detail, 'internalName'); }).toEqual(descending);
+    expect(await shownColumnValues(detail, 'title')).not.toEqual(usualTitles);
+
+    // Without the column, the table is in its usual order, and no heading says it is sorted.
+    await technicalSwitch.uncheck();
+    await expect(technicalSwitch).toBeFocused();
+    await expect(heading).toHaveCount(0);
+    await expect.poll(function() { return shownColumnValues(detail, 'title'); }).toEqual(usualTitles);
+    await expect(detail.getByRole('columnheader', { name: 'Title' })).toHaveAttribute('aria-sort', 'none');
+    expect(record.consoleErrors).toEqual([]);
+
+    // With the column back, the table is sorted by it again.
+    await technicalSwitch.check();
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect.poll(function() { return shownColumnValues(detail, 'internalName'); }).toEqual(descending);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('Refresh report and Start over put every table back in its usual order', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    let detail = await openListDetail(page, 'Documents', 'Columns');
+    const usualTypes = await shownColumnValues(detail, 'dataType');
+    const descending = sortedValues(usualTypes, true);
+    await sortDescendingByHeading(page, detail.getByRole('columnheader', { name: 'Data type' }));
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(descending);
+
+    await page.getByRole('button', { name: 'Refresh report' }).click();
+    await expect(page.locator('#sna-section-title')).toHaveText('Contents');
+    detail = await openListDetail(page, 'Documents', 'Columns');
+    await expect(detail.getByRole('columnheader', { name: 'Data type' })).toHaveAttribute('aria-sort', 'none');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(usualTypes);
+
+    await sortDescendingByHeading(page, detail.getByRole('columnheader', { name: 'Data type' }));
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(descending);
+    await page.getByRole('button', { name: 'Start over' }).click();
+    await expect(page.locator('#sna-report')).toBeHidden();
+    await extractSiteInformation(page);
+    detail = await openListDetail(page, 'Documents', 'Columns');
+    await expect(detail.getByRole('columnheader', { name: 'Data type' })).toHaveAttribute('aria-sort', 'none');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(usualTypes);
+});
+
 test('keeps every word visible with wider text spacing on a 320 pixel wide screen', async function({ page }) {
     await page.setViewportSize({ width: 320, height: 800 });
     await openPretendSite(page);

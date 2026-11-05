@@ -234,10 +234,14 @@ function snaGetFieldTypeIcon(spType, calcType) {
 
 // _snaTablesQueue: tables the view being drawn asks for, built by initSnaTabulators once its markup is on the page.
 // _snaTabInstances: the Tabulator tables on screen, by element id. _snaTableFilters: filter box text by table id,
-// so a table's filter is kept when its view is closed and opened again.
+// so a table's filter is kept when its view is closed and opened again. _snaTableSorts: the order each table was
+// last sorted in, by table id, as Tabulator's initialSort setting, so a table opens in that order again while the
+// report is open. A table that was never sorted has no entry and opens in its usual order. Both are kept in memory
+// only, and snaClearReport empties them with the report.
 var _snaTablesQueue = [];
 var _snaTabInstances = {};
 var _snaTableFilters = {};
+var _snaTableSorts = {};
 var _snaOpenChoices = {};         // Columns whose choices are all shown, by the column's key from snaRowEditKey
 var _snaTabMeta = {};             // The _snaTablesQueue entry each table was built from, by element id
 
@@ -811,9 +815,10 @@ function initSnaTabulators() {
     wrap.appendChild(el);
 
     // Every table grows with its rows, so its headings and frame stay in view. Long tables are split into pages.
+    var columns = snaTableColumns(tbl.type, tbl);
     var options = {
       data: tbl.data,
-      columns: snaTableColumns(tbl.type, tbl),
+      columns: columns,
       layout: 'fitColumns',
       renderVertical: 'basic',
       movableColumns: false,
@@ -834,6 +839,10 @@ function initSnaTabulators() {
       options.paginationSizeSelector = SNA_TABLE_PAGE_SIZES;
       options.langs = SNA_TABLE_TEXT;
     }
+    // The table opens in the order it was last sorted in. A sort by a column the table can't show now, such as a
+    // technical column while Show technical details is off, is left out, so Tabulator never sorts by a missing column.
+    var savedSort = snaUsableTableSort(_snaTableSorts[tbl.id], columns);
+    if (savedSort.length) { options.initialSort = savedSort; }
     var table = new Tabulator(el, options);
     _snaTabInstances[tbl.id] = table;
     _snaTabMeta[tbl.id] = tbl;
@@ -914,14 +923,39 @@ function snaMakeHeadingsSortableByKeyboard(table) {
   });
 }
 
-// Removes the Tabulator tables inside rootEl before its markup is replaced, keeping each filter box's text.
-// Tables whose elements are already gone from the page are removed too.
+// Returns the order a table is sorted in, in the form Tabulator's initialSort setting takes, such as
+// [{ column: 'title', dir: 'desc' }], or [] when the table is in its usual order.
+function snaTableSortState(table) {
+  return table.getSorters().filter(function(sorter) { return sorter.field && (sorter.dir === 'asc' || sorter.dir === 'desc'); })
+    .map(function(sorter) { return { column: sorter.field, dir: sorter.dir }; });
+}
+
+// Returns the part of a remembered sort order (see snaTableSortState) that a table can use now: the sorts by columns
+// that are in its column settings, shown, and sortable. saved may be undefined; columns is from snaTableColumns.
+function snaUsableTableSort(saved, columns) {
+  if (!saved || !saved.length) { return []; }
+  var sortable = {};
+  columns.forEach(function(column) {
+    if (column.field && column.sorter && column.visible !== false) { sortable[column.field] = true; }
+  });
+  return saved.filter(function(sort) { return sortable[sort.column] === true; });
+}
+
+// Removes the Tabulator tables inside rootEl before its markup is replaced, keeping each filter box's text and each
+// table's sort order. Tables whose elements are already gone from the page are removed too.
 function snaDisposeViewTables(rootEl) {
   Object.keys(_snaTabInstances).forEach(function(id) {
     var el = document.getElementById(id);
     if (el && rootEl && !rootEl.contains(el)) { return; }
     var filterInput = document.getElementById(id + '-s');
     if (filterInput) { _snaTableFilters[id] = filterInput.value; }
+    // A table in its usual order keeps the order remembered for it, because that order may be by a column the table
+    // couldn't show this time, such as a technical column while Show technical details was off. A column heading
+    // never returns a table to its usual order, so a table with no sort order was never sorted or is such a table.
+    try {
+      var sort = snaTableSortState(_snaTabInstances[id]);
+      if (sort.length) { _snaTableSorts[id] = sort; }
+    } catch(e) { /* The table was already removed with its element, so its last remembered order stays. */ }
     try { _snaTabInstances[id].destroy(); } catch(e) { /* The table was already removed with its element. */ }
     delete _snaTabInstances[id];
     delete _snaTabMeta[id];
@@ -2014,10 +2048,11 @@ async function snaCheckUserAccess() {
     if (!input || !status || !out || _snaUserCheckRunning) { return; }
 
     var text = input.value.trim();
-    // Removes the result table of an earlier check, and its filter text, before the result area is replaced.
+    // Removes the result table of an earlier check, with its filter text and sort order, before the result area is replaced.
     var clearResult = function(area) {
         snaDisposeViewTables(area);
         delete _snaTableFilters['sna-tbl-person'];
+        delete _snaTableSorts['sna-tbl-person'];
         area.innerHTML = '';
     };
     if (!text) {
@@ -3439,6 +3474,7 @@ function snaClearReport() {
     _snaTablesQueue = [];
     _snaTabInstances = {};
     _snaTableFilters = {};
+    _snaTableSorts = {};
     _snaOpenChoices = {};
     _snaSearchIndex = [];
     snaResetPermissionState();
