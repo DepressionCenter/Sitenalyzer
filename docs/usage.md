@@ -66,7 +66,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 ### Use Sitenalyzer
 
 1. Open the `sitenalyzer` page.
-2. Keep the current site's address in the **Site address** box, or type another site's address or choose one from the list. The list shows sites you can open.
+2. Keep the current site's address in the **Site address** box, or type another site's address or choose one from the list. The list shows sites you can open. To read the list again, select **Refresh sites list**, the round button next to the box. If SharePoint doesn't answer, Sitenalyzer says so under the box and keeps the sites from the last successful load, so you can still choose one or type an address.
 3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, permissions, agents, and site skills, and says what it is reading, such as "Reading lists and libraries: 3 of 12". Large sites can take a minute.
 4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. When you open a section, the page scrolls so the section links are at the top of the window. **Back to top**, at the bottom left of each section, scrolls back to them. See [Report sections](#report-sections).
 5. To find a list, library, column, folder, page, agent, site skill, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
@@ -76,7 +76,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 9. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
 10. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
 11. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
-12. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. To close the box without changing the site, press Escape or select **Close**.
+12. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. **Refresh sites list** reads the list again; if SharePoint doesn't answer, the status line says so and the sites from the last successful load stay listed. To close the box without changing the site, press Escape or select **Close**.
 13. To go back to the first screen, select **Start over**. It puts back the address of the site the page is on.
 
 Both workbooks and the printed report always include the whole report, whatever section is open or filter is set.

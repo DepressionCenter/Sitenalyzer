@@ -3514,6 +3514,160 @@ test('Change site with a typed address reads that site', async function({ page }
     await expect(page.getByLabel('Site address', { exact: true })).toHaveValue(SITE_URL);
 });
 
+// Answers the site searches that fill the sites list by the mode the test sets on state: 'ok' passes the request on
+// to the standard answer with its two sites, 'fail' refuses both the sorted request and the unsorted retry,
+// 'other' lists one different site, and 'empty' lists no sites. state.requests counts the site searches.
+// Searches for agents always pass through to the standard answer.
+function siteSearchAnswer(state) {
+    return { pattern: /^\/_api\/search\/query$/, answer: function(url) {
+        if (!(url.searchParams.get('querytext') || '').includes('STS_Site')) { return undefined; }
+        state.requests += 1;
+        if (state.mode === 'fail') { return reply(500, { error: 'Search is unavailable' }); }
+        if (state.mode === 'empty') { return { PrimaryQueryResult: { RelevantResults: { Table: { Rows: [] } } } }; }
+        if (state.mode === 'other') {
+            return { PrimaryQueryResult: { RelevantResults: { Table: { Rows: [
+                { Cells: [{ Key: 'Title', Value: 'Test Pilot Site' }, { Key: 'Path', Value: 'https://contoso.sharepoint.com/sites/testpilot' }] }
+            ] } } } };
+        }
+        return undefined;
+    } };
+}
+
+// Chrome writes a console error for every 500 answer; the tests check Sitenalyzer's own errors only.
+function errorsExceptRefusedRequests(record) {
+    return record.consoleErrors.filter(function(message) { return !/status of 500/.test(message); });
+}
+
+const SITES_KEPT_MESSAGE = "Couldn't refresh the list of sites. Showing the sites from the last successful load. Check your connection and try again.";
+
+test('keeps the sites list and its saved copy when a refresh fails, and says so at both refresh controls', async function({ page }) {
+    const state = { mode: 'ok', requests: 0 };
+    const record = await openPretendSite(page, { answerOverrides: [siteSearchAnswer(state)] });
+    const helper = page.locator('#site-url-helper-message');
+    const address = page.getByLabel('Site address', { exact: true });
+    const refresh = page.locator('#sna-sites-refresh-btn');
+    await expect(helper).not.toContainText('Loading');
+    await expect(helper).toHaveAttribute('role', 'status');
+    function savedSites() {
+        return page.evaluate(function() {
+            const raw = window.localStorage.getItem('sitenalyzer:sites-cache');
+            return raw === null ? null : JSON.parse(raw).sites.map(function(site) { return site.title; });
+        });
+    }
+    expect(await savedSites()).toEqual(['Test Research Site', 'Test Archive Site']);
+
+    // Both search attempts fail: the typed address, the focus, the list, and the saved copy all stay.
+    await address.fill('https://contoso.sharepoint.com/sites/test');
+    state.mode = 'fail';
+    const requestsBefore = state.requests;
+    await refresh.click();
+    await expect(helper).toHaveText(SITES_KEPT_MESSAGE);
+    expect(state.requests - requestsBefore).toBe(2);
+    await expect(refresh).toBeFocused();
+    await expect(address).toHaveValue('https://contoso.sharepoint.com/sites/test');
+    expect(await savedSites()).toEqual(['Test Research Site', 'Test Archive Site']);
+    await address.focus();
+    await expect(page.locator('#site-suggestions li')).toHaveCount(2);
+
+    // A refresh that works puts the usual hint back.
+    state.mode = 'ok';
+    await refresh.click();
+    await expect(helper).toHaveText('Type a site address or choose one from the list. To see every permission, you need to be a site owner.');
+
+    // The same in Choose a site: the Find a site text, the focus, and the open dialog stay.
+    await address.fill(SITE_URL);
+    await extractSiteInformation(page);
+    await page.getByRole('button', { name: 'Change site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    const find = dialog.getByRole('searchbox', { name: 'Find a site' });
+    const status = dialog.locator('#sna-site-find-status');
+    const dialogRefresh = dialog.getByRole('button', { name: 'Refresh sites list' });
+    await find.fill('test');
+    await expect(status).toHaveText('Showing 2 sites.');
+    state.mode = 'fail';
+    await dialogRefresh.click();
+    await expect(status).toHaveText(SITES_KEPT_MESSAGE);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(2);
+    await expect(dialogRefresh).toBeFocused();
+    await expect(find).toHaveValue('test');
+    expect(await savedSites()).toEqual(['Test Research Site', 'Test Archive Site']);
+
+    // A retry that works replaces the sites and the saved copy.
+    state.mode = 'other';
+    await dialogRefresh.click();
+    await expect(status).toHaveText('Showing 1 site.');
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(1);
+    await expect(dialog.locator('.sna-site-choice')).toContainText('Test Pilot Site');
+    expect(await savedSites()).toEqual(['Test Pilot Site']);
+
+    // An answer with no sites is a result, not a failure: the list is empty and the saved copy is empty too.
+    state.mode = 'empty';
+    await dialogRefresh.click();
+    await expect(status).toHaveText('Sitenalyzer has not found your sites yet. Select Refresh sites list, or enter the site address below.');
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(0);
+    expect(await savedSites()).toEqual([]);
+    expect(errorsExceptRefusedRequests(record)).toEqual([]);
+});
+
+test('says when the sites list could not be loaded at all, and still opens a typed address', async function({ page }) {
+    const state = { mode: 'fail', requests: 0 };
+    const record = await openPretendSite(page, { answerOverrides: [siteSearchAnswer(state)] });
+    const helper = page.locator('#site-url-helper-message');
+    await expect(helper).toHaveText("Couldn't load the list of sites. Check your connection and try again, or type the site address.");
+    expect(await page.evaluate(function() { return window.localStorage.getItem('sitenalyzer:sites-cache'); })).toBeNull();
+    await page.getByLabel('Site address', { exact: true }).focus();
+    await expect(page.locator('#site-suggestions')).toBeHidden();
+
+    // A typed address still opens the site.
+    await page.getByLabel('Site address', { exact: true }).fill(SITE_URL);
+    await extractSiteInformation(page);
+
+    await page.getByRole('button', { name: 'Change site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    const status = dialog.locator('#sna-site-find-status');
+    await expect(status).toHaveText('Sitenalyzer has not found your sites yet. Select Refresh sites list, or enter the site address below.');
+    await dialog.getByRole('button', { name: 'Refresh sites list' }).click();
+    await expect(status).toHaveText("Couldn't load the list of sites. Check your connection and try again, or enter the site address below.");
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(0);
+    await dialog.getByLabel('Or enter a site address').fill(SITE_URL);
+    await dialog.getByLabel('Or enter a site address').press('Enter');
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#sna-section-title')).toHaveText('Overview');
+    expect(errorsExceptRefusedRequests(record)).toEqual([]);
+});
+
+test('keeps the sites list through a failed refresh when browser storage is blocked', async function({ page }) {
+    // A browser that blocks storage throws on every use of localStorage.
+    await page.addInitScript(function() {
+        Object.defineProperty(window, 'localStorage', { configurable: true, get: function() { throw new Error('Browser storage is blocked'); } });
+    });
+    const state = { mode: 'ok', requests: 0 };
+    const record = await openPretendSite(page, { answerOverrides: [siteSearchAnswer(state)] });
+    expect(await page.evaluate(function() { try { return typeof window.localStorage; } catch (e) { return 'blocked'; } })).toBe('blocked');
+    const helper = page.locator('#site-url-helper-message');
+    const address = page.getByLabel('Site address', { exact: true });
+    await expect(helper).not.toContainText('Loading');
+    await address.fill('https://contoso.sharepoint.com/sites/test');
+    await expect(page.locator('#site-suggestions li')).toHaveCount(2);
+
+    state.mode = 'fail';
+    await page.locator('#sna-sites-refresh-btn').click();
+    await expect(helper).toHaveText(SITES_KEPT_MESSAGE);
+    await expect(address).toHaveValue('https://contoso.sharepoint.com/sites/test');
+    await address.focus();
+    await expect(page.locator('#site-suggestions li')).toHaveCount(2);
+
+    await address.fill(SITE_URL);
+    await extractSiteInformation(page);
+    await page.getByRole('button', { name: 'Change site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    await dialog.getByRole('button', { name: 'Refresh sites list' }).click();
+    await expect(dialog.locator('#sna-site-find-status')).toHaveText(SITES_KEPT_MESSAGE);
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(2);
+    expect(errorsExceptRefusedRequests(record)).toEqual([]);
+});
+
 // ### Technical Details ###
 
 test('shows technical details only while the switch is on, and remembers the choice', async function({ page }) {

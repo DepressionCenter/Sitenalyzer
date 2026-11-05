@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/troubleshooting.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-23
+Last Modified: 2026-11-05
 Summary: Problems people can run into when installing or using Sitenalyzer, with causes and fixes.
 Notes: See README file for documentation and full license information.
 
@@ -64,6 +64,18 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 **Cause:** Sitenalyzer waited 10 seconds for the web part's `<div>` and didn't find it. The web part code is missing the `<div>` line, or the `id` was changed.
 
 **Fix:** Replace the web part code with the full contents of `dist/SitePages/sitenalyzer.html.txt`, then refresh the page.
+
+### The sites list says it couldn't be refreshed or loaded
+
+**Problem:** Under the **Site address** box, or in **Choose a site**, a message such as "Couldn't refresh the list of sites. Showing the sites from the last successful load. Check your connection and try again." or "Couldn't load the list of sites. Check your connection and try again, or type the site address."
+
+**Cause:** SharePoint search did not answer when Sitenalyzer asked for the sites you can open. Sitenalyzer tries twice, then keeps the sites from the last successful load, in the list and in your browser's saved copy, so nothing you could choose before is lost. When the list has never loaded, there are no sites to keep.
+
+**Fix:**
+
+1. Check that you are still signed in and connected, then select **Refresh sites list** again.
+2. If the list still doesn't load, type the site's full address, such as `https://contoso.sharepoint.com/sites/example`, and select **Extract site information** or **Open site report**.
+3. If the message appears on every visit, ask your site administrator whether SharePoint search is turned on for your account.
 
 ### Permission sections say "could not read"
 

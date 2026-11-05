@@ -263,7 +263,7 @@ var _snaUserCheckResult = null;   // The finished person check { input, status, 
 var _snaDrafts = {};              // Descriptions being edited, by edit key; see renderAdminDescWrap
 var _snaEditFocus = {};           // The newest redraw of each description, by edit key; see snaRedrawDescription
 var _snaSiteDialogOpener = null;  // The button that opened Choose a site, which gets focus back when the dialog closes
-var _snaReloadSites = null;       // Reads the accessible sites again; set by startApplication
+var _snaReloadSites = null;       // Reads the accessible sites again and resolves to { loaded, kept }; set by startApplication
 var _snaUseAddressRoute = true;   // True until the first report from a ?siteUrl= link opens; other reports start on Overview or the kept view
 
 // Taxonomy and admin edit state.
@@ -7406,11 +7406,27 @@ function snaRenderSiteChoices() {
     }
 }
 
-// Reads the list of sites again, then lists them in the open dialog.
+// Says that the sites list could not be read. With kept true, the sites from the last successful load are still
+// listed. addressHint names the way to go on without the list, such as 'type the site address'.
+function snaSitesLoadFailureMessage(kept, addressHint) {
+    return kept
+        ? "Couldn't refresh the list of sites. Showing the sites from the last successful load. Check your connection and try again."
+        : "Couldn't load the list of sites. Check your connection and try again, or " + addressHint + '.';
+}
+
+// Reads the list of sites again, then lists them in the open dialog. When the read fails, the sites from the last
+// successful load stay listed and the status line says so. The Find a site text and focus are left as they are.
 function snaRefreshSiteChoices() {
     var status = document.getElementById('sna-site-find-status');
     if (status) { status.textContent = 'Reading your sites...'; }
-    Promise.resolve(_snaReloadSites ? _snaReloadSites() : null).then(snaRenderSiteChoices, snaRenderSiteChoices);
+    Promise.resolve(_snaReloadSites ? _snaReloadSites() : { loaded: false, kept: false })
+        .catch(function() { return { loaded: false, kept: (globalAccessibleSites || []).length > 0 }; })
+        .then(function(outcome) {
+            snaRenderSiteChoices();
+            if (status && !outcome.loaded) {
+                status.textContent = snaSitesLoadFailureMessage(outcome.kept, 'enter the site address below');
+            }
+        });
 }
 
 // Opens the report of another site after checking its address and asking about unsaved descriptions.
@@ -7630,31 +7646,45 @@ function startApplication() {
         if (completedNaturally) { saveSitesCache(globalAccessibleSites, true); }
     }
 
-    // Loads accessible sites from localStorage cache or SharePoint search, refreshing stale cache in the background.
-    async function fetchAccessibleSites() {
+    // Loads the sites list from the saved copy in browser storage or from SharePoint search. With force true, it
+    // always asks SharePoint. The sites from the last successful load stay in memory and in the saved copy until
+    // a new answer arrives, so a failed request leaves the list as it was. Resolves to { loaded: true } when a
+    // list is in place, or { loaded: false, kept } when the request failed, where kept says whether earlier
+    // sites are still listed. The helper text under the Site address box says what happened.
+    async function fetchAccessibleSites(force) {
         var helperMessage = document.getElementById('site-url-helper-message');
         var helperDefault = 'Type a site address or choose one from the list. To see every permission, you need to be a site owner.';
 
+        // Puts text under the Site address box; failure text is shown in the error color as well as in words.
+        function showHelper(text, isFailure) {
+            if (!helperMessage) { return; }
+            helperMessage.textContent = text;
+            helperMessage.classList.toggle('sna-error-text', isFailure === true);
+        }
+
         if (helperMessage) {
+            helperMessage.classList.remove('sna-error-text');
             helperMessage.innerHTML = '<div class="helper-spinner"></div> Loading the sites you can open...';
         }
 
         var cacheStale = true;
-        try {
-            var cacheRaw = localStorage.getItem(SITES_CACHE_KEY);
-            if (cacheRaw) {
-                var cached = JSON.parse(cacheRaw);
-                if (cached.version === 1 && Array.isArray(cached.sites)) {
-                    globalAccessibleSites = cached.sites;
-                    if (helperMessage) { helperMessage.innerHTML = helperDefault; }
-                    if (cached.complete === true && cached.cachedAt && (Date.now() - cached.cachedAt < SITES_CACHE_TTL)) {
-                        cacheStale = false;
+        if (!force) {
+            try {
+                var cacheRaw = localStorage.getItem(SITES_CACHE_KEY);
+                if (cacheRaw) {
+                    var cached = JSON.parse(cacheRaw);
+                    if (cached.version === 1 && Array.isArray(cached.sites)) {
+                        globalAccessibleSites = cached.sites;
+                        showHelper(helperDefault);
+                        if (cached.complete === true && cached.cachedAt && (Date.now() - cached.cachedAt < SITES_CACHE_TTL)) {
+                            cacheStale = false;
+                        }
                     }
                 }
-            }
-        } catch(e) {}
+            } catch(e) {}
+        }
 
-        if (!cacheStale && globalAccessibleSites.length > 0) { return; }
+        if (!force && !cacheStale && globalAccessibleSites.length > 0) { return { loaded: true }; }
 
         try {
             var baseUrl = getBaseUrl();
@@ -7678,29 +7708,50 @@ function startApplication() {
                 searchData.PrimaryQueryResult.RelevantResults.Table.Rows)
                 ? searchData.PrimaryQueryResult.RelevantResults.Table.Rows : [];
 
+            // The first answer replaces the earlier sites, even when it lists none, because it is what SharePoint
+            // returns now. A failed request never reaches this point, so the earlier sites stay.
             var newSites = parseSiteRows(rows);
             globalAccessibleSites = newSites;
             var allLoadedInOneBatch = rows.length < batchSize;
             saveSitesCache(newSites, allLoadedInOneBatch);
 
-            if (helperMessage) { helperMessage.innerHTML = helperDefault; }
+            showHelper(helperDefault);
 
             if (!allLoadedInOneBatch) {
                 fetchMoreSitesBackground(baseUrl, sorted, batchSize, newSites);
             }
+            return { loaded: true };
         } catch (error) {
             console.warn('Could not fetch accessible sites: ' + error.message);
-            if (helperMessage) { helperMessage.innerHTML = helperDefault; }
+            var kept = (globalAccessibleSites || []).length > 0;
+            showHelper(snaSitesLoadFailureMessage(kept, 'type the site address'), true);
+            return { loaded: false, kept: kept };
         }
     }
 
+    // One request at a time: a second refresh while one is running gets the running request's outcome.
+    var sitesRequest = null;
+    function loadAccessibleSites(force) {
+        if (!sitesRequest) {
+            sitesRequest = fetchAccessibleSites(force).then(
+                function(outcome) { sitesRequest = null; return outcome; },
+                function(error) { sitesRequest = null; throw error; });
+        }
+        return sitesRequest;
+    }
+
+    // Redraws the suggestion list under the Site address box when it is open; set below, once the box is wired.
+    var redrawSuggestions = function() {};
+
     // Reads the sites list from SharePoint again, for the refresh buttons on the start screen and in Choose a site.
+    // The list and its saved copy are replaced only when SharePoint answers.
     _snaReloadSites = function() {
-        try { localStorage.removeItem(SITES_CACHE_KEY); } catch(e) {}
-        globalAccessibleSites = [];
-        return fetchAccessibleSites();
+        return loadAccessibleSites(true).then(function(outcome) {
+            if (outcome.loaded) { redrawSuggestions(); }
+            return outcome;
+        });
     };
-    fetchAccessibleSites().then(function() {
+    loadAccessibleSites(false).then(function() {
         var dialog = document.getElementById('sna-site-dialog');
         if (dialog && dialog.open) { snaRenderSiteChoices(); }
     });
@@ -7752,6 +7803,10 @@ function startApplication() {
 
             siteSuggestions.style.display = 'block';
         }
+
+        redrawSuggestions = function() {
+            if (siteSuggestions.style.display === 'block') { showSuggestions(getSearchQuery(siteUrlInput.value)); }
+        };
 
         siteUrlInput.addEventListener('input', function() {
             var query = getSearchQuery(siteUrlInput.value);

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-27
+Last Modified: 2026-11-05
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -115,6 +115,7 @@ The tests check that:
 - Each section has its own address, Back and Forward move between sections, a `?siteUrl=...#sna/taxonomy` link opens that section, unknown addresses open the Overview, and other page addresses such as `#top` are ignored.
 - **Refresh report** keeps the section, **Start over** removes the address, and a report address left after reloading the page is removed.
 - **Change site** opens **Choose a site** with focus in **Find a site**. It filters the sites, refuses an address on another host, closes with Escape or **Close** and returns focus to **Change site**, and reads the chosen or typed site.
+- **Refresh sites list**, under **Site address** and in **Choose a site**, asks SharePoint search again. When both the sorted request and the unsorted retry fail, the sites from the last successful load stay listed and in `sitenalyzer:sites-cache`, both controls say so in their status line, and the typed address, the **Find a site** text, the open dialog, and focus stay as they were, also when browser storage is blocked. A first-ever failure says the list couldn't be loaded and a typed address still opens the site. A retry that works replaces the sites and the saved copy, and an answer with no sites shows an empty list instead of the failure message.
 - Taxonomy lists its term sets, opens one from its address or a search result, and says when a term set in the address is not in the report.
 - A term set shows each term's parent term in tree order, including a term pinned under two terms, whether SharePoint returns children with `$expand=children` or one term at a time. When parents can't be read, the **Parent term** column is left out and Report coverage says **Not read**. Term requests follow next-batch links only to the same site, and a parent read that stops at a link to another site says **Partly read**.
 - **Columns that use this term set** lists the list and site columns that use a term set, read from `SchemaXml`, with the term a column starts at. Its links open the list's Columns tab filtered to the column. The print document and the data dictionary include them, and a failed read says so instead of showing an empty table.
