@@ -4269,9 +4269,10 @@ var SNA_SEARCH_GROUPS = [
 ];
 
 // Builds the search index from the report's lists, columns, folders, pages, agents, site skills, and terms.
-// label, sublabel, and breadcrumb are searched; sublabel holds internal names and IDs, so they are always
-// searchable even while technical details are hidden. summary is shown under each result, and technicalText only
-// while Show technical details is on. route is the address of the view the result opens.
+// label, sublabel, breadcrumb, and description are searched; sublabel holds internal names and IDs, so they are
+// always searchable even while technical details are hidden. description holds the saved description of a list,
+// library, column, or term; snaSearchQuery hides values in it before comparing, like a name. summary is shown under
+// each result, and technicalText only while Show technical details is on. route is the address of the view the result opens.
 function buildSearchIndex() {
     _snaSearchIndex = [];
     if (!_snaReport) { return; }
@@ -4290,6 +4291,7 @@ function buildSearchIndex() {
             listId:        list.id,
             columnName:    '',
             dataType:      '',
+            description:   list.description || '',
             summary:       list.description || 'No description.',
             technicalText: list.internalName + ' • ' + list.id
         });
@@ -4314,6 +4316,7 @@ function buildSearchIndex() {
                 listId:        list.id,
                 columnName:    name,
                 dataType:      col.dataType || '',
+                description:   col.description || '',
                 summary:       list.title + (col.description ? ' / ' + col.description : ''),
                 technicalText: col.internalName || '',
                 filterTable:   hasFilter ? columnsTableId : '',
@@ -4395,6 +4398,7 @@ function buildSearchIndex() {
                     columnName:    term.termName || '',
                     dataType:      'Term',
                     synonyms:      term.synonyms || '',
+                    description:   term.termDescription || '',
                     summary:       group.groupName + ' / ' + set.setName + (term.synonyms ? ' / Synonyms: ' + term.synonyms : '') +
                         (term.termDescription ? ' / ' + term.termDescription : ''),
                     technicalText: term.termId || '',
@@ -4446,14 +4450,15 @@ function snaSearchQuery(query) {
         var dedupeKey = item.type + '|' + item.label + '|' + item.route + '|' + item.breadcrumb;
         if (seen[dedupeKey]) { return; }
 
-        // Names are compared as they are shown, so a hidden value can't be found by searching for it.
-        // The sublabel holds internal names and IDs, which are never hidden, except a site page's file name.
-        var labelMatch      = fieldMatches(snaMaskText(item.label));
-        var sublabelMatch   = fieldMatches(item.sublabelIsName ? snaMaskText(item.sublabel) : item.sublabel);
-        var breadcrumbMatch = fieldMatches(snaMaskText(item.breadcrumb));
-        var synonymsMatch   = !!item.synonyms && fieldMatches(snaMaskText(item.synonyms));
+        // Names, synonyms, and descriptions are compared as they are shown, so a hidden value can't be found by
+        // searching for it. The sublabel holds internal names and IDs, which are never hidden, except a site page's file name.
+        var labelMatch       = fieldMatches(snaMaskText(item.label));
+        var sublabelMatch    = fieldMatches(item.sublabelIsName ? snaMaskText(item.sublabel) : item.sublabel);
+        var breadcrumbMatch  = fieldMatches(snaMaskText(item.breadcrumb));
+        var synonymsMatch    = !!item.synonyms && fieldMatches(snaMaskText(item.synonyms));
+        var descriptionMatch = !!item.description && fieldMatches(snaMaskText(item.description));
 
-        if (!labelMatch && !sublabelMatch && !breadcrumbMatch && !synonymsMatch) { return; }
+        if (!labelMatch && !sublabelMatch && !breadcrumbMatch && !synonymsMatch && !descriptionMatch) { return; }
 
         seen[dedupeKey] = true;
 
@@ -7114,7 +7119,7 @@ function snaRenderSearch(route, report) {
     var technical = snaTechnicalDetailsOn();
     html += '<p class="sna-lead">' + snaCountText(total, 'result', 'results') + ' for "' + snaEscapeHtml(q) + '" in ' + snaEscapeHtml(report.site.title) + '.</p>';
     if (groups.length > 1) { html += snaExpandCollapseHtml(); }
-    html += '<p class="sna-muted">Search looks at names, internal names, IDs, data types, and where each item is. ' +
+    html += '<p class="sna-muted">Search looks at names, descriptions, internal names, IDs, data types, and where each item is. ' +
         'Use * between words, or put a phrase in quotes to find it exactly. Columns come first.</p>';
     groups.forEach(function(group) {
         html += '<details class="sna-search-group" open><summary>' + snaEscapeHtml(group.title) + ' (' + group.items.length + ')</summary><ul class="sna-search-list">';

@@ -3141,6 +3141,11 @@ test('puts a saved list description in the data dictionary', async function({ pa
     const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
     const assets = sheetRows(workbook, 'Assets');
     expect(assets.find(function(row) { return row[3] === 'Study Visits'; })[8]).toBe('Updated synthetic visit schedule.');
+
+    // Search finds the list by its saved description without collecting the report again.
+    await searchReport(page, 'Updated synthetic');
+    await expect(page.locator('#sp-results .sna-search-group > summary')).toHaveText(['Lists and libraries (1)']);
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Study Visits' })).toBeVisible();
 });
 
 test('edits a column description in its table with the editor keys', async function({ page }, testInfo) {
@@ -3203,10 +3208,18 @@ test('keeps a draft when saving fails, and saves it on the next try', async func
     await expect(editor).toHaveValue('Draft that is denied at first.');
     await expect(editor).toBeFocused();
 
-    await detail.getByRole('button', { name: 'Save description of Study Visits' }).click();
+    // The draft is not searchable until it is saved, and it stays in the editor while other views are open.
+    await searchReport(page, 'denied at first');
+    await expect(page.locator('#sp-results')).toContainText('No results for "denied at first"');
+    const reopened = await openListDetail(page, 'Study Visits');
+    await expect(reopened.getByRole('textbox', { name: 'Description for Study Visits' })).toHaveValue('Draft that is denied at first.');
+
+    await reopened.getByRole('button', { name: 'Save description of Study Visits' }).click();
     await expect(page.locator('#sna-copy-toast')).toHaveText('Description saved.');
-    await expect(detail.locator('.sna-facts')).toContainText('Draft that is denied at first.');
+    await expect(reopened.locator('.sna-facts')).toContainText('Draft that is denied at first.');
     expect(record.writeRequests.filter(function(r) { return r.method === 'PATCH'; }).length).toBe(2);
+    await searchReport(page, 'denied at first');
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Study Visits' })).toBeVisible();
 });
 
 test('waits for a running save before Refresh report or Start over', async function({ page }) {
@@ -3852,11 +3865,12 @@ test('groups search results by kind, with columns first', async function({ page 
     await openPretendSite(page);
     await extractSiteInformation(page);
 
-    // Search also looks at where each item is, so every column of Study Visits matches, plus 2 columns in Documents.
+    // Search also looks at where each item is and at descriptions, so every column of Study Visits matches, plus 2 columns
+    // in Documents by name and its Title column by its description.
     await searchReport(page, 'Visit*');
     const groups = page.locator('#sp-results .sna-search-group > summary');
-    await expect(groups).toHaveText(['Columns (11)', 'Lists and libraries (1)', 'Agents and skills (2)']);
-    await expect(page.locator('#sp-results .sna-lead')).toHaveText('14 results for "Visit*" in Test Research Site.');
+    await expect(groups).toHaveText(['Columns (12)', 'Lists and libraries (1)', 'Agents and skills (2)']);
+    await expect(page.locator('#sp-results .sna-lead')).toHaveText('15 results for "Visit*" in Test Research Site.');
     expect(hashOf(page)).toBe('#sna/search?q=Visit*');
     // Columns whose names match come before columns that match only by where they are.
     await expect(page.locator('#sp-results .sna-search-group').first().locator('.sna-search-item > a').first()).toHaveText('Visit Count');
@@ -3871,6 +3885,101 @@ test('groups search results by kind, with columns first', async function({ page 
     await expect(page.locator('#sp-results')).toContainText('Enter at least 2 letters or numbers');
     await searchReport(page, 'nothing like this');
     await expect(page.locator('#sp-results')).toContainText('Search covers only what Sitenalyzer read from this site');
+});
+
+test('finds a list, a column, and a term by a word that is only in its description', async function({ page }) {
+    // Each keyword is in one description and nowhere else on the pretend site.
+    const describedTerms = [
+        { id: 'ffffffff-0000-4000-8000-000000000001', labels: [{ name: 'Control', isDefault: true }], descriptions: [{ description: 'Comparator arm.' }] },
+        { id: 'ffffffff-0000-4000-8000-000000000002', labels: [{ name: 'Treatment', isDefault: true }], descriptions: [] }
+    ];
+    await openPretendSite(page, {
+        extraLists: [{
+            Id: 'aaaaaaaa-0000-4000-8000-000000000003', EntityTypeName: 'ProjectsList', Title: 'Projects', Description: 'Recruitment schedules.',
+            ItemCount: 1, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 100,
+            HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Lists/Projects/AllItems.aspx'
+        }],
+        answerOverrides: [
+            { pattern: LIST_FIELDS_PATTERN, body: { value: fields.value.map(function(field) {
+                return field.InternalName === 'StudyArm' ? Object.assign({}, field, { Description: 'Randomization stratum of the participant.' }) : field;
+            }) } },
+            { pattern: TERMS_PATTERN, answer: function(url) {
+                const withChildren = /children/.test(url.searchParams.get('$expand') || '');
+                return { value: describedTerms.map(function(t) { return withChildren ? Object.assign({ children: [] }, t) : t; }) };
+            } }
+        ]
+    });
+    await extractSiteInformation(page);
+    const groups = page.locator('#sp-results .sna-search-group > summary');
+    const results = page.locator('#sp-results .sna-search-list');
+
+    await searchReport(page, 'recruitment');
+    await expect(groups).toHaveText(['Lists and libraries (1)']);
+    await expect(results.getByRole('link', { name: 'Projects' })).toBeVisible();
+    await expect(results.locator('.sna-search-summary')).toHaveText('Recruitment schedules.');
+    await searchReport(page, 'stratum');
+    await expect(groups).toHaveText(['Columns (1)']);
+    await expect(results.getByRole('link', { name: 'Study Arm' })).toBeVisible();
+    await expect(results.locator('.sna-search-summary')).toHaveText('Study Visits / Randomization stratum of the participant.');
+    await searchReport(page, 'comparator');
+    await expect(groups).toHaveText(['Terms (1)']);
+    await expect(results.getByRole('link', { name: 'Control' })).toBeVisible();
+
+    // Quoted phrases and * work in descriptions the same way as in names.
+    await searchReport(page, '"recruitment schedules"');
+    await expect(groups).toHaveText(['Lists and libraries (1)']);
+    await searchReport(page, '"schedules recruitment"');
+    await expect(page.locator('#sp-results')).toContainText('No results for');
+    await searchReport(page, 'recruit*sched');
+    await expect(groups).toHaveText(['Lists and libraries (1)']);
+    await searchReport(page, 'random*particip');
+    await expect(groups).toHaveText(['Columns (1)']);
+
+    // Names and internal names are still found in every list that has the column, and a column found by its name keeps
+    // its place before other columns.
+    await searchReport(page, 'StudyArm');
+    await expect(groups).toHaveText(['Columns (3)']);
+    await searchReport(page, 'Study Arm');
+    await expect(groups).toHaveText(['Columns (3)', 'Terms (2)']);
+    await searchReport(page, 'Visit*');
+    await expect(page.locator('#sp-results .sna-search-group').first().locator('.sna-search-item > a').first()).toHaveText('Visit Count');
+});
+
+test('does not find a phone number in a description while Show hidden values is off', async function({ page }) {
+    await openPretendSite(page, {
+        extraLists: [{
+            Id: 'aaaaaaaa-0000-4000-8000-000000000003', EntityTypeName: 'PhoneLogList', Title: 'Phone log', Description: 'Recruitment line (734) 555-0100.',
+            ItemCount: 1, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 100,
+            HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Lists/PhoneLog/AllItems.aspx'
+        }]
+    });
+    await extractSiteInformation(page);
+    const notice = 'Sitenalyzer hides values that look like personal information, so it doesn\'t search for them.';
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+
+    // The number, or part of it, opens an empty search that says why.
+    await searchReport(page, '555-0100');
+    await expect(page.locator('#sp-results')).toContainText(notice);
+    expect(hashOf(page)).toBe('#sna/search?q=');
+    // A wildcard that skips the hidden digits runs, but matches the hidden text, not the number.
+    await searchReport(page, 'line*0');
+    await expect(page.locator('#sp-results')).not.toContainText(notice);
+    await expect(page.locator('#sp-results')).not.toContainText('Phone log');
+    await searchReport(page, 'recruitment');
+    await expect(page.locator('#sp-results .sna-search-summary')).toHaveText('Recruitment line [phone number hidden].');
+    expect(await readableText(page)).not.toContain('555-0100');
+
+    // With the switch on, the number is searched and shown. Turning the switch off clears that search again.
+    await hiddenSwitch.check();
+    await searchReport(page, 'line*0');
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Phone log' })).toBeVisible();
+    await searchReport(page, '555-0100');
+    await expect(page.locator('#sp-results .sna-search-summary')).toHaveText('Recruitment line (734) 555-0100.');
+    await hiddenSwitch.uncheck();
+    await expect(page.getByRole('searchbox', { name: 'Search this report' })).toHaveValue('');
+    await expect(page.locator('#sp-results')).toContainText(notice);
+    expect(hashOf(page)).toBe('#sna/search?q=');
+    expect(await readableText(page)).not.toContain('555-0100');
 });
 
 test('opens the term set of a term search result', async function({ page }) {

@@ -145,7 +145,7 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 ### Search this report
 
-**Search this report** looks through everything Sitenalyzer read from the site, including sections you haven't opened. It searches names, internal names, IDs, data types, term synonyms, and where each item is. It does not search the rest of SharePoint.
+**Search this report** looks through everything Sitenalyzer read from the site, including sections you haven't opened. It searches names, internal names, IDs, data types, term synonyms, and where each item is. It also searches the descriptions of lists, libraries, columns, terms, and site skills, so a list named Projects with the description "Recruitment schedules" is found by searching for `recruitment`. A description you save is searchable right away. It does not search the rest of SharePoint.
 
 - Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, **Agents and skills**, and **Terms**. Columns whose names match come first. A system list is labeled **System list**.
 - Use `*` between words, such as `visit*date`, or put a phrase in quotes, such as `"Visit Date"`, to find it exactly.
