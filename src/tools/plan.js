@@ -119,6 +119,75 @@ function snaToolsCleanAddress(address) {
     return String(address || '').replace(/[^A-Za-z0-9_-]/g, '');
 }
 
+// ### Lists the Destination Already Has ###
+
+// The note under the Address box of a list or library that the copy adds to, instead of making a new one.
+var SNA_TOOLS_EXISTING_LIST_NOTE = 'The destination already has this. Sitenalyzer adds the columns and views it\'s missing.';
+
+// The problem under the Address box when the destination has a list or library at that address made from another template.
+var SNA_TOOLS_OTHER_TEMPLATE_PROBLEM = 'The destination already has a list or library at this address. Choose another address.';
+
+// Returns the last part of a destination list's address as the Address box would show it, with only letters, numbers,
+// hyphens, and underscores, such as 'SharedDocuments' for /sites/new-study/Shared Documents. Returns '' for a list
+// that isn't at the top of the site or under Lists, such as one inside another folder.
+function snaToolsDestinationAddress(destination, serverRelativeUrl) {
+    var path = xlsxStripSlash(String(serverRelativeUrl || ''));
+    var cut = path.lastIndexOf('/');
+    if (cut < 0) { return ''; }
+    var parent = path.substring(0, cut);
+    var site = xlsxStripSlash(destination.serverRelativeUrl || '');
+    if (site === '/') { site = ''; }
+    if (!snaToolsSamePath(parent || '/', site || '/') && !snaToolsSamePath(parent, site + '/Lists')) { return ''; }
+    var name = path.substring(cut + 1);
+    try { name = decodeURIComponent(name); } catch (e) { /* Kept as it is. */ }
+    return snaToolsCleanAddress(name);
+}
+
+/**
+ * Finds the list or library in the destination at the address a person chose, and says whether the copy can use it.
+ * One made from the same template, such as the Documents library every site has, is used as it is: the copy adds the
+ * columns and views it's missing. Addresses are compared the way the Address box shows them, so SharedDocuments matches
+ * a library at Shared Documents.
+ * @param {object|null} destination The checked destination (see snaToolsCheckDestination in runner.js), or null.
+ * @param {string} newUrl The address in the Address box, such as SharedDocuments.
+ * @param {number} baseTemplate The source list's template, such as 101 for a document library.
+ * @returns {{list: object|null, usable: boolean, checkDestination: object|null}} list is the destination's list or
+ *          library at that address, or null. usable is true when the copy can add to it. checkDestination is the
+ *          destination without that list when usable, for the name and address checks, and otherwise destination.
+ */
+function snaToolsExistingDestinationList(destination, newUrl, baseTemplate) {
+    var none = { list: null, usable: false, checkDestination: destination };
+    var key = String(newUrl || '').toLowerCase();
+    if (!destination || !key) { return none; }
+    var candidates = (destination.lists || []).filter(function(l) {
+        return !l.hidden && snaToolsDestinationAddress(destination, l.serverRelativeUrl).toLowerCase() === key;
+    });
+    if (candidates.length === 0) { return none; }
+    // A list whose address is exactly the one typed wins over one that only matches without its spaces.
+    var exact = candidates.filter(function(l) { return String(l.serverRelativeUrl).split('/').pop().toLowerCase() === key; })[0];
+    var list = exact || candidates[0];
+    if (Number(list.baseTemplate) !== Number(baseTemplate)) { return { list: list, usable: false, checkDestination: destination }; }
+    var others = Object.assign({}, destination, { lists: destination.lists.filter(function(l) { return l !== list; }) });
+    return { list: list, usable: true, checkDestination: others };
+}
+
+/**
+ * Checks the name and address a person chose for one list or library against the destination and the other choices.
+ * @param {object|null} destination The checked destination, or null before a check.
+ * @param {object} choice { newTitle, newUrl, isLibrary, baseTemplate }.
+ * @param {string[]} otherTitles The new names of the other chosen lists and libraries.
+ * @param {string[]} otherUrls The new addresses of the other chosen lists and libraries.
+ * @returns {{name: string, address: string, note: string}} name and address are problems to fix, or ''. note is
+ *          SNA_TOOLS_EXISTING_LIST_NOTE when the copy adds to a list the destination already has, or ''.
+ */
+function snaToolsListChoiceProblems(destination, choice, otherTitles, otherUrls) {
+    var existing = snaToolsExistingDestinationList(destination, choice.newUrl, choice.baseTemplate);
+    var address = (existing.list && !existing.usable) ? SNA_TOOLS_OTHER_TEMPLATE_PROBLEM : '';
+    address = address || snaToolsAddressProblem(choice.newUrl, choice.isLibrary, existing.checkDestination, otherUrls);
+    var name = snaToolsNameProblem(choice.newTitle, existing.checkDestination, otherTitles);
+    return { name: name, address: address, note: (existing.usable && !address) ? SNA_TOOLS_EXISTING_LIST_NOTE : '' };
+}
+
 /**
  * Returns the lists and libraries of this site's report that Copy site structure offers, in the order of Contents.
  * @param {object} report The collected report (see collectReport in sitenalyzer.js).

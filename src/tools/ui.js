@@ -84,7 +84,7 @@ function snaToolsRows(report) {
     if (state.source === 'workbook') {
         var plan = state.workbook && state.workbook.plan;
         return plan ? plan.lists.map(function(l) {
-            return { sourceId: l.sourceId, title: l.title, url: snaToolsCleanAddress(l.url), isLibrary: l.isLibrary,
+            return { sourceId: l.sourceId, title: l.title, url: snaToolsCleanAddress(l.url), isLibrary: l.isLibrary, baseTemplate: l.baseTemplate,
                 columnCount: l.fields.filter(function(f) { return !f.builtIn; }).length, viewCount: l.views.length };
         }) : [];
     }
@@ -149,8 +149,9 @@ function snaToolsChoices(report) {
     };
 }
 
-// Checks every choice. Returns { rows, chosenCount, problems: { sourceId: { name, address } }, canCopy, hint }, where
-// hint says what the person must do before Copy to destination works, or what it will do.
+// Checks every choice. Returns { rows, chosenCount, problems: { sourceId: { name, address, note } }, canCopy, hint }, where
+// hint says what the person must do before Copy to destination works, or what it will do. A note isn't a problem: it says
+// the copy adds to a list or library the destination already has (see snaToolsListChoiceProblems in plan.js).
 function snaToolsValidate(report) {
     var state = _snaToolsState;
     var rows = snaToolsRows(report);
@@ -161,11 +162,11 @@ function snaToolsValidate(report) {
     chosen.forEach(function(row, index) {
         var choice = snaToolsListChoice(row);
         var others = chosen.filter(function(r, i) { return i !== index; }).map(snaToolsListChoice);
-        var name = snaToolsNameProblem(choice.newTitle, dest, others.map(function(o) { return o.newTitle; }));
-        var address = snaToolsAddressProblem(choice.newUrl, row.isLibrary, dest, others.map(function(o) { return o.newUrl; }));
-        problems[row.sourceId] = { name: name, address: address };
-        if (name) { problemCount++; }
-        if (address) { problemCount++; }
+        var found = snaToolsListChoiceProblems(dest, { newTitle: choice.newTitle, newUrl: choice.newUrl, isLibrary: row.isLibrary,
+            baseTemplate: row.baseTemplate }, others.map(function(o) { return o.newTitle; }), others.map(function(o) { return o.newUrl; }));
+        problems[row.sourceId] = found;
+        if (found.name) { problemCount++; }
+        if (found.address) { problemCount++; }
     });
     var termSets = snaToolsTermSetRows(report).filter(snaToolsTermSetChosen);
     var anyOption = ['pages', 'siteAssets', 'agents', 'permissions'].some(snaToolsOption);
@@ -395,12 +396,18 @@ function snaToolsAfterRender() {
     snaToolsLoadViewCounts(_snaReport);
 }
 
-// Shows a message under one Name or Address box, or removes it when text is ''. The box is marked invalid while it has one.
-function snaToolsSetFieldMessage(input, text) {
+// Shows a message under one Name or Address box, or removes it when text is ''. The box is marked invalid while it has
+// one, unless isNote is true: a note says what the copy will do and needs no fix.
+function snaToolsSetFieldMessage(input, text, isNote) {
     if (!input) { return; }
     var message = document.getElementById(input.id + '-msg');
-    if (message) { message.textContent = text; message.hidden = !text; }
-    if (text) { input.setAttribute('aria-invalid', 'true'); } else { input.removeAttribute('aria-invalid'); }
+    if (message) {
+        message.textContent = text;
+        message.hidden = !text;
+        message.classList.toggle('sna-error-text', !isNote);
+        message.classList.toggle('sna-hint', !!isNote);
+    }
+    if (text && !isNote) { input.setAttribute('aria-invalid', 'true'); } else { input.removeAttribute('aria-invalid'); }
 }
 
 // Brings the parts of the screen that depend on the choices up to date, without drawing the view again, so focus and
@@ -411,9 +418,9 @@ function snaToolsRefreshForm() {
     if (!root || !_snaReport) { return; }
     var check = snaToolsValidate(_snaReport);
     root.querySelectorAll('tr[data-list-id]').forEach(function(tr) {
-        var problem = check.problems[tr.getAttribute('data-list-id')] || { name: '', address: '' };
+        var problem = check.problems[tr.getAttribute('data-list-id')] || { name: '', address: '', note: '' };
         snaToolsSetFieldMessage(tr.querySelector('.sna-tools-list-name'), problem.name);
-        snaToolsSetFieldMessage(tr.querySelector('.sna-tools-list-address'), problem.address);
+        snaToolsSetFieldMessage(tr.querySelector('.sna-tools-list-address'), problem.address || problem.note, !problem.address && !!problem.note);
     });
     var count = document.getElementById('sna-tools-lists-count');
     if (count) {
