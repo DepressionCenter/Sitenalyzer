@@ -26,7 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 const { test, expect } = require('@playwright/test');
-const { openPretendSite, rawReply, SITE_URL, SITE_PATH, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, DEST_URL, DEST_PATH } = require('./pretend-sharepoint');
+const { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, DEST_URL, DEST_PATH } = require('./pretend-sharepoint');
 const { DEST_WEB_ID, DEST_SITE_ID } = require('./pretend-destination');
 const { addPretendFile, addPretendPage } = require('./pretend-destination-files');
 
@@ -42,6 +42,10 @@ const ODD_NAME = 'Q#1 100% plan.png';
 const TOO_LARGE_NOTE = 'This file is larger than 250 MB, so Sitenalyzer didn\'t copy it. Copy it to the destination by hand, such as with Copy to in Site Assets.';
 const AGENT_NOTE = 'Copied. It still uses the original site\'s knowledge sources.';
 const PARTIAL_PAGE_NOTE = 'Copied. Some parts of this page may still show the original site\'s content. Open the page and check it.';
+const PAGE_NOT_UPLOADED_NOTE = 'SharePoint didn\'t let Sitenalyzer copy this page to the destination, and uploading it as a file would leave it ' +
+    'blank, so Sitenalyzer didn\'t copy it. Copy it by hand, such as with Copy to in Site Pages.';
+const FOLDER_NOT_READ_NOTE = 'Sitenalyzer couldn\'t read this folder, so it didn\'t copy the files in it. Copy again, or copy them by hand, ' +
+    'such as with Copy to in Site Assets.';
 
 // This site's lists and libraries as the file steps read them, with each library's address.
 const SOURCE_LISTS = [
@@ -72,8 +76,18 @@ function sourceTree() {
 // Returns the HTML-encoded settings of one web part, the way SharePoint stores them in CanvasContent1.
 function webPart(id, properties) {
     const data = JSON.stringify({ id: id, instanceId: 'cdcdcdcd-0000-4000-8000-' + String(Math.floor(Math.random() * 1e12)).padStart(12, '0'), properties: properties });
+    return rawWebPart(data);
+}
+
+// Returns a web part whose settings are this JSON text as it is, such as JSON with escaped slashes, HTML-encoded.
+function rawWebPart(json) {
     return '<div data-sp-canvascontrol="" data-sp-canvasdataversion="1.0"><div data-sp-webpart="" data-sp-webpartdata="' +
-        data.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '"></div></div>';
+        json.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '"></div></div>';
+}
+
+// Returns a GUID without its hyphens, the form getpreview.ashx uses.
+function noHyphens(guid) {
+    return guid.replace(/-/g, '');
 }
 
 // The List web part shows Study Visits, and the Image web part shows welcome.png from Site Assets.
@@ -96,8 +110,9 @@ const SOURCE_PAGES = {
     6: { Title: 'Old Notes', FileLeafRef: 'Old Notes.aspx', FileRef: SITE_PATH + '/SitePages/Old Notes.aspx', modern: false }
 };
 
-// Returns the source answers the file steps need. tree is from sourceTree().
-function sourceAnswers(tree) {
+// Returns the source answers the file steps need. tree is from sourceTree(); pages replaces SOURCE_PAGES when given.
+function sourceAnswers(tree, pages) {
+    const sourcePages = pages || SOURCE_PAGES;
     function alias(url, name) { return String(url.searchParams.get(name) || '').replace(/^'|'$/g, '').replace(/''/g, "'"); }
     function find(path) {
         const key = Object.keys(tree).filter(function(k) { return k.toLowerCase() === path.toLowerCase(); })[0];
@@ -125,18 +140,18 @@ function sourceAnswers(tree) {
             return file ? rawReply(200, 'application/octet-stream', file.content) : undefined;
         } },
         { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: function() {
-            return { value: Object.keys(SOURCE_PAGES).map(function(id) {
-                const p = SOURCE_PAGES[id];
+            return { value: Object.keys(sourcePages).map(function(id) {
+                const p = sourcePages[id];
                 return { Id: Number(id), Title: p.Title, FileLeafRef: p.FileLeafRef, FileRef: p.FileRef, FSObjType: 0, Modified: '2026-10-01T10:00:00Z' };
             }) };
         } },
         { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\((\\d+)\\)$"), answer: function(url, match) {
             if (!/CanvasContent1/.test(url.searchParams.get('$select') || '')) { return undefined; }
-            const p = SOURCE_PAGES[match[1]];
+            const p = sourcePages[match[1]];
             if (!p) { return undefined; }
             return { Id: Number(match[1]), UniqueId: 'efefefef-0000-4000-8000-00000000000' + match[1], Title: p.Title, FileLeafRef: p.FileLeafRef,
                 ClientSideApplicationId: p.modern ? MODERN_APP_ID : null, PageLayoutType: p.PageLayoutType || null, PromotedState: 0,
-                CanvasContent1: p.CanvasContent1 || null, LayoutWebpartsContent: p.modern ? '<div>Title area</div>' : null,
+                CanvasContent1: p.CanvasContent1 || null, LayoutWebpartsContent: p.LayoutWebpartsContent || (p.modern ? '<div>Title area</div>' : null),
                 BannerImageUrl: p.BannerImageUrl || null, Description: p.modern ? 'Synthetic page.' : null, TopicHeader: null };
         } },
         { pattern: /^\/_api\/web\/rootfolder$/, body: { WelcomePage: 'SitePages/Home.aspx' } }
@@ -180,13 +195,15 @@ function destFile(record, path) {
 /**
  * Opens Tools on the pretend site, checks the destination, chooses Study Visits, sets the switches, and copies.
  * @param {import('@playwright/test').Page} page Playwright page.
- * @param {object} options { destination (options for pretend-destination.js), tree (from sourceTree), pages, siteAssets,
- *        agents (switches, all on when left out), replace (the Replace checkbox) }.
+ * @param {object} options { destination (options for pretend-destination.js), tree (from sourceTree), sourcePages (in
+ *        place of SOURCE_PAGES), answers (more source answers, checked first), address (a new address for Study Visits),
+ *        pages, siteAssets, agents (switches, all on when left out), replace (the Replace checkbox) }.
  * @returns {Promise<object>} The record of requests, with record.destination the destination's model.
  */
 async function copyWithFiles(page, options) {
     const settings = options || {};
-    const record = await openPretendSite(page, { destination: settings.destination || true, answerOverrides: sourceAnswers(settings.tree || sourceTree()) });
+    const answers = (settings.answers || []).concat(sourceAnswers(settings.tree || sourceTree(), settings.sourcePages));
+    const record = await openPretendSite(page, { destination: settings.destination || true, answerOverrides: answers });
     page.on('dialog', function(dialog) { dialog.accept(); });
     await page.getByRole('button', { name: 'Extract site information' }).click();
     await expect(page.locator('#sna-site-header h1')).toBeVisible();
@@ -196,6 +213,7 @@ async function copyWithFiles(page, options) {
     await expect(page.locator('#sna-tools-destination-status')).toHaveText(/^You can copy/);
     await page.getByRole('button', { name: 'Clear all' }).click();
     await page.getByRole('checkbox', { name: 'Study Visits', exact: true }).check();
+    if (settings.address) { await page.getByRole('textbox', { name: 'New address for Study Visits' }).fill(settings.address); }
     await page.getByRole('switch', { name: 'Site pages' }).setChecked(settings.pages !== false);
     await page.getByRole('switch', { name: 'Site Assets' }).setChecked(settings.siteAssets !== false);
     await page.getByRole('switch', { name: 'Agents and site skills' }).setChecked(settings.agents !== false);
@@ -376,6 +394,9 @@ test('saves a page in the Templates folder as a page template', async function({
     const template = destFile(record, '/SitePages/Templates/Visit Report.aspx');
     expect(template.page.isTemplate).toBe(true);
     expect(template.page.actions).toEqual(['create', 'checkoutpage', 'savepageasdraft', 'publish']);
+    // The headers the CLI for Microsoft 365 sends with these two calls.
+    expect(template.page.madeWith).toEqual({ ifMatch: '*', xHttpMethod: 'POST' });
+    expect(template.page.headers.savepageasdraft).toEqual({ ifMatch: '*', xHttpMethod: 'MERGE' });
     expect(template.page.CanvasContent1).toBe('<div>Visit report template text.</div>');
     expect(template.page.checkedOut).toBe(false);
     // The page SharePoint made the template from went to the recycle bin.
@@ -419,4 +440,187 @@ test('discards a page that SharePoint refuses to save, so it isn\'t left checked
     expect(discards).toHaveLength(1);
     // The other pages are copied as usual.
     await expectResult(page, 'Visit Report', 'Page', 'Copied', 'Copied the page template.');
+});
+
+// ### Folders That Can't Be Read, Files Already There, and Agents in Site Assets ###
+
+test('copies the other Site Assets files when one folder can\'t be read, and marks that folder as failed', async function({ page }) {
+    const refuseImages = { pattern: /^\/_api\/web\/GetFolderByServerRelativePath\(decodedurl=@p\)$/, answer: function(url) {
+        if (url.searchParams.get('@p') !== "'" + SITE_PATH + "/SiteAssets/images'") { return undefined; }
+        return reply(500, { 'odata.error': { code: '-1, System.Exception', message: { lang: 'en-US', value: 'Synthetic failure.' } } });
+    } };
+    const record = await copyWithFiles(page, { pages: false, agents: false, answers: [refuseImages] });
+    await expectResult(page, 'images', 'Site Assets file', 'Failed', FOLDER_NOT_READ_NOTE);
+    await expectResult(page, 'site-logo.png', 'Site Assets file', 'Copied', 'Copied the file.');
+    expect(record.destination.folders[(DEST_PATH + '/SiteAssets/scripts').toLowerCase()]).toBeTruthy();
+    expect(destFile(record, '/SiteAssets/images/welcome.png')).toBeUndefined();
+});
+
+test('still copies site skills when the destination\'s lists can\'t be read for the agents', async function({ page }) {
+    const refuseLists = { pattern: /^\/_api\/web\/lists$/, answer: function(ctx) {
+        return /IsSiteAssetsLibrary/.test(ctx.url.searchParams.get('$select') || '') ? ctx.spError(500, 'Synthetic failure.') : undefined;
+    } };
+    const record = await copyWithFiles(page, { pages: false, siteAssets: false, destination: { handlers: [refuseLists] } });
+    const note = 'Sitenalyzer couldn\'t read the destination\'s lists and libraries, so it didn\'t copy this agent. SharePoint said: "Synthetic failure". ' +
+        'Copy again in a few minutes.';
+    await expectResult(page, 'Study Visits Helper', 'Agent', 'Failed', note);
+    await expectResult(page, 'Protocol Reviewer', 'Agent', 'Failed', note);
+    await expectResult(page, 'Weekly summary', 'Site skill', 'Copied', 'Copied the site skill.');
+    expect(destFile(record, '/Agent Assets/Skills/weekly-summary/SKILL.md')).toBeTruthy();
+});
+
+test('points a page at an image the destination already has when Replace isn\'t checked', async function({ page }) {
+    let existingId = '';
+    function setup(model) {
+        model.folders[(DEST_PATH + '/SiteAssets/images').toLowerCase()] = { name: 'images', serverRelativeUrl: DEST_PATH + '/SiteAssets/images' };
+        existingId = addPretendFile(model, DEST_PATH + '/SiteAssets/images/welcome.png', { content: 'Older welcome image' }).uniqueId;
+    }
+    const record = await copyWithFiles(page, { agents: false, destination: { setup: setup } });
+    await expectResult(page, 'images/welcome.png', 'Site Assets file', 'Skipped');
+    const canvas = destFile(record, '/SitePages/Home.aspx').page.CanvasContent1;
+    expect(canvas).toContain('&quot;uniqueid&quot;:&quot;' + existingId + '&quot;');
+    expect(canvas).not.toContain(WELCOME_IMAGE_ID);
+    await expect(resultRow(page, 'Welcome', 'Page').locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Copied');
+});
+
+// The report finds an agent in Site Assets, in the folder Copilots, where Copilot saves agents by default.
+const SITE_ASSETS_AGENT_ID = 'bbbbbbbb-0000-4000-8000-000000000041';
+function siteAssetsAgent() {
+    const tree = sourceTree();
+    tree[SITE_PATH + '/SiteAssets'].folders.push('Copilots');
+    tree[SITE_PATH + '/SiteAssets/Copilots'] = { folders: [], files: [{ name: 'Site Helper.agent', content: '{"schemaVersion":"0.2.0"}', uniqueId: SITE_ASSETS_AGENT_ID }] };
+    const answers = [
+        { pattern: /^\/_api\/web\/lists$/, answer: function(url) {
+            if ((url.searchParams.get('$filter') || '') !== 'BaseType eq 1') { return undefined; }
+            return { value: [
+                { Id: LIBRARY_ID, Title: 'Documents', BaseType: 1, Hidden: false, DefaultViewUrl: SITE_PATH + '/Shared Documents/Forms/AllItems.aspx' },
+                { Id: SITE_ASSETS_ID, Title: 'Site Assets', BaseType: 1, Hidden: false, DefaultViewUrl: SITE_PATH + '/SiteAssets/Forms/AllItems.aspx' }
+            ] };
+        } },
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_ASSETS_ID + "'\\)/items$"), answer: function(url) {
+            if (!/File_x0020_Type eq 'agent'/.test(url.searchParams.get('$filter') || '')) { return undefined; }
+            return { value: [{ Id: 41, UniqueId: SITE_ASSETS_AGENT_ID, FileLeafRef: 'Site Helper.agent', FileRef: SITE_PATH + '/SiteAssets/Copilots/Site Helper.agent',
+                FileDirRef: SITE_PATH + '/SiteAssets/Copilots', Modified: '2026-10-20T12:00:00Z', HasUniqueRoleAssignments: false }] };
+        } }
+    ];
+    return { tree: tree, answers: answers };
+}
+
+test('gives an agent in Site Assets the Site Assets result, without copying it twice', async function({ page }) {
+    const agent = siteAssetsAgent();
+    const record = await copyWithFiles(page, { pages: false, tree: agent.tree, answers: agent.answers });
+    await expectResult(page, 'Copilots/Site Helper.agent', 'Site Assets file', 'Copied', 'Copied the file.');
+    await expectResult(page, 'Site Helper', 'Agent', 'Copied', AGENT_NOTE);
+    const copies = record.writeRequests.filter(function(r) { return r.url.indexOf('CopyFileByPath') > -1 && r.body.indexOf('Site Helper.agent') > -1; });
+    expect(copies).toHaveLength(1);
+});
+
+test('makes Site Assets in the destination for an agent saved there, when Site Assets isn\'t copied', async function({ page }) {
+    const agent = siteAssetsAgent();
+    const record = await copyWithFiles(page, { pages: false, siteAssets: false, tree: agent.tree, answers: agent.answers, destination: { setup: function(model) {
+        model.lists = model.lists.filter(function(l) { return !l.IsSiteAssetsLibrary; });
+    } } });
+    expect(destinationRequests(record)).toContain('/_api/web/lists/EnsureSiteAssetsLibrary');
+    expect(destFile(record, '/SiteAssets/Copilots/Site Helper.agent').copiedWith).toBe('server');
+    await expectResult(page, 'Site Helper', 'Agent', 'Copied', AGENT_NOTE);
+});
+
+// ### Page Templates, Pages in Folders, and Links in Pages ###
+
+test('copies a page template before a page with the same name, so the template isn\'t blocked', async function({ page }) {
+    const pages = Object.assign({}, SOURCE_PAGES, { 3: { Title: 'Visit Report', FileLeafRef: 'Visit Report.aspx', FileRef: SITE_PATH + '/SitePages/Visit Report.aspx',
+        modern: true, PageLayoutType: 'Article', CanvasContent1: '<div>Visit report text.</div>' } });
+    const record = await copyWithFiles(page, { agents: false, siteAssets: false, sourcePages: pages });
+    const rows = resultRow(page, 'Visit Report', 'Page');
+    await expect(rows).toHaveCount(2);
+    const notes = await rows.locator('.tabulator-cell[tabulator-field="note"]').allTextContents();
+    expect(notes.sort()).toEqual(['Copied the page template.', 'Copied the page.']);
+    expect(destFile(record, '/SitePages/Templates/Visit Report.aspx').page.isTemplate).toBe(true);
+    expect(destFile(record, '/SitePages/Visit Report.aspx').page.CanvasContent1).toBe('<div>Visit report text.</div>');
+});
+
+// A modern page in a folder of Site Pages other than Templates, with a link and a List web part that use Study Visits.
+const FOLDER_PAGE = { 7: { Title: 'Visit Notes', FileLeafRef: 'Visit Notes.aspx', FileRef: SITE_PATH + '/SitePages/Archive/Visit Notes.aspx', modern: true,
+    PageLayoutType: 'Article', CanvasContent1: '<div><a href="' + SITE_URL + '/Lists/StudyVisits/AllItems.aspx">Visits</a></div>' +
+        webPart('f92bf067-bc19-489e-a556-7fe95f508720', { selectedListId: LIST_ID, webId: SOURCE_WEB_ID }) } };
+
+test('copies a modern page in a folder on the server, then points its links at the destination', async function({ page }) {
+    const record = await copyWithFiles(page, { agents: false, siteAssets: false, sourcePages: Object.assign({}, SOURCE_PAGES, FOLDER_PAGE) });
+    await expectResult(page, 'Visit Notes', 'Page', 'Copied', 'Copied the page as a file, because it\'s in a folder.');
+    const notes = destFile(record, '/SitePages/Archive/Visit Notes.aspx');
+    expect(notes.copiedWith).toBe('server');
+    expect(notes.page.actions).toEqual(['copy', 'checkoutpage', 'savepage', 'publish']);
+    const copiedList = record.destination.lists.filter(function(l) { return l.RootFolder.ServerRelativeUrl === DEST_PATH + '/Lists/StudyVisits'; })[0];
+    expect(notes.page.CanvasContent1).toContain(DEST_URL + '/Lists/StudyVisits/AllItems.aspx');
+    expect(notes.page.CanvasContent1).toContain('&quot;selectedListId&quot;:&quot;' + copiedList.Id + '&quot;');
+    expect(notes.page.CanvasContent1).not.toContain(SITE_PATH + '/');
+    expect(notes.page.checkedOut).toBe(false);
+});
+
+test('doesn\'t upload a modern page in a folder when SharePoint refuses the server copy, because the upload would be blank', async function({ page }) {
+    const tree = sourceTree();
+    tree[SITE_PATH + '/SitePages'] = { folders: [], files: [{ name: 'Old Notes.aspx', content: 'Classic page' }] };
+    const record = await copyWithFiles(page, { agents: false, siteAssets: false, tree: tree, sourcePages: Object.assign({}, SOURCE_PAGES, FOLDER_PAGE),
+        destination: { copyFileRefused: true } });
+    await expectResult(page, 'Visit Notes', 'Page', 'Failed', PAGE_NOT_UPLOADED_NOTE);
+    expect(destFile(record, '/SitePages/Archive/Visit Notes.aspx')).toBeUndefined();
+    // A classic page has no page columns to lose, so it's still uploaded.
+    expect(destFile(record, '/SitePages/Old Notes.aspx').copiedWith).toBe('upload');
+});
+
+// A home page with links to this site in every form the copy must change, and links to other sites it must leave alone.
+const LINK_FORMS_CANVAS = '<div data-sp-rte=""><p>' + [
+    '<a href="' + SITE_PATH + '/SitePages/About.aspx?a=1&amp;b=2" data-cke-saved-href="' + SITE_PATH + '/SitePages/About.aspx">About</a>',
+    '<a href="' + SITE_URL + '/Lists/StudyVisits/AllItems.aspx">Visits</a>',
+    '<a href="http://contoso.sharepoint.com' + SITE_PATH + '">Home over http</a>',
+    '<a href="//contoso.sharepoint.com' + SITE_PATH + '/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2Ftestsite%2FShared%20Documents%2FProtocols">Protocols</a>',
+    '<a href="https://contoso.sharepoint.com:443' + SITE_PATH + '/_layouts/15/listedit.aspx?List=%7B' + LIST_ID.toUpperCase() + '%7D">Settings</a>',
+    '<a href="' + SITE_URL + '/_layouts/15/viewlsts.aspx?Source=https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2Ftestsite%2FSitePages%2FHome.aspx">All</a>',
+    '<a href="https://contoso.sharepoint.com/:w:/r' + SITE_PATH + '/SitePages/About.aspx">About, redirect</a>',
+    '<a href="' + SITE_URL + '/?web=1">Site</a>',
+    '<img src="' + SITE_PATH + '/SiteAssets/site-logo.png" style="background:url(' + SITE_PATH + '/SiteAssets/images/welcome.png)">',
+    '<a href="https://example.org' + SITE_PATH + '/page.aspx">Partner</a>',
+    '<a href="' + SITE_URL + '-archive/SitePages/Home.aspx">Archive</a>',
+    '<a href="/sites/testsites/x.aspx">Other</a>'
+].join(' ') + '</p></div>' +
+    webPart('f92bf067-bc19-489e-a556-7fe95f508720', { selectedListId: LIST_ID, selectedListUrl: SITE_PATH + '/Lists/StudyVisits', webId: SOURCE_WEB_ID,
+        siteId: SOURCE_SITE_ID, formUrl: SITE_URL + '/_layouts/15/listform.aspx?List=%7B' + LIST_ID + '%7D&RootFolder=%2Fsites%2Ftestsite%2FLists%2FStudyVisits',
+        returnTo: 'Source%3D%252Fsites%252Ftestsite%252FSitePages', nested: '{"u":"' + SITE_PATH + '/SiteAssets/site-logo.png"}' }) +
+    rawWebPart('{"id":"c70391ea-0b10-4ee9-b2b4-006d3fcad0cd","properties":{"link":"https:\\/\\/contoso.sharepoint.com\\/sites\\/testsite\\/SitePages\\/About.aspx",' +
+        '"folder":"\\u002fsites\\u002ftestsite\\u002fShared Documents","search":"path:https://contoso.sharepoint.com/sites/testsite*"}}');
+const LINK_FORMS_PAGE = Object.assign({}, SOURCE_PAGES[1], {
+    CanvasContent1: LINK_FORMS_CANVAS,
+    LayoutWebpartsContent: webPart('cbe7b0a9-3504-44dd-a3a3-0e5cacd07788', { imageSource: SITE_PATH + '/SiteAssets/images/welcome.png',
+        siteId: SOURCE_SITE_ID, webId: SOURCE_WEB_ID, listId: '{' + SITE_ASSETS_ID + '}', uniqueId: WELCOME_IMAGE_ID }),
+    BannerImageUrl: SITE_URL + '/_layouts/15/getpreview.ashx?guidSite=' + noHyphens(SOURCE_SITE_ID) + '&guidWeb=' + noHyphens(SOURCE_WEB_ID) +
+        '&guidFile=' + noHyphens(WELCOME_IMAGE_ID)
+});
+
+test('leaves no link to this site in a home page that holds many link forms, and leaves links to other sites alone', async function({ page }) {
+    const record = await copyWithFiles(page, { agents: false, address: 'Visits', sourcePages: Object.assign({}, SOURCE_PAGES, { 1: LINK_FORMS_PAGE }) });
+    const home = destFile(record, '/SitePages/Home.aspx').page;
+    const saved = [home.CanvasContent1, home.LayoutWebpartsContent, home.BannerImageUrl].join('\n');
+    const others = ['https://example.org' + SITE_PATH + '/page.aspx', SITE_URL + '-archive/SitePages/Home.aspx', '/sites/testsites/x.aspx'];
+    others.forEach(function(other) { expect(saved).toContain(other); });
+    // This site's path in any form: /, \/, \u002f, %2F, or %252F between its parts.
+    expect(saved.split(others[0]).join('')).not.toMatch(/sites(?:\/|\\\/|\\u002f|%2F|%252F)testsite(?![\w.-])/i);
+    [LIST_ID, SOURCE_WEB_ID, SOURCE_SITE_ID, SITE_ASSETS_ID, WELCOME_IMAGE_ID].forEach(function(id) {
+        expect(saved.toLowerCase()).not.toContain(id);
+        expect(saved.toLowerCase()).not.toContain(noHyphens(id));
+    });
+    const visits = record.destination.lists.filter(function(l) { return l.RootFolder.ServerRelativeUrl === DEST_PATH + '/Lists/Visits'; })[0];
+    expect(saved).toContain('<a href="' + DEST_URL + '/Lists/Visits/AllItems.aspx">Visits</a>');
+    expect(saved).toContain('&quot;selectedListUrl&quot;:&quot;' + DEST_PATH + '/Lists/Visits&quot;');
+    expect(saved).toContain('RootFolder=%2Fsites%2Ftargetsite%2FLists%2FVisits');
+    expect(saved).toContain('listedit.aspx?List=%7B' + visits.Id.toUpperCase() + '%7D');
+    expect(saved).toContain('?id=%2Fsites%2Ftargetsite%2FShared%20Documents%2FProtocols');
+    expect(saved).toContain('Source=https%3A%2F%2Fcontoso.sharepoint.com%2Fsites%2Ftargetsite%2FSitePages%2FHome.aspx');
+    expect(saved).toContain('Source%3D%252Fsites%252Ftargetsite%252FSitePages');
+    expect(saved).toContain('https:\\/\\/contoso.sharepoint.com\\/sites\\/targetsite\\/SitePages\\/About.aspx');
+    expect(saved).toContain('\\u002fsites\\u002ftargetsite\\u002fShared Documents');
+    expect(saved).toContain('path:https://contoso.sharepoint.com/sites/targetsite*');
+    expect(saved).toContain('https://contoso.sharepoint.com/:w:/r' + DEST_PATH + '/SitePages/About.aspx');
+    expect(home.BannerImageUrl).toBe(DEST_URL + '/_layouts/15/getpreview.ashx?guidSite=' + noHyphens(DEST_SITE_ID) + '&guidWeb=' + noHyphens(DEST_WEB_ID) +
+        '&guidFile=' + noHyphens(destFile(record, '/SiteAssets/images/welcome.png').uniqueId));
+    await expect(resultRow(page, 'Welcome', 'Page').locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Copied');
 });

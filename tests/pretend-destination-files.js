@@ -14,9 +14,12 @@ Notes: See README file for documentation and full license information.
        Model parts this file uses, in model (see newModel in pretend-destination.js):
          files      By lowercase server-relative path: { name, serverRelativeUrl, content, uniqueId, length, copiedWith,
                     source, page }. copiedWith is 'server' or 'upload'; source is the copied file's path in the source.
-                    page, for a page made through the site pages API, is { Id, UniqueId, Title, Name, path, checkedOut,
-                    published, isTemplate, discarded, actions: [names of the calls made on it, in order], and the content
-                    saved: CanvasContent1, LayoutWebpartsContent, BannerImageUrl, Description, TopicHeader }.
+                    page, for a page made through the site pages API or an .aspx file copied on the server into Site
+                    Pages, is { Id, UniqueId, Title, Name, path, checkedOut, published, isTemplate, discarded, actions:
+                    [names of the calls made on it, in order, starting with 'create' or 'copy'], headers: { call name:
+                    { ifMatch, xHttpMethod } sent with it }, and the content saved: CanvasContent1, LayoutWebpartsContent,
+                    BannerImageUrl, Description, TopicHeader }. A template made with savepageastemplate keeps the headers
+                    of that call in madeWith.
          folders    By lowercase server-relative path: { name, serverRelativeUrl }.
          recycled   Paths of the files moved to the recycle bin.
          welcomePage  The home page set with a MERGE of the root folder, such as 'SitePages/Home.aspx'.
@@ -199,7 +202,16 @@ addDestinationHandlers([
         if (!folderExists(ctx.model, parentOf(path))) { return ctx.spError(400, 'The destination folder does not exist.'); }
         if (ctx.model.files[keyOf(path)] && !overwrite) { return ctx.spError(400, 'A file with the name ' + path + ' already exists.'); }
         const old = ctx.model.files[keyOf(path)];
-        addPretendFile(ctx.model, path, { content: 'Copied on the server', copiedWith: 'server', source: from.substring(TENANT_ORIGIN.length), page: old ? old.page : undefined });
+        const file = addPretendFile(ctx.model, path, { content: 'Copied on the server', copiedWith: 'server', source: from.substring(TENANT_ORIGIN.length),
+            page: old ? old.page : undefined });
+        // A page copied on the server keeps its page columns, so the site pages API can change it.
+        const library = sitePagesList(ctx.model);
+        if (!file.page && library && /\.aspx$/i.test(path) && keyOf(path).indexOf(keyOf(library.RootFolder.ServerRelativeUrl) + '/') === 0) {
+            ensureParts(ctx.model);
+            ctx.model.pageCounter++;
+            file.page = { Id: ctx.model.pageCounter, UniqueId: file.uniqueId, Title: leafOf(path).replace(/\.aspx$/i, ''), Name: leafOf(path), path: path,
+                checkedOut: false, published: true, isTemplate: false, discarded: false, actions: ['copy'] };
+        }
         return ctx.reply(200, null);
     } },
     // The upload, after a refused server copy.
@@ -252,6 +264,8 @@ addDestinationHandlers([
         if (!page) { return ctx.spError(404, 'The page does not exist.', NOT_FOUND_CODE); }
         const action = ctx.match[2].toLowerCase();
         page.actions.push(action);
+        const sent = { ifMatch: ctx.headers['if-match'] || '', xHttpMethod: ctx.xHttpMethod };
+        page.headers = Object.assign(page.headers || {}, { [action]: sent });
         if (action === 'checkoutpage') {
             page.checkedOut = true;
             return pageJson(page);
@@ -277,7 +291,7 @@ addDestinationHandlers([
         const root = sitePagesList(ctx.model).RootFolder.ServerRelativeUrl;
         const folder = root + '/Templates';
         if (!folderExists(ctx.model, folder)) { ctx.model.folders[keyOf(folder)] = { name: 'Templates', serverRelativeUrl: folder }; }
-        const template = newPage(ctx.model, folder + '/' + page.Name, page.Title, { isTemplate: true, checkedOut: false });
+        const template = newPage(ctx.model, folder + '/' + page.Name, page.Title, { isTemplate: true, checkedOut: false, madeWith: sent });
         template.actions.push('create');
         return pageJson(template);
     } },
