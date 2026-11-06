@@ -185,6 +185,12 @@ function isPermissionsRequest(address) {
         /AssociatedOwnerGroup|Owner\b/.test(url.searchParams.get('$expand') || '');
 }
 
+// Returns the CSOM requests the destination got from the permissions step. The term set and column steps also send CSOM
+// requests: one that opens the term store (GetTaxonomySession) and one per managed metadata column (SspId).
+function permissionCsomRequests(record) {
+    return record.destination.csomRequests.filter(function(text) { return text.indexOf('GetTaxonomySession') === -1 && !/<SetProperty [^>]*Name="SspId"/.test(text); });
+}
+
 // Returns the destination list the copy made for Study Visits.
 function copiedList(record) {
     return record.destination.lists.filter(function(l) { return l.RootFolder.ServerRelativeUrl === DEST_PATH + '/Lists/StudyVisits'; })[0];
@@ -326,9 +332,10 @@ test('creates a group with a person as its owner, and a group that owns itself t
     expect(team.OwnerId).toBe(coordinator.Id);
     const managers = destGroup(record, 'Data Managers');
     expect(managers.OwnerId).toBe(managers.Id);
-    expect(record.destination.csomRequests).toHaveLength(1);
-    expect(record.destination.csomRequests[0]).toContain('<SetProperty Id="10" ObjectPathId="5" Name="Owner"><Parameter ObjectPathId="6" /></SetProperty>');
-    expect(record.destination.csomRequests[0]).toContain('Name="GetById"><Parameters><Parameter Type="Number">' + managers.Id + '</Parameter>');
+    const csom = permissionCsomRequests(record);
+    expect(csom).toHaveLength(1);
+    expect(csom[0]).toContain('<SetProperty Id="10" ObjectPathId="5" Name="Owner"><Parameter ObjectPathId="6" /></SetProperty>');
+    expect(csom[0]).toContain('Name="GetById"><Parameters><Parameter Type="Number">' + managers.Id + '</Parameter>');
 
     const rows = await savedResults(page, testInfo);
     expect(row(rows, 'Test Study Team', 'Group')).toEqual({ name: 'Test Study Team', kind: 'Group', result: 'Copied',
@@ -340,7 +347,7 @@ test('creates a group with a person as its owner, and a group that owns itself t
 test('says what to do when SharePoint doesn\'t let a group be made another group\'s owner', async function({ page }, testInfo) {
     const record = await openTools(page, { destination: { groupOwnerRefused: true } });
     await copyStudyVisits(page);
-    expect(record.destination.csomRequests).toHaveLength(1);
+    expect(permissionCsomRequests(record)).toHaveLength(1);
     const managers = destGroup(record, 'Data Managers');
     expect(managers.OwnerId).toBe(record.destination.currentUser.Id);
     const rows = await savedResults(page, testInfo);
@@ -398,7 +405,9 @@ test('gives a list its own permissions as in this site, and removes the access S
     await copyStudyVisits(page);
     const list = copiedList(record);
     const base = "/_api/web/lists(guid'" + list.Id + "')";
-    const listChanges = destinationChanges(record).filter(function(c) { return c.path.indexOf(base + '/') === 0; }).map(function(c) { return c.path.substring(base.length); });
+    // Only the list's permission changes; the columns and views steps change the list too.
+    const listChanges = destinationChanges(record).filter(function(c) { return c.path.indexOf(base + '/') === 0 && /\/(breakroleinheritance|roleassignments)/.test(c.path); })
+        .map(function(c) { return c.path.substring(base.length); });
     const team = destGroup(record, 'Test Study Team');
     const coordinatorLevel = record.destination.roleDefinitions.filter(function(d) { return d.Name === 'Study Coordinator'; })[0];
     expect(listChanges).toEqual([

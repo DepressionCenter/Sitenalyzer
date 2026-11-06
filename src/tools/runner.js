@@ -17,6 +17,7 @@ Notes: See README file for documentation and full license information.
          termSets: { srcSetId: destSetId }, terms: { srcTermId: destTermId }, termSetsMissing: { srcSetId: reason },
          views: { srcViewId: destViewId }, contentTypes: { srcStringId: destStringId },
          principals: { srcPrincipalId: destPrincipalId }, roleDefinitions: { srcId: destId },
+         fileUrls: { srcServerRelativeUrl: destServerRelativeUrl }, fileIds: { srcFileId: destFileId },
          destination: { siteUrl, webId, siteId, serverRelativeUrl, termStoreId, currentUserId } }
        IDs are lowercase GUIDs without braces.
 
@@ -206,7 +207,7 @@ function snaToolsAddressProblem(newUrl, isLibrary, destination, others) {
 function snaToolsNewMaps(dest) {
     return {
         lists: {}, listUrls: {}, fields: {}, fieldIds: {}, termSets: {}, terms: {}, termSetsMissing: {}, views: {},
-        contentTypes: {}, principals: {}, roleDefinitions: {},
+        contentTypes: {}, principals: {}, roleDefinitions: {}, fileUrls: {}, fileIds: {},
         destination: { siteUrl: dest.siteUrl, webId: dest.webId, siteId: dest.siteId, serverRelativeUrl: dest.serverRelativeUrl,
             termStoreId: '', currentUserId: dest.currentUserId }
     };
@@ -263,13 +264,17 @@ async function snaToolsRunCopy(plan, destination) {
     plan.lists.forEach(function(list, index) {
         var otherUrls = newUrls.filter(function(u, i) { return i !== index; });
         var otherTitles = newTitles.filter(function(u, i) { return i !== index; });
-        var problem = snaToolsAddressProblem(list.newUrl, list.isLibrary, dest, otherUrls) || snaToolsNameProblem(list.newTitle, dest, otherTitles);
+        // A list or library the destination already has at the chosen address, from the same template, is used instead of a new one.
+        var found = snaToolsListChoiceProblems(dest, list, otherTitles, otherUrls);
+        var problem = found.address || found.name;
         if (problem) {
             throw snaToolsUserError('Sitenalyzer didn\'t copy anything, because ' + snaMaskText(list.title) + ' can\'t be copied with the name and address you chose: ' + problem);
         }
     });
     if (_snaToolsRun) { _snaToolsRun.destination = dest; }
     var maps = snaToolsNewMaps(dest);
+    // A plan from a data dictionary file names the columns, terms, and views it can't make; each gets a Skipped row.
+    snaToolsLogWorkbookSkipped(plan);
     var K = SNA_TOOLS_KINDS;
 
     await snaToolsRunStep(1, 'Copying term sets.', K.termSet, 'Term sets', function() { return snaToolsCopyTermSets(plan, dest, maps); });

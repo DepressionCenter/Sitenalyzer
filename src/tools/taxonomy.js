@@ -901,12 +901,12 @@ async function snaToolsCopyTermSets(plan, dest, maps) {
 // ### Helpers for Managed Metadata Columns ###
 
 /**
- * Connects a managed metadata column in a destination list to its term set through CSOM: sets SspId, TermSetId,
- * AnchorId, Open, IsPathRendered, and CreateValuesInEditForm on the column, then saves it with Update. Microsoft
- * documents this as the way to finish a managed metadata column created from its XML.
+ * Connects a managed metadata column in a destination list, or a destination site column, to its term set through
+ * CSOM: sets SspId, TermSetId, AnchorId, Open, IsPathRendered, and CreateValuesInEditForm on the column, then saves it
+ * with Update. Microsoft documents this as the way to finish a managed metadata column created from its XML.
  * @param {string} destSiteUrl The destination site address, with no slash at the end.
- * @param {string} destListId The destination list's ID.
- * @param {string} fieldId The column's ID in that list.
+ * @param {string} destListId The destination list's ID, or '' for a site column.
+ * @param {string} fieldId The column's ID in that list, or the site column's ID.
  * @param {object} binding { sspId (the term store ID), termSetId, anchorId ('' or the empty GUID for the whole set),
  *        open, isPathRendered, createValuesInEditForm (true or false) }.
  * @returns {Promise<void>} Side effects: changes the column. Needs the person to be able to manage the list.
@@ -920,16 +920,16 @@ async function snaToolsTaxonomyBindField(destSiteUrl, destListId, fieldId, bindi
     var sspId = snaToolsCleanGuid(settings.sspId);
     var termSetId = snaToolsCleanGuid(settings.termSetId);
     var anchorId = snaToolsCleanGuid(settings.anchorId) || SNA_TOOLS_EMPTY_GUID;
-    if (!listId || !columnId || !sspId || !termSetId) {
+    if ((destListId && !listId) || !columnId || !sspId || !termSetId) {
         throw snaToolsUserError('Sitenalyzer couldn\'t connect this column to its term set, because it doesn\'t have every ID it needs. ' +
             'Choose the term set for the column by hand in the destination.');
     }
     var request = snaToolsTaxonomyCsomRequest();
     var context = request.staticProperty(SNA_TOOLS_REQUEST_CONTEXT_TYPE_ID, 'Current');
     var web = request.property(context, 'Web');
-    var lists = request.property(web, 'Lists');
-    var list = request.method(lists, 'GetById', [{ type: 'Guid', value: listId }]);
-    var fields = request.property(list, 'Fields');
+    var fields = listId
+        ? request.property(request.method(request.property(web, 'Lists'), 'GetById', [{ type: 'Guid', value: listId }]), 'Fields')
+        : request.property(web, 'Fields');
     var field = request.method(fields, 'GetById', [{ type: 'Guid', value: columnId }]);
     request.set(field, 'SspId', { type: 'Guid', value: sspId });
     request.set(field, 'TermSetId', { type: 'Guid', value: termSetId });

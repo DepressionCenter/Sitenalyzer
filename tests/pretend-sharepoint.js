@@ -342,6 +342,14 @@ const searchResults = {
     }
 };
 
+// Answers a folder read by path. The folder of the weekly-summary site skill holds its SKILL.md; no other folder exists.
+function skillFolderAnswer(url) {
+    const folderPath = String(url.searchParams.get('@p') || '').replace(/^'|'$/g, '').replace(/''/g, "'");
+    if (folderPath !== SITE_PATH + '/Agent Assets/Skills/weekly-summary') { return { Exists: false, Folders: [], Files: [] }; }
+    return { Exists: true, ServerRelativeUrl: folderPath, Folders: [],
+        Files: [{ Name: 'SKILL.md', ServerRelativeUrl: folderPath + '/SKILL.md', Length: '120', UniqueId: skillItems[0].UniqueId }] };
+}
+
 // Each entry matches the part of the address after the site path. Order matters: first match wins.
 // An entry has a fixed body, or an answer(url, match, request) function for answers that depend on the address,
 // query, or request; an answer function that returns undefined passes the request to the next entry. An answer
@@ -400,6 +408,9 @@ const API_ANSWERS = [
             ? rawReply(200, 'text/markdown', "---\nname: Weekly summary\ndescription: Summarizes the week's visit notes.\n---\nSynthetic instructions.")
             : reply(404, { error: 'File not found' });
     } },
+    // Reads that only the file steps of Copy site structure make: a site skill's folder, and the site's home page.
+    { pattern: /^\/_api\/web\/GetFolderByServerRelativePath\(decodedurl=@p\)$/, answer: skillFolderAnswer },
+    { pattern: /^\/_api\/web\/rootfolder$/, body: { WelcomePage: 'SitePages/Home.aspx' } },
     { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: sitePagesItems },
     { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\((\\d+)\\)$"), answer: function(url, match) {
         return PAGE_IMAGES[match[1]] ? { BannerImageUrl: PAGE_IMAGES[match[1]] } : reply(404, { error: 'Item not found' });

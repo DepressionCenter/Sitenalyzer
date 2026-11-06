@@ -67,6 +67,9 @@ var SNA_TOOLS_LISTS_TAXONOMY_HELPER_IDS = ['f3b0adf9-c1a2-4b02-920d-943fba4b3611
 // The ID SharePoint uses for "none", such as a managed metadata column with no starting term.
 var SNA_TOOLS_LISTS_EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
 
+// Added to the note of a lookup column read from a data dictionary file, which doesn't say which column a lookup shows.
+var SNA_TOOLS_LISTS_GUESSED_LOOKUP_NOTE = 'This lookup shows the Title column, because the data dictionary file doesn\'t say which column it shows.';
+
 // List settings, in the order they are set. Version history goes first, because some other settings need it.
 var SNA_TOOLS_LISTS_VERSION_SETTINGS = ['EnableVersioning', 'EnableMinorVersions', 'MajorVersionLimit', 'MajorWithMinorVersionsLimit',
     'EnableModeration', 'DraftVersionVisibility'];
@@ -1021,8 +1024,9 @@ async function snaToolsListsMakeColumn(plan, dest, maps, scope, field) {
         var target = snaToolsListsPointLookup(plan, dest, maps, scope, field, root);
         if (target.skip) { return { result: 'skipped', note: target.skip }; }
         if (target.note) { notes.push(target.note); }
+        if (field.lookupFieldGuessed) { notes.push(SNA_TOOLS_LISTS_GUESSED_LOOKUP_NOTE); }
     }
-    var people = snaToolsListsAdjustPeople(root, field, notes);
+    var people = snaToolsListsAdjustPeople(root, field, notes, !!plan.permissions);
     if (field.type === 'Calculated') { return snaToolsListsMakeCalculated(dest, maps, scope, field, root, notes); }
     var made = await snaToolsListsCreateColumn(dest, scope.destListId, root, scope.addToDefaultType);
     var partial = notes.length > 0 && people.changed;
@@ -1075,9 +1079,11 @@ function snaToolsListsPointLookup(plan, dest, maps, scope, field, root) {
 }
 
 // Changes a Person column so it works in the destination: leaves out a default person, whose ID belongs to the source,
-// and lets people choose anyone when it chose only from one SharePoint group, whose ID belongs to the source too.
-// Returns { changed, scope (the source group ID, or 0) } and adds a note for each change.
-function snaToolsListsAdjustPeople(root, field, notes) {
+// and lets people choose anyone when it chose only from one SharePoint group, whose ID belongs to the source too. When
+// permissions are copied, the permissions step limits the column to the destination's copy of that group afterwards
+// (it reads maps.fieldIds), so the column isn't marked as changed for that. Returns { changed, scope (the source group
+// ID, or 0) } and adds a note for each change.
+function snaToolsListsAdjustPeople(root, field, notes, permissionsCopied) {
     var out = { changed: false, scope: 0 };
     if (field.type !== 'User' && field.type !== 'UserMulti') { return out; }
     var defaults = snaToolsListsChild(root, 'Default');
@@ -1089,8 +1095,12 @@ function snaToolsListsAdjustPeople(root, field, notes) {
     var group = parseInt(root.getAttribute('UserSelectionScope'), 10);
     if (group > 0) {
         root.setAttribute('UserSelectionScope', '0');
-        out.changed = true;
         out.scope = group;
+        if (permissionsCopied) {
+            notes.push('Sitenalyzer set the group people choose from after it copied the groups. Another row for this column says whether that worked.');
+            return out;
+        }
+        out.changed = true;
         notes.push('It lets people choose anyone, because it chose only from a SharePoint group that the destination doesn\'t have yet. ' +
             'Change the column settings in the destination to choose from that group again.');
     }

@@ -435,13 +435,13 @@ test('copies each kind of column, in an order that lets lookups, managed metadat
     expect(clinic.SchemaXml).toMatch(new RegExp('<Name>TermSetId</Name><Value[^>]*>' + TENANT_SET_CLINICS + '</Value>'));
     expect(clinic.SchemaXml).toMatch(new RegExp('<Name>SspId</Name><Value[^>]*>' + DEST_STORE_ID + '</Value>'));
     expect(clinic.SchemaXml).toMatch(/<Name>TextField<\/Name><Value[^>]*>\{bbbbbbbb-2000-4000-8000-0000000000a1\}<\/Value>/);
-    expect(clinic.Open).toBe('true');
+    expect(clinic.Open).toBe(true);
     await expectResult(page, 'Clinic Site in Study Visits', 'Column', 'Copied', 'Created the column and connected it to its term set.');
     expect(destField(visits, 'VisitTopics').SchemaXml).toMatch(/Type="TaxonomyFieldTypeMulti"[^>]*Mult="TRUE"/);
     expect(destField(visits, 'VisitTopics').SchemaXml).toContain('<Default/>');
     await expectResult(page, 'Visit Topics in Study Visits', 'Column', 'Partly copied', 'Created the column and connected it to its term set. ' +
         'Sitenalyzer left out its default term. Set it again in the column settings in the destination.');
-    const csom = record.destination.listsCsomRequests.filter(function(text) { return /Name="TermSetId"/.test(text); });
+    const csom = record.destination.csomRequests.filter(function(text) { return /Name="TermSetId"/.test(text); });
     expect(csom).toHaveLength(2);
     expect(csom[0]).toContain('<Parameter Type="Guid">{' + clinic.Id + '}</Parameter>');
 

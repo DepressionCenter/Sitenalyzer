@@ -380,9 +380,11 @@ test('reads back a data dictionary saved from this site and copies its lists int
     for (const name of ['Visit Date in Study Visits', 'Participant in Study Visits', 'Arm Term in Study Visits', 'Double Count in Study Visits', 'Enrolled in Participants']) {
         await expect(resultRow(page, name)).toHaveCount(1);
     }
-    // Built-in columns, such as Created, aren't columns the copy makes.
+    // Built-in columns, such as Created, aren't columns the copy makes. The Title column, named Visit Code in this site,
+    // gets that name in the destination.
     await expect(resultRow(page, 'Created in Study Visits')).toHaveCount(0);
-    await expect(resultRow(page, 'Visit Code in Study Visits')).toHaveCount(0);
+    await expect(resultRow(page, 'Visit Code in Study Visits').locator('[tabulator-field="note"]'))
+        .toHaveText('Gave the destination\'s Title column the same name, required setting, and formatting.');
 
     // Nothing left the browser except the requests to the two pretend sites, and no request holds the file.
     expect(record.otherOriginRequests).toEqual([]);

@@ -16,7 +16,9 @@ Notes: See README file for documentation and full license information.
          model.tenantTermSets          IDs of tenant-level term sets the destination's term store has.
          model.missingTermSets         IDs of term sets the destination's term store doesn't have (answered with 404).
        Model properties these answers add:
-         model.listsCsomRequests       The text of each CSOM request these answers handled.
+         model.listsCsomRequests       The text of each CSOM request these answers handled: the ones that add columns to
+                                       content types. pretend-destination-taxonomy.js answers the one that connects a
+                                       managed metadata column to its term set, and keeps it in model.csomRequests.
          model.siteColumns, model.contentTypes, and each list's fields, views, contentTypes, and contentTypeOrder.
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -112,11 +114,12 @@ function readCsom(text) {
     return { paths: paths, actions: items(part('Actions'), 'ObjectPath|SetProperty|Method') };
 }
 
-// Answers the CSOM requests the copy of lists sends: adding columns to content types (FieldLinks.Add), and connecting a
-// managed metadata column to its term set. Returns undefined for other CSOM requests, so other answers can handle them.
+// Answers the CSOM requests that add columns to content types (FieldLinks.Add). Returns undefined for other CSOM requests,
+// so other answers can handle them: pretend-destination-taxonomy.js answers the request that connects a managed metadata
+// column to its term set, which taxonomy.js sends.
 function answerCsom(ctx) {
     const text = ctx.text || '';
-    if (text.indexOf('Name="FieldLinks"') === -1 && text.indexOf('Name="TermSetId"') === -1) { return undefined; }
+    if (text.indexOf('Name="FieldLinks"') === -1) { return undefined; }
     const model = ctx.model;
     (model.listsCsomRequests = model.listsCsomRequests || []).push(text);
     const csom = readCsom(text);

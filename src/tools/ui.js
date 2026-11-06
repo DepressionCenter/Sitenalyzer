@@ -78,14 +78,15 @@ function snaToolsReset() {
 // ### Choices ###
 
 // Returns the lists and libraries to choose from: the report's, or the data dictionary file's.
-// Each is { sourceId, title, url, isLibrary, columnCount, viewCount (a number, or undefined until counted) }.
+// Each is { sourceId, title, url, isLibrary, columnCount, viewCount (a number, or undefined until counted) }. A managed
+// metadata column's hidden Note column isn't counted, because the person sees the two as one column.
 function snaToolsRows(report) {
     var state = _snaToolsState;
     if (state.source === 'workbook') {
         var plan = state.workbook && state.workbook.plan;
         return plan ? plan.lists.map(function(l) {
             return { sourceId: l.sourceId, title: l.title, url: snaToolsCleanAddress(l.url), isLibrary: l.isLibrary, baseTemplate: l.baseTemplate,
-                columnCount: l.fields.filter(function(f) { return !f.builtIn; }).length, viewCount: l.views.length };
+                columnCount: l.fields.filter(function(f) { return !f.builtIn && !f.isTaxonomyNote; }).length, viewCount: l.views.length };
         }) : [];
     }
     return snaToolsSourceLists(report).map(function(row) {

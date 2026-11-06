@@ -101,6 +101,11 @@ function destinationChanges(record) {
     }).map(function(r) { return { method: r.method, path: decodeURIComponent(new URL(r.url).pathname).substring(DEST_PATH.length), body: r.body }; });
 }
 
+// True for a change the term set step makes: a term store request, or a CSOM request that opens the term store.
+function isTermStoreChange(change) {
+    return change.path.indexOf('/_api/v2.1/') === 0 || (change.path === '/_vti_bin/client.svc/ProcessQuery' && change.body.indexOf('GetTaxonomySession') > -1);
+}
+
 // Returns the requests that could change the source site: every request to it that isn't a GET, except the request
 // digest and $batch requests that hold only GET requests, which the report itself sends.
 function sourceChanges(record) {
@@ -139,10 +144,16 @@ async function expectNoAxeViolations(page) {
 }
 
 // Runs a copy of Study Visits only, accepting the confirmation, and waits for the Results heading to get focus.
-async function copyStudyVisits(page, messages) {
+// With options.filesOff, Site pages, Site Assets, and Agents and site skills are turned off first.
+async function copyStudyVisits(page, messages, options) {
     acceptDialogs(page, messages);
     await checkDestination(page, DEST_URL);
     await chooseOnly(page, 'Study Visits');
+    if (options && options.filesOff) {
+        await page.getByRole('switch', { name: 'Site pages' }).uncheck();
+        await page.getByRole('switch', { name: 'Site Assets' }).uncheck();
+        await page.getByRole('switch', { name: 'Agents and site skills' }).uncheck();
+    }
     await page.getByRole('button', { name: 'Copy to destination' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
 }
@@ -314,9 +325,14 @@ test('lists the lists and libraries with checkboxes, Name and Address boxes, and
     await expect(address).not.toHaveAttribute('aria-invalid', 'true');
     await expect(table.locator('#sna-tools-row-1-name-msg')).toBeHidden();
 
-    // After the check, a name the destination already uses is marked too, and Copy waits until it is fixed.
+    // After the check, Documents is marked as a library the destination already has, which the copy adds to.
     await checkDestination(page, DEST_URL);
+    const documentsAddress = table.getByRole('textbox', { name: 'New address for Documents' });
+    await expect(documentsAddress).toHaveAccessibleDescription('The destination already has this. Sitenalyzer adds the columns and views it\'s missing.');
+    await expect(documentsAddress).not.toHaveAttribute('aria-invalid', 'true');
+    // A name the destination already uses for another list is marked, and Copy waits until it is fixed.
     const documentsName = table.getByRole('textbox', { name: 'New name for Documents' });
+    await documentsName.fill('Site Pages');
     await expect(documentsName).toHaveAccessibleDescription('The destination already has a list or library with this name. Choose another name.');
     await expect(page.locator('#sna-tools-copy-hint')).toHaveText('Fix the problem marked in Lists and libraries before you copy.');
     await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeDisabled();
@@ -378,15 +394,20 @@ test('turns off and disables the switches for a data dictionary file, which does
 test('copies one list into the pretend destination and shows a result for each item', async function({ page }, testInfo) {
     const messages = [];
     const record = await openTools(page, { destination: true });
-    await copyStudyVisits(page, messages);
-    expect(messages).toEqual(['Copy 1 list, 1 term set, site pages, Site Assets, and agents and site skills to Study Two?']);
+    await copyStudyVisits(page, messages, { filesOff: true });
+    expect(messages).toEqual(['Copy 1 list and 1 term set to Study Two?']);
 
     // The list is in the destination, at the address chosen, with the name chosen.
     const copied = record.destination.lists.filter(function(l) { return l.RootFolder.ServerRelativeUrl === DEST_PATH + '/Lists/StudyVisits'; });
     expect(copied.map(function(l) { return { title: l.Title, template: l.BaseTemplate, description: l.Description }; }))
         .toEqual([{ title: 'Study Visits', template: 100, description: 'Synthetic visit schedule.' }]);
-    const changes = destinationChanges(record);
-    expect(changes.map(function(c) { return c.method + ' ' + c.path; })).toEqual(['POST /_api/web/lists', "POST /_api/web/lists(guid'" + copied[0].Id + "')"]);
+    // The term set step changes the term store first; the list is then created with its address and renamed.
+    const all = destinationChanges(record);
+    const termStoreCount = all.filter(isTermStoreChange).length;
+    expect(termStoreCount).toBeGreaterThan(0);
+    expect(all.slice(0, termStoreCount).every(isTermStoreChange)).toBe(true);
+    const changes = all.slice(termStoreCount);
+    expect(changes.slice(0, 2).map(function(c) { return c.method + ' ' + c.path; })).toEqual(['POST /_api/web/lists', "POST /_api/web/lists(guid'" + copied[0].Id + "')"]);
     expect(JSON.parse(changes[0].body)).toEqual({ __metadata: { type: 'SP.List' }, Title: 'StudyVisits', BaseTemplate: 100, Description: 'Synthetic visit schedule.' });
     expect(JSON.parse(changes[1].body)).toEqual({ Title: 'Study Visits' });
     // Every write used the destination's own request digest, and nothing changed in this site.
@@ -395,21 +416,28 @@ test('copies one list into the pretend destination and shows a result for each i
     expect(record.unexpectedRequests).toEqual([]);
     expect(record.consoleErrors).toEqual([]);
 
-    // The results: the list was copied and checked, and the parts that aren't built yet were skipped.
+    // The results: the term set, the list, its columns, and its view were copied and checked.
     await expect(page.locator('.sna-tools-results-lead')).toHaveText('Finished copying to Study Two. Sitenalyzer checked the destination afterwards. Each row says what happened.');
     const list = resultRow(page, 'Study Visits');
     await expect(resultCell(list, 'kind')).toHaveText('List');
     await expect(resultCell(list, 'resultText')).toHaveText('Copied');
     await expect(resultCell(list, 'note')).toHaveText('Created the list without its items.');
-    for (const item of [['Study Arms', 'Term set'], ['Visit Date in Study Visits', 'Column'], ['All Items in Study Visits', 'View'], ['Site Assets', 'Site Assets file'], ['Welcome', 'Page']]) {
-        const row = resultRow(page, item[0]);
-        await expect(resultCell(row, 'kind')).toHaveText(item[1]);
-        await expect(resultCell(row, 'resultText')).toHaveText('Skipped');
-        await expect(resultCell(row, 'note')).toHaveText('This part of the copy isn\'t available yet. Make it by hand in the destination if you need it.');
-    }
-    const check = page.locator('#sna-tbl-tools-results .tabulator-row', { hasText: 'Destination check' });
-    await expect(resultCell(check, 'note')).toHaveText('Found 1 of 1 list in the destination.');
-    await expect(page.locator('.sna-tools-results-summary')).toHaveText(/^Copied 1 item\. Partly copied 0\. Skipped \d+\. Failed 0\.$/);
+    const arms = resultRow(page, 'Study Arms');
+    await expect(resultCell(arms, 'kind')).toHaveText('Term set');
+    await expect(resultCell(arms, 'resultText')).toHaveText('Copied');
+    await expect(resultCell(arms, 'note')).toHaveText('Created the term set with 2 terms.');
+    const visitDate = resultRow(page, 'Visit Date in Study Visits');
+    await expect(resultCell(visitDate, 'kind')).toHaveText('Column');
+    await expect(resultCell(visitDate, 'resultText')).toHaveText('Copied');
+    const allItems = resultRow(page, 'All Items in Study Visits');
+    await expect(resultCell(allItems, 'kind')).toHaveText('View');
+    await expect(resultCell(allItems, 'note')).toHaveText('Updated the list\'s default view to match.');
+    // The parts that were turned off have no rows.
+    await expect(resultRow(page, 'Welcome')).toHaveCount(0);
+    const checks = page.locator('#sna-tbl-tools-results .tabulator-row', { hasText: 'Destination check' });
+    await expect(resultCell(checks.filter({ hasText: 'list in the destination' }), 'note')).toHaveText('Found 1 of 1 list in the destination.');
+    await expect(resultCell(checks.filter({ hasText: 'term set in the destination' }), 'note')).toHaveText('Found 1 of 1 term set in the destination.');
+    await expect(page.locator('.sna-tools-results-summary')).toHaveText(/^Copied 6 items\. Partly copied 0\. Skipped \d+\. Failed 0\.$/);
     // The copy can run again once it has finished.
     await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Stop copying' })).toHaveCount(0);
@@ -438,7 +466,8 @@ test('reports a list the destination refused as failed, and keeps copying the re
     await expect(resultCell(list, 'resultText')).toHaveText('Failed');
     await expect(resultCell(list, 'note')).toHaveText('SharePoint couldn\'t make this change. SharePoint said: "The list template is not available on this site". ' +
         'Try again later, or make it by hand in the destination.');
-    await expect(resultRow(page, 'Welcome').locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Skipped');
+    // The steps after the lists still ran, such as the copy of the site pages.
+    await expect(resultRow(page, 'Welcome').locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Copied');
     expect(record.destination.lists.filter(function(l) { return l.Title === 'Study Visits'; })).toEqual([]);
 });
 
@@ -481,8 +510,12 @@ test('Stop copying stops the copy before its next change and shows what was done
     await expect(page.locator('.sna-tools-results-lead')).toHaveText('You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped.');
     await expect(resultRow(page, 'Study Arms')).toHaveCount(1);
     await expect(resultRow(page, 'Study Visits')).toHaveCount(0);
-    // The list request was already on its way, but the copy sent nothing after it, such as the request that renames the list.
-    expect(destinationChanges(record).map(function(c) { return c.method + ' ' + c.path; })).toEqual(['POST /_api/web/lists']);
+    // The term set step ran first. The list request was already on its way, but the copy sent nothing after it, such as
+    // the request that renames the list.
+    const changes = destinationChanges(record);
+    const termStoreCount = changes.filter(isTermStoreChange).length;
+    expect(changes.slice(0, termStoreCount).every(isTermStoreChange)).toBe(true);
+    expect(changes.slice(termStoreCount).map(function(c) { return c.method + ' ' + c.path; })).toEqual(['POST /_api/web/lists']);
     await expect(page.getByRole('textbox', { name: 'Destination site address' })).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Stop copying' })).toHaveCount(0);
 });

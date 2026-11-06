@@ -17,13 +17,14 @@ Notes: See README file for documentation and full license information.
          termGroup: { name, sets: [PlanTermSet] } | null,
          siteContent: { pages: [report page], agents: [report agent], skills: [report site skill] },
          pages, siteAssets, agents, permissions, replaceExisting (booleans from the person's choices),
-         warnings: [string] }
+         warnings: [string], skippedItems: [{ kind, itemName, listSourceId, setSourceId, note }] (data dictionary files only) }
        PlanList = { sourceId, title, url (the source address, such as StudyVisits), newTitle, newUrl, baseTemplate,
          isLibrary, description, rootFolder (server-relative), settings {SP.List properties}, fields [PlanField],
          views [PlanView], contentTypes [PlanContentType], contentTypesEnabled, ownPermissions, roleAssignments, selected }
        PlanField = { id, internalName, staticName, title, description, type (TypeAsString), schemaXml, customFormatter,
-         isSiteColumn, lookupListId, lookupWebId, lookupField, isDependentLookup, primaryFieldId, termSetId, anchorId,
-         sspId, isTaxonomy, isTaxonomyNote, formula, fieldRefs [internal names], builtIn, hidden, required, group }
+         isSiteColumn, lookupListId, lookupWebId, lookupField, lookupFieldGuessed (true when a data dictionary file didn't say
+         which column a lookup shows), isDependentLookup, primaryFieldId, termSetId, anchorId, sspId, isTaxonomy,
+         isTaxonomyNote, formula, fieldRefs [internal names], builtIn, hidden, required, group }
        PlanView = { id, title, isDefault, personalView, hidden, viewFields [internal names], viewQuery, rowLimit, paged,
          scope, viewType, viewType2, viewData, calendarViewStyles, customFormatter, aggregations, aggregationsStatus,
          jsLink, tabularView, includeRootFolder, mobileView, mobileDefaultView, url }
@@ -260,6 +261,8 @@ function snaToolsPlanWithChoices(plan, choices) {
     copy.agents = isSite && !!choices.agents;
     copy.permissions = isSite && !!choices.permissions;
     copy.replaceExisting = !!choices.replaceExisting;
+    // Which lookups and term sets a file's columns lose depends on what the person chose, so those warnings come now.
+    if (copy.source.kind === 'workbook') { snaToolsPlanWarnings(copy); }
     return copy;
 }
 
@@ -569,7 +572,8 @@ function snaToolsPlanWarnings(plan) {
     });
     if (plan.termGroup) {
         plan.termGroup.sets.forEach(function(set) {
-            if (set.selected && !set.complete) {
+            // A data dictionary file's own warnings already say which term sets it doesn't list in full.
+            if (set.selected && !set.complete && plan.source.kind === 'site') {
                 plan.warnings.push('Sitenalyzer couldn\'t read every term of ' + snaMaskText(set.name) + ', so the copy may leave some terms out.');
             }
         });

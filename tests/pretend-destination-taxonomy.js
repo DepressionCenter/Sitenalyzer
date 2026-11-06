@@ -8,8 +8,9 @@ Summary: Term store answers for the pretend destination site in pretend-destinat
          term sets (taxonomy.js). It answers the term store REST API writes the copy sends (term sets, terms,
          reused terms, and settings), the reads it makes of term sets and their children, the TaxonomyHiddenList read,
          and the CSOM requests (ProcessQuery) that create the site's own term group, term sets, and terms, or connect a
-         managed metadata column to its term set. Every change goes into the destination's in-memory model, so the
-         standard answers and verify.js read back what was made. All names and IDs here are made up.
+         managed metadata column in a list, or a site column, to its term set, which also updates the column's
+         definition. Every change goes into the destination's in-memory model, so the standard answers and verify.js
+         read back what was made. All names and IDs here are made up.
 Notes: See README file for documentation and full license information.
 
        The destination options termStoreRefusesRest and termStoreRefusesAll make the term store refuse changes:
@@ -309,6 +310,12 @@ function parameterValue(element, evaluate) {
     return element.text;
 }
 
+// Sets one Customization property, such as TermSetId, in a managed metadata column's definition (SchemaXml).
+function setCustomization(field, name, value) {
+    const pattern = new RegExp('(<Name>' + name + '</Name><Value[^>]*>)[^<]*(</Value>)');
+    field.SchemaXml = String(field.SchemaXml || '').replace(pattern, function(all, start, end) { return start + String(value) + end; });
+}
+
 // Returns an error that ends a CSOM request with SharePoint's error information.
 function csomError(message, code, typeName) {
     const error = new Error(message);
@@ -357,7 +364,8 @@ function runCsom(ctx, request) {
         if (parent.kind === 'context' && name === 'Site') { return { kind: 'site' }; }
         if (parent.kind === 'context' && name === 'Web') { return { kind: 'web' }; }
         if (parent.kind === 'web' && name === 'Lists') { return { kind: 'lists' }; }
-        if (parent.kind === 'list' && name === 'Fields') { return { kind: 'fields', list: parent.list }; }
+        if (parent.kind === 'list' && name === 'Fields') { return { kind: 'fields', fields: parent.list.fields }; }
+        if (parent.kind === 'web' && name === 'Fields') { return { kind: 'fields', fields: model.siteColumns }; }
         throw csomError('The property ' + name + ' is not available here.');
     }
 
@@ -418,7 +426,7 @@ function runCsom(ctx, request) {
             return { kind: 'list', list: list };
         }
         if (parent.kind === 'fields' && name === 'GetById') {
-            const field = parent.list.fields.filter(function(f) { return cleanId(f.Id) === parameters[0]; })[0];
+            const field = parent.fields.filter(function(f) { return cleanId(f.Id) === parameters[0]; })[0];
             if (!field) { throw csomError('Invalid field name.'); }
             return { kind: 'field', field: field, pending: {} };
         }
@@ -492,6 +500,8 @@ function runCsom(ctx, request) {
         }
         if (target.kind === 'field' && name === 'Update') {
             Object.assign(target.field, target.pending);
+            // SharePoint also keeps these settings in the column's definition, which the copy reads back.
+            Object.keys(target.pending).forEach(function(key) { setCustomization(target.field, key, target.pending[key]); });
             state.changedFields.push(target.field);
             return undefined;
         }
