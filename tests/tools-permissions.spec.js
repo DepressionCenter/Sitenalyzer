@@ -29,7 +29,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { openPretendSite, DIST_DIR, DEST_URL, DEST_PATH } = require('./pretend-sharepoint');
+const { openPretendSite, reply, DIST_DIR, DEST_URL, DEST_PATH, LIST_ID, fieldsWithSchema } = require('./pretend-sharepoint');
 const { seedPermissions, ROLE_IDS, CALLER_LOGIN } = require('./pretend-destination-permissions');
 
 // The same SheetJS copy that site owners upload, used to read the saved results.
@@ -84,17 +84,22 @@ const SITE_ASSIGNMENTS = [
 
 /**
  * Returns the answers this site gives for its permissions, added to the standard ones in pretend-sharepoint.js.
- * @param {object} [options] { siteGroupId: this site's Microsoft 365 group, membersGroupExtra: more members of Test Site Members }.
+ * @param {object} [options] { siteGroupId: this site's Microsoft 365 group, membersGroupExtra: more members of Test Site Members,
+ *        groupOwners: { groupId: owner } to give groups other owners, listAccessRefused: true to refuse reading who has
+ *        access to Study Visits, studyVisitsColumns: more columns of Study Visits }.
  * @returns {object[]} answerOverrides for openPretendSite.
  */
 function sourceAnswers(options) {
     const settings = options || {};
-    return [
+    const groups = SOURCE_GROUPS.map(function(g) {
+        return settings.groupOwners && settings.groupOwners[g.Id] ? Object.assign({}, g, { Owner: settings.groupOwners[g.Id] }) : g;
+    });
+    const answers = [
         // Only the copy reads the groups with their owners; the report's own read of the groups gets the standard answer.
         { pattern: /^\/_api\/web\/sitegroups$/, answer: function(url) {
             if (!/Owner/.test(url.searchParams.get('$expand') || '')) { return undefined; }
             const skip = parseInt(url.searchParams.get('$skip'), 10) || 0;
-            return { value: skip > 0 ? [] : SOURCE_GROUPS };
+            return { value: skip > 0 ? [] : groups };
         } },
         { pattern: /^\/_api\/web$/, answer: function(url) {
             if (!/AssociatedOwnerGroup/.test(url.searchParams.get('$expand') || '')) { return undefined; }
@@ -115,6 +120,17 @@ function sourceAnswers(options) {
             { Id: 37, Title: 'Data Manager', LoginName: 'i:0#.f|membership|data.manager@example.org', PrincipalType: 1 }
         ] } }
     ];
+    if (settings.listAccessRefused) {
+        answers.push({ pattern: new RegExp("^/_api/web/lists\\(guid'" + LIST_ID + "'\\)/roleassignments$"), body: reply(403, { error: 'Access denied' }) });
+    }
+    if (settings.studyVisitsColumns) {
+        // Only the copy plan's read of the columns names FromBaseType; the report's read gets the standard answer.
+        answers.push({ pattern: new RegExp("^/_api/web/lists\\(guid'" + LIST_ID + "'\\)/fields$"), answer: function(url) {
+            if (!/FromBaseType/.test(url.searchParams.get('$select') || '')) { return undefined; }
+            return { value: fieldsWithSchema.value.concat(settings.studyVisitsColumns) };
+        } });
+    }
+    return answers;
 }
 
 // ### Helpers ###
@@ -268,6 +284,23 @@ test('reports a built-in level whose permissions differ, and uses a level with t
     expect(destinationChanges(record).filter(function(c) { return /roledefinitions\(/.test(c.path); })).toEqual([]);
 });
 
+test('says what to do when the destination doesn\'t have a built-in level, and names one missing level in the singular', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { setup: function(model) {
+        seedPermissions(model);
+        model.roleDefinitions.splice(model.roleDefinitions.findIndex(function(d) { return d.Name === 'Contribute'; }), 1);
+    } } });
+    await copyStudyVisits(page);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Contribute', 'Permission level')).toEqual({ name: 'Contribute', kind: 'Permission level', result: 'Skipped',
+        note: 'The destination doesn\'t have this built-in permission level, so Sitenalyzer couldn\'t give it to anyone. In the destination, ' +
+            'make a permission level with the same permissions, then give it by hand to the people and groups who have this level in this site.' });
+    expect(row(rows, 'Test Site Members on the site', 'Permission')).toEqual({ name: 'Test Site Members on the site', kind: 'Permission', result: 'Failed',
+        note: 'Sitenalyzer couldn\'t copy the permission level Contribute, so it couldn\'t give this access. Check the permission levels in the ' +
+            'results, then give this access by hand in the destination.' });
+    expect(row(rows, 'Test Study Team on Study Visits', 'Permission')).toEqual({ name: 'Test Study Team on Study Visits', kind: 'Permission', result: 'Partly copied',
+        note: 'Gave access with Study Coordinator. Couldn\'t give Contribute. Give it by hand in the destination.' });
+});
+
 // ### Groups ###
 
 test('maps the owners, members, and visitors groups by their role and adds their members', async function({ page }, testInfo) {
@@ -355,6 +388,43 @@ test('says what to do when SharePoint doesn\'t let a group be made another group
         note: 'Created the group, but SharePoint didn\'t let Sitenalyzer make the group itself its owner. In the destination, open the group\'s settings and choose the group as its owner.' });
     // The members are still added.
     expect(memberLogins(record, managers)).toContain('i:0#.f|membership|data.manager@example.org');
+});
+
+test('leaves this site\'s Microsoft 365 group out as the owner of a new group', async function({ page }, testInfo) {
+    const ownersClaim = { Id: 41, Title: 'Test Research Site Owners', LoginName: 'c:0o.c|federateddirectoryclaimprovider|' + SITE_GROUP_ID + '_o', PrincipalType: 4 };
+    const record = await openTools(page, { source: { siteGroupId: SITE_GROUP_ID, groupOwners: { 20: ownersClaim } } });
+    await copyStudyVisits(page);
+    const changes = destinationChanges(record);
+    expect(changes.filter(function(c) { return /SetUserAsOwner/.test(c.path); })).toEqual([]);
+    expect(changes.filter(function(c) { return c.path === '/_api/web/ensureuser' && JSON.parse(c.body).logonName === ownersClaim.LoginName; })).toEqual([]);
+    // SharePoint makes the person who creates a group its owner, and the copy leaves it that way.
+    expect(destGroup(record, 'Test Study Team').OwnerId).toBe(record.destination.currentUser.Id);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Test Study Team', 'Group')).toEqual({ name: 'Test Study Team', kind: 'Group', result: 'Partly copied',
+        note: 'Created the group, with you as its owner. In this site, its owner is Test Research Site Owners, which Sitenalyzer left out, ' +
+            'because it\'s the Microsoft 365 group connected to this site. In the destination, open the group\'s settings and choose its owner. ' +
+            'Removed you from the group, because you aren\'t in it in this site.' });
+});
+
+test('copies a group that only limits a people picker column, and points the column at it', async function({ page }, testInfo) {
+    const coordinator = { Id: 'bbbbbbbb-0000-4000-8000-000000000005', InternalName: 'Coordinator', StaticName: 'Coordinator', Title: 'Coordinator',
+        TypeAsString: 'User', Description: '', Required: false, Hidden: false, ReadOnlyField: false, CanBeDeleted: true, FromBaseType: false,
+        Sealed: false, Group: 'Custom Columns', Indexed: false, EnforceUniqueValues: false, CustomFormatter: '',
+        SchemaXml: '<Field ID="{bbbbbbbb-0000-4000-8000-000000000005}" Type="User" Name="Coordinator" StaticName="Coordinator" DisplayName="Coordinator" ' +
+            'List="UserInfo" ShowField="ImnName" UserSelectionMode="PeopleOnly" UserSelectionScope="22" Required="FALSE" SourceID="{' + LIST_ID + '}" ' +
+            'ColName="int1" RowOrdinal="0" />' };
+    const record = await openTools(page, { source: { studyVisitsColumns: [coordinator] } });
+    await copyStudyVisits(page);
+    const unused = destGroup(record, 'Unused Group');
+    expect(unused).toBeDefined();
+    const column = copiedList(record).fields.filter(function(f) { return f.InternalName === 'Coordinator'; })[0];
+    expect(column.SelectionGroup).toBe(unused.Id);
+    const rows = await savedResults(page, testInfo);
+    const columnRows = rows.filter(function(r) { return r.name === 'Coordinator in Study Visits' && r.kind === 'Column'; });
+    expect(columnRows[columnRows.length - 1]).toEqual({ name: 'Coordinator in Study Visits', kind: 'Column', result: 'Copied',
+        note: 'Limited the people you can choose in this column to the group Unused Group, as in this site.' });
+    // Unused Group was the only group left out, so no group is left out now.
+    expect(rows.filter(function(r) { return r.name === 'Other groups'; })).toEqual([]);
 });
 
 test('removes the person running the copy from a new group they aren\'t in, and from no other group', async function({ page }) {
@@ -448,6 +518,66 @@ test('copies Everyone except external users with a note that it opens the site t
     expect(row(rows, 'Limited Access on the site', 'Permission').result).toBe('Skipped');
     expect(row(rows, 'Study Staff Security Group on the site', 'Permission').note).toBe('Gave access with Read.');
     expect(record.destination.groups.filter(function(g) { return g.Title.indexOf('SharingLinks.') === 0; })).toEqual([]);
+});
+
+test('reports access that SharePoint kept on a list and that this site doesn\'t give', async function({ page }, testInfo) {
+    // The person running the copy has access to the destination through its members group, so SharePoint keeps that
+    // group's access when the list gets its own permissions.
+    const record = await openTools(page, { destination: { listBreakKeepsGroup: 5 } });
+    await copyStudyVisits(page);
+    const list = copiedList(record);
+    const team = destGroup(record, 'Test Study Team');
+    const coordinatorLevel = record.destination.roleDefinitions.filter(function(d) { return d.Name === 'Study Coordinator'; })[0];
+    // Nothing is removed: the person running the copy has no access of their own on the list. The members group has
+    // Edit in the destination and Contribute from this site, given to the site before the list.
+    expect(listAssignments(record, list.Id)).toEqual({ 3: [ROLE_IDS.fullControl], 5: [ROLE_IDS.edit, ROLE_IDS.contribute].sort(), [team.Id]: [ROLE_IDS.contribute, coordinatorLevel.Id].sort() });
+    expect(destinationChanges(record).filter(function(c) { return /getbyprincipalid/.test(c.path); })).toEqual([]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Copied',
+        note: 'Gave it its own permissions, as in this site.' });
+    expect(row(rows, 'Other access to Study Visits', 'Permission')).toEqual({ name: 'Other access to Study Visits', kind: 'Permission', result: 'Skipped',
+        note: 'In the destination, 1 person or group has access to Study Visits that it doesn\'t have in this site: Study Two Members. Sitenalyzer ' +
+            'didn\'t remove its access. Remove it in the destination if it shouldn\'t have access.' });
+});
+
+test('says what to check when it can\'t read who has access to a list after giving it its own permissions', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { listAccessRefused: true } });
+    await copyStudyVisits(page);
+    const list = copiedList(record);
+    // The person running the copy keeps the access SharePoint gave them, because the copy couldn't check it.
+    expect(listAssignments(record, list.Id)[record.destination.currentUser.Id]).toEqual([ROLE_IDS.fullControl]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Partly copied',
+        note: 'Gave it its own permissions, as in this site. Sitenalyzer couldn\'t check who else SharePoint gave access to it, such as you ' +
+            'or a group you\'re in. In the destination, open its permissions and remove anyone who doesn\'t have access to it in this site.' });
+});
+
+test('marks a list partly copied when it can\'t give the access this site gives', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { listAddRefused: true } });
+    await copyStudyVisits(page);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Test Site Owners on Study Visits', 'Permission').result).toBe('Failed');
+    expect(row(rows, 'Test Study Team on Study Visits', 'Permission').result).toBe('Failed');
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Partly copied',
+        note: 'Gave it its own permissions, as in this site. Couldn\'t give 2 people and groups the access they have in this site. ' +
+            'Give them access by hand in the destination. Removed the access SharePoint gave you when it got its own permissions, because ' +
+            'you don\'t have it in this site.' });
+});
+
+test('leaves a list with the site\'s permissions when it can\'t read who has access to it, and copies the rest', async function({ page }, testInfo) {
+    const record = await openTools(page, { source: { listAccessRefused: true } });
+    await copyStudyVisits(page);
+    const list = copiedList(record);
+    expect((record.destination.listPermissions || {})[list.Id]).toBeUndefined();
+    expect(destinationChanges(record).filter(function(c) { return /\/lists\(guid'[^']+'\)\/(breakroleinheritance|roleassignments)/.test(c.path); })).toEqual([]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Failed',
+        note: 'Sitenalyzer couldn\'t read who has access to it in this site, so it uses the site\'s permissions in the destination. Open its ' +
+            'permissions in the destination, stop inheriting permissions, and give access by hand.' });
+    // The levels, groups, and access to the site are still copied.
+    expect(row(rows, 'Study Coordinator', 'Permission level').result).toBe('Copied');
+    expect(row(rows, 'Test Site Members on the site', 'Permission').result).toBe('Copied');
+    expect(rows.filter(function(r) { return r.name === 'Permissions'; })).toEqual([]);
 });
 
 // ### When Permissions Aren't Copied ###

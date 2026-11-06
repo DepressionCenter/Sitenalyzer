@@ -21,6 +21,11 @@ Notes: See README file for documentation and full license information.
        Destination options this file reads (openPretendSite(page, { destination: { ... } })):
          missingLogins       Sign-in names that no longer exist in the organization, so adding them fails.
          groupOwnerRefused   The CSOM request that makes a group another group's owner fails.
+         listBreakKeepsGroup A group ID. When a list gets its own permissions, SharePoint keeps that group's access to the
+                             site instead of the access of the person running the copy, as it does when that person
+                             has access through the group.
+         listAccessRefused   Reading who has access to a list fails.
+         listAddRefused      Giving a person or group access to a list fails.
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -315,6 +320,7 @@ addDestinationHandlers([
     { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/roleassignments$/, answer: function(ctx) {
         const model = seedPermissions(ctx.model);
         const list = ctx.findList(ctx.match[1]);
+        if (ctx.options.listAccessRefused) { return ctx.spError(403, 'Access denied.'); }
         return list ? assignmentsJson(model, assignmentsOf(model, list.Id)) : ctx.spError(404, 'List does not exist.');
     } },
     { method: 'POST', pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/breakroleinheritance\((true|false),(true|false)\)$/, answer: function(ctx) {
@@ -322,10 +328,14 @@ addDestinationHandlers([
         const list = ctx.findList(ctx.match[1]);
         if (!list) { return ctx.spError(404, 'List does not exist.'); }
         if (!model.listPermissions[list.Id]) {
-            // Without copying, SharePoint keeps one assignment for the person who gave the list its own permissions.
+            // Without copying, SharePoint keeps one assignment that gives the person who gave the list its own
+            // permissions access: their own, or that of a group they are in.
+            const keptGroup = model.roleAssignments.filter(function(a) { return a.principalId === ctx.options.listBreakKeepsGroup; })[0];
+            const kept = keptGroup ? { principalId: keptGroup.principalId, roleIds: keptGroup.roleIds.slice() }
+                : { principalId: model.currentUser.Id, roleIds: [ROLE_IDS.fullControl] };
             const assignments = ctx.match[2] === 'true'
                 ? model.roleAssignments.map(function(a) { return { principalId: a.principalId, roleIds: a.roleIds.slice() }; })
-                : [{ principalId: model.currentUser.Id, roleIds: [ROLE_IDS.fullControl] }];
+                : [kept];
             model.listPermissions[list.Id] = { assignments: assignments };
         }
         return ctx.reply(204, null);
@@ -333,6 +343,7 @@ addDestinationHandlers([
     { method: 'POST', pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/roleassignments\/addroleassignment\(principalid=(\d+),roledefid=(\d+)\)$/, answer: function(ctx) {
         seedPermissions(ctx.model);
         const list = ctx.findList(ctx.match[1]);
+        if (ctx.options.listAddRefused) { return ctx.spError(403, 'Access denied.'); }
         return addAssignment(ctx, list ? list.Id : ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3]));
     } },
     { method: 'POST', pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/roleassignments\/getbyprincipalid\((\d+)\)$/, answer: function(ctx) {
