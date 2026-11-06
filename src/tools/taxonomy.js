@@ -33,8 +33,9 @@ Notes: See README file for documentation and full license information.
 
        How changes are sent: each change goes first to the term store REST API (/_api/v2.1). When SharePoint refuses it
        with HTTP 403 or a message about OAuth or notAllowed, which some tenants do for requests made with browser
-       cookies, that change and every later one go through CSOM (ProcessQuery) instead. When CSOM fails too before it
-       has worked once, the term sets not yet copied are reported as missing. The destination's own term group is
+       cookies, that change and every later one go through CSOM (ProcessQuery) instead. When SharePoint refuses CSOM too
+       before it has worked once, the term sets not yet copied are reported as missing. A CSOM error about one change,
+       such as a label SharePoint doesn't accept, fails only that term or term set. The destination's own term group is
        created only through CSOM (TermStore.GetSiteCollectionGroup), because the REST API has no way to ask for a
        group of one site collection. A tenant-level group is never created.
 
@@ -98,6 +99,15 @@ function snaToolsTaxonomyIsRefusal(err) {
     return err.status === 403 || /oauth|notallowed/i.test(String(err.code || '') + ' ' + String(err.serverMessage || ''));
 }
 
+// True when err is SharePoint refusing a CSOM request itself, not one change in it: HTTP 401 or 403, "Access denied"
+// (error code -2147024891, which SharePoint sends for System.UnauthorizedAccessException), or "Cannot find stub for
+// type", which SharePoint sends when it doesn't offer a type the request names. Any other error belongs to one change.
+function snaToolsTaxonomyIsCsomRefusal(err) {
+    if (!err || !err.snaToolsError) { return false; }
+    if (err.status === 401 || err.status === 403 || err.code === '-2147024891') { return true; }
+    return /cannot find stub for type/i.test(err.serverMessage);
+}
+
 // Returns the address of the destination's term store API, after the site address.
 function snaToolsTaxonomyBase(siteId) {
     return '/_api/v2.1/sites/' + encodeURIComponent(siteId) + '/termStore';
@@ -125,8 +135,9 @@ function snaToolsTaxonomyDefaultLanguageId(t) {
 
 /**
  * Sends one term store change: first through the REST API, then through CSOM when the REST API refuses it. After one
- * refusal, every later change of the same copy goes through CSOM. When CSOM fails too before it has worked once in this
- * copy, every later change fails with the same error, marked with snaToolsTaxonomyBlocked, without being sent.
+ * refusal, every later change of the same copy goes through CSOM. When SharePoint refuses CSOM too before CSOM has
+ * worked once in this copy, every later change fails with the same error, marked with snaToolsTaxonomyBlocked, without
+ * being sent. A CSOM error about the change itself, such as a label SharePoint doesn't accept, fails only that change.
  * @param {object} t The state of this copy's term store work (see snaToolsCopyTermSets).
  * @param {function(): Promise<*>} restWork Makes the change through the REST API.
  * @param {function(): Promise<*>} csomWork Makes the same change through CSOM.
@@ -143,13 +154,25 @@ async function snaToolsTaxonomyLadder(t, restWork, csomWork) {
             t.mode = 'csom';
         }
     }
+    return snaToolsTaxonomyCsomWork(t, csomWork);
+}
+
+/**
+ * Sends one term store change through CSOM, and marks the term store as blocked when SharePoint refuses the request
+ * before CSOM has worked once in this copy (see snaToolsTaxonomyLadder).
+ * @param {object} t The state of this copy's term store work.
+ * @param {function(): Promise<*>} csomWork Makes the change through CSOM.
+ * @returns {Promise<*>} What csomWork returns.
+ * @throws {Error} The error from csomWork; snaCancelledError when the copy is stopped. Side effects: changes the destination.
+ */
+async function snaToolsTaxonomyCsomWork(t, csomWork) {
     try {
         var result = await csomWork();
         t.csomWorked = true;
         return result;
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
-        if (!t.csomWorked && !err.snaUserMessage) {
+        if (!t.csomWorked && snaToolsTaxonomyIsCsomRefusal(err)) {
             err.snaToolsTaxonomyBlocked = true;
             t.mode = 'blocked';
             t.blockedError = err;
@@ -164,7 +187,7 @@ async function snaToolsTaxonomyLadder(t, restWork, csomWork) {
 function snaToolsTaxonomyCsomParameter(parameter) {
     if (parameter.path !== undefined) { return '<Parameter ObjectPathId="' + Number(parameter.path) + '" />'; }
     if (SNA_TOOLS_CSOM_PARAMETER_TYPES.indexOf(parameter.type) === -1) {
-        throw snaToolsUserError('Sitenalyzer didn\'t send a change, because it held a value of a type it doesn\'t send.');
+        throw snaToolsUserError('Sitenalyzer didn\'t send this change because of an unexpected problem. Copy again, or make it by hand in the destination\'s term store.');
     }
     var text;
     if (parameter.type === 'Guid') {
@@ -416,11 +439,17 @@ function snaToolsTaxonomyTermTexts(term, t) {
     return result;
 }
 
-// True when a source term isn't available for tagging. The REST API gives this as false, or as a list with one item
-// for each term set the term is in, such as [{ setId, isAvailable: false }].
-function snaToolsTaxonomyNotForTagging(value) {
+// True when a source term isn't available for tagging in the source term set sourceSetId. The REST API gives this as
+// false, or as a list with one item for each term set the term is in, such as [{ setId, isAvailable: false }]. Only
+// the item for sourceSetId counts, because a reused term can be available in one term set and not in another.
+function snaToolsTaxonomyNotForTagging(value, sourceSetId) {
     if (value === false) { return true; }
-    return Array.isArray(value) && value.some(function(v) { return v && v.isAvailable === false; });
+    if (!Array.isArray(value)) { return false; }
+    var items = value.filter(function(v) { return v && typeof v === 'object'; });
+    var setKey = snaToolsCleanGuid(sourceSetId);
+    var withSet = items.filter(function(v) { return v.setId; });
+    if (withSet.length === 0) { return items.some(function(v) { return v.isAvailable === false; }); }
+    return withSet.some(function(v) { return setKey && snaToolsCleanGuid(v.setId) === setKey && v.isAvailable === false; });
 }
 
 // Creates one term under a term set (parentId '') or a term in the destination, and returns the new term's ID.
@@ -653,7 +682,7 @@ async function snaToolsTaxonomyCopyTerms(t, set, destSetId, setExisted, maps, st
         var made = copied[settingsTerm.sourceId];
         if (!made || made.existed) { continue; }
         var deprecate = settingsTerm.isDeprecated === true;
-        var notForTagging = snaToolsTaxonomyNotForTagging(settingsTerm.isAvailableForTagging);
+        var notForTagging = snaToolsTaxonomyNotForTagging(settingsTerm.isAvailableForTagging, set.sourceId);
         if (!deprecate && !notForTagging) { continue; }
         try {
             await snaToolsTaxonomyTermSettings(t, destSetId, made.destId, deprecate, notForTagging);
@@ -700,7 +729,15 @@ async function snaToolsTaxonomyCreateSet(t, set, stats) {
                 await snaToolsWrite(t.siteUrl, snaToolsTaxonomySetPath(t, id, ''), { method: 'PATCH', body: patch });
             } catch (err) {
                 if (snaToolsIsCancelled(err)) { throw err; }
-                settingsFailed();
+                if (!snaToolsTaxonomyIsRefusal(err)) { settingsFailed(); return id; }
+                // The REST API refused the change, so it and every later change go through CSOM.
+                t.mode = 'csom';
+                try {
+                    await snaToolsTaxonomyCsomWork(t, function() { return snaToolsTaxonomySetSettingsCsom(t, id, wantOpen, wantHidden); });
+                } catch (csomErr) {
+                    if (snaToolsIsCancelled(csomErr)) { throw csomErr; }
+                    settingsFailed();
+                }
             }
         }
         return id;
@@ -720,6 +757,30 @@ async function snaToolsTaxonomyCreateSet(t, set, stats) {
     });
 }
 
+// Makes a destination term set open to new terms, or unavailable for tagging, or both, through CSOM.
+async function snaToolsTaxonomySetSettingsCsom(t, setId, open, hidden) {
+    var request = snaToolsTaxonomyCsomRequest();
+    var store = snaToolsTaxonomyCsomStore(request);
+    var termSet = request.method(store, 'GetTermSet', [{ type: 'Guid', value: setId }]);
+    if (open) { request.set(termSet, 'IsOpenForTermCreation', { type: 'Boolean', value: true }); }
+    if (hidden) { request.set(termSet, 'IsAvailableForTagging', { type: 'Boolean', value: false }); }
+    request.call(store, 'CommitAll', []);
+    await snaToolsCsom(t.siteUrl, request.xml());
+}
+
+// Returns the English name of a language tag, such as French (France) for fr-FR, or the tag when the browser can't
+// name it. People see language names, not tags, on SharePoint's term store screens.
+function snaToolsTaxonomyLanguageName(languageTag) {
+    var tag = String(languageTag || '');
+    try {
+        var name = new Intl.DisplayNames(['en'], { type: 'language' }).of(tag);
+        if (name && name.toLowerCase() !== tag.toLowerCase()) { return name; }
+    } catch (err) {
+        // The browser doesn't know the tag, or has no Intl.DisplayNames, so the tag is shown instead.
+    }
+    return tag;
+}
+
 // Returns the sentences about problems in a copied term set, for the end of its row's note.
 function snaToolsTaxonomySetProblems(set, stats) {
     var problems = [];
@@ -734,7 +795,7 @@ function snaToolsTaxonomySetProblems(set, stats) {
         if (stats.droppedLabels > 0) { parts.push(snaCountText(stats.droppedLabels, 'label', 'labels')); }
         if (stats.droppedDescriptions > 0) { parts.push(snaCountText(stats.droppedDescriptions, 'description', 'descriptions')); }
         var one = stats.languages.length === 1;
-        problems.push('Left out ' + parts.join(' and ') + ' in ' + snaJoinWords(stats.languages) + ', because the destination\'s term store doesn\'t have ' +
+        problems.push('Left out ' + parts.join(' and ') + ' in ' + snaJoinWords(stats.languages.map(snaToolsTaxonomyLanguageName)) + ', because the destination\'s term store doesn\'t have ' +
             (one ? 'that language' : 'those languages') + '. Ask a term store admin to add ' + (one ? 'it' : 'them') + ', then copy again.');
     }
     if (stats.unnamedLabels > 0 || stats.unnamedDescriptions > 0) {
@@ -743,7 +804,7 @@ function snaToolsTaxonomySetProblems(set, stats) {
         if (stats.unnamedDescriptions > 0) { unnamedParts.push(snaCountText(stats.unnamedDescriptions, 'description', 'descriptions')); }
         var oneLanguage = stats.unnamedLanguages.length === 1;
         var oneText = stats.unnamedLabels + stats.unnamedDescriptions === 1;
-        problems.push('Left out ' + unnamedParts.join(' and ') + ' in ' + snaJoinWords(stats.unnamedLanguages) +
+        problems.push('Left out ' + unnamedParts.join(' and ') + ' in ' + snaJoinWords(stats.unnamedLanguages.map(snaToolsTaxonomyLanguageName)) +
             ', because Sitenalyzer can\'t add text in ' + (oneLanguage ? 'that language' : 'those languages') +
             ' to this destination. Add ' + (oneText ? 'it' : 'them') + ' by hand in the destination\'s term store.');
     }
@@ -751,7 +812,8 @@ function snaToolsTaxonomySetProblems(set, stats) {
         problems.push('Couldn\'t make the term set ' + snaJoinWords(stats.setSettings) + '. Change this by hand in the destination\'s term store.');
     }
     if (set.complete === false) {
-        problems.push('Sitenalyzer couldn\'t read every term of this term set in this site, so some terms may be missing.');
+        problems.push('Sitenalyzer couldn\'t read every term of this term set in the site you copy from, so some terms may be missing. ' +
+            'Check the term set in the destination, and add any missing terms by hand.');
     }
     return problems;
 }

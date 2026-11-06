@@ -254,15 +254,22 @@ function planTerm(id, name, parentIds) {
         isDeprecated: false, isAvailableForTagging: true };
 }
 
-// Returns a copy plan with only these term sets, each { id, name, selected, terms }.
+// Returns a copy plan with only these term sets, each { id, name, selected, terms }, and optionally isOpen,
+// isAvailableForTagging, and complete (false when the source couldn't read every term of the set).
 function termPlan(sets) {
     return {
         lists: [], siteColumns: [],
         termGroup: { name: 'Test Term Group', sets: sets.map(function(s) {
-            return { sourceId: s.id, name: s.name, description: '', isOpen: false, isAvailableForTagging: true, languageTag: 'en-US', terms: s.terms || [],
-                selected: s.selected, complete: true };
+            return { sourceId: s.id, name: s.name, description: '', isOpen: s.isOpen === true, isAvailableForTagging: s.isAvailableForTagging !== false,
+                languageTag: 'en-US', terms: s.terms || [], selected: s.selected, complete: s.complete !== false };
         }) }
     };
+}
+
+// Returns SharePoint's CSOM answer for a request that failed with this error.
+function csomFailure(message, code, typeName) {
+    return [{ SchemaVersion: '15.0.0.0', LibraryVersion: '16.0.0.0', ErrorInfo: { ErrorMessage: message, ErrorValue: null,
+        TraceCorrelationId: '00000000-0000-4000-8000-0000000000cc', ErrorCode: code, ErrorTypeName: typeName } }];
 }
 
 // ### Term Group ###
@@ -338,7 +345,7 @@ test('copies terms with children, synonyms, descriptions, a deprecated term, and
     // The term set the person left out was not copied.
     expect(findTermSet(record.destination, 'Visit Types')).toBeUndefined();
 
-    await expectRow(page, 'Study Arms', 'Term set', 'Partly copied', 'Created the term set with 6 terms. Left out 1 label in fr-FR, because the ' +
+    await expectRow(page, 'Study Arms', 'Term set', 'Partly copied', 'Created the term set with 6 terms. Left out 1 label in French (France), because the ' +
         'destination\'s term store doesn\'t have that language. Ask a term store admin to add it, then copy again.');
     await expectRow(page, 'Visit Types', 'Term set', 'Skipped', LEFT_OUT_NOTE);
     await expect(page.locator('#sna-tbl-tools-results .tabulator-row').filter({ has: page.locator('.tabulator-cell[tabulator-field="kind"]', { hasText: /^Term$/ }) })).toHaveCount(0);
@@ -425,7 +432,7 @@ test('adds only the missing terms to a term set with the same name that the dest
     expect(termStoreChanges(record).filter(function(c) { return c.line === 'POST /sets'; })).toEqual([]);
     // Control is one of the new terms, so its French label is left out as in the first copy.
     await expectRow(page, 'Study Arms', 'Term set', 'Partly copied', 'The destination already had a term set with this name, so Sitenalyzer used it. ' +
-        'Added 4 new terms to it, and 2 terms were already there. Left out 1 label in fr-FR, because the destination\'s term store doesn\'t have ' +
+        'Added 4 new terms to it, and 2 terms were already there. Left out 1 label in French (France), because the destination\'s term store doesn\'t have ' +
         'that language. Ask a term store admin to add it, then copy again.');
 });
 
@@ -495,6 +502,96 @@ test('fills the term and term set maps the columns step uses', async function({ 
     expect(outcome.maps.termSetsMissing).toEqual({});
     expect(outcome.maps.destination.termStoreId).toBe(TERM_STORE_ID);
     expect(outcome.results).toEqual([{ kind: 'Term set', name: 'Study Arms', result: 'copied', note: 'Created the term set with 2 terms.' }]);
+});
+
+test('keeps using CSOM for later terms and term sets after one term fails there for a reason of its own', async function({ page }) {
+    const record = await openPretendSite(page, { destination: {
+        termStoreRefusesRest: true,
+        setup: function(model) { addTermSet(model, addOwnTermGroup(model), 'Study Arms', []); },
+        // CSOM refuses only the term whose label has a character a term label can't hold.
+        handlers: [{ method: 'POST', pattern: /^\/_vti_bin\/client\.svc\/ProcessQuery$/, answer: function(ctx) {
+            if (ctx.text.indexOf('Name="CreateTerm"') === -1 || ctx.text.indexOf('<Parameter Type="String">Arm A | old</Parameter>') === -1) { return undefined; }
+            return csomFailure('The label contains a character that isn\'t allowed.', -2147024809, 'System.ArgumentException');
+        } }]
+    } });
+    const outcome = await copyTermSetsOnPage(page, termPlan([
+        { id: SET_ARMS, name: 'Study Arms', selected: true, terms: [planTerm(ARM_A, 'Arm A | old'), planTerm(ARM_B, 'Arm B')] },
+        { id: SET_VISITS, name: 'Visit Types', selected: true, terms: [planTerm(SCREENING, 'Screening')] }
+    ]));
+    expect(outcome.maps.termSetsMissing).toEqual({});
+    expect(Object.keys(outcome.maps.termSets).sort()).toEqual([SET_ARMS, SET_VISITS]);
+    expect(Object.keys(outcome.maps.terms).sort()).toEqual([ARM_B, SCREENING]);
+    expect(findTerm(findTermSet(record.destination, 'Study Arms'), 'Arm B')).toBeTruthy();
+    expect(findTerm(findTermSet(record.destination, 'Visit Types'), 'Screening')).toBeTruthy();
+    expect(outcome.results).toEqual([
+        { kind: 'Term', name: 'Arm A | old in Study Arms', result: 'failed', note: 'Sitenalyzer couldn\'t create this term. SharePoint couldn\'t make this ' +
+            'change. SharePoint said: "The label contains a character that isn\'t allowed". Try again later, or make it by hand in the destination.' },
+        { kind: 'Term set', name: 'Study Arms', result: 'partial', note: 'The destination already had a term set with this name, so Sitenalyzer used it. ' +
+            'Added 1 new term to it, and 0 terms were already there. Couldn\'t copy 1 term, which has its own row.' },
+        { kind: 'Term set', name: 'Visit Types', result: 'copied', note: 'Created the term set with 1 term.' }
+    ]);
+});
+
+test('makes a term unavailable for tagging only when it is unavailable in the term set being copied', async function({ page }) {
+    const otherSet = 'eeeeeeee-0000-4000-8000-000000000009';
+    const record = await openPretendSite(page, { destination: true });
+    // Arm A is reused in another term set where it isn't available for tagging. Arm B isn't available in Study Arms.
+    const armA = Object.assign(planTerm(ARM_A, 'Arm A'), { isAvailableForTagging: [{ setId: SET_ARMS, isAvailable: true }, { setId: otherSet, isAvailable: false }] });
+    const armB = Object.assign(planTerm(ARM_B, 'Arm B'), { isAvailableForTagging: [{ setId: SET_ARMS.toUpperCase(), isAvailable: false }, { setId: otherSet, isAvailable: true }] });
+    const outcome = await copyTermSetsOnPage(page, termPlan([{ id: SET_ARMS, name: 'Study Arms', selected: true, terms: [armA, armB] }]));
+    const set = findTermSet(record.destination, 'Study Arms');
+    expect(findTerm(set, 'Arm A').isAvailableForTagging).toBe(true);
+    expect(findTerm(set, 'Arm B').isAvailableForTagging).toBe(false);
+    expect(termStoreChanges(record).filter(function(c) { return c.line.indexOf('PATCH') === 0; })).toEqual([{
+        line: 'PATCH /sets/' + set.id + '/terms/' + findTerm(set, 'Arm B').id, body: { isAvailableForTagging: [{ setId: set.id, isAvailable: false }] }
+    }]);
+    expect(outcome.results).toEqual([{ kind: 'Term set', name: 'Study Arms', result: 'copied', note: 'Created the term set with 2 terms.' }]);
+});
+
+test('uses CSOM for a new term set\'s settings when the REST API refuses them', async function({ page }) {
+    const record = await openPretendSite(page, { destination: {
+        setup: function(model) { addOwnTermGroup(model); },
+        handlers: [{ method: 'PATCH', pattern: /^\/_api\/v2\.1(?:\/sites\/[^/]+)?\/termStore\/sets\/[^/]+$/, answer: function(ctx) {
+            return ctx.reply(403, { error: { code: 'notAllowed', message: 'This operation needs an OAuth token.' } });
+        } }]
+    } });
+    const outcome = await copyTermSetsOnPage(page, termPlan([{ id: SET_ARMS, name: 'Study Arms', selected: true, isOpen: true, isAvailableForTagging: false,
+        terms: [planTerm(CONTROL, 'Control')] }]));
+    const set = findTermSet(record.destination, 'Study Arms');
+    expect({ isOpen: set.isOpen, isAvailableForTagging: set.isAvailableForTagging }).toEqual({ isOpen: true, isAvailableForTagging: false });
+    expect(findTerm(set, 'Control')).toBeTruthy();
+    // The REST API refused the settings, so they and every later change went through CSOM.
+    expect(termStoreChanges(record).map(function(c) { return c.line; })).toEqual(['POST /sets', 'PATCH /sets/' + set.id]);
+    const csom = csomTaxonomyRequests(record.destination);
+    expect(csom).toHaveLength(2);
+    expect(csom[0]).toContain('Name="GetTermSet"><Parameters><Parameter Type="Guid">{' + set.id + '}</Parameter></Parameters></Method>');
+    expect(csom[0]).toContain('Name="IsOpenForTermCreation"><Parameter Type="Boolean">true</Parameter></SetProperty>');
+    expect(csom[0]).toContain('Name="IsAvailableForTagging"><Parameter Type="Boolean">false</Parameter></SetProperty>');
+    expect(csom[0]).toContain('<Method Name="CommitAll"');
+    expect(csom[1]).toContain('Name="CreateTerm"');
+    expect(outcome.results).toEqual([{ kind: 'Term set', name: 'Study Arms', result: 'copied', note: 'Created the term set with 1 term.' }]);
+});
+
+test('names the language and says what to do in the notes of a term set it couldn\'t copy in full', async function({ page }) {
+    const record = await openPretendSite(page, { destination: { termStoreRefusesRest: true, setup: function(model) {
+        model.termStore.languageTags = ['en-US', 'is-IS'];
+        addOwnTermGroup(model);
+    } } });
+    // Sitenalyzer has no CSOM language ID for Icelandic, so it can't send that label through CSOM.
+    const control = planTerm(CONTROL, 'Control');
+    control.labels.push({ name: 'Eftirlit', languageTag: 'is-IS', isDefault: true });
+    const outcome = await copyTermSetsOnPage(page, termPlan([{ id: SET_ARMS, name: 'Study Arms', selected: true, complete: false, terms: [control] }]));
+    expect(findTerm(findTermSet(record.destination, 'Study Arms'), 'Control').labels).toEqual([{ name: 'Control', languageTag: 'en-US', isDefault: true }]);
+    expect(outcome.results).toEqual([{ kind: 'Term set', name: 'Study Arms', result: 'partial', note: 'Created the term set with 1 term. Left out 1 label in ' +
+        'Icelandic (Iceland), because Sitenalyzer can\'t add text in that language to this destination. Add it by hand in the destination\'s term store. ' +
+        'Sitenalyzer couldn\'t read every term of this term set in the site you copy from, so some terms may be missing. Check the term set in the ' +
+        'destination, and add any missing terms by hand.' }]);
+});
+
+test('says what to do when a change holds a value Sitenalyzer can\'t send', async function({ page }) {
+    await openPretendSite(page, { destination: true });
+    const note = await runTools(page, 'try { snaToolsTaxonomyCsomParameter({ type: "Double", value: 1 }); return ""; } catch (e) { return snaToolsFriendlyError(e); }', {});
+    expect(note).toBe('Sitenalyzer didn\'t send this change because of an unexpected problem. Copy again, or make it by hand in the destination\'s term store.');
 });
 
 // ### Helpers for Managed Metadata Columns ###
