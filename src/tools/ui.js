@@ -6,7 +6,8 @@ Created: 2026-11-05
 Last Modified: 2026-11-05
 Summary: Draws the Tools section (#sna/tools) and its Copy site structure screen (#sna/tools/copy), and handles its
          buttons, boxes, and switches: the source, the destination and its check, the lists and libraries to copy with
-         their new names and addresses, the term sets, the other content, the copy with its progress and Stop copying
+         their new names and addresses, the term sets, the site's own content types, the other content, the copy with
+         its progress and Stop copying
          button, and the results table with Save results (.xlsx). The choices and results are kept in _snaToolsState,
          so they stay when the view is drawn again, such as after Show hidden values changes.
 Notes: See README file for documentation and full license information.
@@ -40,8 +41,13 @@ var SNA_TOOLS_SWITCHES = [
 // The hint of each switch that a data dictionary file has nothing for.
 var SNA_TOOLS_WORKBOOK_SWITCH_HINT = 'A data dictionary file doesn\'t include these.';
 
-// Most list and library views counted at the same time for the Views column.
+// Most list and library views counted at the same time for the Views column, and most lists whose content types are
+// read at the same time for the Content types part.
 var SNA_TOOLS_VIEW_COUNT_PARALLEL = 3;
+
+// The hints of a content type that can't be left out, and why.
+var SNA_TOOLS_TYPE_USED_HINT = 'A list you chose uses it.';
+var SNA_TOOLS_TYPE_PARENT_HINT = 'A content type you chose is based on it.';
 
 // ### Screen State ###
 
@@ -56,6 +62,9 @@ function snaToolsNewState() {
         destinationStatus: '', destinationError: false, checking: false,
         lists: {},                  // Choices by source list ID: { selected, newTitle, newUrl }
         termSets: {},               // true or false by source term set ID
+        contentTypes: null,         // The site's own content types: { report, status ('loading', 'ready', or 'failed'),
+                                    // types [{ id (uppercase), name, parent (uppercase ID) }], uses { listId: [content type IDs] } }
+        excludedTypes: {},          // true by uppercase ID for each site content type the person unchecked
         options: { pages: true, siteAssets: true, agents: true, permissions: false, replaceExisting: false },
         viewCounts: {}, viewCountsReport: null,
         running: false, progressText: '', progressValue: 0,
@@ -135,8 +144,39 @@ function snaToolsCurrentDestination() {
     return (dest && dest.ok && dest.typed === String(state.destinationText || '').trim()) ? dest : null;
 }
 
-// Returns the choices for the plan: { lists: [{ sourceId, newTitle, newUrl }], termSetIds, pages, siteAssets, agents,
-// permissions, replaceExisting }. Names are trimmed.
+// Returns why each of the site's own content types must be copied, by uppercase ID: 'list' when a chosen list uses it,
+// and 'parent' when a content type that is copied is based on it. The person can leave out the others.
+function snaToolsForcedTypes(report) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    var forced = {};
+    if (state.source !== 'site' || !info || info.status !== 'ready') { return forced; }
+    var byId = {};
+    info.types.forEach(function(t) { byId[t.id] = t; });
+    snaToolsRows(report).forEach(function(row) {
+        if (!snaToolsListChoice(row).selected) { return; }
+        (info.uses[row.sourceId] || []).forEach(function(id) { if (byId[id]) { forced[id] = 'list'; } });
+    });
+    info.types.forEach(function(t) {
+        if (!forced[t.id] && state.excludedTypes[t.id]) { return; }
+        for (var parent = byId[t.parent]; parent; parent = byId[parent.parent]) {
+            if (!forced[parent.id]) { forced[parent.id] = 'parent'; }
+        }
+    });
+    return forced;
+}
+
+// Returns how many of the site's own content types the copy includes, or 0 while they aren't known.
+function snaToolsChosenTypeCount(report) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    if (state.source !== 'site' || !info || info.status !== 'ready') { return 0; }
+    var forced = snaToolsForcedTypes(report);
+    return info.types.filter(function(t) { return forced[t.id] || !state.excludedTypes[t.id]; }).length;
+}
+
+// Returns the choices for the plan: { lists: [{ sourceId, newTitle, newUrl }], termSetIds, excludedContentTypeIds, pages,
+// siteAssets, agents, permissions, replaceExisting }. Names are trimmed.
 function snaToolsChoices(report) {
     var lists = snaToolsRows(report).filter(function(row) { return snaToolsListChoice(row).selected; }).map(function(row) {
         var choice = snaToolsListChoice(row);
@@ -145,6 +185,8 @@ function snaToolsChoices(report) {
     return {
         lists: lists,
         termSetIds: snaToolsTermSetRows(report).filter(snaToolsTermSetChosen).map(function(s) { return s.sourceId; }),
+        // The plan copies a chosen list's content types, and the ones they are based on, even when unchecked here.
+        excludedContentTypeIds: Object.keys(_snaToolsState.excludedTypes).filter(function(id) { return _snaToolsState.excludedTypes[id]; }),
         pages: snaToolsOption('pages'), siteAssets: snaToolsOption('siteAssets'), agents: snaToolsOption('agents'),
         permissions: snaToolsOption('permissions'), replaceExisting: snaToolsOption('replaceExisting')
     };
@@ -178,8 +220,8 @@ function snaToolsValidate(report) {
         result.hint = 'Choose a data dictionary file before you copy.';
     } else if (!dest) {
         result.hint = 'Check the destination before you copy.';
-    } else if (chosen.length === 0 && termSets.length === 0 && !anyOption) {
-        result.hint = 'Choose at least one list, library, term set, or other content to copy.';
+    } else if (chosen.length === 0 && termSets.length === 0 && !anyOption && snaToolsChosenTypeCount(report) === 0) {
+        result.hint = 'Choose at least one list, library, term set, content type, or other content to copy.';
     } else if (problemCount > 0) {
         result.hint = problemCount === 1
             ? 'Fix the problem marked in Lists and libraries before you copy.'
@@ -254,6 +296,8 @@ function snaToolsRenderCopy(report) {
 
     html += snaToolsHeadingHtml('sna-tools-h-lists', 'Lists and libraries') + snaToolsListsHtml(report, off);
     html += snaToolsTermSetsHtml(report, off);
+    html += snaToolsHeadingHtml('sna-tools-h-contenttypes', 'Content types') +
+        '<div id="sna-tools-contenttypes">' + snaToolsContentTypesHtml(off) + '</div>';
     html += snaToolsOtherContentHtml(off);
     html += snaToolsCopyHtml();
     html += snaToolsResultsHtml();
@@ -311,6 +355,26 @@ function snaToolsTermSetsHtml(report, off) {
             return '<li><label class="sna-tools-check"><input type="checkbox" class="sna-tools-termset-check" data-set-id="' + snaEscapeHtml(set.sourceId) + '"' +
                 (snaToolsTermSetChosen(set) ? ' checked' : '') + off + '><span>' + snaEscapeHtml(set.name) +
                 ' <span class="sna-muted">(' + snaEscapeHtml(snaCountText(set.termCount, 'term', 'terms')) + ')</span></span></label></li>';
+        }).join('') + '</ul>';
+}
+
+// Returns the inside of the Content types part: a checkbox for each of the site's own content types, all checked at
+// first, or a sentence that says why there are none. Which ones can't be left out is set by snaToolsRefreshForm.
+function snaToolsContentTypesHtml(off) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    if (state.source === 'workbook') { return '<p class="sna-note">A data dictionary file doesn\'t include content types.</p>'; }
+    if (!info || info.status === 'loading') { return '<p class="sna-note">Reading this site\'s content types...</p>'; }
+    if (info.status === 'failed') {
+        return '<p class="sna-note">Sitenalyzer couldn\'t read this site\'s content types here, so the copy includes all of the site\'s own content types.</p>';
+    }
+    if (info.types.length === 0) { return '<p class="sna-note">This site has no content types of its own.</p>'; }
+    return '<p id="sna-tools-types-hint" class="sna-hint">Sitenalyzer copies each content type you check, with its columns.</p>' +
+        '<ul class="sna-tools-checklist" aria-labelledby="sna-tools-h-contenttypes">' + info.types.map(function(t, index) {
+            var id = 'sna-tools-type-' + index;
+            return '<li><label class="sna-tools-check"><input type="checkbox" class="sna-tools-type-check" id="' + id + '" data-type-id="' + snaEscapeHtml(t.id) + '"' +
+                (state.excludedTypes[t.id] ? '' : ' checked') + off + '><span>' + snaEscapeHtml(t.name) + '</span></label>' +
+                '<p id="' + id + '-hint" class="sna-hint sna-tools-type-hint" hidden></p></li>';
         }).join('') + '</ul>';
 }
 
@@ -395,6 +459,7 @@ function snaToolsAfterRender() {
     snaToolsRefreshForm();
     snaToolsFitTable();
     snaToolsLoadViewCounts(_snaReport);
+    snaToolsLoadContentTypes(_snaReport);
 }
 
 // Shows a message under one Name or Address box, or removes it when text is ''. The box is marked invalid while it has
@@ -428,6 +493,17 @@ function snaToolsRefreshForm() {
         var total = check.rows.length;
         count.textContent = 'Chose ' + check.chosenCount + ' of ' + (total === 1 ? '1 list or library.' : total + ' lists and libraries.');
     }
+    var forced = snaToolsForcedTypes(_snaReport);
+    root.querySelectorAll('.sna-tools-type-check').forEach(function(box) {
+        var id = box.getAttribute('data-type-id');
+        var why = forced[id];
+        var text = why === 'list' ? SNA_TOOLS_TYPE_USED_HINT : (why === 'parent' ? SNA_TOOLS_TYPE_PARENT_HINT : '');
+        box.checked = !!why || !_snaToolsState.excludedTypes[id];
+        box.disabled = !!why || _snaToolsState.running;
+        var hint = document.getElementById(box.id + '-hint');
+        if (hint) { hint.textContent = text; hint.hidden = !text; }
+        if (text) { box.setAttribute('aria-describedby', box.id + '-hint'); } else { box.removeAttribute('aria-describedby'); }
+    });
     var button = document.getElementById('sna-tools-copy-button');
     if (button) { button.disabled = !check.canCopy; }
     var hint = document.getElementById('sna-tools-copy-hint');
@@ -476,6 +552,45 @@ function snaToolsLoadViewCounts(report) {
             if (cell) { cell.textContent = String(count); }
         });
     });
+}
+
+// Reads the site's own content types, once for each report, and, when it has any, which of them each list or library
+// uses, for the Content types part. Content types from SharePoint and from the content type hub aren't offered.
+async function snaToolsLoadContentTypes(report) {
+    var state = _snaToolsState;
+    if (!report || state.source !== 'site' || (state.contentTypes && state.contentTypes.report === report)) { return; }
+    var info = { report: report, status: 'loading', types: [], uses: {} };
+    state.contentTypes = info;
+    snaToolsShowContentTypes();
+    try {
+        var read = await snaToolsReadAll(report.siteUrl, '/_api/web/contenttypes?$select=' + SNA_TOOLS_CONTENT_TYPE_CHOICE_SELECT, SNA_TOOLS_READ_MAX);
+        info.types = snaToolsChoosableContentTypes(read.items.map(function(ct) { return snaToolsPlanContentType(ct, false); })).map(function(t) {
+            return { id: t.stringId.toUpperCase(), name: t.name, parent: String(t.parentStringId).toUpperCase() };
+        });
+        if (info.types.length > 0) {
+            await snaMapWithLimit(snaToolsSourceLists(report), SNA_TOOLS_VIEW_COUNT_PARALLEL, async function(row) {
+                try {
+                    var types = await snaToolsReadAll(report.siteUrl, "/_api/web/lists(guid'" + row.sourceId + "')/contenttypes?$select=StringId", SNA_TOOLS_READ_MAX);
+                    info.uses[row.sourceId] = types.items.map(function(ct) { return snaToolsListTypeParent(ct.StringId); }).filter(function(id) { return !!id; });
+                } catch (err) {
+                    // The copy itself still copies the content types this list uses.
+                    info.uses[row.sourceId] = [];
+                }
+            });
+        }
+        info.status = 'ready';
+    } catch (err) {
+        info.status = 'failed';
+    }
+    if (_snaToolsState !== state || state.contentTypes !== info || _snaReport !== report) { return; }
+    snaToolsShowContentTypes();
+    snaToolsRefreshForm();
+}
+
+// Draws the inside of the Content types part again, without drawing the rest of the view.
+function snaToolsShowContentTypes() {
+    var part = document.getElementById('sna-tools-contenttypes');
+    if (part) { part.innerHTML = snaToolsContentTypesHtml(_snaToolsState.running ? ' disabled' : ''); }
 }
 
 // Shows the result of a destination check, or '' to clear it, under the destination box.
@@ -549,6 +664,8 @@ function snaToolsHandleChange(e) {
         if (choice) { choice.selected = el.checked; }
     } else if (el.classList.contains('sna-tools-termset-check')) {
         state.termSets[el.getAttribute('data-set-id')] = el.checked;
+    } else if (el.classList.contains('sna-tools-type-check')) {
+        state.excludedTypes[el.getAttribute('data-type-id')] = !el.checked;
     } else if (el.hasAttribute('data-option')) {
         var option = el.getAttribute('data-option');
         if (Object.prototype.hasOwnProperty.call(state.options, option)) { state.options[option] = el.checked; }
@@ -660,6 +777,7 @@ function snaToolsConfirmText(plan, dest) {
     if (lists) { parts.push(snaCountText(lists, 'list', 'lists')); }
     if (libraries) { parts.push(snaCountText(libraries, 'library', 'libraries')); }
     if (sets) { parts.push(snaCountText(sets, 'term set', 'term sets')); }
+    if (plan.siteContentTypes.length) { parts.push(snaCountText(plan.siteContentTypes.length, 'content type', 'content types')); }
     if (plan.pages) { parts.push('site pages'); }
     if (plan.siteAssets) { parts.push('Site Assets'); }
     if (plan.agents) { parts.push('agents and site skills'); }

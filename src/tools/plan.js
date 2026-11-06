@@ -7,13 +7,17 @@ Last Modified: 2026-11-05
 Summary: Builds the copy plan for Copy site structure from this site's report. The report doesn't hold everything a
          copy needs, so for each list or library the person chose, this reads its full settings, every column with its
          definition (SchemaXml), its views and their columns, and its content types and their columns. It also reads
-         the site columns those lists use and every detail of the chosen term sets' terms. Reads only; changes nothing.
+         the site's own content types and the site columns they and those lists use, and every detail of the chosen term
+         sets' terms. Reads only; changes nothing.
          A data dictionary file becomes the same plan in workbook.js, so the copy doesn't depend on where it came from.
 Notes: See README file for documentation and full license information.
 
        Plan shape (the copy steps in runner.js read only this):
        { source: { kind: 'site'|'workbook', siteUrl, siteId, webId, serverRelativeUrl, title, termStoreId, fileName },
          lists: [PlanList], siteColumns: [PlanField], siteContentTypes: [PlanContentType],
+         hubContentTypes: [{ stringId, name }] (content types from the content type hub that the copy needs),
+         builtInSiteColumns: [{ id, internalName, title }] (SharePoint's own site columns that the chosen lists or content
+         types use, with the name they have in the source site, such as TaxKeyword shown as Tags),
          termGroup: { name, sets: [PlanTermSet] } | null,
          siteContent: { pages: [report page], agents: [report agent], skills: [report site skill] },
          pages, siteAssets, agents, permissions, replaceExisting (booleans from the person's choices),
@@ -24,12 +28,14 @@ Notes: See README file for documentation and full license information.
        PlanField = { id, internalName, staticName, title, description, type (TypeAsString), schemaXml, customFormatter,
          isSiteColumn, lookupListId, lookupWebId, lookupField, lookupFieldGuessed (true when a data dictionary file didn't say
          which column a lookup shows), isDependentLookup, primaryFieldId, termSetId, anchorId, sspId, isTaxonomy,
-         isTaxonomyNote, formula, fieldRefs [internal names], builtIn, hidden, required, group }
+         isTaxonomyNote, formula, fieldRefs [internal names], builtIn, builtInSiteColumn (a built-in column that a list
+         gets from SharePoint's own site columns, such as Start Date, rather than from its template), hidden, required, group }
        PlanView = { id, title, isDefault, personalView, hidden, viewFields [internal names], viewQuery, rowLimit, paged,
          scope, viewType, viewType2, viewData, calendarViewStyles, customFormatter, aggregations, aggregationsStatus,
          jsLink, tabularView, includeRootFolder, mobileView, mobileDefaultView, url }
        PlanContentType = { stringId, name, description, group, parentStringId, fieldLinks [{ internalName, id,
-         required, hidden }], clientFormCustomFormatter, formComponents {}, readOnly, sealed, hidden, isBuiltIn }
+         required, hidden, displayName (the name the column shows in this content type, or '' when it's the column's
+         own name) }], clientFormCustomFormatter, formComponents {}, readOnly, sealed, hidden, isBuiltIn, isHub }
        PlanTermSet = { sourceId, name, description, isOpen, isAvailableForTagging, languageTag, terms [PlanTerm],
          selected, complete }
        PlanTerm = { sourceId, parentIds [the first is the main parent], labels [{ name, languageTag, isDefault }],
@@ -82,6 +88,18 @@ var SNA_TOOLS_CONTENT_TYPE_SELECT = 'StringId,Name,Description,Group,Hidden,Seal
     'NewFormClientSideComponentId,NewFormClientSideComponentProperties,EditFormClientSideComponentId,' +
     'EditFormClientSideComponentProperties,DisplayFormClientSideComponentId,DisplayFormClientSideComponentProperties,' +
     'FieldLinks/Id,FieldLinks/Name,FieldLinks/Required,FieldLinks/Hidden';
+
+// Site content types also give the name each column shows in them (FieldLink DisplayName), such as Tags.
+var SNA_TOOLS_SITE_CONTENT_TYPE_SELECT = SNA_TOOLS_CONTENT_TYPE_SELECT + ',FieldLinks/DisplayName';
+
+// What the Tools screen reads to offer the site's own content types.
+var SNA_TOOLS_CONTENT_TYPE_CHOICE_SELECT = 'StringId,Name,Group,Sealed,ReadOnly';
+
+// SharePoint's own content types whose IDs end in 00 and 32 hexadecimal digits, the same as a content type someone
+// made, by the start of their ID: Site Page (and Repost Page), Rich Media Asset (and Image, Audio, and Video), the
+// publishing Page, and Page Layout. The copy never makes these.
+var SNA_TOOLS_BUILT_IN_CONTENT_TYPE_STARTS = ['0x0101009D1CB255DA76424F860D91F20E6C4118', '0x0101009148F5A04DDD49CBA7127AADA5FB792B',
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2', '0x01010007FF3E057FA8AB4AA42FCB67B453FFC1'];
 
 // ### Choosing What to Copy ###
 
@@ -228,7 +246,7 @@ function snaToolsSourceTermSets(report) {
 function snaToolsEmptyPlan(kind) {
     return {
         source: { kind: kind, siteUrl: '', siteId: '', webId: '', serverRelativeUrl: '', title: '', termStoreId: '', fileName: '' },
-        lists: [], siteColumns: [], siteContentTypes: [], termGroup: null,
+        lists: [], siteColumns: [], siteContentTypes: [], hubContentTypes: [], builtInSiteColumns: [], termGroup: null,
         siteContent: { pages: [], agents: [], skills: [] },
         pages: false, siteAssets: false, agents: false, permissions: false, replaceExisting: false,
         warnings: []
@@ -301,7 +319,8 @@ function snaToolsFieldRefs(root) {
     return names;
 }
 
-// True when a source column comes with the list template or SharePoint itself, so the copy never creates it.
+// True when a source column comes with the list template or SharePoint itself, so the copy never creates it from its
+// definition. See snaToolsIsBuiltInSiteColumn for the ones the copy adds from the destination's site columns.
 function snaToolsIsBuiltInField(field, root) {
     if (field.CanBeDeleted === false || field.FromBaseType === true || field.Sealed === true) { return true; }
     if (SNA_TOOLS_BUILT_IN_FIELD_TYPES.indexOf(field.TypeAsString) > -1) { return true; }
@@ -309,6 +328,16 @@ function snaToolsIsBuiltInField(field, root) {
     var sourceId = root ? String(root.getAttribute('SourceID') || '') : '';
     if (sourceId.toLowerCase().indexOf('http://schemas.microsoft.com/sharepoint') === 0) { return true; }
     return /^_/.test(String(field.InternalName || '')) && field.Hidden === true;
+}
+
+// True when a built-in column is one of SharePoint's own site columns that someone added, such as Start Date or
+// Enterprise Keywords: its definition comes from SharePoint, but nothing else marks it as part of every list.
+function snaToolsIsBuiltInSiteColumn(field, root) {
+    if (field.CanBeDeleted === false || field.FromBaseType === true || field.Sealed === true) { return false; }
+    if (SNA_TOOLS_BUILT_IN_FIELD_TYPES.indexOf(field.TypeAsString) > -1 || SITEANALYZER_SKIP_FIELDS.has(field.InternalName)) { return false; }
+    if (/^_/.test(String(field.InternalName || '')) && field.Hidden === true) { return false; }
+    var sourceId = root ? String(root.getAttribute('SourceID') || '') : '';
+    return sourceId.toLowerCase().indexOf('http://schemas.microsoft.com/sharepoint') === 0;
 }
 
 /**
@@ -352,6 +381,7 @@ function snaToolsPlanField(field, siteColumnIds) {
         formula: field.Formula || (formulaElement ? formulaElement.textContent : ''),
         fieldRefs: snaToolsFieldRefs(root),
         builtIn: snaToolsIsBuiltInField(field, root),
+        builtInSiteColumn: snaToolsIsBuiltInSiteColumn(field, root),
         hidden: field.Hidden === true,
         required: field.Required === true,
         group: field.Group || attr('Group')
@@ -389,9 +419,12 @@ function snaToolsPlanView(view) {
 }
 
 // True when a content type ID is one of SharePoint's own, such as 0x01 (Item) or 0x0101 (Document). The ID of a
-// content type someone made ends in 00 and a GUID's 32 hexadecimal digits.
+// content type someone made ends in 00 and a GUID's 32 hexadecimal digits, as do a few of SharePoint's own
+// (see SNA_TOOLS_BUILT_IN_CONTENT_TYPE_STARTS).
 function snaToolsIsBuiltInContentTypeId(stringId) {
-    return !/00[0-9a-f]{32}$/i.test(String(stringId || ''));
+    var id = String(stringId || '').toUpperCase();
+    if (!/00[0-9A-F]{32}$/.test(id)) { return true; }
+    return SNA_TOOLS_BUILT_IN_CONTENT_TYPE_STARTS.some(function(start) { return id.indexOf(start.toUpperCase()) === 0; });
 }
 
 // Returns a PlanContentType from a content type read from SharePoint. A list's content type ID is its site content
@@ -408,7 +441,8 @@ function snaToolsPlanContentType(ct, isListContentType) {
         group: ct.Group || '',
         parentStringId: parent,
         fieldLinks: links.map(function(link) {
-            return { internalName: link.Name || '', id: snaToolsCleanGuid(link.Id), required: link.Required === true, hidden: link.Hidden === true };
+            return { internalName: link.Name || '', id: snaToolsCleanGuid(link.Id), required: link.Required === true, hidden: link.Hidden === true,
+                displayName: link.DisplayName || '' };
         }),
         clientFormCustomFormatter: ct.ClientFormCustomFormatter || '',
         formComponents: {
@@ -422,8 +456,40 @@ function snaToolsPlanContentType(ct, isListContentType) {
         readOnly: ct.ReadOnly === true,
         sealed: ct.Sealed === true,
         hidden: ct.Hidden === true,
-        isBuiltIn: isListContentType ? snaToolsIsBuiltInContentTypeId(parent || id) : snaToolsIsBuiltInContentTypeId(id)
+        isBuiltIn: isListContentType ? snaToolsIsBuiltInContentTypeId(parent || id) :
+            (snaToolsIsBuiltInContentTypeId(id) || ct.Group === '_Hidden' || ct.Sealed === true),
+        // SharePoint makes each content type that the content type hub publishes read-only in the sites that get it.
+        isHub: !isListContentType && ct.ReadOnly === true
     };
+}
+
+/**
+ * Returns the site content types that Copy site structure offers: the site's own, not SharePoint's and not from the
+ * content type hub, in the order of their names.
+ * @param {object[]} siteTypes PlanContentTypes of the site (see snaToolsPlanContentType).
+ * @returns {object[]} The ones the person can choose.
+ */
+function snaToolsChoosableContentTypes(siteTypes) {
+    return siteTypes.filter(function(ct) { return !ct.isBuiltIn && !ct.isHub; }).sort(function(a, b) {
+        return String(a.name).localeCompare(String(b.name));
+    });
+}
+
+// Returns the uppercase ID of the site content type a list content type comes from, or '' for SharePoint's own.
+function snaToolsListTypeParent(stringId) {
+    var id = String(stringId || '');
+    return (id.length > 34 && !snaToolsIsBuiltInContentTypeId(id)) ? id.substring(0, id.length - 34).toUpperCase() : '';
+}
+
+// Adds to wanted (uppercase IDs as keys) every content type that the ones already in it are based on, up to
+// SharePoint's own. byId holds the site's PlanContentTypes by uppercase ID. Returns wanted.
+function snaToolsAddTypeParents(wanted, byId) {
+    Object.keys(wanted).forEach(function(id) {
+        for (var t = byId[id]; t && !t.isBuiltIn; t = byId[String(t.parentStringId).toUpperCase()]) {
+            wanted[t.stringId.toUpperCase()] = true;
+        }
+    });
+    return wanted;
 }
 
 // Reads one chosen list or library from the source and returns its PlanList. choice is { sourceId, newTitle, newUrl }.
@@ -582,9 +648,10 @@ function snaToolsPlanWarnings(plan) {
 
 /**
  * Builds the copy plan from this site's report, reading from this site what the report doesn't hold. Reads only the
- * lists and term sets the person chose.
+ * lists and term sets the person chose, and every one of the site's own content types except the ones the person left out.
  * @param {object} report The collected report (see collectReport in sitenalyzer.js).
- * @param {object} choices { lists: [{ sourceId, newTitle, newUrl }], termSetIds: [lowercase IDs], pages, siteAssets,
+ * @param {object} choices { lists: [{ sourceId, newTitle, newUrl }], termSetIds: [lowercase IDs], excludedContentTypeIds
+ *        [site content type IDs the person left out; a chosen list's content types are copied anyway], pages, siteAssets,
  *        agents, permissions, replaceExisting }.
  * @param {function} [onProgress] Called with a plain-English sentence before each read, such as 'Reading Study Visits.'.
  * @returns {Promise<object>} The plan (see the plan shape at the top of this file). Changes nothing.
@@ -611,10 +678,30 @@ async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
         skills: (report.agents && report.agents.skills) || []
     };
 
+    // The site's own content types are copied whether or not a chosen list uses them, so they are read first.
+    var siteTypes = [];
+    progress('Reading the site content types.');
+    try {
+        siteTypes = (await snaToolsReadAllWithFallback(siteUrl,
+            '/_api/web/contenttypes?$select=' + SNA_TOOLS_SITE_CONTENT_TYPE_SELECT + '&$expand=FieldLinks',
+            '/_api/web/contenttypes?$expand=FieldLinks')).map(function(ct) { return snaToolsPlanContentType(ct, false); });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        plan.warnings.push('Sitenalyzer couldn\'t read this site\'s content types, so it will copy only the lists\' own content types that it can.');
+    }
+    var typesById = {};
+    siteTypes.forEach(function(ct) { typesById[ct.stringId.toUpperCase()] = ct; });
+    var excluded = {};
+    (choices.excludedContentTypeIds || []).forEach(function(id) { excluded[String(id).toUpperCase()] = true; });
+    var wantedTypes = {};
+    snaToolsChoosableContentTypes(siteTypes).forEach(function(ct) {
+        if (!excluded[ct.stringId.toUpperCase()]) { wantedTypes[ct.stringId.toUpperCase()] = true; }
+    });
+
     var chosen = choices.lists || [];
     var siteColumnIds = {};
     var siteFields = [];
-    if (chosen.length > 0) {
+    if (chosen.length > 0 || Object.keys(wantedTypes).length > 0) {
         progress('Reading the site columns.');
         siteFields = await snaToolsReadAllWithFallback(siteUrl, '/_api/web/fields?$select=' + SNA_TOOLS_FIELD_SELECT,
             '/_api/web/fields?$select=' + SNA_TOOLS_FIELD_SELECT_SHORT);
@@ -629,32 +716,38 @@ async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
         plan.lists.push(await snaToolsReadSourceList(siteUrl, reportList, chosen[i], siteColumnIds));
     }
 
-    // Site columns the chosen lists use; a site column added to a list has the same ID there.
-    var usedIds = {};
-    plan.lists.forEach(function(l) { l.fields.forEach(function(f) { if (f.isSiteColumn && !f.builtIn) { usedIds[f.id] = true; } }); });
-    plan.siteColumns = siteFields.map(function(f) { return snaToolsPlanField(f, siteColumnIds); })
-        .filter(function(f) { return usedIds[f.id] && !f.builtIn; });
-
-    // Site content types the chosen lists' content types come from, with their parents, parents first.
-    var neededTypes = {};
+    // Site content types: the ones the person kept, the ones the chosen lists' content types come from (whether or not
+    // the person kept them), and every content type those are based on, parents first.
     plan.lists.forEach(function(l) {
-        l.contentTypes.forEach(function(ct) { if (!ct.isBuiltIn && ct.parentStringId) { neededTypes[ct.parentStringId.toUpperCase()] = true; } });
+        l.contentTypes.forEach(function(ct) { if (!ct.isBuiltIn && ct.parentStringId) { wantedTypes[ct.parentStringId.toUpperCase()] = true; } });
     });
-    if (Object.keys(neededTypes).length > 0) {
-        progress('Reading the site content types.');
-        var siteTypes = (await snaToolsReadAllWithFallback(siteUrl,
-            '/_api/web/contenttypes?$select=' + SNA_TOOLS_CONTENT_TYPE_SELECT + '&$expand=FieldLinks',
-            '/_api/web/contenttypes?$expand=FieldLinks')).map(function(ct) { return snaToolsPlanContentType(ct, false); });
-        var byId = {};
-        siteTypes.forEach(function(ct) { byId[ct.stringId.toUpperCase()] = ct; });
-        Object.keys(neededTypes).forEach(function(id) {
-            for (var parent = byId[id]; parent && !parent.isBuiltIn; parent = byId[parent.parentStringId.toUpperCase()]) {
-                neededTypes[parent.stringId.toUpperCase()] = true;
-            }
+    snaToolsAddTypeParents(wantedTypes, typesById);
+    plan.siteContentTypes = siteTypes.filter(function(ct) { return !ct.isBuiltIn && !ct.isHub && wantedTypes[ct.stringId.toUpperCase()]; })
+        .sort(function(a, b) { return a.stringId.length - b.stringId.length || (a.stringId < b.stringId ? -1 : 1); });
+    plan.hubContentTypes = siteTypes.filter(function(ct) { return ct.isHub && wantedTypes[ct.stringId.toUpperCase()]; })
+        .map(function(ct) { return { stringId: ct.stringId, name: ct.name }; });
+
+    // Site columns the chosen lists use (a site column added to a list has the same ID there) and the chosen content
+    // types link to. SharePoint's own site columns among them are kept apart: the destination has them already.
+    var siteById = {};
+    var planFields = siteFields.map(function(f) { return snaToolsPlanField(f, siteColumnIds); });
+    planFields.forEach(function(f) { siteById[f.id] = f; });
+    var usedIds = {};
+    var linkedIds = {};
+    plan.lists.forEach(function(l) { l.fields.forEach(function(f) { if (f.isSiteColumn) { usedIds[f.id] = true; } }); });
+    plan.siteContentTypes.forEach(function(ct) {
+        ct.fieldLinks.forEach(function(link) {
+            usedIds[link.id] = true;
+            linkedIds[link.id] = true;
+            // A content type that shows a column by the column's own name has no name of its own for it.
+            var column = siteById[link.id];
+            if (column && link.displayName === column.title) { link.displayName = ''; }
         });
-        plan.siteContentTypes = siteTypes.filter(function(ct) { return !ct.isBuiltIn && neededTypes[ct.stringId.toUpperCase()]; })
-            .sort(function(a, b) { return a.stringId.length - b.stringId.length || (a.stringId < b.stringId ? -1 : 1); });
-    }
+    });
+    plan.siteColumns = planFields.filter(function(f) { return usedIds[f.id] && !f.builtIn; });
+    // A list gets only the ones someone added (see snaToolsIsBuiltInSiteColumn); a content type can link to any of them.
+    plan.builtInSiteColumns = planFields.filter(function(f) { return f.builtIn && ((usedIds[f.id] && f.builtInSiteColumn) || linkedIds[f.id]); })
+        .map(function(f) { return { id: f.id, internalName: f.internalName, title: f.title }; });
 
     var chosenSets = choices.termSetIds || [];
     plan.termGroup = await snaToolsReadSourceTermGroup(report, chosenSets, progress);

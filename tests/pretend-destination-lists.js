@@ -17,8 +17,9 @@ Notes: See README file for documentation and full license information.
          model.missingTermSets         IDs of term sets the destination's term store doesn't have (answered with 404).
        Model properties these answers add:
          model.listsCsomRequests       The text of each CSOM request these answers handled: the ones that add columns to
-                                       content types. pretend-destination-taxonomy.js answers the one that connects a
-                                       managed metadata column to its term set, and keeps it in model.csomRequests.
+                                       content types or change the columns they have, and the ones that add a site column
+                                       to a list. pretend-destination-taxonomy.js answers the one that connects a managed
+                                       metadata column to its term set, and keeps it in model.csomRequests.
          model.siteColumns, model.contentTypes, and each list's fields, views, contentTypes, and contentTypeOrder.
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -91,7 +92,8 @@ function setCustomization(field, name, value) {
 
 // ### CSOM ###
 
-// Reads the object paths and actions of a CSOM request: { paths: { id: { kind, parentId, name, params, fieldPathId } }, actions }.
+// Reads the object paths and actions of a CSOM request: { paths: { id: { kind, parentId, name, params, fieldPathId,
+// objectParamId } }, actions }. objectParamId is the object path passed as a parameter, such as the column in Fields.Add.
 function readCsom(text) {
     function part(name) { return ((new RegExp('<' + name + '>([\\s\\S]*)</' + name + '>')).exec(text) || [])[1] || ''; }
     function items(source, kinds) {
@@ -105,7 +107,9 @@ function readCsom(text) {
             let p;
             while ((p = paramPattern.exec(inner)) !== null) { params.push({ type: p[1], value: decodeXml(p[2]) }); }
             const fieldRef = /<Property Name="Field" ObjectPathId="(\d+)"/.exec(inner);
-            found.push(Object.assign({ kind: match[1], params: params, fieldPathId: fieldRef ? fieldRef[1] : '' }, attributesOf(match[2])));
+            const objectParam = /<Parameter ObjectPathId="(\d+)"/.exec(inner);
+            found.push(Object.assign({ kind: match[1], params: params, fieldPathId: fieldRef ? fieldRef[1] : '', objectParamId: objectParam ? objectParam[1] : '' },
+                attributesOf(match[2])));
         }
         return found;
     }
@@ -114,12 +118,14 @@ function readCsom(text) {
     return { paths: paths, actions: items(part('Actions'), 'ObjectPath|SetProperty|Method') };
 }
 
-// Answers the CSOM requests that add columns to content types (FieldLinks.Add). Returns undefined for other CSOM requests,
-// so other answers can handle them: pretend-destination-taxonomy.js answers the request that connects a managed metadata
-// column to its term set, which taxonomy.js sends.
+// Answers the CSOM requests that add columns to content types (FieldLinks.Add), change the columns they have
+// (FieldLinks.GetById), and add a site column to a list (Fields.Add). Returns undefined for other CSOM requests, so other
+// answers can handle them: pretend-destination-taxonomy.js answers the request that connects a managed metadata column
+// to its term set, which taxonomy.js sends.
 function answerCsom(ctx) {
     const text = ctx.text || '';
-    if (text.indexOf('Name="FieldLinks"') === -1) { return undefined; }
+    const addsColumn = text.indexOf('Name="AvailableFields"') > -1 && /<Parameter ObjectPathId="\d+"/.test(text);
+    if (text.indexOf('Name="FieldLinks"') === -1 && !addsColumn) { return undefined; }
     const model = ctx.model;
     (model.listsCsomRequests = model.listsCsomRequests || []).push(text);
     const csom = readCsom(text);
@@ -153,6 +159,14 @@ function answerCsom(ctx) {
                 const field = resolve(path.fieldPathId);
                 result = field && field.type === 'field' ? { type: 'newLink', contentType: parent.contentType, field: field.field } : null;
             }
+            else if (parent && parent.type === 'links' && path.Name === 'GetById') {
+                const link = (parent.contentType.FieldLinks || []).filter(function(l) { return cleanId(l.Id) === cleanId(value); })[0];
+                result = link ? { type: 'link', contentType: parent.contentType, link: link } : null;
+            }
+            else if (parent && parent.type === 'fields' && path.Name === 'Add' && path.objectParamId) {
+                const field = resolve(path.objectParamId);
+                result = field && field.type === 'field' ? { type: 'addedField', fields: parent.fields, field: field.field } : null;
+            }
         }
         objects[id] = result;
         return result;
@@ -165,8 +179,15 @@ function answerCsom(ctx) {
             if (links.some(function(l) { return cleanId(l.Id) === cleanId(target.field.Id); })) { return fail('A duplicate field name was found.'); }
             target.link = { Id: target.field.Id, Name: target.field.InternalName, Required: false, Hidden: false };
             links.push(target.link);
-        } else if (action.kind === 'SetProperty' && target.type === 'newLink' && target.link) {
-            target.link[action.Name] = action.params[0].value === 'true';
+        } else if (action.kind === 'ObjectPath' && target.type === 'addedField' && !target.added) {
+            if (target.fields.some(function(f) { return f.InternalName.toLowerCase() === target.field.InternalName.toLowerCase(); })) {
+                return fail('A duplicate field name "' + target.field.InternalName + '" was found.');
+            }
+            target.added = Object.assign({}, target.field);
+            target.fields.push(target.added);
+        } else if (action.kind === 'SetProperty' && (target.type === 'newLink' || target.type === 'link') && target.link) {
+            const param = action.params[0];
+            target.link[action.Name] = param.type === 'Boolean' ? param.value === 'true' : param.value;
         } else if (action.kind === 'SetProperty' && target.type === 'field') {
             const param = action.params[0];
             const value = param.type === 'Guid' ? cleanId(param.value) : param.value;
@@ -214,6 +235,19 @@ addDestinationHandlers([
             SchemaXml: '<Field Type="Lookup" DisplayName="' + title + '" FieldRef="' + primary.Id + '" ShowField="' + show + '" Name="' + internalName + '" ReadOnly="TRUE" />' };
         list.fields.push(field);
         return field;
+    } },
+
+    // The top-level site's own columns by ID, such as SharePoint's Enterprise Keywords (TaxKeyword), read and renamed.
+    { pattern: /^\/_api\/site\/rootweb\/fields\/getbyid\(@f\)$/, answer: function(ctx) {
+        const field = findField(ctx.model.siteColumns, unquote(ctx.url.searchParams.get('@f')));
+        return field ? fieldJson(field) : ctx.spError(404, 'Invalid field name.');
+    } },
+    { method: 'POST', pattern: /^\/_api\/site\/rootweb\/fields\/getbyid\(@f\)$/, answer: function(ctx) {
+        const field = findField(ctx.model.siteColumns, unquote(ctx.url.searchParams.get('@f')));
+        if (!field) { return ctx.spError(404, 'Invalid field name.'); }
+        if (ctx.xHttpMethod !== 'MERGE') { return undefined; }
+        Object.keys(ctx.body || {}).forEach(function(name) { field[name] = ctx.body[name]; });
+        return ctx.reply(204, null);
     } },
 
     // What managed metadata columns need: the top-level site, its TaxonomyHiddenList, and tenant-level term sets.
@@ -265,7 +299,12 @@ addDestinationHandlers([
         return view;
     } },
 
-    // Content types: site content types, a list's content types, and their order on the New menu.
+    // Content types: site content types and their columns, a list's content types, and their order on the New menu.
+    { pattern: /^\/_api\/web\/contenttypes\/getbyid\(@c\)\/fieldlinks$/, answer: function(ctx) {
+        const id = unquote(ctx.url.searchParams.get('@c')).toUpperCase();
+        const type = ctx.model.contentTypes.filter(function(t) { return t.StringId.toUpperCase() === id; })[0];
+        return type ? { value: type.FieldLinks || [] } : ctx.spError(404, 'The content type does not exist.');
+    } },
     { method: 'POST', pattern: /^\/_api\/web\/contenttypes$/, answer: function(ctx) {
         const body = ctx.body || {};
         const id = String((body.Id && body.Id.StringValue) || '');

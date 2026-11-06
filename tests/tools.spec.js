@@ -28,7 +28,7 @@ const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { openPretendSite, SITE_URL, SITE_PATH, DIST_DIR, DEST_URL, DEST_PATH } = require('./pretend-sharepoint');
+const { openPretendSite, SITE_URL, SITE_PATH, DIST_DIR, DEST_URL, DEST_PATH, LIST_ID } = require('./pretend-sharepoint');
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 // The same SheetJS copy that site owners upload, used to read the saved results.
@@ -169,7 +169,8 @@ test('opens Tools from the section navigation, with Copy site structure as its o
     await expect(subnav.getByRole('link')).toHaveText(['Copy site structure']);
     await expect(subnav.getByRole('link', { name: 'Copy site structure' })).toHaveAttribute('aria-current', 'page');
     await expect(page.locator('#sna-part-title')).toHaveText('Copy site structure');
-    await expect(page.locator('#sna-tools h3.sna-tools-heading')).toHaveText(['Source', 'Destination', 'Lists and libraries', 'Term sets', 'Other content', 'Copy']);
+    await expect(page.locator('#sna-tools h3.sna-tools-heading')).toHaveText(['Source', 'Destination', 'Lists and libraries', 'Term sets', 'Content types', 'Other content', 'Copy']);
+    await expect(page.locator('#sna-tools-contenttypes')).toHaveText('This site has no content types of its own.');
 
     await subnav.getByRole('link', { name: 'Copy site structure' }).click();
     await expect.poll(function() { return hashOf(page); }).toBe('#sna/tools/copy');
@@ -353,6 +354,78 @@ test('offers the term sets of the site\'s own term group, all chosen at first', 
     const box = page.getByRole('checkbox', { name: 'Study Arms (2 terms)' });
     await expect(box).toBeChecked();
     await expect(page.locator('#sna-tools-termsets-hint')).toHaveText('Columns that use a term set you leave out are skipped.');
+});
+
+// The site's content types for the Content types part: SharePoint's Item and Site Page, Study Record, Visit Record (based on
+// Study Record, and used by Study Visits), Consent Form (used by no list), and Policy Document from the content type hub.
+const STUDY_RECORD_ID = '0x0100AAAA0000000040008000000000000001';
+const VISIT_RECORD_ID = STUDY_RECORD_ID + '00BBBB0000000040008000000000000002';
+const CONTENT_TYPE_ANSWERS = [
+    { pattern: /^\/_api\/web\/contenttypes$/, body: { value: [
+        { StringId: '0x01', Name: 'Item', Group: 'List Content Types' },
+        { StringId: '0x0101009D1CB255DA76424F860D91F20E6C4118', Name: 'Site Page', Group: 'Document Content Types' },
+        { StringId: STUDY_RECORD_ID, Name: 'Study Record', Group: 'Study Content Types' },
+        { StringId: VISIT_RECORD_ID, Name: 'Visit Record', Group: 'Study Content Types' },
+        { StringId: '0x0100CCCC0000000040008000000000000003', Name: 'Consent Form', Group: 'Study Content Types' },
+        { StringId: '0x0100DDDD0000000040008000000000000004', Name: 'Policy Document', Group: 'Policy Content Types', ReadOnly: true }
+    ] } },
+    { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIST_ID + "'\\)/contenttypes$"), body: { value: [
+        { StringId: VISIT_RECORD_ID + '00EEEE0000000040008000000000000005', Name: 'Visit Record' }
+    ] } }
+];
+
+test('offers the site\'s own content types, all checked, and keeps the ones a chosen list or content type needs', async function({ page }) {
+    await openTools(page, { answerOverrides: CONTENT_TYPE_ANSWERS });
+    const boxes = page.locator('#sna-tools-contenttypes').getByRole('checkbox');
+    // SharePoint's own content types and the one from the content type hub aren't offered.
+    await expect(boxes).toHaveCount(3);
+    await expect(page.locator('#sna-tools-contenttypes label')).toHaveText(['Consent Form', 'Study Record', 'Visit Record']);
+    const consent = page.getByRole('checkbox', { name: 'Consent Form' });
+    const study = page.getByRole('checkbox', { name: 'Study Record' });
+    const visit = page.getByRole('checkbox', { name: 'Visit Record' });
+    for (const box of [consent, study, visit]) { await expect(box).toBeChecked(); }
+    await expect(consent).toBeEnabled();
+    await expect(visit).toBeDisabled();
+    await expect(visit).toHaveAccessibleDescription('A list you chose uses it.');
+    await expect(study).toBeDisabled();
+    await expect(study).toHaveAccessibleDescription('A content type you chose is based on it.');
+    await expectNoAxeViolations(page);
+
+    // Without Study Visits, Visit Record can be left out; Study Record stays while Visit Record is checked.
+    await page.getByRole('button', { name: 'Clear all' }).click();
+    await expect(visit).toBeEnabled();
+    await expect(visit).toHaveAccessibleDescription('');
+    await expect(study).toBeDisabled();
+    await visit.uncheck();
+    await expect(study).toBeEnabled();
+    await expect(study).toBeChecked();
+
+    // With the keyboard alone: Tab goes from the term sets to the first content type, and Space unchecks it.
+    await page.getByRole('checkbox', { name: 'Study Arms (2 terms)' }).focus();
+    await page.keyboard.press('Tab');
+    await expect(consent).toBeFocused();
+    await page.keyboard.press('Space');
+    await expect(consent).not.toBeChecked();
+
+    // Choosing Study Visits again checks Visit Record and Study Record and keeps them.
+    await page.getByRole('checkbox', { name: 'Study Visits', exact: true }).check();
+    await expect(visit).toBeChecked();
+    await expect(visit).toBeDisabled();
+    await expect(study).toBeDisabled();
+    await expect(consent).not.toBeChecked();
+    await expectNoAxeViolations(page);
+    // At 320 pixels wide too, without a sideways scroll bar.
+    await page.setViewportSize({ width: 320, height: 900 });
+    await expectNoAxeViolations(page);
+    expect(await page.evaluate(function() { return document.documentElement.scrollWidth; })).toBeLessThanOrEqual(320);
+
+    // A data dictionary file has no content types.
+    await page.getByRole('radio', { name: 'A data dictionary file' }).check();
+    await expect(page.locator('#sna-tools-contenttypes')).toHaveText('A data dictionary file doesn\'t include content types.');
+    await expect(boxes).toHaveCount(0);
+    await expectNoAxeViolations(page);
+    await page.getByRole('radio', { name: 'This site\'s report' }).check();
+    await expect(consent).not.toBeChecked();
 });
 
 test('turns on Site pages, Site Assets, and Agents and site skills, and leaves Permissions off', async function({ page }) {
