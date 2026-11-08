@@ -757,6 +757,15 @@ test('changes a subsite\'s site collection ID in a link in a web part item that 
     await expectResult(page, 'Welcome', 'Page', 'Copied');
 });
 
+test('keeps the site collection ID of a query to the parent site in a web part item that names the subsite', async function({ page }) {
+    const canvas = '<div>' + webPart('f92bf067-bc19-489e-a556-7fe95f508720', { webId: SOURCE_WEB_ID,
+        queryText: 'SiteId=' + SOURCE_SITE_ID + ' WebId=' + PARENT_WEB_ID }) + '</div>';
+    const saved = await copySubsiteHome(page, canvas);
+    expect(saved.CanvasContent1).toContain('SiteId=' + SOURCE_SITE_ID + ' WebId=' + PARENT_WEB_ID);
+    expect(saved.CanvasContent1).toContain('&quot;webId&quot;:&quot;' + DEST_WEB_ID + '&quot;');
+    await expectResult(page, 'Welcome', 'Page', 'Partly copied');
+});
+
 test('changes a subsite\'s site collection ID in a web part item that names its list in braces before it', async function({ page }) {
     const canvas = '<div>' + webPart('f92bf067-bc19-489e-a556-7fe95f508720', { webId: SOURCE_WEB_ID, selectedListId: '{' + LIST_ID + '}',
         siteId: SOURCE_SITE_ID }) + '</div>';
