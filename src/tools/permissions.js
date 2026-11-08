@@ -30,7 +30,9 @@ Notes: See README file for documentation and full license information.
          { type: 'permissionLevel', roleDefinitionId }            a permission level, by its destination ID
          { type: 'group', groupId }                               a SharePoint group, by its destination ID
          { type: 'groupMember', groupId, loginName }              a member of a destination group; loginName stays in memory
-         { type: 'permission', listId, principalId, roleDefinitionIds }  access on the site ('' listId) or a list
+         { type: 'permission', listId, principalId, roleDefinitionIds, keepNote }  access on the site ('' listId) or a
+                                                                  list; keepNote is the end of the note that stays
+                                                                  when the check finds a problem
          { type: 'ownPermissions', listId }                       a list or library that has its own permissions
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -905,13 +907,16 @@ async function snaToolsPermissionsCopyAssignment(ctx, scope, assignment) {
         note += ' Couldn\'t give ' + snaJoinWords(failed.concat(missing)) + '. Give ' + (failed.length + missing.length === 1 ? 'it' : 'them') +
             ' by hand in the destination.';
     }
+    // keep is the part of the note that the destination check keeps after a problem it finds (see verify.js).
+    var keep = '';
     if (snaToolsPermissionsIsEveryone(member.LoginName)) {
         result = 'partial';
-        note += ' This opens ' + scope.words + ' to your whole organization. Remove ' + snaToolsPermissionsDisplayName(member, 'it') +
+        keep = ' This opens ' + scope.words + ' to your whole organization. Remove ' + snaToolsPermissionsDisplayName(member, 'it') +
             ' from the permissions in the destination if only some people should have access.';
+        note += keep;
     }
     match.entry = snaToolsLog(kind, name, result, note, { verify: { type: 'permission', listId: scope.listId, principalId: principalId,
-        roleDefinitionIds: given.map(function(g) { return g.id; }) } });
+        roleDefinitionIds: given.map(function(g) { return g.id; }), keepNote: keep } });
     return failed.length > 0 || missing.length > 0;
 }
 
@@ -959,10 +964,18 @@ function snaToolsPermissionsLogOtherAccess(scope, destAssignments, skipId) {
         ' access. Remove it in the destination if ' + (one ? 'it shouldn\'t' : 'they shouldn\'t') + ' have access.');
 }
 
+// Adds a sentence to the note of a permission row. The destination check keeps it after a problem it finds, because
+// the sentence names access that the check doesn't look at (see verify.js).
+function snaToolsPermissionsAddNote(entry, text) {
+    entry.note += text;
+    if (entry.verify) { entry.verify.keepNote = (entry.verify.keepNote || '') + text; }
+}
+
 // Adds to the row of each person or group with access in this site the permission levels they also have in the
 // destination, read before the copy, that this site doesn't give them, such as Full Control that SharePoint keeps for
 // the owners group when a list gets its own permissions. Never removes that access, except that removeCallerExtra
-// (for a list) removes the extra levels of the person running the copy when they got every level this site gives them.
+// removes the extra levels of the person running the copy when they got every level this site gives them. Pass it
+// only for a list that used the site's permissions before the copy, so that SharePoint gave those levels.
 async function snaToolsPermissionsReportExtraLevels(ctx, scope, destAssignments, removeCallerExtra) {
     var callerId = snaToolsPermissionsInt(ctx.dest.currentUserId);
     var where = scope.listId ? ' on ' + scope.words : '';
@@ -994,26 +1007,28 @@ async function snaToolsPermissionsReportExtraLevels(ctx, scope, destAssignments,
                 }
             }
             if (removed.length > 0) {
-                entry.note += ' Removed ' + snaJoinWords(removed) + ', which SharePoint gave you when ' + scope.words + ' got its own ' +
-                    'permissions, because you don\'t have ' + (removed.length === 1 ? 'it' : 'them') + ' there in this site.';
+                snaToolsPermissionsAddNote(entry, ' Removed ' + snaJoinWords(removed) + ', which SharePoint gave you when ' + scope.words +
+                    ' got its own permissions, because you don\'t have ' + (removed.length === 1 ? 'it' : 'them') + ' there in this site.');
             }
             if (kept.length > 0) {
                 var oneKept = kept.length === 1;
                 if (entry.result === 'copied') { entry.result = 'partial'; }
-                entry.note += ' SharePoint gave you ' + snaJoinWords(kept) + ' when ' + scope.words + ' got its own permissions, and ' +
-                    'Sitenalyzer couldn\'t remove ' + (oneKept ? 'it' : 'them') + '. Remove ' + (oneKept ? 'it' : 'them') +
-                    ' in the destination if you shouldn\'t have ' + (oneKept ? 'it' : 'them') + '.';
+                snaToolsPermissionsAddNote(entry, ' SharePoint gave you ' + snaJoinWords(kept) + ' when ' + scope.words +
+                    ' got its own permissions, and Sitenalyzer couldn\'t remove ' + (oneKept ? 'it' : 'them') + '. Remove ' + (oneKept ? 'it' : 'them') +
+                    ' in the destination if you shouldn\'t have ' + (oneKept ? 'it' : 'them') + '.');
             }
             continue;
         }
+        var isPerson = !!ra.Member && ra.Member.PrincipalType === 1;
         if (entry.result === 'copied') { entry.result = 'partial'; }
-        entry.note += isCaller
+        snaToolsPermissionsAddNote(entry, isCaller
             ? ' In the destination, you also have ' + levelWords + where + ', which you don\'t have in this site. Sitenalyzer ' +
               'didn\'t remove ' + (one ? 'that level' : 'those levels') + '. Remove ' + (one ? 'it' : 'them') +
               ' in the destination if you shouldn\'t have ' + (one ? 'it' : 'them') + '.'
-            : ' In the destination, ' + snaToolsPermissionsDisplayName(ra.Member, 'this person or group') + ' also has ' + levelWords +
-              where + ', which it doesn\'t have in this site. Sitenalyzer didn\'t remove ' + (one ? 'that level' : 'those levels') +
-              '. Remove ' + (one ? 'it' : 'them') + ' in the destination if ' + (one ? 'it isn\'t' : 'they aren\'t') + ' needed.';
+            : ' In the destination, ' + snaToolsPermissionsDisplayName(ra.Member, isPerson ? 'this person' : 'this group') + ' also has ' +
+              levelWords + where + ', which ' + (isPerson ? 'they don\'t' : 'it doesn\'t') + ' have in this site. Sitenalyzer didn\'t ' +
+              'remove ' + (one ? 'that level' : 'those levels') + '. Remove ' + (one ? 'it' : 'them') + ' in the destination if ' +
+              (one ? 'it isn\'t' : 'they aren\'t') + ' needed.');
     }
 }
 
@@ -1051,8 +1066,10 @@ async function snaToolsPermissionsCopySiteAccess(ctx) {
 }
 
 // Gives each copied list or library with its own permissions the same permissions as in this site, then reports
-// access that SharePoint kept on it and that this site doesn't give. A list whose access in this site couldn't be read
-// has no entry in ctx.source.listAssignments and keeps the site's permissions.
+// access that the destination list has and that this site doesn't give. A list whose access in this site couldn't be
+// read has no entry in ctx.source.listAssignments and keeps the site's permissions. Access is removed only from the
+// person running the copy, and only on a list that used the site's permissions before the copy, because then
+// SharePoint gave that access when the copy gave the list its own permissions.
 async function snaToolsPermissionsCopyListAccess(ctx) {
     var lists = ctx.plan.lists;
     for (var i = 0; i < lists.length; i++) {
@@ -1065,22 +1082,44 @@ async function snaToolsPermissionsCopyListAccess(ctx) {
         var name = 'Permissions of ' + listName;
         var apiBase = snaToolsPermissionsListBase(destListId);
         snaToolsProgress('Copying permissions: ' + snaMaskText(listName) + '.');
-        var entry;
+        // hadOwn is true when the destination list already had its own permissions, such as a list the destination
+        // already had that the copy used, false when it used the site's, and null when that couldn't be read.
+        var hadOwn = null;
         try {
-            // (false,true) doesn't copy the site's assignments, so the new list starts with only what SharePoint keeps
-            // for the person running the copy. It also clears its items' own permissions, which is safe because the
-            // copy brings no items.
-            await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(false,true)', { method: 'POST' });
-            entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'Gave it its own permissions, as in this site.',
-                { verify: { type: 'ownPermissions', listId: destListId } });
+            var destList = await snaToolsRead(ctx.dest.siteUrl, apiBase + '?$select=Id,HasUniqueRoleAssignments');
+            if (destList && typeof destList.HasUniqueRoleAssignments === 'boolean') { hadOwn = destList.HasUniqueRoleAssignments; }
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
-            snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'failed', 'Sitenalyzer couldn\'t give it its own permissions, so it uses the ' +
-                'site\'s permissions in the destination. ' + snaToolsPermissionsErrorNote(err));
-            continue;
         }
-        // SharePoint keeps one assignment that gives the person running the copy access: their own, or that of a group
-        // they are in, such as the destination's owners group. destAssignments is null when it couldn't be read.
+        var entry;
+        if (hadOwn === true) {
+            // Giving it its own permissions again would change nothing but could clear its items' own permissions.
+            entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'It already had its own permissions in the destination, so ' +
+                'Sitenalyzer added the access it has in this site and didn\'t remove any.', { verify: { type: 'ownPermissions', listId: destListId } });
+        } else {
+            try {
+                // (false,false) doesn't copy the site's assignments, so the list starts with only what SharePoint keeps
+                // for the person running the copy, and keeps the own permissions of any items a list the destination
+                // already had holds.
+                await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(false,false)', { method: 'POST' });
+                entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'Gave it its own permissions, as in this site.',
+                    { verify: { type: 'ownPermissions', listId: destListId } });
+            } catch (err) {
+                if (snaToolsIsCancelled(err)) { throw err; }
+                snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'failed', 'Sitenalyzer couldn\'t give it its own permissions, so it uses the ' +
+                    'site\'s permissions in the destination. ' + snaToolsPermissionsErrorNote(err));
+                continue;
+            }
+        }
+        if (entry && hadOwn === null) {
+            entry.result = 'partial';
+            entry.note += ' Sitenalyzer couldn\'t check whether it already had its own permissions in the destination, so it didn\'t ' +
+                'remove any access from it. Open its permissions in the destination and remove anyone who doesn\'t have access to it ' +
+                'in this site.';
+        }
+        // When the copy gave the list its own permissions, SharePoint keeps one assignment that gives the person running
+        // the copy access: their own, or that of a group they are in, such as the destination's owners group.
+        // destAssignments is null when it couldn't be read.
         var destAssignments = null;
         try {
             destAssignments = await snaToolsPermissionsReadAssignments(ctx.dest.siteUrl, apiBase);
@@ -1096,17 +1135,22 @@ async function snaToolsPermissionsCopyListAccess(ctx) {
                 (one ? 'it has' : 'they have') + ' in this site. Give ' + (one ? 'it' : 'them') + ' access by hand in the destination.';
         }
         if (!destAssignments) {
-            if (entry) {
+            if (entry && hadOwn === false) {
                 entry.result = 'partial';
                 entry.note += ' Sitenalyzer couldn\'t check who else SharePoint gave access to it, such as you or a group you\'re ' +
                     'in. In the destination, open its permissions and remove anyone who doesn\'t have access to it in this site.';
+            } else if (entry && hadOwn === true) {
+                entry.result = 'partial';
+                entry.note += ' Sitenalyzer couldn\'t check who else has access to it in the destination. Open its permissions there ' +
+                    'and remove anyone who doesn\'t have access to it in this site.';
             }
             continue;
         }
         var callerId = snaToolsPermissionsInt(ctx.dest.currentUserId);
-        snaToolsPermissionsLogOtherAccess(scope, destAssignments, callerId);
-        await snaToolsPermissionsReportExtraLevels(ctx, scope, destAssignments, true);
-        if (!callerId || !scope.existing[callerId] || scope.matched[callerId]) { continue; }
+        var removeCallerAccess = hadOwn === false;
+        snaToolsPermissionsLogOtherAccess(scope, destAssignments, removeCallerAccess ? callerId : 0);
+        await snaToolsPermissionsReportExtraLevels(ctx, scope, destAssignments, removeCallerAccess);
+        if (!removeCallerAccess || !callerId || !scope.existing[callerId] || scope.matched[callerId]) { continue; }
         try {
             await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/roleassignments/getbyprincipalid(' + callerId + ')', { method: 'DELETE' });
             if (entry) { entry.note += ' Removed the access SharePoint gave you when it got its own permissions, because you don\'t have it in this site.'; }

@@ -932,7 +932,8 @@ function snaToolsCancel() {
 
 // Adds a destination check for one type of detail.verify, such as 'group'. checker(dest, entries, cache) reads the
 // destination and sets entry.verify.found (true or false) and, for an item that is there but not as asked,
-// entry.verify.problem (a note). cache is an object shared by every check of one copy. See verify.js.
+// entry.verify.problem (a note). When a check sets a problem, the note becomes that problem followed by
+// entry.verify.keepNote, if the copy set one. cache is an object shared by every check of one copy. See verify.js.
 function snaToolsAddVerifyCheck(type, checker) {
     _snaToolsVerifyChecks[type] = checker;
 }

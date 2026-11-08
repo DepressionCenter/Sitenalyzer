@@ -522,7 +522,7 @@ test('gives a list its own permissions as in this site, and removes the access S
     const team = destGroup(record, 'Test Study Team');
     const coordinatorLevel = record.destination.roleDefinitions.filter(function(d) { return d.Name === 'Study Coordinator'; })[0];
     expect(listChanges).toEqual([
-        '/breakroleinheritance(false,true)',
+        '/breakroleinheritance(false,false)',
         '/roleassignments/addroleassignment(principalid=3,roledefid=' + ROLE_IDS.fullControl + ')',
         '/roleassignments/addroleassignment(principalid=' + team.Id + ',roledefid=' + ROLE_IDS.contribute + ')',
         '/roleassignments/addroleassignment(principalid=' + team.Id + ',roledefid=' + coordinatorLevel.Id + ')',
@@ -687,6 +687,101 @@ test('reports the level SharePoint gave the person running the copy on a list wh
     const callerRow = row(rows, 'Test User on Study Visits', 'Permission');
     expect(callerRow.result).toBe('Failed');
     expect(callerRow.note).toMatch(/ In the destination, you also have Full Control on Study Visits, which you don't have in this site\. Sitenalyzer didn't remove that level\. Remove it in the destination if you shouldn't have it\.$/);
+});
+
+// Adds Study Visits to the destination before the copy, with its own permissions: the person running the copy has
+// Full Control on it, and each { principalId, roleIds } in more has access too. The copy then uses this list.
+function addStudyVisitsWithOwnPermissions(model, more) {
+    seedPermissions(model);
+    const list = model.addList('Study Visits', 100, 'StudyVisits');
+    model.listPermissions[list.Id] = { assignments: [{ principalId: model.currentUser.Id, roleIds: [ROLE_IDS.fullControl] }].concat(more || []) };
+}
+
+test('keeps the access the person running the copy already had on a list the destination already gave its own permissions', async function({ page }, testInfo) {
+    const caller = { Id: 36, Title: 'Test User', LoginName: CALLER_LOGIN, PrincipalType: 1 };
+    const record = await openTools(page, { source: { studyVisitsAccess: [{ Member: caller, RoleDefinitionBindings: [ROLE.read] }] },
+        destination: { setup: function(model) { addStudyVisitsWithOwnPermissions(model); } } });
+    await copyStudyVisits(page);
+    const list = copiedList(record);
+    const callerId = record.destination.currentUser.Id;
+    expect(listAssignments(record, list.Id)).toEqual({ [callerId]: [ROLE_IDS.fullControl, ROLE_IDS.read].sort() });
+    expect(destinationChanges(record).filter(function(c) { return /breakroleinheritance|removeroleassignment|getbyprincipalid/.test(c.path); })).toEqual([]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Test User on Study Visits', 'Permission')).toEqual({ name: 'Test User on Study Visits', kind: 'Permission', result: 'Partly copied',
+        note: 'Gave access with Read. In the destination, you also have Full Control on Study Visits, which you don\'t have in this site. ' +
+            'Sitenalyzer didn\'t remove that level. Remove it in the destination if you shouldn\'t have it.' });
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Copied',
+        note: 'It already had its own permissions in the destination, so Sitenalyzer added the access it has in this site and didn\'t remove any.' });
+});
+
+test('reports the person running the copy as other access on a list the destination already gave its own permissions', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { setup: function(model) { addStudyVisitsWithOwnPermissions(model); } } });
+    await copyStudyVisits(page);
+    const callerId = record.destination.currentUser.Id;
+    expect(listAssignments(record, copiedList(record).Id)[callerId]).toEqual([ROLE_IDS.fullControl]);
+    expect(destinationChanges(record).filter(function(c) { return /breakroleinheritance|removeroleassignment|getbyprincipalid/.test(c.path); })).toEqual([]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Other access to Study Visits', 'Permission')).toEqual({ name: 'Other access to Study Visits', kind: 'Permission', result: 'Skipped',
+        note: 'In the destination, 1 person or group has access to Study Visits that it doesn\'t have in this site: Test User. Sitenalyzer ' +
+            'didn\'t remove its access. Remove it in the destination if it shouldn\'t have access.' });
+    expect(row(rows, 'Permissions of Study Visits', 'Permission').note).not.toMatch(/Removed/);
+});
+
+test('removes no access from a list when it can\'t check whether the list already had its own permissions', async function({ page }, testInfo) {
+    const caller = { Id: 36, Title: 'Test User', LoginName: CALLER_LOGIN, PrincipalType: 1 };
+    const record = await openTools(page, { source: { studyVisitsAccess: [{ Member: caller, RoleDefinitionBindings: [ROLE.read] }] },
+        destination: { listUniqueReadRefused: true } });
+    await copyStudyVisits(page);
+    const list = copiedList(record);
+    const callerId = record.destination.currentUser.Id;
+    // The new list still gets its own permissions; only the removals are left out.
+    expect(listAssignments(record, list.Id)).toEqual({ [callerId]: [ROLE_IDS.fullControl, ROLE_IDS.read].sort() });
+    expect(destinationChanges(record).filter(function(c) { return /removeroleassignment|getbyprincipalid/.test(c.path); })).toEqual([]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Test User on Study Visits', 'Permission').note).toBe('Gave access with Read. In the destination, you also have Full Control on ' +
+        'Study Visits, which you don\'t have in this site. Sitenalyzer didn\'t remove that level. Remove it in the destination if you shouldn\'t have it.');
+    // The destination check can't read the list either, so it adds its own sentence at the end.
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Partly copied',
+        note: 'Gave it its own permissions, as in this site. Sitenalyzer couldn\'t check whether it already had its own permissions in the ' +
+            'destination, so it didn\'t remove any access from it. Open its permissions in the destination and remove anyone who doesn\'t ' +
+            'have access to it in this site. Sitenalyzer couldn\'t read the destination to check it, so look for it there.' });
+});
+
+test('calls a person "they" when it reports a level they have only in the destination', async function({ page }, testInfo) {
+    const coordinator = { Id: 33, Title: 'Test Coordinator', LoginName: COORDINATOR_LOGIN, PrincipalType: 1 };
+    const record = await openTools(page, { source: { studyVisitsAccess: [{ Member: coordinator, RoleDefinitionBindings: [ROLE.read] }] },
+        destination: { setup: function(model) {
+            seedPermissions(model);
+            model.siteUsers.push({ Id: 70, Title: 'Test Coordinator', LoginName: COORDINATOR_LOGIN, PrincipalType: 1 });
+            addStudyVisitsWithOwnPermissions(model, [{ principalId: 70, roleIds: [ROLE_IDS.edit] }]);
+        } } });
+    await copyStudyVisits(page);
+    expect(listAssignments(record, copiedList(record).Id)[70]).toEqual([ROLE_IDS.edit, ROLE_IDS.read].sort());
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Test Coordinator on Study Visits', 'Permission')).toEqual({ name: 'Test Coordinator on Study Visits', kind: 'Permission',
+        result: 'Partly copied', note: 'Gave access with Read. In the destination, Test Coordinator also has Edit on Study Visits, which they ' +
+            'don\'t have in this site. Sitenalyzer didn\'t remove that level. Remove it in the destination if it isn\'t needed.' });
+});
+
+test('keeps the notes about extra levels and the whole organization when the destination check finds a missing level', async function({ page }, testInfo) {
+    // The destination answers that each new level was given but doesn't keep it, so the check finds it missing.
+    const record = await openTools(page, { destination: { addNotSaved: true, setup: function(model) {
+        seedPermissions(model);
+        model.siteUsers.push({ Id: 71, Title: 'Everyone except external users', LoginName: EVERYONE_EXCEPT_EXTERNAL, PrincipalType: 4 });
+        model.roleAssignments.push({ principalId: 71, roleIds: [ROLE_IDS.edit] });
+    } } });
+    await copyStudyVisits(page);
+    const rows = await savedResults(page, testInfo);
+    const problem = 'Gave access, but the destination doesn\'t show every permission level Sitenalyzer gave. Check this person or group\'s ' +
+        'permissions in the destination.';
+    expect(row(rows, 'Test Site Members on the site', 'Permission')).toEqual({ name: 'Test Site Members on the site', kind: 'Permission',
+        result: 'Partly copied', note: problem + ' In the destination, Study Two Members also has Edit, which it doesn\'t have in this site. ' +
+            'Sitenalyzer didn\'t remove that level. Remove it in the destination if it isn\'t needed.' });
+    expect(row(rows, 'Everyone except external users on the site', 'Permission')).toEqual({ name: 'Everyone except external users on the site',
+        kind: 'Permission', result: 'Partly copied', note: problem + ' This opens the site to your whole organization. Remove Everyone except ' +
+            'external users from the permissions in the destination if only some people should have access. In the destination, Everyone ' +
+            'except external users also has Edit, which it doesn\'t have in this site. Sitenalyzer didn\'t remove that level. Remove it in ' +
+            'the destination if it isn\'t needed.' });
 });
 
 // ### When Permissions Aren't Copied ###

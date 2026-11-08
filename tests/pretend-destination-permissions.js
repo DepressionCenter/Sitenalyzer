@@ -26,6 +26,9 @@ Notes: See README file for documentation and full license information.
                              has access through the group.
          listAccessRefused   Reading who has access to a list fails.
          listAddRefused      Giving a person or group access to a list fails.
+         listUniqueReadRefused Reading whether a list has its own permissions fails.
+         addNotSaved         Giving a person or group access to the site or a list answers that it worked, but the
+                             destination doesn't keep that access.
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -178,6 +181,7 @@ function addAssignment(ctx, listId, principalId, roleId) {
     if (!findGroup(model, principalId) && !model.siteUsers.some(function(u) { return u.Id === principalId; })) {
         return ctx.spError(404, 'Cannot find the user or group.');
     }
+    if (ctx.options.addNotSaved) { return ctx.reply(204, null); }
     const assignments = assignmentsOf(model, listId);
     let assignment = assignments.filter(function(a) { return a.principalId === principalId; })[0];
     if (!assignment) { assignment = { principalId: principalId, roleIds: [] }; assignments.push(assignment); }
@@ -369,9 +373,11 @@ addDestinationHandlers([
         model.listPermissions[list.Id].assignments = model.listPermissions[list.Id].assignments.filter(function(a) { return a.principalId !== Number(ctx.match[2]); });
         return ctx.reply(204, null);
     } },
-    // Whether a list has its own permissions, for the destination check. Other reads of a list get the standard answer.
+    // Whether a list has its own permissions, for the copy and the destination check. Other reads of a list get the
+    // standard answer.
     { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)$/, answer: function(ctx) {
         if ((ctx.url.searchParams.get('$select') || '') !== 'Id,HasUniqueRoleAssignments') { return undefined; }
+        if (ctx.options.listUniqueReadRefused) { return ctx.spError(403, 'Access denied.'); }
         const model = seedPermissions(ctx.model);
         const list = ctx.findList(ctx.match[1]);
         return list ? { Id: list.Id, HasUniqueRoleAssignments: !!model.listPermissions[list.Id] } : ctx.spError(404, 'List does not exist.');

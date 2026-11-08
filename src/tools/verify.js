@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 verify.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: After a copy, reads the destination back and checks that each item the copy logged as copied is there.
          An item that isn't there is changed to Failed, and one that is there but not as asked, such as with another
          name, to Partly copied. Adds one summary row for each kind of item it checked. Reads only.
@@ -17,7 +17,8 @@ Notes: See README file for documentation and full license information.
          { type: 'termSet', groupId, setId, termCount }       a term set in the destination term group, with its terms
          { type: 'file', serverRelativeUrl }                  a file or page, by its path in the destination
        Another file adds a type with snaToolsAddVerifyCheck(type, checker) at its top level (see core.js), such as
-       'group' in permissions.js.
+       'group' in permissions.js. Any type can also have keepNote: text that stays at the end of the note when a check
+       finds a problem and the note becomes that problem.
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -227,7 +228,7 @@ async function snaToolsVerifyCopy(plan, dest, maps) {
             counts.found++;
             if (entry.verify.problem) {
                 entry.result = 'partial';
-                entry.note = entry.verify.problem;
+                entry.note = entry.verify.problem + (entry.verify.keepNote || '');
             }
             if (entry.result === 'partial') { counts.partial++; }
         } else if (entry.verify.found === false) {
