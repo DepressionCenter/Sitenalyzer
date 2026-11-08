@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/architecture.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: How Sitenalyzer's files fit together, how it starts on a SharePoint page, and why it is built this way.
 Notes: See README file for documentation and full license information.
 
@@ -211,7 +211,7 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 
 ### Tools
 
-Tools is a section of the report screen, at `#sna/tools`. Its one part so far is **Copy site structure**, which copies the structure of this site into another site on the same host where the person is a site collection administrator. It copies lists and libraries without their items or files, and term sets of the site collection's own term group. Some parts of the copy are not built yet. Those parts show **Skipped** in the results, with a note saying so.
+Tools is a section of the report screen, at `#sna/tools`. Its one part so far is **Copy site structure**, which copies the structure of this site into another site on the same host where the person is a site collection administrator. It copies lists and libraries without their items or files, term sets of the site collection's own term group, Site Assets, agents and site skills, and site pages. When the **Permissions** switch is on, it also copies permission levels, groups, and who has access. The copy can also start from a data dictionary file instead of this site.
 
 #### Files in src/tools
 
@@ -221,11 +221,11 @@ The Tools code is kept in its own files in `src/tools/`, one file for each part 
 | --- | --- |
 | `core.js` | Shared helpers: the write helper, reads that check their addresses, CSOM requests, XML and ID helpers, the results log, the progress line, and stopping a copy. |
 | `plan.js` | Builds the copy plan from the report, reading from the site what the report doesn't hold. |
-| `workbook.js` | Builds the same plan from a data dictionary file. Not built yet. |
-| `taxonomy.js` | Copies term sets and terms. Not built yet. |
-| `lists.js` | Copies lists and libraries, site columns, content types, columns, views, and form settings. So far it creates the lists and libraries with their new names, addresses, and descriptions. |
-| `files.js` | Copies Site Assets, agents and site skills, and site pages. Not built yet. |
-| `permissions.js` | Copies permission levels, groups, and permissions, only when the **Permissions** switch is on. Not built yet. |
+| `workbook.js` | Builds the same plan from a data dictionary file. |
+| `taxonomy.js` | Copies term sets and terms. |
+| `lists.js` | Copies lists and libraries, site columns, content types, columns, views, and form settings. |
+| `files.js` | Copies Site Assets, agents and site skills, and site pages. |
+| `permissions.js` | Copies permission levels, groups, and permissions, only when the **Permissions** switch is on. |
 | `verify.js` | Reads the destination after the copy and corrects the results of items it can't find. |
 | `runner.js` | Checks the destination and runs the copy's steps in order. |
 | `ui.js` | Draws the section and handles its buttons, boxes, and switches. |

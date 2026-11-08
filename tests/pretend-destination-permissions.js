@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-destination-permissions.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Answers of the pretend destination site (see pretend-destination.js) for the permissions part of Copy site
          structure: permission levels, SharePoint groups with their owners and members, the people the site knows,
          and who has access to the site and to each list. The answers change the same in-memory model that the
@@ -345,6 +345,21 @@ addDestinationHandlers([
         const list = ctx.findList(ctx.match[1]);
         if (ctx.options.listAddRefused) { return ctx.spError(403, 'Access denied.'); }
         return addAssignment(ctx, list ? list.Id : ctx.match[1], Number(ctx.match[2]), Number(ctx.match[3]));
+    } },
+    // Takes one permission level away from a person or group on a list, the way removeroleassignment does. SharePoint
+    // removes the assignment when no level is left.
+    { method: 'POST', pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/roleassignments\/removeroleassignment\(principalid=(\d+),roledefid=(\d+)\)$/, answer: function(ctx) {
+        const model = seedPermissions(ctx.model);
+        const list = ctx.findList(ctx.match[1]);
+        if (!list || !model.listPermissions[list.Id]) { return ctx.spError(404, 'List does not exist or uses the site\'s permissions.'); }
+        const principalId = Number(ctx.match[2]);
+        const roleId = Number(ctx.match[3]);
+        const permissions = model.listPermissions[list.Id];
+        permissions.assignments.forEach(function(a) {
+            if (a.principalId === principalId) { a.roleIds = a.roleIds.filter(function(id) { return id !== roleId; }); }
+        });
+        permissions.assignments = permissions.assignments.filter(function(a) { return a.roleIds.length > 0; });
+        return ctx.reply(204, null);
     } },
     { method: 'POST', pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)\/roleassignments\/getbyprincipalid\((\d+)\)$/, answer: function(ctx) {
         if (ctx.xHttpMethod !== 'DELETE') { return undefined; }
