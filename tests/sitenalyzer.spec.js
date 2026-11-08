@@ -3048,6 +3048,40 @@ test('hides an email address in a site page file name in the page address, on sc
     await expect(printedPages).not.toContainText('%40');
 });
 
+test('does not find a page or folder by a hidden email address in its name with a table filter box', async function({ page }) {
+    const pages = Array.from({ length: 11 }, function(_, index) {
+        const fileName = index === 0 ? 'pat.example@example.org.aspx' : 'Page ' + String(index).padStart(2, '0') + '.aspx';
+        return { Id: index + 1, Title: index === 0 ? 'Contact page' : 'Page ' + index, FileLeafRef: fileName,
+            FileRef: SITE_PATH + '/SitePages/' + fileName, FSObjType: 0, Modified: '2026-09-01T10:00:00Z' };
+    });
+    const folders = Array.from({ length: 11 }, function(_, index) {
+        const name = index === 0 ? 'pat.example@example.org' : 'Folder ' + String(index).padStart(2, '0');
+        return { Name: name, UniqueId: 'cccccccc-0000-4000-8000-0000000001' + String(index).padStart(2, '0'), ItemCount: 1,
+            ServerRelativeUrl: SITE_PATH + '/Shared Documents/' + name };
+    });
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: function(url) {
+            return url.searchParams.get('$filter') ? undefined : { value: pages };
+        } },
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIBRARY_ID + "'\\)/RootFolder/Folders$"), body: { value: folders } }
+    ] });
+    await extractSiteInformation(page);
+
+    // The encoded address holds the email as pat.example%40example.org, so it must be compared as people read it.
+    const pagesSection = await openSitePages(page);
+    await pagesSection.getByRole('searchbox', { name: 'Filter pages' }).fill('pat.example');
+    await expect(pagesSection.locator('.sna-table-count')).toHaveText('Showing 0 of 11 pages.');
+
+    const detail = await openListDetail(page, 'Documents', 'Folders');
+    await detail.getByRole('searchbox', { name: 'Filter folders' }).fill('pat.example');
+    await expect(detail.locator('.sna-table-count')).toHaveText('Showing 0 of 11 folders.');
+
+    // With Show hidden values on, the same text finds the folder.
+    await page.getByRole('switch', { name: 'Show hidden values' }).check();
+    await detail.getByRole('searchbox', { name: 'Filter folders' }).fill('pat.example');
+    await expect(detail.locator('.sna-table-count')).toHaveText('Showing 1 of 11 folders.');
+});
+
 // Answers the site groups request in pages, as SharePoint does with $top and $skip. Group IDs start at 1000.
 // failAfter makes every request that skips that many groups or more fail.
 function pagedSiteGroups(titles, failAfter) {

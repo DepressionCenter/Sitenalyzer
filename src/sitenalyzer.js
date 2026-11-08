@@ -689,9 +689,10 @@ function snaColumnTermSetHtml(row) {
 
 // Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
 // compared as they are shown, so a hidden value can't be found by typing it. personFields lists the fields that hold
-// people's and groups' names, which are shown as they are, so they are compared as they are. decodeFileUrls compares
-// agent and site skill addresses as decoded display text, so encoded spaces cannot interfere with hiding values.
-function snaApplyTableFilter(table, text, personFields, decodeFileUrls) {
+// people's and groups' names, which are shown as they are, so they are compared as they are. Addresses, in fields
+// whose names end in url or Url, are compared as decoded text, the way people read them, because an encoded character
+// such as %40 for @ would hide an email address in a file name from the check for hidden values.
+function snaApplyTableFilter(table, text, personFields) {
   var val = String(text || '').trim().toLowerCase();
   if (!val) { table.clearFilter(); return; }
   var asShown = personFields || [];
@@ -700,7 +701,7 @@ function snaApplyTableFilter(table, text, personFields, decodeFileUrls) {
     for (var k = 0; k < keys.length; k++) {
       var v = data[keys[k]];
       if (!v || typeof v === 'object') { continue; }
-      if (decodeFileUrls && keys[k] === 'url') { v = snaFileAddressText(v); }
+      if (/url$/i.test(keys[k])) { v = snaFileAddressText(v); }
       var shown = asShown.indexOf(keys[k]) > -1 ? String(v) : snaMaskText(v);
       if (shown.toLowerCase().indexOf(val) > -1) { return true; }
     }
@@ -872,7 +873,7 @@ function initSnaTabulators() {
       if (filterInput) {
         var saved = _snaTableFilters[tbl.id] || '';
         filterInput.value = saved;
-        if (saved) { snaApplyTableFilter(table, saved, personFields, tbl.type === 'agents' || tbl.type === 'skills'); } else { updateCount(total); }
+        if (saved) { snaApplyTableFilter(table, saved, personFields); } else { updateCount(total); }
       }
       if (paged) { snaMarkCurrentPage(pagesEl); }
       // A table in a column the browser has only just laid out can measure its width too early, so it redraws once.
@@ -885,7 +886,7 @@ function initSnaTabulators() {
     if (filterInput) {
       filterInput.addEventListener('input', function() {
         _snaTableFilters[tbl.id] = filterInput.value;
-        snaApplyTableFilter(table, filterInput.value, personFields, tbl.type === 'agents' || tbl.type === 'skills');
+        snaApplyTableFilter(table, filterInput.value, personFields);
         // Tabulator keeps the open page number when the filter changes, so the matches start on the first page.
         if (paged) { table.setPage(1); }
       });
