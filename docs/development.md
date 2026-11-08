@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -157,6 +157,7 @@ The tests in `tests/tools-integration.spec.js` check that:
 - The results table has the expected row for each item, and the check afterwards (`verify.js`) finds every item. When the destination doesn't have an item afterwards, the check marks it as **Failed**.
 - With Permissions off, the copy sends no permission request.
 - A data dictionary file saved from the pretend site copies its lists, columns, and term set in the same order, and warns about a lookup to a list the person didn't choose.
+- `tests/tools-site.spec.js` checks the **Navigation** and **Site look** parts. The left menu is copied in order with its labels, hidden links, and audiences, links to this site point at the destination while links to other sites stay the same, and a second copy adds no link twice. A classic site's top menu is copied, a hub's menu is reported, and a refused footer is reported. The theme, logo, header, and footer are copied, a group site's picture is changed, refusals are reported with what to do, and both switches have the right defaults, are disabled for a data dictionary file, work with the keyboard, and pass axe. `tests/pretend-destination-site.js` answers these parts for the destination, and answers the source site's reads of its menus and look from the destination option `sourceSite`.
 
 The pretend site is in `tests/pretend-sharepoint.js`. All of its names, addresses, and IDs are made up. `openPretendSite(page, options)` takes these options:
 

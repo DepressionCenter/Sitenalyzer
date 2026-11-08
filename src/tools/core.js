@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 core.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Shared helpers for the Tools section: the one helper that writes to a site, reads that check their
          addresses first, CSOM requests, XML and ID helpers, the link rewrite that points links and IDs of the source
          at the destination (snaToolsRewriteSourceLinks), the results log, the progress line, and stopping a copy.
@@ -34,7 +34,7 @@ var SNA_TOOLS_KINDS = {
     list: 'List', library: 'Library', column: 'Column', view: 'View', contentType: 'Content type',
     termSet: 'Term set', term: 'Term', siteAssetsFile: 'Site Assets file', page: 'Page', agent: 'Agent',
     siteSkill: 'Site skill', permissionLevel: 'Permission level', group: 'Group', groupMember: 'Group member',
-    permission: 'Permission'
+    permission: 'Permission', menuLink: 'Menu link', siteLookSetting: 'Site look setting'
 };
 
 // Each kind in a sentence, for one item and for several, such as "Found 2 of 3 columns in the destination."
@@ -44,7 +44,8 @@ var SNA_TOOLS_KIND_WORDS = {
     'Term': ['term', 'terms'], 'Site Assets file': ['Site Assets file', 'Site Assets files'], 'Page': ['page', 'pages'],
     'Agent': ['agent', 'agents'], 'Site skill': ['site skill', 'site skills'],
     'Permission level': ['permission level', 'permission levels'], 'Group': ['group', 'groups'],
-    'Group member': ['group member', 'group members'], 'Permission': ['permission', 'permissions']
+    'Group member': ['group member', 'group members'], 'Permission': ['permission', 'permissions'],
+    'Menu link': ['menu link', 'menu links'], 'Site look setting': ['site look setting', 'site look settings']
 };
 
 // Results an item can have, with the words the results table and workbook show for each.

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Browser tests for the Tools section and its Copy site structure screen. Each test opens the built app from
          dist/ on the pretend SharePoint site (see pretend-sharepoint.js), and most add the pretend destination site
          (see pretend-destination.js), so a copy runs against an in-memory model of the destination.
@@ -144,7 +144,7 @@ async function expectNoAxeViolations(page) {
 }
 
 // Runs a copy of Study Visits only, accepting the confirmation, and waits for the Results heading to get focus.
-// With options.filesOff, Site pages, Site Assets, and Agents and site skills are turned off first.
+// With options.filesOff, Site pages, Site Assets, Agents and site skills, and Navigation are turned off first.
 async function copyStudyVisits(page, messages, options) {
     acceptDialogs(page, messages);
     await checkDestination(page, DEST_URL);
@@ -153,6 +153,7 @@ async function copyStudyVisits(page, messages, options) {
         await page.getByRole('switch', { name: 'Site pages' }).uncheck();
         await page.getByRole('switch', { name: 'Site Assets' }).uncheck();
         await page.getByRole('switch', { name: 'Agents and site skills' }).uncheck();
+        await page.getByRole('switch', { name: 'Navigation' }).uncheck();
     }
     await page.getByRole('button', { name: 'Copy to destination' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });

@@ -3,9 +3,9 @@ This file is part of Sitenalyzer
 tools-integration.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Browser tests for a whole Copy site structure run, with every step working together: term sets, lists and
-         their columns and views, Site Assets, an agent, a site skill, a site page, and permissions. They check the
+         their columns and views, Site Assets, an agent, a site skill, a site page, the left menu, and permissions. They check the
          order of the changes the destination gets, the results table, and the check of the destination afterwards
          (verify.js). One test copies with Permissions off, and one copies from a data dictionary file saved from the
          pretend site. The source site's extra answers are here, through answerOverrides; the destination's answers are
@@ -34,6 +34,7 @@ const { test, expect } = require('@playwright/test');
 const { openPretendSite, SITE_URL, SITE_PATH, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, AGENT_ASSETS_ID, agentItems, skillItems,
     TAXONOMY_HIDDEN_LIST_ID, DEST_URL, DEST_PATH } = require('./pretend-sharepoint');
 const { DEST_WEB_ID, DEST_SITE_ID } = require('./pretend-destination');
+const { menuTree } = require('./pretend-destination-site');
 
 // The same SheetJS copy that site owners upload, used to read saved workbooks.
 const XLSX = require(path.join(DIST_DIR, 'SiteAssets', 'scripts', 'xlsx.full.min.js'));
@@ -265,11 +266,23 @@ function sourceAnswers() {
 
 // Opens the pretend site with the source above and a destination, reads the site, and opens Tools. Returns the record.
 async function openTools(page, destinationOptions) {
-    const record = await openPretendSite(page, { destination: destinationOptions || true, extraLists: [STUDY_ARMS_LIST], answerOverrides: sourceAnswers() });
+    const destination = Object.assign({ sourceSite: { quickLaunch: LEFT_MENU } }, destinationOptions || {});
+    const record = await openPretendSite(page, { destination: destination, extraLists: [STUDY_ARMS_LIST], answerOverrides: sourceAnswers() });
     await page.getByRole('button', { name: 'Extract site information' }).click();
     await expect(page.locator('#sna-site-header h1')).toBeVisible();
     return record;
 }
+
+// The source site's left menu: its home page, Study Visits, the page, and a link outside SharePoint.
+const LEFT_MENU = [
+    { title: 'Home', url: SITE_PATH },
+    { title: 'Study Visits', url: SITE_PATH + '/Lists/StudyVisits/AllItems.aspx' },
+    { title: 'Welcome', url: SITE_URL + '/SitePages/Home.aspx' },
+    { title: 'Contoso Help', url: 'https://example.org/help' }
+];
+
+// The text Copy to destination shows before every copy with Navigation on, after the question.
+const NAVIGATION_WARNING = '\n\nBefore you copy:\n- Navigation replaces the links in the destination\'s menus with this site\'s links.';
 
 // Opens Tools from the section navigation.
 async function gotoTools(page) {
@@ -390,7 +403,7 @@ test('copies a whole site in an order where each step finds what it uses, and ch
     const record = await openTools(page);
     await gotoTools(page);
     const messages = await copyBothLists(page, true);
-    expect(messages).toEqual(['Copy 2 lists, 1 term set, site pages, Site Assets, agents and site skills, and permissions to Study Two?']);
+    expect(messages).toEqual(['Copy 2 lists, 1 term set, site pages, Site Assets, agents and site skills, navigation, and permissions to Study Two?' + NAVIGATION_WARNING]);
 
     // ### The order of the changes ###
     const writes = destinationWrites(record);
@@ -405,6 +418,7 @@ test('copies a whole site in an order where each step finds what it uses, and ch
     const formattedViewMade = firstIndex(writes, 'Upcoming Visits created', function(w) { return /\/views\/add$/.test(w.path) && /Upcoming Visits/.test(w.body); });
     const siteAssetsFileCopied = firstIndex(writes, 'study-logo.png copied', function(w) { return /CopyFileByPath/.test(w.path) && /\/SiteAssets\/study-logo\.png/.test(w.body); });
     const pageMade = firstIndex(writes, 'Welcome created', function(w) { return w.path === '/_api/sitepages/pages'; });
+    const menuLinkAdded = firstIndex(writes, 'a menu link added', function(w) { return w.method === 'POST' && w.path === '/_api/web/navigation/QuickLaunch'; });
     const firstPermissionsWrite = firstIndex(writes, 'a permissions change', isPermissionsWrite);
     expect(termSetMade).toBeLessThan(termColumnMade);
     expect(termColumnMade).toBeLessThan(termColumnBound);
@@ -416,6 +430,9 @@ test('copies a whole site in an order where each step finds what it uses, and ch
     // Permissions come last: after the first permissions change, every change is about permissions.
     expect(writes.slice(firstPermissionsWrite).filter(function(w) { return !isPermissionsWrite(w); }).map(function(w) { return w.method + ' ' + w.path; })).toEqual([]);
     expect(firstPermissionsWrite).toBeGreaterThan(pageMade);
+    // The menu comes after the lists and the page it links to, and before permissions.
+    expect(menuLinkAdded).toBeGreaterThan(pageMade);
+    expect(menuLinkAdded).toBeLessThan(firstPermissionsWrite);
 
     // ### What the destination has ###
     const visits = destList(record, '/Lists/StudyVisits');
@@ -448,6 +465,11 @@ test('copies a whole site in an order where each step finds what it uses, and ch
     expect(record.destination.files[(DEST_PATH + '/SiteAssets/Forms/AllItems.aspx').toLowerCase()]).toBeUndefined();
     expect(record.destination.files[(DEST_PATH + '/Shared Documents/Study Visits Helper.agent').toLowerCase()]).toBeTruthy();
     expect(record.destination.files[(DEST_PATH + '/Agent Assets/Skills/weekly-summary/SKILL.md').toLowerCase()]).toBeTruthy();
+    // The left menu is this site's, with its links pointed at the destination, and the links SharePoint added for the new lists are gone.
+    expect(menuTree(record.destination, 'QuickLaunch').map(function(n) { return n.title + ' ' + n.url; })).toEqual([
+        'Home ' + DEST_PATH, 'Study Visits ' + DEST_PATH + '/Lists/StudyVisits/AllItems.aspx', 'Welcome ' + DEST_URL + '/SitePages/Home.aspx',
+        'Contoso Help https://example.org/help'
+    ]);
 
     // ### The results table ###
     const rows = await savedResults(page, testInfo);
@@ -477,7 +499,7 @@ test('copies a whole site in an order where each step finds what it uses, and ch
 
     // ### The check afterwards ###
     expectEveryItemFound(rows);
-    for (const kind of ['Term set', 'List', 'Column', 'View', 'Site Assets file', 'Page', 'Agent', 'Site skill', 'Group', 'Permission']) {
+    for (const kind of ['Term set', 'List', 'Column', 'View', 'Site Assets file', 'Page', 'Agent', 'Site skill', 'Menu link', 'Group', 'Permission']) {
         expect(rows.filter(function(r) { return r.name === 'Destination check' && r.kind === kind; }), kind).toHaveLength(1);
     }
     // Each list the check found is in the destination.
@@ -513,7 +535,7 @@ test('sends no permission request when Permissions is off, and marks an item the
     await gotoTools(page);
     const before = record.apiRequests.length;
     const messages = await copyBothLists(page, false);
-    expect(messages).toEqual(['Copy 2 lists, 1 term set, site pages, Site Assets, and agents and site skills to Study Two?']);
+    expect(messages).toEqual(['Copy 2 lists, 1 term set, site pages, Site Assets, agents and site skills, and navigation to Study Two?' + NAVIGATION_WARNING]);
     expect(record.apiRequests.slice(before).filter(isPermissionsAddress)).toEqual([]);
     expect(destinationWrites(record).filter(isPermissionsWrite)).toEqual([]);
     expect(record.destination.permissionsSeeded).toBeUndefined();

@@ -8,7 +8,8 @@ Summary: Builds the copy plan for Copy site structure from this site's report. T
          copy needs, so for each list or library the person chose, this reads its full settings, every column with its
          definition (SchemaXml), its views and their columns, and its content types and their columns. It also reads
          the site's own content types and the site columns they and those lists use, and every detail of the chosen term
-         sets' terms. Reads only; changes nothing.
+         sets' terms. When Navigation or Site look is on, it also reads the site's menus and look (see site.js).
+         Reads only; changes nothing.
          A data dictionary file becomes the same plan in workbook.js, so the copy doesn't depend on where it came from.
 Notes: See README file for documentation and full license information.
 
@@ -21,7 +22,9 @@ Notes: See README file for documentation and full license information.
          when someone added the column, so the destination's column gets that name),
          termGroup: { name, sets: [PlanTermSet] } | null,
          siteContent: { pages: [report page], agents: [report agent], skills: [report site skill] },
-         pages, siteAssets, agents, permissions, replaceExisting (booleans from the person's choices),
+         pages, siteAssets, agents, navigation, siteLook, permissions, replaceExisting (booleans from the person's choices),
+         siteSettings (this site's menus and look, read by snaToolsSiteReadSource in site.js when navigation or siteLook
+         is on, or null),
          warnings: [string], skippedItems: [{ kind, itemName, listSourceId, setSourceId, note }] (data dictionary files only) }
        PlanList = { sourceId, title, url (the source address, such as StudyVisits), newTitle, newUrl, baseTemplate,
          isLibrary, description, rootFolder (server-relative), settings {SP.List properties}, fields [PlanField],
@@ -270,8 +273,8 @@ function snaToolsEmptyPlan(kind) {
         source: { kind: kind, siteUrl: '', siteId: '', webId: '', serverRelativeUrl: '', title: '', termStoreId: '', fileName: '' },
         lists: [], siteColumns: [], siteContentTypes: [], hubContentTypes: [], builtInSiteColumns: [], termGroup: null,
         siteContent: { pages: [], agents: [], skills: [] },
-        pages: false, siteAssets: false, agents: false, permissions: false, replaceExisting: false,
-        warnings: []
+        pages: false, siteAssets: false, agents: false, navigation: false, siteLook: false, permissions: false, replaceExisting: false,
+        siteSettings: null, warnings: []
     };
 }
 
@@ -299,6 +302,8 @@ function snaToolsPlanWithChoices(plan, choices) {
     copy.pages = isSite && !!choices.pages;
     copy.siteAssets = isSite && !!choices.siteAssets;
     copy.agents = isSite && !!choices.agents;
+    copy.navigation = isSite && !!choices.navigation;
+    copy.siteLook = isSite && !!choices.siteLook;
     copy.permissions = isSite && !!choices.permissions;
     copy.replaceExisting = !!choices.replaceExisting;
     // Which lookups and term sets a file's columns lose depends on what the person chose, so those warnings come now.
@@ -635,7 +640,7 @@ async function snaToolsReadSourceTermGroup(report, chosenIds, onProgress) {
 }
 
 // Adds warnings about what the copy will leave out: lookup columns that read from a list that isn't copied, and
-// managed metadata columns whose term set isn't copied.
+// managed metadata columns whose term set isn't copied. Also says that Navigation replaces the destination's menu links.
 function snaToolsPlanWarnings(plan) {
     var copiedLists = {};
     plan.lists.forEach(function(l) { copiedLists[l.sourceId] = true; });
@@ -658,6 +663,10 @@ function snaToolsPlanWarnings(plan) {
             }
         });
     });
+    // The copy of the menus removes the destination's own links first, so the person is told before anything changes.
+    if (plan.navigation) {
+        plan.warnings.push('Navigation replaces the links in the destination\'s menus with this site\'s links.');
+    }
     if (plan.termGroup) {
         plan.termGroup.sets.forEach(function(set) {
             // A data dictionary file's own warnings already say which term sets it doesn't list in full.
@@ -674,7 +683,7 @@ function snaToolsPlanWarnings(plan) {
  * @param {object} report The collected report (see collectReport in sitenalyzer.js).
  * @param {object} choices { lists: [{ sourceId, newTitle, newUrl }], termSetIds: [lowercase IDs], excludedContentTypeIds
  *        [site content type IDs the person left out; a chosen list's content types are copied anyway], pages, siteAssets,
- *        agents, permissions, replaceExisting }.
+ *        agents, navigation, siteLook, permissions, replaceExisting }.
  * @param {function} [onProgress] Called with a plain-English sentence before each read, such as 'Reading Study Visits.'.
  * @returns {Promise<object>} The plan (see the plan shape at the top of this file). Changes nothing.
  * @throws {Error} snaToolsError when a read fails; the copy then stops before it changes anything.
@@ -692,6 +701,8 @@ async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
     plan.pages = !!choices.pages;
     plan.siteAssets = !!choices.siteAssets;
     plan.agents = !!choices.agents;
+    plan.navigation = !!choices.navigation;
+    plan.siteLook = !!choices.siteLook;
     plan.permissions = !!choices.permissions;
     plan.replaceExisting = !!choices.replaceExisting;
     plan.siteContent = {
@@ -787,6 +798,7 @@ async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
 
     var chosenSets = choices.termSetIds || [];
     plan.termGroup = await snaToolsReadSourceTermGroup(report, chosenSets, progress);
+    if (plan.navigation || plan.siteLook) { plan.siteSettings = await snaToolsSiteReadSource(plan, progress); }
     snaToolsPlanWarnings(plan);
     return plan;
 }

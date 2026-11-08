@@ -3,10 +3,10 @@ This file is part of Sitenalyzer
 runner.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Checks the destination site of Copy site structure, and runs the copy's steps in order: term sets, site
-         columns, lists and libraries, content types, list columns, views, form settings, Site Assets, agents and
-         site skills, site pages, permissions, and finally the check of the destination. Each step logs a result for
+         columns, lists and libraries, content types, list columns, views, form settings, Site Assets, the site look,
+         agents and site skills, site pages, navigation, permissions, and finally the check of the destination. Each step logs a result for
          each item and keeps going after an item fails. Only a failed destination check, a stop, or a failed read of
          the source stops the copy.
 Notes: See README file for documentation and full license information.
@@ -38,8 +38,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // ### Runner Settings ###
 
-// Steps of the copy, for the progress bar: the destination check, the eleven copy steps, and the check afterwards.
-var SNA_TOOLS_STEP_COUNT = 13;
+// Steps of the copy, for the progress bar: the destination check, the thirteen copy steps, and the check afterwards.
+var SNA_TOOLS_STEP_COUNT = 15;
 
 // Parts of a site's address after which a person may have pasted more, such as /SitePages/Home.aspx. The destination
 // check keeps only the part before them.
@@ -288,17 +288,26 @@ async function snaToolsRunCopy(plan, destination) {
     if (plan.siteAssets) {
         await snaToolsRunStep(8, 'Copying Site Assets.', K.siteAssetsFile, 'Site Assets', function() { return snaToolsCopySiteAssets(plan, dest, maps); });
     }
+    // The site look comes after Site Assets, so a logo copied with Site Assets is used from there.
+    if (plan.siteLook) {
+        await snaToolsRunStep(9, 'Copying the site look.', K.siteLookSetting, 'Site look', function() { return snaToolsCopySiteLook(plan, dest, maps); });
+    }
     if (plan.agents) {
-        await snaToolsRunStep(9, 'Copying agents and site skills.', K.agent, 'Agents and site skills', function() { return snaToolsCopyAgents(plan, dest, maps); });
+        await snaToolsRunStep(10, 'Copying agents and site skills.', K.agent, 'Agents and site skills', function() { return snaToolsCopyAgents(plan, dest, maps); });
     }
     if (plan.pages) {
-        await snaToolsRunStep(10, 'Copying site pages.', K.page, 'Site pages', function() { return snaToolsCopyPages(plan, dest, maps); });
+        await snaToolsRunStep(11, 'Copying site pages.', K.page, 'Site pages', function() { return snaToolsCopyPages(plan, dest, maps); });
+    }
+    // Navigation comes after the lists, libraries, and pages, so links to them find their copies, and so the links that
+    // new lists add to the menu are replaced with this site's.
+    if (plan.navigation) {
+        await snaToolsRunStep(12, 'Copying navigation.', K.menuLink, 'Navigation', function() { return snaToolsCopyNavigation(plan, dest, maps); });
     }
     if (plan.permissions) {
-        await snaToolsRunStep(11, 'Copying permissions.', K.permission, 'Permissions', function() { return snaToolsCopyPermissions(plan, dest, maps); });
+        await snaToolsRunStep(13, 'Copying permissions.', K.permission, 'Permissions', function() { return snaToolsCopyPermissions(plan, dest, maps); });
     }
     snaToolsCheckCancelled();
-    snaToolsProgress('Checking what was copied.', 12);
+    snaToolsProgress('Checking what was copied.', 14);
     try {
         await snaToolsVerifyCopy(plan, dest, maps);
     } catch (err) {

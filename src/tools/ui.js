@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 ui.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Draws the Tools section (#sna/tools) and its Copy site structure screen (#sna/tools/copy), and handles its
          buttons, boxes, and switches: the source, the destination and its check, the lists and libraries to copy with
          their new names and addresses, the term sets, the site's own content types, the other content, the copy with
@@ -35,6 +35,8 @@ var SNA_TOOLS_SWITCHES = [
     { option: 'pages', label: 'Site pages', hint: 'Copies the pages in Site Pages, pointed at the copied lists and libraries.' },
     { option: 'siteAssets', label: 'Site Assets', hint: 'Copies the files in Site Assets, such as images that pages show.' },
     { option: 'agents', label: 'Agents and site skills', hint: 'Copies agents and the site skills in Agent Assets.' },
+    { option: 'navigation', label: 'Navigation', hint: 'Copies the site\'s menus, and points links to this site at the destination.' },
+    { option: 'siteLook', label: 'Site look', hint: 'Copies the theme, logo, header, and footer. Changes how the whole destination looks.' },
     { option: 'permissions', label: 'Permissions', hint: 'Copies permission levels, groups and their members, and who has access to the site and to each list or library. Off unless you turn it on.' }
 ];
 
@@ -65,7 +67,7 @@ function snaToolsNewState() {
         contentTypes: null,         // The site's own content types: { report, status ('loading', 'ready', or 'failed'),
                                     // types [{ id (uppercase), name, parent (uppercase ID) }], uses { listId: [content type IDs] } }
         excludedTypes: {},          // true by uppercase ID for each site content type the person unchecked
-        options: { pages: true, siteAssets: true, agents: true, permissions: false, replaceExisting: false },
+        options: { pages: true, siteAssets: true, agents: true, navigation: true, siteLook: false, permissions: false, replaceExisting: false },
         viewCounts: {}, viewCountsReport: null,
         running: false, progressText: '', progressValue: 0,
         results: null,              // The rows of the last copy, from snaToolsLog
@@ -130,8 +132,8 @@ function snaToolsTermSetChosen(row) {
     return sets[row.sourceId];
 }
 
-// Returns whether a switch under Other content is on. A data dictionary file has no pages, files, or permissions,
-// so for that source only Replace stays as the person set it.
+// Returns whether a switch under Other content is on. A data dictionary file has no pages, files, menus, look, or
+// permissions, so for that source only Replace stays as the person set it.
 function snaToolsOption(name) {
     if (_snaToolsState.source === 'workbook' && name !== 'replaceExisting') { return false; }
     return !!_snaToolsState.options[name];
@@ -176,7 +178,7 @@ function snaToolsChosenTypeCount(report) {
 }
 
 // Returns the choices for the plan: { lists: [{ sourceId, newTitle, newUrl }], termSetIds, excludedContentTypeIds, pages,
-// siteAssets, agents, permissions, replaceExisting }. Names are trimmed.
+// siteAssets, agents, navigation, siteLook, permissions, replaceExisting }. Names are trimmed.
 function snaToolsChoices(report) {
     var lists = snaToolsRows(report).filter(function(row) { return snaToolsListChoice(row).selected; }).map(function(row) {
         var choice = snaToolsListChoice(row);
@@ -188,7 +190,7 @@ function snaToolsChoices(report) {
         // The plan copies a chosen list's content types, and the ones they are based on, even when unchecked here.
         excludedContentTypeIds: Object.keys(_snaToolsState.excludedTypes).filter(function(id) { return _snaToolsState.excludedTypes[id]; }),
         pages: snaToolsOption('pages'), siteAssets: snaToolsOption('siteAssets'), agents: snaToolsOption('agents'),
-        permissions: snaToolsOption('permissions'), replaceExisting: snaToolsOption('replaceExisting')
+        navigation: snaToolsOption('navigation'), siteLook: snaToolsOption('siteLook'), permissions: snaToolsOption('permissions'), replaceExisting: snaToolsOption('replaceExisting')
     };
 }
 
@@ -212,7 +214,7 @@ function snaToolsValidate(report) {
         if (found.address) { problemCount++; }
     });
     var termSets = snaToolsTermSetRows(report).filter(snaToolsTermSetChosen);
-    var anyOption = ['pages', 'siteAssets', 'agents', 'permissions'].some(snaToolsOption);
+    var anyOption = ['pages', 'siteAssets', 'agents', 'navigation', 'siteLook', 'permissions'].some(snaToolsOption);
     var result = { rows: rows, chosenCount: chosen.length, problems: problems, canCopy: false, hint: '' };
     if (state.running || snaToolsBusy()) {
         result.hint = 'Sitenalyzer is copying. Select Stop copying to stop.';
@@ -781,6 +783,8 @@ function snaToolsConfirmText(plan, dest) {
     if (plan.pages) { parts.push('site pages'); }
     if (plan.siteAssets) { parts.push('Site Assets'); }
     if (plan.agents) { parts.push('agents and site skills'); }
+    if (plan.navigation) { parts.push('navigation'); }
+    if (plan.siteLook) { parts.push('the site look'); }
     if (plan.permissions) { parts.push('permissions'); }
     var text = 'Copy ' + snaJoinWords(parts) + ' to ' + snaMaskText(dest.title || dest.siteUrl) + '?';
     if (plan.warnings.length > 0) {

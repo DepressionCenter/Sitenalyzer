@@ -3,7 +3,7 @@
 # build.sh
 # Author(s): Gabriel Mongefranco.
 # Created: 2026-10-14
-# Last Modified: 2026-11-05
+# Last Modified: 2026-11-08
 # Summary: Builds the files that site owners copy to SharePoint. Reads src/ and writes dist/.
 #          Needs only bash and standard tools (sed, awk, and sha256sum or shasum), so it runs on
 #          Linux, macOS, and Git Bash on Windows. build.ps1 does the same work in PowerShell, and
@@ -45,7 +45,7 @@ ASSET_VERSION_MARKER="var SNA_ASSET_VERSION = '';"
 # line between files. They are inside the function that holds all of sitenalyzer.js, so they can use its helpers.
 # build.ps1 lists the same files in the same order.
 TOOLS_MARKER='// The build places the files from src/tools/ here, in the order listed in build.sh and build.ps1.'
-TOOLS_FILES=(core.js plan.js workbook.js taxonomy.js lists.js files.js permissions.js verify.js runner.js ui.js)
+TOOLS_FILES=(core.js plan.js workbook.js taxonomy.js lists.js files.js site.js permissions.js verify.js runner.js ui.js)
 TAB="$(printf '\t')"
 FILES_WRITTEN=0
 
