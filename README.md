@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 README.md - Main README file with overview, quick start guide and license information.
 Author(s): Gabriel Mongefranco
 Created: 2026-04-20
-Last Modified: 2026-10-23
+Last Modified: 2026-11-08
 Summary: Provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -35,7 +35,8 @@ With Sitenalyzer, you can:
 + See who can open what, by person or group, with the members of each SharePoint group, and check what one person can do.
 + Spot guests, organization-wide access, and sharing links that anyone can use, and find lists and libraries to review.
 + Save a data dictionary or a permissions workbook as an Excel file, or print the whole report or save it as a PDF.
-+ Move between an Overview, Contents, Permissions, Taxonomy, and Site review, and search the whole report, with results grouped by kind.
++ Copy a site's lists, libraries, columns, views, content types, and term sets into another site with **Copy site structure** in Tools, without list items or library files, from the site or from a saved data dictionary.
++ Move between an Overview, Contents, Permissions, Taxonomy, Site review, and Tools, and search the whole report, with results grouped by kind.
 + Edit site, list, column, and term descriptions, if you own the site.
 + Turn on technical details to see internal names, and copy the site, list, and library IDs needed for Microsoft Graph and Microsoft Entra apps.
 + Hide values that look like personal information, such as phone numbers, on screen, in printouts, and in workbooks, until you choose to show them.
@@ -58,7 +59,7 @@ To install a newer version, download the files again and upload the files from `
 
 
 ## Documentation
-+ **Complete documentation:** See the [`/docs`](./docs) folder in this repository: [installing and using Sitenalyzer](docs/usage.md), [troubleshooting](docs/troubleshooting.md), [data dictionary format](docs/data-dictionary.md), [architecture](docs/architecture.md), and [building and testing](docs/development.md).
++ **Complete documentation:** See the [`/docs`](./docs) folder in this repository: [installing and using Sitenalyzer](docs/usage.md), [copying a site's structure](docs/how-to/copy-a-site.md), [troubleshooting](docs/troubleshooting.md), [data dictionary format](docs/data-dictionary.md), [architecture](docs/architecture.md), and [building and testing](docs/development.md).
 + **Overview for researchers and developers:** Visit the [Health Research Resource Library](https://michmed.org/efdc-kb) for a high-level summary, key features, and important assumptions.
 + **Project instructions for contributors and AI coding tools:** See [AGENTS.md](AGENTS.md) and the [skills index](SKILLS.md).
 

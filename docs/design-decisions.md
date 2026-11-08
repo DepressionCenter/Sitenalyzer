@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/design-decisions.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-20
-Last Modified: 2026-10-22
+Last Modified: 2026-11-08
 Summary: The design decisions behind the Sitenalyzer report screen, as built, and the reason for each.
 Notes: See README file for documentation and full license information.
 
@@ -32,7 +32,7 @@ Sitenalyzer stays plain JavaScript, HTML, and CSS, with the bundled Tabulator an
 
 - **Dark blue bars.** The top bar holds the Sitenalyzer name, **Refresh report**, **Start over**, **Change site**, and **Site settings**. The section bar under it shows the open section in dark blue on maize. **Show technical details** sits at the right end of the section bar. Keeping these on two bars saves space above the report.
 - **The site comes first.** The site header shows the site's own logo, name, description, and address. When a site has no logo, the header shows its initials. Sitenalyzer's own symbol stays small in the top bar, so nobody mistakes it for the site's logo.
-- **Five sections.** Overview, Contents, Permissions, Taxonomy, and Site review. Site review is its own section so cleanup suggestions always have the same place.
+- **Six sections.** Overview, Contents, Permissions, Taxonomy, Site review, and Tools. Site review is its own section so cleanup suggestions always have the same place. Tools is last. It is left out of the printed report and search, because it holds choices for a copy rather than facts about the site.
 - **Real links with their own addresses.** Each view has an address after `#sna/`, so Back and Forward work. A link that starts with `?siteUrl=`, such as `?siteUrl=https://contoso.sharepoint.com/sites/example#sna/permissions`, opens that site's report on that view. The section links are ordinary links with `aria-current="page"`, not tabs, because a tab interface needs keyboard behavior that links don't have.
 - **No second main landmark.** The report area is a `<div>`, not a `<main>` element, because the SharePoint page already has one.
 - **Full width.** The app fills the width of its web part, so wide tables have room. Paragraphs stop at about 80 characters, because longer lines are hard to read. The height follows the content, tables included, so the page has one scroll bar.
@@ -87,6 +87,24 @@ One switch, **Show technical details**, adds internal names, IDs, lookup targets
 
 A page's details show the image chosen for the page. Sitenalyzer reads it from the page's `BannerImageUrl` column through SharePoint's REST API, with the person's own access. It doesn't use Microsoft Graph, which would need a new sign-in. It shows the image only when it is stored on the organization's SharePoint. The image has empty alternative text and the caption "The image chosen for this page", because the page's name is already in the heading.
 
+### Tools
+
+**Copy site structure** in Tools copies a site's structure into another site. These decisions shape how it works. [Copying a site's structure](how-to/copy-a-site.md) describes the screen, and [Tools in the architecture page](architecture.md#tools) describes the code.
+
+- **One app file.** The Tools code is kept in its own files in `src/tools/`, one for each part of the work, such as `taxonomy.js` for term sets and `lists.js` for lists and libraries. The build joins them into `sitenalyzer.js`, inside the same function as the rest of the app. Site owners still upload one app file, Tools adds no names to the page, and it uses the app's own helpers, such as the one that escapes text. Every name a Tools file defines starts with `snaTools`, `SNA_TOOLS_`, or `_snaTools`, so it can't clash with the rest of the file.
+- **Structure, not content.** The copy makes lists and libraries without their items or files. The only files it copies are the ones the switches name: pages, Site Assets files, agents, and site skills.
+- **A site collection administrator of the destination, on the same host.** Sitenalyzer checks this before **Copy to destination** works, so the person finds out before anything changes. It sends no request at all to an address on another host.
+- **An order where each step finds what it needs.** The copy runs in this order: term sets, site columns, lists and libraries, content types, columns, views, form settings, Site Assets, site look, agents and site skills, site pages, navigation, and permissions, and then the destination check. Managed metadata columns need their term sets, and content types need their site columns and lists. Columns are made in five passes: plain columns, then lookup columns once every list exists, then managed metadata columns, then calculated columns in the order their formulas use each other, then dependent lookup columns, which show another column of a lookup. Views come after columns because they show them. Site Assets comes before the site look and the pages, so the logo and page images are there first. Navigation comes after the lists, libraries, and pages, so its links find their copies, and permissions come last, so the lists and groups exist.
+- **Address first, then the name.** SharePoint takes a new list's web address from the title it is created with. So the copy creates each list with the address from the **Address** box as its title, then renames it to the name in the **Name** box. If the rename fails, the result says the list kept its address as its name.
+- **Permissions off by default.** Copying access can give people access to the destination that they shouldn't have, so the person has to turn **Permissions** on. **Site look** is off at first too, because it changes how the whole destination looks.
+- **The copy adds, and doesn't remove.** Items the destination already has, such as a site column, view, or content type with the same name, are left as they are and reported as **Skipped**. A group with the same name is used without changing its settings. A list or library at the same address, made from the same template, gets only the columns and views it's missing. Pages and files are replaced only when **Replace pages and files that already exist in the destination** is checked. Permissions are added, and access the destination already has is reported instead of removed. So a person can copy into the same destination again without losing work. The copy removes something in only these cases:
+  - **Navigation** removes the destination's own links from each menu it copies, so the menu matches this site's. The person is told before the copy starts, and the results say so.
+  - A list the copy creates loses the content types SharePoint gave it that the source list doesn't have. The list is new, so nothing of the destination's is lost.
+  - The person running the copy loses group membership and permission levels that SharePoint gave them when the copy made a group or gave a list its own permissions, if this site doesn't give them those. The results say so.
+- **Only the site collection's own term sets.** Term sets in tenant-level groups are shared by every site, so the destination can already use them. The copy connects columns to the same shared term set instead, and skips a column whose term set the destination can't use.
+- **Read back after the copy.** SharePoint can accept a change and still store something different, such as another name. So Sitenalyzer reads the destination after the copy and corrects each result to match what it finds there.
+- **Nothing saved in the browser.** Tools saves nothing in browser storage. The choices and results stay in memory while the report is open, and **Start over**, **Change site**, and **Refresh report** clear them. **Save results (.xlsx)** saves the results only when the person asks.
+
 ### Accessibility and safety
 
 - The target is WCAG 2.2 AA inside the real web part: keyboard use, visible focus, 24-pixel targets, 200% zoom, 320-pixel reflow, forced colors, and reduced motion.
@@ -101,6 +119,7 @@ You now know what the report screen is meant to do and why each part works the w
 ### Additional resources
 
 - [Installing and using Sitenalyzer](usage.md)
+- [Copying a site's structure](how-to/copy-a-site.md)
 - [Sitenalyzer architecture](architecture.md)
 - [Branding](branding.md)
 - [Building and testing Sitenalyzer](development.md)

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/troubleshooting.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Problems people can run into when installing or using Sitenalyzer, with causes and fixes.
 Notes: See README file for documentation and full license information.
 
@@ -20,7 +20,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 [Back to README](../README.md)
 
-This page lists problems you might see after installing Sitenalyzer, what causes them, and how to fix them. It is for site owners and site administrators. Most problems come from a file that is missing from the Site Assets library or a page saved in the wrong place.
+This page lists problems you might see after installing Sitenalyzer, what causes them, and how to fix them. It is for site owners and site administrators. Most problems come from a file that is missing from the Site Assets library or a page saved in the wrong place. Problems with **Copy site structure** in **Tools** are listed together under [Copy site structure](#copy-site-structure).
 
 ### Sitenalyzer says it could not load a file
 
@@ -157,6 +157,63 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 **Fix:** In the print window, set **Destination** to **Save as PDF** and wait a few seconds. If the preview still fails, print from another browser, such as Firefox. If your organization installs a printing extension in your browser, ask your IT help desk about the problem, because you may not be able to turn the extension off yourself.
 
+### Copy site structure
+
+These problems appear under **Destination** or in the results table of **Copy site structure**. Each row of the results has a note that says what happened and what to do. See [Copying a site's structure](how-to/copy-a-site.md).
+
+#### Check destination says you can't copy to the site
+
+**Problem:** Under **Destination site address**, a message such as "You can't copy to New Study. You need to be a site collection administrator there. Ask a site collection administrator to add you, then check again." During a copy, rows can also say "SharePoint didn't let you make this change."
+
+**Cause:** You aren't a site collection administrator of the destination. Being a site owner isn't enough. Sitenalyzer checks this before you can copy, and again when the copy starts.
+
+**Fix:** Ask a site collection administrator of the destination, or your SharePoint admin, to add you as a site collection administrator there. Then select **Check destination** again. If the message appeared during a copy, copy again into the same destination. Sitenalyzer adds what is missing and leaves what is already there.
+
+#### Term sets fail because SharePoint refused the term store changes
+
+**Problem:** Term set rows say **Failed**, with a note such as "SharePoint didn't let Sitenalyzer create term sets in the destination." or "Sitenalyzer couldn't create the site's own term group in the destination."
+
+**Cause:** Some organizations don't let SharePoint pages change the term store. Sitenalyzer tries two ways to make each change, and when SharePoint refuses both, it stops changing the term store. The term group message means the destination has no term group of its own, and SharePoint didn't let Sitenalyzer make one.
+
+**Fix:**
+
+1. For the term group message, add a managed metadata column to any list in the destination and choose **Customize your term set**. That makes the destination's own term group. Then copy again.
+2. For the term sets message, create the term sets by hand in the destination's term store, or ask your term store administrator to. Then copy again. A term set with the same name is used as it is, and the copy adds the terms it's missing.
+
+The columns that use these term sets are skipped until the term sets are there. See the next problem.
+
+#### Columns are skipped because their term set wasn't copied
+
+**Problem:** Column rows say **Skipped**, with a note such as "Sitenalyzer skipped the column Study Arm in Study Visits, because it uses the term set Study Arms, which wasn't copied. You left this term set out. Copy the term set, then copy again."
+
+**Cause:** A managed metadata column takes its values from a term set. You cleared that term set under **Term sets**, or the term set failed to copy. When the term set is shared by every site, the note says instead that the destination's term store doesn't have it.
+
+**Fix:** Check the term set under **Term sets**, and copy again into the same destination with the same addresses. The copy adds the term set and the columns that are missing. For a term set shared by every site, ask your term store administrator to make it available to the destination, then copy again.
+
+#### Content types from the content type hub are skipped
+
+**Problem:** Content type rows say **Skipped**, with a note such as "Sitenalyzer didn't copy this content type, because it comes from the content type hub and the destination doesn't have it yet." A content type based on one of these is skipped too.
+
+**Cause:** Your organization publishes these content types to sites from the content type hub. Sitenalyzer never makes them itself, so the hub can still publish them to the destination.
+
+**Fix:** Publish the content type to the destination from the content type gallery, or ask your SharePoint admin to. When the destination has it, copy again into the same destination.
+
+#### Site look settings are skipped because custom scripts are turned off
+
+**Problem:** Site look setting rows say **Skipped**, with a note such as "The destination doesn't allow custom scripts, so SharePoint didn't let Sitenalyzer change this." A similar note says "Only a SharePoint admin can change this in the destination."
+
+**Cause:** SharePoint refused the change. It refuses some changes to how a site looks when the site doesn't allow custom scripts, and some only a SharePoint admin can make.
+
+**Fix:** Make the change by hand in the place the note names, such as **Settings** > **Change the look** > **Theme** in the destination. You can also ask your SharePoint admin to make the change, or to allow custom scripts on the destination, and then copy again with **Site look** on. Allowing custom scripts is a security decision for your SharePoint admin.
+
+#### Pages are partly copied and still use the original site
+
+**Problem:** Page rows say **Partly copied**, with a note such as "Copied. Some parts of this page may still show the original site's content. Open the page and check it." A note can also say that some links still open the original site.
+
+**Cause:** Sitenalyzer changes each link and web part that uses this site so it uses the copy in the destination. It can't do that for something the copy didn't include, such as a list you didn't choose or a subsite of this site, so those keep using the original site. A page saved in a folder is copied as a file first, and if SharePoint then refuses the changed page, its links still open the original site. A copied agent also still uses the original site's knowledge sources.
+
+**Fix:** Open the page in the destination and check each web part and link. To fix the page with a copy, choose the lists and libraries it uses in **Lists and libraries**, check **Replace pages and files that already exist in the destination**, and copy again into the same destination.
+
 ### Conclusion
 
 Most problems are fixed by checking the files in Site Assets and the code in the web part. If the problem continues, open an issue in this repository and include the messages from the browser console, with any site names and personal details removed.
@@ -165,6 +222,8 @@ Most problems are fixed by checking the files in Site Assets and the code in the
 
 - [Installing and using Sitenalyzer](usage.md)
 - [Sitenalyzer architecture](architecture.md)
+- [Copying a site's structure](how-to/copy-a-site.md)
+- [Manage site collection administrators (Microsoft Learn)](https://learn.microsoft.com/sharepoint/manage-site-collection-administrators)
 - [Support for Content Security Policy (CSP) in SharePoint Online](https://learn.microsoft.com/en-us/sharepoint/dev/spfx/content-securty-policy-trusted-script-sources)
 
 [Back to README](../README.md)

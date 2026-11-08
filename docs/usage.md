@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/usage.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: How to install, update, and use Sitenalyzer on a SharePoint Online site.
 Notes: See README file for documentation and full license information.
 
@@ -100,6 +100,7 @@ If SharePoint doesn't save the description, Sitenalyzer says why and keeps your 
 | **Permissions** | Access to the site, its lists, and its libraries. See [Permissions](#permissions). |
 | **Taxonomy** | The term groups and term sets in the site collection's term store. Select a term set on the left to see its terms. **All term groups** shows each group's description and term sets. See [Term sets](#term-sets). |
 | **Site review** | Lists and libraries to review, the largest ones, and what Sitenalyzer could and couldn't read. See [Site review](#site-review). |
+| **Tools** | **Copy site structure**, which copies this site's lists, libraries, columns, views, content types, and term sets into another site. See [Tools](#tools). |
 
 #### Contents summary
 
@@ -281,6 +282,19 @@ Agents made with Microsoft Copilot Agent Builder, agents saved on other sites, u
 
 The printed report includes both tables and every row, even when a filter is set. The data dictionary adds one row per agent and site skill to **Assets**. It uses the asset types `SharePoint Agent` and `Copilot in SharePoint Skill`. **Created by** is not included in the workbook. Display names and descriptions hide values; file names, folder names in `asset_name`, and file addresses remain unchanged. Check those cells before sharing the workbook.
 
+### Tools
+
+**Tools** is the last section in the section links. It has one tool, **Copy site structure**. It copies this site's lists and libraries, with their columns, views, and content types, and its term sets, into another site. It never copies list items or the files in your libraries. Switches under **Other content** can also copy site pages, Site Assets, agents and site skills, navigation, the site look, and permissions. The copy can also start from a data dictionary file instead of this site.
+
+You need to be a site collection administrator of the site you copy into. Sitenalyzer checks this before you can copy, and it never changes the site you copy from unless you choose that same site as the destination. For the steps, see [Copying a site's structure](how-to/copy-a-site.md).
+
+| Address | Opens |
+| --- | --- |
+| `#sna/tools` | **Tools**, with **Copy site structure** open |
+| `#sna/tools/copy` | **Copy site structure** |
+
+You can add these to a `?siteUrl=` link, such as `.../sitenalyzer.aspx?siteUrl=https://contoso.sharepoint.com/sites/study-template#sna/tools/copy`. Your choices and results in **Tools** stay while you look at other sections. **Start over**, **Change site**, and **Refresh report** clear them. The printed report and **Search this report** leave **Tools** out.
+
 ### Print the report
 
 **Print full report / PDF** opens your browser's print window with a printable copy of the whole report. To save it as a PDF, choose **Save as PDF** or **Microsoft Print to PDF** as the printer. Ctrl+P, or Command+P on a Mac, and your browser's print menu print the same copy while a report is open.
@@ -325,11 +339,12 @@ You don't need to change the page unless the release notes say so.
 
 ### Conclusion
 
-You can now install Sitenalyzer on a site, use it to document the site and its permissions, and update it. If something doesn't work, see [Troubleshooting](troubleshooting.md).
+You can now install Sitenalyzer on a site, use it to document the site and its permissions, copy its structure to another site, and update it. If something doesn't work, see [Troubleshooting](troubleshooting.md).
 
 ### Additional resources
 
 - [Upgrade agents in SharePoint and OneDrive](https://learn.microsoft.com/sharepoint/upgrade-sharepoint-agents)
+- [Copying a site's structure](how-to/copy-a-site.md)
 - [Troubleshooting](troubleshooting.md)
 - [Sitenalyzer architecture](architecture.md)
 - [Modern Script Editor web part](https://github.com/pnp/sp-dev-fx-webparts/tree/main/samples/react-script-editor)
