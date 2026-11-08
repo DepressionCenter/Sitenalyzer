@@ -65,7 +65,7 @@ The diagram shows these steps:
 
 ### Requests to SharePoint
 
-Every request is made with the signed-in person's own permissions, and the report itself only reads. The only writes are the description edits that site owners make on purpose, and the changes that **Copy site structure** in Tools makes in a destination site after the person confirms them (see [Tools](#tools)). Tools never changes the site it copies from: the destination check refuses this site, by its ID when both IDs are known and by its address otherwise. The `$batch` requests for shared item names are sent as POST requests, but they hold only reads and change nothing on the site.
+Every request is made with the signed-in person's own permissions, and the report itself only reads. The only writes are the description edits that site owners make on purpose, and the changes that **Copy site structure** in Tools makes in a destination site after the person confirms them (see [Tools](#tools)). Tools never changes the site it copies from: in a copy from this site's report, **Check destination** refuses this site, by its ID when both IDs are known and by its address otherwise. A copy from a data dictionary file can go into this site, because the file is the source. The `$batch` requests for shared item names are sent as POST requests, but they hold only reads and change nothing on the site.
 
 | Request | Reason |
 | --- | --- |

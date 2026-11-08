@@ -63,11 +63,11 @@ Sitenalyzer reads the destination and changes nothing. It checks that the addres
 - "You can copy to New Study. You're a site collection administrator there." You can go on.
 - "You can't copy to New Study. You need to be a site collection administrator there." Ask a site collection administrator of that site to add you, then check again.
 - "You can copy only to a site on contoso.sharepoint.com, the same SharePoint as this site." Use an address on the same SharePoint.
-- "You can't copy to this site. Copy site structure copies only to another site." You entered the address of this site, the one whose report is open. Enter the address of another site.
+- "You can't copy to this site. Copy site structure copies only to another site." You chose **This site's report** and entered the address of this site, the one whose report is open. Enter the address of another site.
 
-If you paste a longer address, such as `https://contoso.sharepoint.com/sites/new-study/SitePages/Home.aspx`, Sitenalyzer uses only the site's part of it. If you change the address after a check, select **Check destination** again.
+If you paste a longer address, such as `https://contoso.sharepoint.com/sites/new-study/SitePages/Home.aspx`, Sitenalyzer uses only the site's part of it. If you change the address after a check, select **Check destination** again. Do the same if the destination is this site and you change the source.
 
-Sitenalyzer never copies into this site, so the copy never changes this site. It knows this site by its address, and by its ID once it has read the destination, so another address that opens this site is refused too.
+With **This site's report**, Sitenalyzer never copies into this site, so the copy never changes this site. It knows this site by its address, and by its ID once it has read the destination, so another address that opens this site is refused too. With **A data dictionary file**, you can copy into this site, such as to build the lists of a new, empty site from a file.
 
 ### Choose lists and libraries
 

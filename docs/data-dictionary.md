@@ -262,7 +262,7 @@ A site column that isn't in any list or library has no **Fields** row, so it add
 
 ### Data dictionary files as a copy source
 
-**Copy site structure** in **Tools** can use a data dictionary file as its source instead of the site whose report is open. Choose **A data dictionary file** under **Source**, then choose the file. Sitenalyzer reads it in your browser and sends nothing from it anywhere except to the destination. The file can come from **Data dictionary (.xlsx)** or from another tool that writes this format. See [Copying a site's structure](how-to/copy-a-site.md).
+**Copy site structure** in **Tools** can use a data dictionary file as its source instead of the site whose report is open. Choose **A data dictionary file** under **Source**, then choose the file. Sitenalyzer reads it in your browser and sends nothing from it anywhere except to the destination. The file can come from **Data dictionary (.xlsx)** or from another tool that writes this format. The destination can be any site where you're a site collection administrator, including the site whose report is open, such as a new, empty site whose lists you build from the file. See [Copying a site's structure](how-to/copy-a-site.md).
 
 #### Content it makes from a file
 

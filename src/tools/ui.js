@@ -65,6 +65,7 @@ function snaToolsNewState() {
         destinationText: '',        // What is in the Destination site address box
         destination: null,          // The last successful destination check; it counts only while destinationText matches its typed
         destinationStatus: '', destinationError: false, checking: false,
+        destinationThisSite: false, // true when the last check found the site whose report is open; its answer depends on the source
         lists: {},                  // Choices by source list ID: { selected, newTitle, newUrl }
         termSets: {},               // true or false by source term set ID
         contentTypes: null,         // The site's own content types: { report, status ('loading', 'ready', or 'failed'),
@@ -242,7 +243,9 @@ function snaToolsValidate(report) {
             : 'Fix the ' + problemCount + ' problems marked in Lists and libraries before you copy.';
     } else {
         result.canCopy = true;
-        result.hint = 'Copies what you chose to ' + snaMaskText(dest.title || dest.siteUrl) + '. Nothing changes in this site.';
+        result.hint = dest.thisSite
+            ? 'Copies what you chose from the file to this site, ' + snaMaskText(dest.title || dest.siteUrl) + '.'
+            : 'Copies what you chose to ' + snaMaskText(dest.title || dest.siteUrl) + '. Nothing changes in this site.';
     }
     return result;
 }
@@ -674,6 +677,15 @@ function snaToolsHandleChange(e) {
         state.source = el.value === 'workbook' ? 'workbook' : 'site';
         state.lists = {};
         state.termSets = {};
+        // This site is a destination only for a data dictionary file, so a check that found this site, or one still
+        // running, no longer counts for the new source, and its answer is replaced.
+        if (state.checking || state.destinationThisSite) {
+            _snaToolsCheckCount++;
+            state.checking = false;
+            state.destinationThisSite = false;
+            state.destination = null;
+            snaToolsSetDestinationStatus(String(state.destinationText || '').trim() ? 'You changed the source, so select Check destination again.' : '', false);
+        }
         snaToolsRedraw(el.id);
         return;
     }
@@ -716,6 +728,7 @@ function snaToolsUseDestination(address) {
     var text = String(address || '').trim();
     state.destinationText = text;
     state.destination = null;
+    state.destinationThisSite = false;
     snaToolsSetDestinationStatus(text ? 'Select Check destination to check this site.' : '', false);
     var input = document.getElementById('sna-tools-destination');
     if (input) {
@@ -741,7 +754,7 @@ async function snaToolsCheckDestinationNow() {
     snaToolsRefreshForm();
     var result;
     try {
-        result = await snaToolsCheckDestination(typed, report.siteUrl, snaToolsReportWebId(report));
+        result = await snaToolsCheckDestination(typed, report.siteUrl, snaToolsReportWebId(report), state.source === 'workbook');
     } catch (err) {
         result = { ok: false, message: 'Sitenalyzer couldn\'t check the destination. ' + snaToolsFriendlyError(err) };
     }
@@ -749,6 +762,7 @@ async function snaToolsCheckDestinationNow() {
     state.checking = false;
     result.typed = typed;
     state.destination = result.ok ? result : null;
+    state.destinationThisSite = !!result.thisSite;
     snaToolsSetDestinationStatus(result.message, !result.ok);
     snaToolsRefreshForm();
 }

@@ -862,3 +862,36 @@ test('keeps the switches and Replace off and disabled for a file it read, and st
     await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeEnabled();
     await expect(page.getByRole('table', { name: 'Lists and libraries to copy' }).getByRole('textbox', { name: 'New address for Study Participants' })).toHaveValue('participants');
 });
+
+test('copies from a file into the site whose report is open, which a copy from this site\'s report refuses', async function({ page }) {
+    const sameSite = 'You can\'t copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again.';
+    // The pretend destination has this site's ID, as when another address opens the same site.
+    const record = await openTools(page, { destination: { setup: function(model) { model.web.Id = '{' + SITE_ID + '}'; } } });
+    await chooseFile(page, 'small.xlsx', smallFile());
+    await checkDestination(page, DEST_URL);
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText('You can copy to Study Two. You\'re a site collection administrator there.');
+    await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeEnabled();
+    await expect(page.locator('#sna-tools-copy-hint')).toHaveText('Copies what you chose from the file to this site, Study Two.');
+
+    // A check made for the file doesn't count for this site's report, which can't be copied into this site.
+    await page.getByRole('radio', { name: 'This site\'s report' }).check();
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText('You changed the source, so select Check destination again.');
+    await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeDisabled();
+    await checkDestination(page, DEST_URL);
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText(sameSite);
+    await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeDisabled();
+
+    // Back to the file: the copy checks the destination again, and goes ahead.
+    await chooseFile(page, 'small.xlsx', smallFile());
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText('You changed the source, so select Check destination again.');
+    await checkDestination(page, DEST_URL);
+    await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await beforeYouCopy(page);
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
+    await expect(page.locator('.sna-tools-results-lead')).toHaveText(/^Finished copying to Study Two\./);
+    await expect(resultRow(page, 'Study Participants').locator('[tabulator-field="resultText"]')).toHaveText('Copied');
+    expect(record.destination.lists.filter(function(l) { return /\/Lists\/participants$/.test(l.RootFolder.ServerRelativeUrl); })).toHaveLength(1);
+    expect(record.unexpectedRequests).toEqual([]);
+    expect(record.consoleErrors).toEqual([]);
+});

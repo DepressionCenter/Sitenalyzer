@@ -82,8 +82,8 @@ function snaToolsNormalizeSiteAddress(text, sourceUrl) {
     return { siteUrl: origin + xlsxStripSlash(path), message: '' };
 }
 
-// The status line for a destination that is this site. Copying into this site would change its menus, look, and
-// permissions, and a list with its own name and address would be copied onto itself.
+// The status line for a destination that is this site, in a copy from this site's report. Copying into this site would
+// change its menus, look, and permissions, and a list with its own name and address would be copied onto itself.
 var SNA_TOOLS_SAME_SITE_MESSAGE = 'You can\'t copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again.';
 
 // Returns the ID of the site whose report is open, as a lowercase GUID, or '' when it isn't known.
@@ -92,27 +92,30 @@ function snaToolsReportWebId(report) {
 }
 
 /**
- * Checks a destination site before anything is copied: that its address is on this host, that it isn't this site,
- * that the person is a site collection administrator there, and which lists, site columns, and content types it
- * already has. This site is recognized by its ID when both IDs are known, and by its address otherwise.
+ * Checks a destination site before anything is copied: that its address is on this host, that the person is a site
+ * collection administrator there, and which lists, site columns, and content types it already has. For a copy from this
+ * site's report, it also checks that the destination isn't this site. This site is recognized by its ID when both IDs
+ * are known, and by its address otherwise. A copy from a data dictionary file may go into this site, because nothing of
+ * this site is copied onto itself.
  * @param {string} address The destination address the person typed.
  * @param {string} sourceUrl This site's address.
  * @param {string} [sourceWebId] This site's ID, such as from snaToolsReportWebId, or '' when it isn't known.
+ * @param {boolean} [fromFile] true when the copy comes from a data dictionary file, so this site is allowed.
  * @returns {Promise<object>} { ok, message, siteUrl, title, webId, siteId, serverRelativeUrl, webTemplate,
- *          configuration, groupId, hasUniqueRoleAssignments, currentUserId, isSiteAdmin, sameAsSource (true when the
- *          destination is this site, so ok is false), lists: [{ id, title, serverRelativeUrl, baseTemplate, hidden }],
- *          siteColumns: [{ id, internalName }], contentTypes: [{ stringId, name }] }. message is a plain-English
- *          sentence for the status line: why ok is false, or what the person can do. Reads only; sends no request for
- *          an address on another host or for this site's own address.
+ *          configuration, groupId, hasUniqueRoleAssignments, currentUserId, isSiteAdmin, thisSite (true when the
+ *          destination is this site; ok is then false unless fromFile is true), lists: [{ id, title, serverRelativeUrl,
+ *          baseTemplate, hidden }], siteColumns: [{ id, internalName }], contentTypes: [{ stringId, name }] }. message
+ *          is a plain-English sentence for the status line: why ok is false, or what the person can do. Reads only;
+ *          sends no request for an address on another host, or for this site's own address unless fromFile is true.
  */
-async function snaToolsCheckDestination(address, sourceUrl, sourceWebId) {
+async function snaToolsCheckDestination(address, sourceUrl, sourceWebId, fromFile) {
     var normalized = snaToolsNormalizeSiteAddress(address, sourceUrl);
     var result = { ok: false, message: normalized.message, siteUrl: normalized.siteUrl, title: '', webId: '', siteId: '', serverRelativeUrl: '',
         webTemplate: '', configuration: 0, groupId: '', hasUniqueRoleAssignments: false, currentUserId: 0, isSiteAdmin: false,
-        sameAsSource: false, lists: [], siteColumns: [], contentTypes: [] };
+        thisSite: false, lists: [], siteColumns: [], contentTypes: [] };
     if (!normalized.siteUrl) { return result; }
-    if (snaDigestKey(normalized.siteUrl) === snaDigestKey(sourceUrl)) {
-        result.sameAsSource = true;
+    if (!fromFile && snaDigestKey(normalized.siteUrl) === snaDigestKey(sourceUrl)) {
+        result.thisSite = true;
         result.message = SNA_TOOLS_SAME_SITE_MESSAGE;
         return result;
     }
@@ -145,8 +148,8 @@ async function snaToolsCheckDestination(address, sourceUrl, sourceWebId) {
     result.currentUserId = (user && user.Id) || 0;
     result.isSiteAdmin = !!(user && user.IsSiteAdmin === true);
     var sourceId = snaToolsCleanGuid(sourceWebId);
-    result.sameAsSource = (result.webId && sourceId) ? result.webId === sourceId : snaDigestKey(site) === snaDigestKey(sourceUrl);
-    if (result.sameAsSource) {
+    result.thisSite = (result.webId && sourceId) ? result.webId === sourceId : snaDigestKey(site) === snaDigestKey(sourceUrl);
+    if (result.thisSite && !fromFile) {
         result.message = SNA_TOOLS_SAME_SITE_MESSAGE;
         return result;
     }
@@ -279,8 +282,9 @@ async function snaToolsRunStep(stepNumber, text, kind, what, work) {
  */
 async function snaToolsRunCopy(plan, destination) {
     snaToolsProgress('Checking the destination again.', 0);
+    // A plan from a data dictionary file has no site address, so this site's own address and ID are used.
     var dest = await snaToolsCheckDestination(destination.siteUrl, plan.source.siteUrl || (_snaReport && _snaReport.siteUrl) || getBaseUrl(),
-        snaToolsReportWebId(_snaReport));
+        snaToolsReportWebId(_snaReport), plan.source.kind === 'workbook');
     if (!dest.ok) { throw snaToolsUserError(dest.message); }
     var newUrls = plan.lists.map(function(l) { return l.newUrl; });
     var newTitles = plan.lists.map(function(l) { return l.newTitle; });

@@ -173,9 +173,9 @@ These problems appear under **Destination** or in the results table of **Copy si
 
 **Problem:** Under **Destination site address**, the message "You can't copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again."
 
-**Cause:** The address opens the site whose report is open. Sitenalyzer copies only into another site, so the copy never changes this site. It also refuses another address that opens this same site.
+**Cause:** You chose **This site's report** as the source, and the address opens the site whose report is open. Sitenalyzer copies this site's report only into another site, so the copy never changes this site. It also refuses another address that opens this same site.
 
-**Fix:** Enter the address of the site you want to copy into, such as `https://contoso.sharepoint.com/sites/new-study`, then select **Check destination**. To copy into this site from another site, open the other site's report with **Change site**, then copy from there.
+**Fix:** Enter the address of the site you want to copy into, such as `https://contoso.sharepoint.com/sites/new-study`, then select **Check destination**. To copy into this site from another site, open the other site's report with **Change site**, then copy from there. To copy into this site from a data dictionary file, choose **A data dictionary file**, then select **Check destination** again.
 
 #### Term sets fail because SharePoint refused the term store changes
 
