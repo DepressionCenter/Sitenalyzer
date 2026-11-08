@@ -34,7 +34,7 @@ var SNA_TOOLS_KINDS = {
     list: 'List', library: 'Library', column: 'Column', view: 'View', contentType: 'Content type',
     termSet: 'Term set', term: 'Term', siteAssetsFile: 'Site Assets file', page: 'Page', agent: 'Agent',
     siteSkill: 'Site skill', permissionLevel: 'Permission level', group: 'Group', groupMember: 'Group member',
-    permission: 'Permission', menuLink: 'Menu link', siteLookSetting: 'Site look setting'
+    permission: 'Permission', menuLink: 'Menu link', siteLookSetting: 'Site look setting', note: 'Note'
 };
 
 // Each kind in a sentence, for one item and for several, such as "Found 2 of 3 columns in the destination."
@@ -45,11 +45,13 @@ var SNA_TOOLS_KIND_WORDS = {
     'Agent': ['agent', 'agents'], 'Site skill': ['site skill', 'site skills'],
     'Permission level': ['permission level', 'permission levels'], 'Group': ['group', 'groups'],
     'Group member': ['group member', 'group members'], 'Permission': ['permission', 'permissions'],
-    'Menu link': ['menu link', 'menu links'], 'Site look setting': ['site look setting', 'site look settings']
+    'Menu link': ['menu link', 'menu links'], 'Site look setting': ['site look setting', 'site look settings'],
+    'Note': ['note', 'notes']
 };
 
-// Results an item can have, with the words the results table and workbook show for each.
-var SNA_TOOLS_RESULTS = { copied: 'Copied', partial: 'Partly copied', skipped: 'Skipped', failed: 'Failed' };
+// Results an item can have, with the words the results table and workbook show for each. A warning is something the
+// check before copying found (see preflight.js); it isn't counted as copied, skipped, or failed.
+var SNA_TOOLS_RESULTS = { copied: 'Copied', partial: 'Partly copied', skipped: 'Skipped', failed: 'Failed', warning: 'Warning' };
 
 // The note for an item whose part of the copy Sitenalyzer can't do yet.
 var SNA_TOOLS_NOT_READY_NOTE = 'This part of the copy isn\'t available yet. Make it by hand in the destination if you need it.';
@@ -873,7 +875,7 @@ function snaToolsRewriteSourceLinks(text, maps, options) {
  * Adds one row to the results of the copy that is running. Does nothing once the copy was stopped.
  * @param {string} kind One of SNA_TOOLS_KINDS, such as 'List'.
  * @param {string} name The item, as people know it, such as 'Study Visits'.
- * @param {string} result 'copied', 'partial', 'skipped', or 'failed'.
+ * @param {string} result 'copied', 'partial', 'skipped', 'failed', or 'warning' (from the check before copying).
  * @param {string} note Plain English that says what happened and, when the person can act, what to do next.
  *        Never a sign-in name, an email address, or file contents.
  * @param {object} [detail] Kept only in memory. detail.verify tells verify.js what to look for in the destination,

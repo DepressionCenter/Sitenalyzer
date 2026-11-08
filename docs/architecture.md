@@ -227,6 +227,7 @@ The Tools code is kept in its own files in `src/tools/`, one file for each part 
 | `files.js` | Copies Site Assets, agents and site skills, and site pages. It makes each modern page again through SharePoint's site pages API, with the source site's links and IDs pointed at the destination by the link rewrite in `core.js`. Links into a subsite of the source stay as they are. |
 | `permissions.js` | Copies permission levels, groups, and permissions, only when the **Permissions** switch is on. |
 | `verify.js` | Reads the destination after the copy and corrects the results of items it can't find. |
+| `preflight.js` | Runs the check before copying: reads the destination, and for some checks this site, and lists what the copy will skip, what will fail, and what may fail. Draws the **Before you copy** part of the screen. Sends no changes. |
 | `runner.js` | Checks the destination and runs the copy's steps in order. |
 | `ui.js` | Draws the section and handles its buttons, boxes, and switches. |
 

@@ -157,9 +157,8 @@ async function openTools(page, options) {
 }
 
 // Checks the destination, chooses only Study Visits and the Permissions switch (unless permissions is false), and
-// copies, accepting the confirmation. Waits for the Results heading to get focus.
+// copies, with Copy anyway under Before you copy. Waits for the Results heading to get focus.
 async function copyStudyVisits(page, permissions) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     await page.getByRole('textbox', { name: 'Destination site address' }).fill(DEST_URL);
     await page.getByRole('button', { name: 'Check destination' }).click();
     await expect(page.locator('#sna-tools-destination-status')).not.toHaveText(/^Checking/);
@@ -170,6 +169,7 @@ async function copyStudyVisits(page, permissions) {
     }
     if (permissions !== false) { await page.getByRole('switch', { name: 'Permissions' }).check(); }
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 30000 });
 }
 
@@ -186,9 +186,10 @@ async function savedResults(page, testInfo) {
     return rows.slice(1).map(function(r) { return { name: r[0], kind: r[1], result: r[2], note: r[3] }; });
 }
 
-// Returns the one result row with this name and kind, and fails when there isn't exactly one.
+// Returns the one result row with this name and kind, and fails when there isn't exactly one. Rows from Before you copy,
+// whose result is Warning, are left out.
 function row(rows, name, kind) {
-    const found = rows.filter(function(r) { return r.name === name && r.kind === kind; });
+    const found = rows.filter(function(r) { return r.name === name && r.kind === kind && r.result !== 'Warning'; });
     expect(found, name + ' (' + kind + ')').toHaveLength(1);
     return found[0];
 }

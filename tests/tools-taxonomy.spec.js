@@ -142,9 +142,11 @@ async function copyTermSetsOnly(page, leaveOut) {
     await copyAgain(page);
 }
 
-// Selects Copy to destination with the choices as they are, and waits until the Results heading has focus.
+// Selects Copy to destination with the choices as they are, then Copy anyway under Before you copy, and waits until the
+// Results heading has focus.
 async function copyAgain(page) {
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
 }
 
@@ -296,7 +298,6 @@ function csomRefusal(marker, refused) {
 
 test('creates the destination\'s own term group through CSOM when it has none, and copies the term set into it', async function({ page }) {
     const otherSite = 'contoso.sharepoint.com,99999999-0000-4000-8000-000000000001,99999999-0000-4000-8000-000000000002';
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { destination: { setup: function(model) {
         // Another site collection's own group, which the copy must not use.
         model.termStore.groups.push({ id: 'dddddddd-0000-4000-8000-0000000000b1', displayName: 'Site Collection - contoso.sharepoint.com-sites-otherstudy',
@@ -332,7 +333,6 @@ test('creates the destination\'s own term group through CSOM when it has none, a
 });
 
 test('reports every term set as failed with what to do when the destination\'s own term group can\'t be created', async function({ page }) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { destination: { termStoreRefusesAll: true } });
     await copyTermSetsOnly(page, []);
     await expectRow(page, 'Study Arms', 'Term set', 'Failed', GROUP_NOTE);
@@ -344,7 +344,6 @@ test('reports every term set as failed with what to do when the destination\'s o
 // ### Terms ###
 
 test('copies terms with children, synonyms, descriptions, a deprecated term, and a term under two parents', async function({ page }) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { destination: true, answerOverrides: sourceTermAnswers() });
     await expect(page.getByRole('checkbox', { name: 'Study Arms (6 terms)' })).toBeChecked();
     await copyTermSetsOnly(page, ['Visit Types']);
@@ -375,7 +374,6 @@ test('copies terms with children, synonyms, descriptions, a deprecated term, and
 });
 
 test('copies a label in another language when the destination\'s term store has that language', async function({ page }) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { destination: { setup: function(model) { model.termStore.languageTags = ['en-US', 'fr-FR']; } },
         answerOverrides: sourceTermAnswers() });
     await copyTermSetsOnly(page, ['Visit Types']);
@@ -384,7 +382,6 @@ test('copies a label in another language when the destination\'s term store has 
 });
 
 test('reports a term it couldn\'t create by name, and the terms under it', async function({ page }) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { answerOverrides: sourceTermAnswers(), destination: {
         setup: function(model) { model.termStore.languageTags = ['en-US', 'fr-FR']; },
         handlers: [{ method: 'POST', pattern: /\/children$/, answer: function(ctx) {
@@ -404,7 +401,6 @@ test('reports a term it couldn\'t create by name, and the terms under it', async
 });
 
 test('reports a term it couldn\'t add under its second parent as partly copied', async function({ page }) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { answerOverrides: sourceTermAnswers(), destination: {
         setup: function(model) { model.termStore.languageTags = ['en-US', 'fr-FR']; },
         handlers: [{ method: 'POST', pattern: /\/relations$/, answer: function(ctx) {
@@ -421,7 +417,6 @@ test('reports a term it couldn\'t add under its second parent as partly copied',
 // ### Copying Again ###
 
 test('uses the same term set and its terms on a second copy instead of making them again', async function({ page }) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { destination: true, answerOverrides: sourceTermAnswers() });
     await copyTermSetsOnly(page, ['Visit Types']);
     const changesAfterFirst = termStoreChanges(record).length;
@@ -440,7 +435,6 @@ test('uses the same term set and its terms on a second copy instead of making th
 });
 
 test('adds only the missing terms to a term set with the same name that the destination already has', async function({ page }) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { answerOverrides: sourceTermAnswers(), destination: { setup: function(model) {
         const group = addOwnTermGroup(model);
         addTermSet(model, group, 'Study Arms', [{ label: 'Treatment' }, { label: 'Arm A', parent: 'Treatment' }]);
@@ -459,7 +453,6 @@ test('adds only the missing terms to a term set with the same name that the dest
 // ### Refusals ###
 
 test('uses CSOM for every change after the term store REST API refuses one', async function({ page }) {
-    page.on('dialog', function(dialog) { dialog.accept(); });
     const record = await openTools(page, { answerOverrides: sourceTermAnswers(), destination: {
         termStoreRefusesRest: true, setup: function(model) { model.termStore.languageTags = ['en-US', 'fr-FR']; }
     } });

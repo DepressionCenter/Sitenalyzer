@@ -167,9 +167,10 @@ function escapeRegExp(text) {
 
 // Returns the row of the results table whose Item is name and, when given, whose Kind is kind.
 function resultRow(page, name, kind) {
+    // Rows from Before you copy, whose result is Warning, are left out. tools-preflight.spec.js tests them.
     let rows = page.locator('#sna-tbl-tools-results .tabulator-row').filter({
         has: page.locator('.tabulator-cell[tabulator-field="name"]', { hasText: new RegExp('^' + escapeRegExp(name) + '$') })
-    });
+    }).filter({ hasNot: page.locator('.tabulator-cell[tabulator-field="resultText"]', { hasText: /^Warning$/ }) });
     if (kind) { rows = rows.filter({ has: page.locator('.tabulator-cell[tabulator-field="kind"]', { hasText: new RegExp('^' + escapeRegExp(kind) + '$') }) }); }
     return rows;
 }
@@ -204,7 +205,6 @@ async function copyWithFiles(page, options) {
     const settings = options || {};
     const answers = (settings.answers || []).concat(sourceAnswers(settings.tree || sourceTree(), settings.sourcePages));
     const record = await openPretendSite(page, { destination: settings.destination || true, answerOverrides: answers });
-    page.on('dialog', function(dialog) { dialog.accept(); });
     await page.getByRole('button', { name: 'Extract site information' }).click();
     await expect(page.locator('#sna-site-header h1')).toBeVisible();
     await page.locator('.sna-nav').getByRole('link', { name: 'Tools', exact: true }).click();
@@ -219,6 +219,7 @@ async function copyWithFiles(page, options) {
     await page.getByRole('switch', { name: 'Agents and site skills' }).setChecked(settings.agents !== false);
     await page.getByRole('checkbox', { name: 'Replace pages and files that already exist in the destination' }).setChecked(!!settings.replace);
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 30000 });
     return record;
 }

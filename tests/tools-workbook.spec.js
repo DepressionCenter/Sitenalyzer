@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-workbook.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Browser tests for a data dictionary file as the source of Copy site structure (src/tools/workbook.js). They save
          the data dictionary from the pretend site and choose that file in Tools, which shows that Sitenalyzer reads back
          what it writes. They also build files in the test, such as one from another tool with only display_type values,
@@ -334,6 +334,17 @@ function taxonomyProperty(xml, name) {
 
 // ### Round Trip ###
 
+// Waits for Before you copy to get focus after Copy to destination, and returns what it shows: { lead (its first
+// sentence), rows ([item, kind, what will happen] for each row of its table) }.
+async function beforeYouCopy(page) {
+    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused({ timeout: 30000 });
+    const lead = await page.locator('.sna-tools-preflight-lead').textContent();
+    const rows = await page.locator('.sna-tools-preflight-table tbody tr').evaluateAll(function(trs) {
+        return trs.map(function(tr) { return Array.prototype.map.call(tr.cells, function(td) { return td.textContent; }); });
+    });
+    return { lead: lead, rows: rows };
+}
+
 test('reads back a data dictionary saved from this site and copies its lists into the destination', async function({ page }, testInfo) {
     const record = await openPretendSite(page, richSiteOptions());
     await extractSiteInformation(page);
@@ -362,15 +373,17 @@ test('reads back a data dictionary saved from this site and copies its lists int
     }
 
     // Copy Study Visits and Participants. Documents keeps its name, which the destination already uses, so it's left out.
-    const messages = [];
-    page.on('dialog', function(dialog) { messages.push(dialog.message()); dialog.accept(); });
     await checkDestination(page, DEST_URL);
     await table.getByRole('checkbox', { name: 'Documents', exact: true }).uncheck();
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    const before = await beforeYouCopy(page);
+    expect(before.lead).toBe('You chose to copy 2 lists and 1 term set to Study Two.');
+    expect(before.rows.filter(function(r) { return r[1] === 'Note'; })).toEqual([
+        ['This copy', 'Note', '1 lookup column will show the Title column of the list it reads from, because the file doesn\'t say which column to show. Change it in the destination if it should show another column.'],
+        ['This copy', 'Note', 'A data dictionary file has no views, so each list and library gets only the destination\'s default view.']
+    ]);
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
-    expect(messages).toEqual(['Copy 2 lists and 1 term set to Study Two?\n\nBefore you copy:\n' +
-        '- 1 lookup column will show the Title column of the list it reads from, because the file doesn\'t say which column to show. Change it in the destination if it should show another column.\n' +
-        '- A data dictionary file has no views, so each list and library gets only the destination\'s default view.']);
 
     const created = record.destination.lists.filter(function(l) { return /\/Lists\/(StudyVisits|Participants)$/.test(l.RootFolder.ServerRelativeUrl); });
     expect(created.map(function(l) { return [l.Title, l.BaseTemplate, l.Description]; }).sort()).toEqual([

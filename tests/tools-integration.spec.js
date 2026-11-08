@@ -281,8 +281,8 @@ const LEFT_MENU = [
     { title: 'Contoso Help', url: 'https://example.org/help' }
 ];
 
-// The text Copy to destination shows before every copy with Navigation on, after the question.
-const NAVIGATION_WARNING = '\n\nBefore you copy:\n- Navigation replaces the links in the destination\'s menus with this site\'s links.';
+// The row Before you copy shows before every copy with Navigation on.
+const NAVIGATION_WARNING = ['This copy', 'Note', 'Navigation replaces the links in the destination\'s menus with this site\'s links.'];
 
 // Opens Tools from the section navigation.
 async function gotoTools(page) {
@@ -297,11 +297,9 @@ async function checkDestination(page) {
     await expect(page.locator('#sna-tools-destination-status')).toHaveText(/^You can copy/);
 }
 
-// Chooses Study Visits and Study Arms only, sets the switches, accepts the confirmation, copies, and waits for the
-// Results heading to get focus. Returns the confirmation's text.
+// Chooses Study Visits and Study Arms only, sets the switches, copies with Copy anyway under Before you copy, and waits
+// for the Results heading to get focus. Returns what Before you copy showed (see beforeYouCopy).
 async function copyBothLists(page, permissions) {
-    const messages = [];
-    page.on('dialog', function(dialog) { messages.push(dialog.message()); dialog.accept(); });
     await checkDestination(page);
     await page.getByRole('button', { name: 'Clear all' }).click();
     await page.getByRole('checkbox', { name: 'Study Visits', exact: true }).check();
@@ -309,8 +307,21 @@ async function copyBothLists(page, permissions) {
     for (const name of ['Site pages', 'Site Assets', 'Agents and site skills']) { await page.getByRole('switch', { name: name }).check(); }
     await page.getByRole('switch', { name: 'Permissions' }).setChecked(permissions);
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    const before = await beforeYouCopy(page);
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 60000 });
-    return messages;
+    return before;
+}
+
+// Waits for Before you copy to get focus after Copy to destination, and returns what it shows: { lead (its first
+// sentence), rows ([item, kind, what will happen] for each row of its table) }.
+async function beforeYouCopy(page) {
+    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused({ timeout: 30000 });
+    const lead = await page.locator('.sna-tools-preflight-lead').textContent();
+    const rows = await page.locator('.sna-tools-preflight-table tbody tr').evaluateAll(function(trs) {
+        return trs.map(function(tr) { return Array.prototype.map.call(tr.cells, function(td) { return td.textContent; }); });
+    });
+    return { lead: lead, rows: rows };
 }
 
 // Saves the results with Save results (.xlsx) and returns every row as { name, kind, result, note }, so a test sees
@@ -402,8 +413,9 @@ function expectEveryItemFound(rows) {
 test('copies a whole site in an order where each step finds what it uses, and checks every item afterwards', async function({ page }, testInfo) {
     const record = await openTools(page);
     await gotoTools(page);
-    const messages = await copyBothLists(page, true);
-    expect(messages).toEqual(['Copy 2 lists, 1 term set, site pages, Site Assets, agents and site skills, navigation, and permissions to Study Two?' + NAVIGATION_WARNING]);
+    const before = await copyBothLists(page, true);
+    expect(before.lead).toBe('You chose to copy 2 lists, 1 term set, site pages, Site Assets, agents and site skills, navigation, and permissions to Study Two.');
+    expect(before.rows).toContainEqual(NAVIGATION_WARNING);
 
     // ### The order of the changes ###
     const writes = destinationWrites(record);
@@ -534,8 +546,9 @@ test('sends no permission request when Permissions is off, and marks an item the
     const record = await openTools(page, { handlers: [hideView] });
     await gotoTools(page);
     const before = record.apiRequests.length;
-    const messages = await copyBothLists(page, false);
-    expect(messages).toEqual(['Copy 2 lists, 1 term set, site pages, Site Assets, agents and site skills, and navigation to Study Two?' + NAVIGATION_WARNING]);
+    const shown = await copyBothLists(page, false);
+    expect(shown.lead).toBe('You chose to copy 2 lists, 1 term set, site pages, Site Assets, agents and site skills, and navigation to Study Two.');
+    expect(shown.rows).toContainEqual(NAVIGATION_WARNING);
     expect(record.apiRequests.slice(before).filter(isPermissionsAddress)).toEqual([]);
     expect(destinationWrites(record).filter(isPermissionsWrite)).toEqual([]);
     expect(record.destination.permissionsSeeded).toBeUndefined();
@@ -551,7 +564,7 @@ test('sends no permission request when Permissions is off, and marks an item the
     expect(row(rows, 'Destination check', 'View')).toEqual({ name: 'Destination check', kind: 'View', result: 'Partly copied', note: 'Found 2 of 3 views in the destination.' });
     expect(rows.filter(function(r) { return r.result === 'Failed'; }).map(function(r) { return r.name; })).toEqual(['Upcoming Visits in Study Visits']);
     expectEveryItemFound(rows.filter(function(r) { return r.kind !== 'View'; }));
-    await expect(page.locator('.sna-tools-results-summary')).toHaveText(/ Failed 1\.$/);
+    await expect(page.locator('.sna-tools-results-summary')).toHaveText(/ Failed 1\. Warned about 2 items before the copy\.$/);
     expect(record.unexpectedRequests).toEqual([]);
 });
 
@@ -573,27 +586,26 @@ test('copies a site from a data dictionary file saved from it, with the term set
     await expect(page.locator('#sna-tools-file-status')).toHaveText(/^Read .*: \d+ lists and libraries and 1 term set\.$/);
     expect(record.apiRequests.length).toBe(before);
 
-    // The first confirmation is dismissed: with only Study Visits chosen, it warns that the lookup to Study Arms is skipped.
-    const messages = [];
-    page.on('dialog', function(dialog) {
-        messages.push(dialog.message());
-        if (messages.length === 1) { dialog.dismiss(); } else { dialog.accept(); }
-    });
+    // The first time, Go back: with only Study Visits chosen, Before you copy says that the lookup to Study Arms is skipped.
     await checkDestination(page);
     await page.getByRole('button', { name: 'Clear all' }).click();
     await page.getByRole('checkbox', { name: 'Study Visits', exact: true }).check();
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    const lookupWarning = ['Study Arm in Study Visits', 'Column', 'It reads from a list you didn\'t choose that the destination doesn\'t have, so ' +
+        'Sitenalyzer will skip this column. Choose that list too if you need the column.'];
+    expect((await beforeYouCopy(page)).rows).toContainEqual(lookupWarning);
+    await page.getByRole('button', { name: 'Go back' }).click();
     await expect(page.locator('#sna-tools-progress-status')).toHaveText('You didn\'t copy anything.');
-    const lookupWarning = 'Study Visits has a lookup column, Study Arm, that reads from a list you didn\'t choose. Sitenalyzer will skip that column.';
-    expect(messages[0]).toContain(lookupWarning);
     await page.getByRole('checkbox', { name: 'Study Arms', exact: true }).check();
     // Study Visits counts its managed metadata column once, without its hidden Note column.
     const visitsRow = page.getByRole('table', { name: 'Lists and libraries to copy' }).locator('tbody tr').filter({ hasText: 'Study Visits' });
     await expect(visitsRow.locator('td').nth(4)).toHaveText('6');
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    const second = await beforeYouCopy(page);
+    expect(second.lead).toBe('You chose to copy 2 lists and 1 term set to Study Two.');
+    expect(second.rows).not.toContainEqual(lookupWarning);
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 60000 });
-    expect(messages[1]).toMatch(/^Copy 2 lists and 1 term set to Study Two\?/);
-    expect(messages[1]).not.toContain(lookupWarning);
 
     // The term set comes before the managed metadata column, and Study Arms before the lookup that reads from it.
     const writes = destinationWrites(record);

@@ -130,7 +130,6 @@ async function copySite(page, options) {
     const destination = Object.assign({ sourceSite: settings.sourceSite || {} }, settings.destination || {});
     const answers = [sourceWeb(settings.web), sourceCollection(settings.collection)].concat(sourceFiles());
     const record = await openPretendSite(page, { destination: destination, answerOverrides: answers });
-    page.on('dialog', function(dialog) { dialog.accept(); });
     await page.getByRole('button', { name: 'Extract site information' }).click();
     await expect(page.locator('#sna-site-header h1')).toBeVisible();
     await page.locator('.sna-nav').getByRole('link', { name: 'Tools', exact: true }).click();
@@ -146,6 +145,7 @@ async function copySite(page, options) {
     await page.getByRole('switch', { name: 'Site look' }).setChecked(!!settings.siteLook);
     for (let i = 0; i < (settings.times || 1); i++) {
         await page.getByRole('button', { name: 'Copy to destination' }).click();
+        await page.getByRole('button', { name: 'Copy anyway' }).click();
         await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: settings.resultsTimeout || 30000 });
     }
     return record;

@@ -88,9 +88,12 @@ function resultCell(row, field) {
     return row.locator('.tabulator-cell[tabulator-field="' + field + '"]');
 }
 
-// Accepts the confirmation that Copy to destination asks, and keeps its text in messages.
-function acceptDialogs(page, messages) {
-    page.on('dialog', function(dialog) { messages.push(dialog.message()); dialog.accept(); });
+// Waits for Before you copy to get focus after Copy to destination, keeps its first sentence in messages, and selects
+// Copy anyway.
+async function copyAnyway(page, messages) {
+    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused({ timeout: 15000 });
+    messages.push(await page.locator('.sna-tools-preflight-lead').textContent());
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
 }
 
 // Returns the requests that change the destination, without its request digest requests.
@@ -143,10 +146,9 @@ async function expectNoAxeViolations(page) {
     expect(describeViolations(results.violations)).toEqual([]);
 }
 
-// Runs a copy of Study Visits only, accepting the confirmation, and waits for the Results heading to get focus.
-// With options.filesOff, Site pages, Site Assets, Agents and site skills, and Navigation are turned off first.
+// Runs a copy of Study Visits only, with Copy anyway under Before you copy, and waits for the Results heading to get
+// focus. With options.filesOff, Site pages, Site Assets, Agents and site skills, and Navigation are turned off first.
 async function copyStudyVisits(page, messages, options) {
-    acceptDialogs(page, messages);
     await checkDestination(page, DEST_URL);
     await chooseOnly(page, 'Study Visits');
     if (options && options.filesOff) {
@@ -156,6 +158,7 @@ async function copyStudyVisits(page, messages, options) {
         await page.getByRole('switch', { name: 'Navigation' }).uncheck();
     }
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await copyAnyway(page, messages);
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
 }
 
@@ -469,7 +472,7 @@ test('copies one list into the pretend destination and shows a result for each i
     const messages = [];
     const record = await openTools(page, { destination: true });
     await copyStudyVisits(page, messages, { filesOff: true });
-    expect(messages).toEqual(['Copy 1 list and 1 term set to Study Two?']);
+    expect(messages).toEqual(['You chose to copy 1 list and 1 term set to Study Two.']);
 
     // The list is in the destination, at the address chosen, with the name chosen.
     const copied = record.destination.lists.filter(function(l) { return l.RootFolder.ServerRelativeUrl === DEST_PATH + '/Lists/StudyVisits'; });
@@ -511,7 +514,9 @@ test('copies one list into the pretend destination and shows a result for each i
     const checks = page.locator('#sna-tbl-tools-results .tabulator-row', { hasText: 'Destination check' });
     await expect(resultCell(checks.filter({ hasText: 'list in the destination' }), 'note')).toHaveText('Found 1 of 1 list in the destination.');
     await expect(resultCell(checks.filter({ hasText: 'term set in the destination' }), 'note')).toHaveText('Found 1 of 1 term set in the destination.');
-    await expect(page.locator('.sna-tools-results-summary')).toHaveText(/^Copied 6 items\. Partly copied 0\. Skipped \d+\. Failed 0\.$/);
+    // The destination has no term group of its own, so Before you copy warned that making one may be refused.
+    await expect(page.locator('.sna-tools-results-summary')).toHaveText(/^Copied 6 items\. Partly copied 0\. Skipped \d+\. Failed 0\. Warned about 1 item before the copy\.$/);
+    await expect(resultCell(resultRow(page, 'Term store'), 'resultText')).toHaveText('Warning');
     // The copy can run again once it has finished.
     await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Stop copying' })).toHaveCount(0);
@@ -568,10 +573,10 @@ test('Stop copying stops the copy before its next change and shows what was done
         await release;
         return undefined;
     } }] } });
-    acceptDialogs(page, []);
     await checkDestination(page, DEST_URL);
     await chooseOnly(page, 'Study Visits');
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await copyAnyway(page, []);
     const stop = page.getByRole('button', { name: 'Stop copying' });
     await expect(stop).toBeFocused();
     await expect(page.getByLabel('Copy progress')).toBeVisible();
@@ -594,16 +599,20 @@ test('Stop copying stops the copy before its next change and shows what was done
     await expect(page.getByRole('button', { name: 'Stop copying' })).toHaveCount(0);
 });
 
-test('copies nothing when the person cancels the confirmation', async function({ page }) {
+test('copies nothing when the person selects Go back under Before you copy', async function({ page }) {
     const record = await openTools(page, { destination: true });
-    page.on('dialog', function(dialog) { dialog.dismiss(); });
     await checkDestination(page, DEST_URL);
     await chooseOnly(page, 'Study Visits');
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused();
+    await page.getByRole('button', { name: 'Go back' }).click();
     await expect(page.locator('#sna-tools-progress-status')).toHaveText('You didn\'t copy anything.');
     await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeFocused();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toHaveCount(0);
-    expect(destinationChanges(record)).toEqual([]);
+    // The check before copying sent only reads: the CSOM request that loads the term store has no change in its actions.
+    expect(destinationChanges(record).filter(function(c) {
+        return c.path !== '/_vti_bin/client.svc/ProcessQuery' || /<(SetProperty|Method)/.test(c.body.split('<ObjectPaths>')[0]);
+    })).toEqual([]);
 });
 
 test('Start over clears the choices and results in Tools', async function({ page }) {
@@ -637,7 +646,6 @@ test('keeps the choices and results when Show technical details changes or the v
 // ### Keyboard and Accessibility ###
 
 test('works with the keyboard alone, from the destination to the results', async function({ page }) {
-    acceptDialogs(page, []);
     await openTools(page, { destination: true });
     const box = page.getByRole('textbox', { name: 'Destination site address' });
     await tabTo(page, box);
@@ -662,7 +670,10 @@ test('works with the keyboard alone, from the destination to the results', async
 
     await tabTo(page, page.getByRole('button', { name: 'Copy to destination' }));
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused();
+    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused({ timeout: 15000 });
+    await tabTo(page, page.getByRole('button', { name: 'Copy anyway' }));
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
     await expect(resultCell(resultRow(page, 'Study Visits'), 'resultText')).toHaveText('Copied');
     await tabTo(page, page.getByRole('button', { name: 'Save results (.xlsx)' }));
 });
@@ -670,7 +681,6 @@ test('works with the keyboard alone, from the destination to the results', async
 for (const width of [1280, 320]) {
     test('has no automatically detectable accessibility problems in Tools at ' + width + ' pixels wide', async function({ page }) {
         await page.setViewportSize({ width: width, height: 900 });
-        acceptDialogs(page, []);
         await openTools(page, { destination: true });
         function pageWidth() { return page.evaluate(function() { return document.documentElement.scrollWidth; }); }
         await expect(page.locator('#sna-tools tbody tr').first().locator('.sna-tools-views')).toHaveText('1');
@@ -691,7 +701,12 @@ for (const width of [1280, 320]) {
         // With results.
         await chooseOnly(page, 'Study Visits');
         await page.getByRole('button', { name: 'Copy to destination' }).click();
-        await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused();
+        // Before you copy, with its table of warnings.
+        await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused({ timeout: 15000 });
+        await expectNoAxeViolations(page);
+        if (width === 320) { expect(await pageWidth()).toBeLessThanOrEqual(320); }
+        await page.getByRole('button', { name: 'Copy anyway' }).click();
+        await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
         await expect(page.locator('#sna-tbl-tools-results .tabulator-row').first()).toBeVisible();
         await expectNoAxeViolations(page);
         if (width === 320) { expect(await pageWidth()).toBeLessThanOrEqual(320); }

@@ -313,7 +313,6 @@ async function openTools(page, options) {
     await expect(page.locator('#sna-site-header h1')).toBeVisible();
     await page.locator('.sna-nav').getByRole('link', { name: 'Tools', exact: true }).click();
     await expect(page.locator('#sna-section-title')).toBeFocused();
-    page.on('dialog', function(dialog) { dialog.accept(); });
     await page.getByRole('textbox', { name: 'Destination site address' }).fill(DEST_URL);
     await page.getByRole('button', { name: 'Check destination' }).click();
     await expect(page.locator('#sna-tools-destination-status')).toHaveText(/^You can copy to Study Two/);
@@ -335,14 +334,16 @@ async function chooseLists(page, choices) {
 // Selects Copy to destination and waits for the results.
 async function copyNow(page) {
     await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 20000 });
 }
 
 // Returns the row of the results table whose Item is name.
 function resultRow(page, name) {
+    // Rows from Before you copy, whose result is Warning, are left out. tools-preflight.spec.js tests them.
     return page.locator('#sna-tbl-tools-results .tabulator-row').filter({
         has: page.locator('.tabulator-cell[tabulator-field="name"]', { hasText: new RegExp('^' + escapeRegExp(name) + '$') })
-    });
+    }).filter({ hasNot: page.locator('.tabulator-cell[tabulator-field="resultText"]', { hasText: /^Warning$/ }) });
 }
 
 // Checks one row of the results: its kind, result, and note.

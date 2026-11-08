@@ -51,7 +51,7 @@ $AssetVersionMarker = "var SNA_ASSET_VERSION = '';"
 # line between files. They are inside the function that holds all of sitenalyzer.js, so they can use its helpers.
 # build.sh lists the same files in the same order.
 $ToolsMarker = '// The build places the files from src/tools/ here, in the order listed in build.sh and build.ps1.'
-$ToolsFiles = @('core.js', 'plan.js', 'workbook.js', 'taxonomy.js', 'lists.js', 'files.js', 'site.js', 'permissions.js', 'verify.js', 'runner.js', 'ui.js')
+$ToolsFiles = @('core.js', 'plan.js', 'workbook.js', 'taxonomy.js', 'lists.js', 'files.js', 'site.js', 'permissions.js', 'verify.js', 'preflight.js', 'runner.js', 'ui.js')
 # UTF-8 without a byte order mark, so the output matches build.sh byte for byte.
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:FilesWritten = 0

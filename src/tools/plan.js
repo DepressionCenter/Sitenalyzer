@@ -306,7 +306,7 @@ function snaToolsPlanWithChoices(plan, choices) {
     copy.siteLook = isSite && !!choices.siteLook;
     copy.permissions = isSite && !!choices.permissions;
     copy.replaceExisting = !!choices.replaceExisting;
-    // Which lookups and term sets a file's columns lose depends on what the person chose, so those warnings come now.
+    // Some warnings depend on what the person chose, so for a data dictionary file they come now.
     if (copy.source.kind === 'workbook') { snaToolsPlanWarnings(copy); }
     return copy;
 }
@@ -639,30 +639,9 @@ async function snaToolsReadSourceTermGroup(report, chosenIds, onProgress) {
     return termGroup;
 }
 
-// Adds warnings about what the copy will leave out: lookup columns that read from a list that isn't copied, and
-// managed metadata columns whose term set isn't copied. Also says that Navigation replaces the destination's menu links.
+// Adds warnings that come from the plan itself: that Navigation replaces the destination's menu links, and which chosen
+// term sets weren't read in full. The columns the copy will skip are found by the check before copying (preflight.js).
 function snaToolsPlanWarnings(plan) {
-    var copiedLists = {};
-    plan.lists.forEach(function(l) { copiedLists[l.sourceId] = true; });
-    var siteSets = {};
-    var chosenSets = {};
-    if (plan.termGroup) {
-        plan.termGroup.sets.forEach(function(set) { siteSets[set.sourceId] = set.name; if (set.selected) { chosenSets[set.sourceId] = true; } });
-    }
-    plan.lists.forEach(function(list) {
-        list.fields.forEach(function(field) {
-            if (field.builtIn || field.isTaxonomyNote) { return; }
-            // Managed metadata columns read from TaxonomyHiddenList, which every site collection has, so they are left out here.
-            if (field.lookupListId && !field.isTaxonomy && !copiedLists[field.lookupListId] && field.lookupListId !== list.sourceId) {
-                plan.warnings.push(snaMaskText(list.title) + ' has a lookup column, ' + snaMaskText(field.title) +
-                    ', that reads from a list you didn\'t choose. Sitenalyzer will skip that column.');
-            }
-            if (field.isTaxonomy && siteSets[field.termSetId] !== undefined && !chosenSets[field.termSetId]) {
-                plan.warnings.push(snaMaskText(list.title) + ' has a managed metadata column, ' + snaMaskText(field.title) +
-                    ', that uses the term set ' + snaMaskText(siteSets[field.termSetId]) + ', which you didn\'t choose. Sitenalyzer will skip that column.');
-            }
-        });
-    });
     // The copy of the menus removes the destination's own links first, so the person is told before anything changes.
     if (plan.navigation) {
         plan.warnings.push('Navigation replaces the links in the destination\'s menus with this site\'s links.');
