@@ -365,7 +365,7 @@ test('copies terms with children, synonyms, descriptions, a deprecated term, and
     expect(findTermSet(record.destination, 'Visit Types')).toBeUndefined();
 
     await expectRow(page, 'Study Arms', 'Term set', 'Partly copied', 'Created the term set with 6 terms. Left out 1 label in French (France), because the ' +
-        'destination\'s term store doesn\'t have that language. Ask a term store admin to add it, then copy again.');
+        'destination\'s term store doesn\'t have that language. Ask your term store administrator to add it, then copy again.');
     await expectRow(page, 'Visit Types', 'Term set', 'Skipped', LEFT_OUT_NOTE);
     await expect(page.locator('#sna-tbl-tools-results .tabulator-row').filter({ has: page.locator('.tabulator-cell[tabulator-field="kind"]', { hasText: /^Term$/ }) })).toHaveCount(0);
     await expectRow(page, 'Destination check', 'Term set', 'Partly copied', 'Found 1 of 1 term set in the destination.');
@@ -447,7 +447,7 @@ test('adds only the missing terms to a term set with the same name that the dest
     // Control is one of the new terms, so its French label is left out as in the first copy.
     await expectRow(page, 'Study Arms', 'Term set', 'Partly copied', 'The destination already had a term set with this name, so Sitenalyzer used it. ' +
         'Added 4 new terms to it, and 2 terms were already there. Left out 1 label in French (France), because the destination\'s term store doesn\'t have ' +
-        'that language. Ask a term store admin to add it, then copy again.');
+        'that language. Ask your term store administrator to add it, then copy again.');
 });
 
 // ### Refusals ###

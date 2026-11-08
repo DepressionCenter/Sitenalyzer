@@ -169,6 +169,14 @@ These problems appear under **Destination** or in the results table of **Copy si
 
 **Fix:** Ask a site collection administrator of the destination, or your SharePoint admin, to add you as a site collection administrator there. Then select **Check destination** again. If the message appeared during a copy, copy again into the same destination. Sitenalyzer adds what is missing and leaves what is already there.
 
+#### Check destination says you can't copy to this site
+
+**Problem:** Under **Destination site address**, the message "You can't copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again."
+
+**Cause:** The address opens the site whose report is open. Sitenalyzer copies only into another site, so the copy never changes this site. It also refuses another address that opens this same site.
+
+**Fix:** Enter the address of the site you want to copy into, such as `https://contoso.sharepoint.com/sites/new-study`, then select **Check destination**. To copy into this site from another site, open the other site's report with **Change site**, then copy from there.
+
 #### Term sets fail because SharePoint refused the term store changes
 
 **Problem:** Term set rows say **Failed**, with a note such as "SharePoint didn't let Sitenalyzer create term sets in the destination." or "Sitenalyzer couldn't create the site's own term group in the destination."

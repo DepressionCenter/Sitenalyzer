@@ -28,7 +28,7 @@ const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
-const { openPretendSite, SITE_URL, SITE_PATH, DIST_DIR, DEST_URL, DEST_PATH, LIST_ID } = require('./pretend-sharepoint');
+const { openPretendSite, reply, SITE_URL, SITE_PATH, DIST_DIR, DEST_URL, DEST_PATH, LIST_ID } = require('./pretend-sharepoint');
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 // The same SheetJS copy that site owners upload, used to read the saved results.
@@ -250,6 +250,24 @@ test('refuses a destination where the person is not a site collection administra
     await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeDisabled();
 });
 
+test('refuses this site as the destination, by its address or by its ID', async function({ page }) {
+    const sameSite = 'You can\'t copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again.';
+    // The pretend destination has this site's ID, as when another address opens the same site.
+    const record = await openTools(page, { destination: { setup: function(model) { model.web.Id = '{11111111-0000-4000-8000-000000000000}'; } } });
+    const from = record.apiRequests.length;
+    await checkDestination(page, SITE_URL.replace('/sites/', '/SITES/') + '/SitePages/Home.aspx');
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText(sameSite);
+    await expect(page.locator('#sna-tools-destination-status')).toHaveClass(/sna-error-text/);
+    await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeDisabled();
+    // This site's own address is refused without a request.
+    expect(record.apiRequests.slice(from)).toEqual([]);
+
+    await checkDestination(page, DEST_URL);
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText(sameSite);
+    await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeDisabled();
+    await expect(page.locator('#sna-tools-copy-hint')).toHaveText('Check the destination before you copy.');
+});
+
 test('refuses a destination on another host without sending it any request', async function({ page }) {
     const record = await openTools(page, { destination: true });
     await checkDestination(page, 'https://fabrikam.sharepoint.com/sites/new-study');
@@ -456,12 +474,16 @@ test('turns off and disables the switches for a data dictionary file, which does
         await expect(control).not.toBeChecked();
         await expect(control).toHaveAccessibleDescription('A data dictionary file doesn\'t include these.');
     }
-    await expect(page.getByRole('checkbox', { name: 'Replace pages and files that already exist in the destination' })).toBeEnabled();
+    const replace = page.getByRole('checkbox', { name: 'Replace pages and files that already exist in the destination' });
+    await expect(replace).toBeDisabled();
+    await expect(replace).not.toBeChecked();
+    await expect(replace).toHaveAccessibleDescription('A data dictionary file doesn\'t include pages or files.');
     await expect(page.locator('#sna-tools')).toContainText('Choose a data dictionary file to see its lists and libraries.');
     await expect(page.locator('#sna-tools-copy-hint')).toHaveText('Choose a data dictionary file before you copy.');
 
     // Back to this site's report, the switches are as they were.
     await page.getByRole('radio', { name: 'This site\'s report' }).check();
+    await expect(replace).toBeEnabled();
     await expect(page.getByRole('switch', { name: 'Site pages' })).toBeChecked();
     await expect(page.getByRole('switch', { name: 'Permissions' })).not.toBeChecked();
 });
@@ -613,6 +635,24 @@ test('copies nothing when the person selects Go back under Before you copy', asy
     expect(destinationChanges(record).filter(function(c) {
         return c.path !== '/_vti_bin/client.svc/ProcessQuery' || /<(SetProperty|Method)/.test(c.body.split('<ObjectPaths>')[0]);
     })).toEqual([]);
+});
+
+test('says this site couldn\'t be read when reading it for the copy fails, and changes nothing', async function({ page }) {
+    let refuse = false;
+    const record = await openTools(page, { destination: true, answerOverrides: [{ pattern: /^\/_api\/web\/fields$/, answer: function() {
+        if (!refuse) { return undefined; }
+        return reply(403, { 'odata.error': { code: '-2147024891, System.UnauthorizedAccessException', message: { lang: 'en-US', value: 'Access denied.' } } });
+    } }] });
+    await checkDestination(page, DEST_URL);
+    await chooseOnly(page, 'Study Visits');
+    refuse = true;
+    await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 30000 });
+    // The note is about this site, which Sitenalyzer reads, not the destination, which it hasn't changed.
+    await expect(page.locator('.sna-tools-results-lead')).toHaveText('Sitenalyzer stopped the copy before it changed anything. SharePoint didn\'t let ' +
+        'you read part of this site that the copy needs. SharePoint said: "Access denied". Check that you can still open this site, then select Refresh ' +
+        'report and copy again.');
+    expect(destinationChanges(record)).toEqual([]);
 });
 
 test('Start over clears the choices and results in Tools', async function({ page }) {

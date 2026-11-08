@@ -1175,6 +1175,12 @@ async function snaToolsCopyListColumns(plan, dest, maps) {
         snaToolsCheckCancelled();
         scopes.push(await snaToolsListsListScope(dest, lists[i], run.lists[lists[i].sourceId]));
     }
+    // A data dictionary file's columns that the copy can't make count as skipped, so a calculated column that uses one
+    // is skipped too. Each already has its own Skipped row (see snaToolsLogWorkbookSkipped in workbook.js).
+    (plan.skippedItems || []).forEach(function(item) {
+        var state = item.kind === SNA_TOOLS_KINDS.column && item.internalName ? run.lists[item.listSourceId] : null;
+        if (state) { state.skipped[item.internalName] = item.itemName; }
+    });
 
     // Lookup site columns read from a list, so they wait until the lists exist. The ones that show another column of a
     // lookup come last; the copy can't make those, and each gets a Skipped row that says so.

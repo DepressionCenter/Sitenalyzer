@@ -1018,7 +1018,8 @@ details.permissions-section {
 #sp-info-app .sna-tools-switch input[role="switch"]:disabled { border-color: #767676; background: #f3f2f1; cursor: not-allowed; }
 #sp-info-app .sna-tools-switch input[role="switch"]:disabled::before { background: #767676; }
 .sna-tools-switch label { cursor: pointer; }
-.sna-tools-switch.sna-tools-disabled label { color: #595959; cursor: not-allowed; }
+.sna-tools-switch.sna-tools-disabled label,
+.sna-tools-replace.sna-tools-disabled label { color: #595959; cursor: not-allowed; }
 .sna-tools-replace { margin-top: 4px; }
 .sna-tools-replace label { font-weight: 600; }
 .sna-tools-copy-hint { margin: 0 0 4px 0; }

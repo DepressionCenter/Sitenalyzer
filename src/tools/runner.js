@@ -82,23 +82,40 @@ function snaToolsNormalizeSiteAddress(text, sourceUrl) {
     return { siteUrl: origin + xlsxStripSlash(path), message: '' };
 }
 
+// The status line for a destination that is this site. Copying into this site would change its menus, look, and
+// permissions, and a list with its own name and address would be copied onto itself.
+var SNA_TOOLS_SAME_SITE_MESSAGE = 'You can\'t copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again.';
+
+// Returns the ID of the site whose report is open, as a lowercase GUID, or '' when it isn't known.
+function snaToolsReportWebId(report) {
+    return snaToolsCleanGuid(report && report.site && report.site.id);
+}
+
 /**
- * Checks a destination site before anything is copied: that its address is on this host, that the person is a site
- * collection administrator there, and which lists, site columns, and content types it already has.
+ * Checks a destination site before anything is copied: that its address is on this host, that it isn't this site,
+ * that the person is a site collection administrator there, and which lists, site columns, and content types it
+ * already has. This site is recognized by its ID when both IDs are known, and by its address otherwise.
  * @param {string} address The destination address the person typed.
  * @param {string} sourceUrl This site's address.
+ * @param {string} [sourceWebId] This site's ID, such as from snaToolsReportWebId, or '' when it isn't known.
  * @returns {Promise<object>} { ok, message, siteUrl, title, webId, siteId, serverRelativeUrl, webTemplate,
- *          configuration, groupId, hasUniqueRoleAssignments, currentUserId, isSiteAdmin, sameAsSource,
- *          lists: [{ id, title, serverRelativeUrl, baseTemplate, hidden }], siteColumns: [{ id, internalName }],
- *          contentTypes: [{ stringId, name }] }. message is a plain-English sentence for the status line: why ok is
- *          false, or what the person can do. Reads only; sends no request for an address on another host.
+ *          configuration, groupId, hasUniqueRoleAssignments, currentUserId, isSiteAdmin, sameAsSource (true when the
+ *          destination is this site, so ok is false), lists: [{ id, title, serverRelativeUrl, baseTemplate, hidden }],
+ *          siteColumns: [{ id, internalName }], contentTypes: [{ stringId, name }] }. message is a plain-English
+ *          sentence for the status line: why ok is false, or what the person can do. Reads only; sends no request for
+ *          an address on another host or for this site's own address.
  */
-async function snaToolsCheckDestination(address, sourceUrl) {
+async function snaToolsCheckDestination(address, sourceUrl, sourceWebId) {
     var normalized = snaToolsNormalizeSiteAddress(address, sourceUrl);
     var result = { ok: false, message: normalized.message, siteUrl: normalized.siteUrl, title: '', webId: '', siteId: '', serverRelativeUrl: '',
         webTemplate: '', configuration: 0, groupId: '', hasUniqueRoleAssignments: false, currentUserId: 0, isSiteAdmin: false,
         sameAsSource: false, lists: [], siteColumns: [], contentTypes: [] };
     if (!normalized.siteUrl) { return result; }
+    if (snaDigestKey(normalized.siteUrl) === snaDigestKey(sourceUrl)) {
+        result.sameAsSource = true;
+        result.message = SNA_TOOLS_SAME_SITE_MESSAGE;
+        return result;
+    }
 
     var site = normalized.siteUrl;
     var web, collection, user;
@@ -127,7 +144,12 @@ async function snaToolsCheckDestination(address, sourceUrl) {
     result.groupId = snaToolsCleanGuid(collection && collection.GroupId);
     result.currentUserId = (user && user.Id) || 0;
     result.isSiteAdmin = !!(user && user.IsSiteAdmin === true);
-    result.sameAsSource = snaDigestKey(site) === snaDigestKey(sourceUrl);
+    var sourceId = snaToolsCleanGuid(sourceWebId);
+    result.sameAsSource = (result.webId && sourceId) ? result.webId === sourceId : snaDigestKey(site) === snaDigestKey(sourceUrl);
+    if (result.sameAsSource) {
+        result.message = SNA_TOOLS_SAME_SITE_MESSAGE;
+        return result;
+    }
     var name = snaMaskText(result.title || site);
     if (!result.isSiteAdmin) {
         result.message = 'You can\'t copy to ' + name + '. You need to be a site collection administrator there. Ask a site collection administrator to add you, then check again.';
@@ -160,8 +182,7 @@ async function snaToolsCheckDestination(address, sourceUrl) {
         if (snaToolsIsCancelled(err)) { throw err; }
     }
     result.ok = true;
-    result.message = 'You can copy to ' + name + '. You\'re a site collection administrator there.' +
-        (result.sameAsSource ? ' This is the site you\'re copying from, so give each list and library a new name and address.' : '');
+    result.message = 'You can copy to ' + name + '. You\'re a site collection administrator there.';
     return result;
 }
 
@@ -258,7 +279,8 @@ async function snaToolsRunStep(stepNumber, text, kind, what, work) {
  */
 async function snaToolsRunCopy(plan, destination) {
     snaToolsProgress('Checking the destination again.', 0);
-    var dest = await snaToolsCheckDestination(destination.siteUrl, plan.source.siteUrl || (_snaReport && _snaReport.siteUrl) || getBaseUrl());
+    var dest = await snaToolsCheckDestination(destination.siteUrl, plan.source.siteUrl || (_snaReport && _snaReport.siteUrl) || getBaseUrl(),
+        snaToolsReportWebId(_snaReport));
     if (!dest.ok) { throw snaToolsUserError(dest.message); }
     var newUrls = plan.lists.map(function(l) { return l.newUrl; });
     var newTitles = plan.lists.map(function(l) { return l.newTitle; });

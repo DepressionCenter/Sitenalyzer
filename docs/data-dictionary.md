@@ -274,7 +274,7 @@ A site column that isn't in any list or library has no **Fields** row, so it add
 
 #### Content a file can't copy
 
-A data dictionary file has no views, content types, list settings, or permissions. So each list and library gets only the destination's default view, and **Content types** says the file doesn't include them. The file also has no site pages, Site Assets, agents and site skills, navigation, or site look, so those switches are off and grayed out. Only **Replace pages and files that already exist in the destination** stays as you set it.
+A data dictionary file has no views, content types, list settings, or permissions. So each list and library gets only the destination's default view, and **Content types** says the file doesn't include them. The file also has no site pages, Site Assets, agents and site skills, navigation, or site look, so those switches are off and grayed out. **Replace pages and files that already exist in the destination** is off and grayed out too, because the file has no pages or files to replace.
 
 #### Lookups from a file
 
@@ -288,6 +288,8 @@ Sitenalyzer skips a lookup column, and says why, when:
 - It has no **Relationships** row.
 - Its list isn't in the file, or is one Sitenalyzer doesn't copy, such as Site Pages.
 - You didn't choose its list in **Lists and libraries**.
+
+**Before you copy** names each column of the lists you chose that the copy will skip because of the file, such as a column with no type Sitenalyzer can make. A calculated column whose formula uses a skipped column is skipped too, and is named there with the column it uses.
 
 #### Files Sitenalyzer refuses
 

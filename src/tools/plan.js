@@ -25,7 +25,8 @@ Notes: See README file for documentation and full license information.
          pages, siteAssets, agents, navigation, siteLook, permissions, replaceExisting (booleans from the person's choices),
          siteSettings (this site's menus and look, read by snaToolsSiteReadSource in site.js when navigation or siteLook
          is on, or null),
-         warnings: [string], skippedItems: [{ kind, itemName, listSourceId, setSourceId, note }] (data dictionary files only) }
+         warnings: [string], skippedItems: [{ kind, itemName, listSourceId, setSourceId, note, and for a column internalName
+         and beforeNote }] (data dictionary files only; see workbook.js) }
        PlanList = { sourceId, title, url (the source address, such as StudyVisits), newTitle, newUrl, baseTemplate,
          isLibrary, description, rootFolder (server-relative), settings {SP.List properties}, fields [PlanField],
          views [PlanView], contentTypes [PlanContentType], contentTypesEnabled, ownPermissions, roleAssignments, selected }
@@ -305,9 +306,7 @@ function snaToolsPlanWithChoices(plan, choices) {
     copy.navigation = isSite && !!choices.navigation;
     copy.siteLook = isSite && !!choices.siteLook;
     copy.permissions = isSite && !!choices.permissions;
-    copy.replaceExisting = !!choices.replaceExisting;
-    // Some warnings depend on what the person chose, so for a data dictionary file they come now.
-    if (copy.source.kind === 'workbook') { snaToolsPlanWarnings(copy); }
+    copy.replaceExisting = isSite && !!choices.replaceExisting;
     return copy;
 }
 

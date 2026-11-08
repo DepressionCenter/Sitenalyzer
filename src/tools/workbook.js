@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 workbook.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Reads a data dictionary file (.xlsx, in the format in docs/data-dictionary.md) that the person chooses as the
          source of Copy site structure, and turns it into the same copy plan that plan.js builds from this site's report.
          Lists and libraries come from the Assets sheet, their columns from Fields, choices and term sets from Value_Sets
@@ -36,7 +36,8 @@ Notes: See README file for documentation and full license information.
        - Term sets have languageTag '' (the destination's default language), and terms whose codes aren't GUIDs get
          new IDs.
        - plan.skippedItems lists what snaToolsLogWorkbookSkipped adds to the results: [{ kind, itemName,
-         listSourceId, setSourceId, note }].
+         listSourceId, setSourceId, note }]. A column there also has internalName, and beforeNote, which Before you
+         copy shows (see preflight.js). Those columns aren't in their list's fields, and plan.warnings doesn't name them.
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -678,13 +679,15 @@ function snaToolsWorkbookTermSets(sheets, taxonomySetIds, notes) {
 
 // ### Columns ###
 
-// Adds a column the copy will skip to the warnings and to the skipped items, with the same reason in both. Both end
-// with nextStep, what the person can do instead, which is SNA_TOOLS_WORKBOOK_SKIPPED_COLUMN_STEP when left out.
-function snaToolsWorkbookSkipColumn(notes, list, title, warning, reason, nextStep) {
+// Adds a column the copy will skip to the skipped items, with its internal name, so a calculated column that uses it
+// is skipped too, and two notes with the same reason: note for the results, and beforeNote for Before you copy (see
+// preflight.js). Both end with nextStep, what the person can do instead, which is SNA_TOOLS_WORKBOOK_SKIPPED_COLUMN_STEP
+// when left out. column is { title, internalName }.
+function snaToolsWorkbookSkipColumn(notes, list, column, reason, nextStep) {
     var step = nextStep || SNA_TOOLS_WORKBOOK_SKIPPED_COLUMN_STEP;
-    notes.warnings.push(warning + ' ' + step);
-    notes.skippedItems.push({ kind: SNA_TOOLS_KINDS.column, itemName: title, listSourceId: list.sourceId, setSourceId: '',
-        note: 'Sitenalyzer skipped this column because ' + reason + ' ' + step });
+    notes.skippedItems.push({ kind: SNA_TOOLS_KINDS.column, itemName: column.title, internalName: column.internalName, listSourceId: list.sourceId,
+        setSourceId: '', note: 'Sitenalyzer skipped this column because ' + reason + ' ' + step,
+        beforeNote: 'Sitenalyzer will skip this column because ' + reason + ' ' + step });
 }
 
 /**
@@ -731,8 +734,7 @@ function snaToolsWorkbookListFields(list, rows, context, notes) {
             // In a file from another tool, a column gets here without a built-in name only when its native_type is one
             // that SharePoint makes by itself, such as Counter, because the first pass renamed the others.
             if (!context.fromSitenalyzer && !builtInName) {
-                snaToolsWorkbookSkipColumn(notes, list, column.title,
-                    shownList + ' has a column, ' + shownColumn + ', of a type that only SharePoint makes, such as an ID column. Sitenalyzer will skip that column.',
+                snaToolsWorkbookSkipColumn(notes, list, column,
                     'it\'s a type of column that only SharePoint makes.',
                     'To keep its data, make a Text or Number column by hand in the destination after the copy.');
                 return;
@@ -758,10 +760,7 @@ function snaToolsWorkbookListFields(list, rows, context, notes) {
             var givesType = !!kind.shownType && kind.shownType.toLowerCase() !== 'unknown';
             var typeName = givesType ? (snaToolsWorkbookMapValue(SNA_TOOLS_WORKBOOK_SHOWN_TYPE_NAMES, kind.nativeType.toLowerCase()) ||
                 snaToolsWorkbookMapValue(SNA_TOOLS_WORKBOOK_SHOWN_TYPE_NAMES, snaToolsCell(row, 'display_type').toLowerCase())) : '';
-            var because = typeName ? 'it can\'t make ' + typeName + ' columns from a data dictionary file.'
-                : (givesType ? 'it can\'t make that type of column from a data dictionary file.' : 'the file doesn\'t give a column type it can use, such as Text or Number.');
-            snaToolsWorkbookSkipColumn(notes, list, column.title,
-                'Sitenalyzer can\'t make the column ' + shownColumn + ' in ' + shownList + ' from this file, because ' + because + ' Sitenalyzer will skip that column.',
+            snaToolsWorkbookSkipColumn(notes, list, column,
                 typeName ? 'Sitenalyzer can\'t make ' + typeName + ' columns from a data dictionary file.'
                     : (givesType ? 'it\'s a type of column Sitenalyzer can\'t make from a data dictionary file.' : 'the file doesn\'t say what type of column it is.'));
             return;
@@ -824,8 +823,7 @@ function snaToolsWorkbookListFields(list, rows, context, notes) {
         if (type === 'Calculated') {
             var formula = snaToolsCell(row, 'calculation_formula');
             if (!formula) {
-                snaToolsWorkbookSkipColumn(notes, list, column.title,
-                    shownList + ' has a calculated column, ' + shownColumn + ', with no formula in the file. Sitenalyzer will skip that column.',
+                snaToolsWorkbookSkipColumn(notes, list, column,
                     'the file has no formula for it.');
                 return;
             }
@@ -839,21 +837,17 @@ function snaToolsWorkbookListFields(list, rows, context, notes) {
         if (type === 'Lookup' || type === 'LookupMulti') {
             var target = relationship ? snaToolsCell(relationship, 'to_asset_id').toLowerCase() : '';
             if (target && context.hiddenLists[target]) {
-                snaToolsWorkbookSkipColumn(notes, list, column.title,
-                    shownList + ' has a lookup column, ' + shownColumn + ', that reads from ' + snaMaskText(context.hiddenLists[target]) +
-                        ', which Sitenalyzer doesn\'t copy as a list. Sitenalyzer will skip that column.',
+                snaToolsWorkbookSkipColumn(notes, list, column,
                     'the list it reads from isn\'t one that Sitenalyzer copies.');
                 return;
             }
             if (!target) {
-                snaToolsWorkbookSkipColumn(notes, list, column.title,
-                    shownList + ' has a lookup column, ' + shownColumn + ', but the file doesn\'t say which list it reads from. Sitenalyzer will skip that column.',
+                snaToolsWorkbookSkipColumn(notes, list, column,
                     'the file doesn\'t say which list it reads from.');
                 return;
             }
             if (!context.listIdByAsset[target]) {
-                snaToolsWorkbookSkipColumn(notes, list, column.title,
-                    shownList + ' has a lookup column, ' + shownColumn + ', that reads from a list that isn\'t in the file. Sitenalyzer will skip that column.',
+                snaToolsWorkbookSkipColumn(notes, list, column,
                     'the list it reads from isn\'t in the file.');
                 return;
             }
@@ -870,8 +864,7 @@ function snaToolsWorkbookListFields(list, rows, context, notes) {
         if (type === 'TaxonomyFieldType' || type === 'TaxonomyFieldTypeMulti') {
             var termSet = valueSetId ? context.termSets.byValueSetId[valueSetId] : null;
             if (!termSet || !termSet.sourceId) {
-                snaToolsWorkbookSkipColumn(notes, list, column.title,
-                    shownList + ' has a managed metadata column, ' + shownColumn + ', whose term set Sitenalyzer can\'t find in the file. Sitenalyzer will skip that column.',
+                snaToolsWorkbookSkipColumn(notes, list, column,
                     'Sitenalyzer can\'t find its term set in the file.');
                 return;
             }

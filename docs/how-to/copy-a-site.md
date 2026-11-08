@@ -47,7 +47,7 @@ Under **Source**, choose where the copy comes from.
 - **This site's report** copies from the site whose report is open. This is the usual choice.
 - **A data dictionary file** copies from a file saved with **Data dictionary (.xlsx)**, or a file in the same format from another tool. Choose the file in **Data dictionary file**. Sitenalyzer reads it in your browser and says what it found, such as "Read study-template.xlsx: 3 lists and libraries and 1 term set."
 
-A data dictionary file has lists, libraries, columns, choices, and term sets, but nothing else. So with a file, the switches under **Other content** are off and grayed out, and **Content types** says the file doesn't include them. The lists get only the destination's default view. See [Data dictionary files as a copy source](../data-dictionary.md#data-dictionary-files-as-a-copy-source).
+A data dictionary file has lists, libraries, columns, choices, and term sets, but nothing else. So with a file, the switches under **Other content** and **Replace pages and files that already exist in the destination** are off and grayed out, and **Content types** says the file doesn't include them. The lists get only the destination's default view. See [Data dictionary files as a copy source](../data-dictionary.md#data-dictionary-files-as-a-copy-source).
 
 Sitenalyzer refuses a file that isn't an `.xlsx` file, is larger than 25 MB, or uses a format newer than version 1. It also refuses a file that has hidden values, such as `[phone number hidden]`, where a name should be. Save the data dictionary again with **Show hidden values** on, then choose the new file.
 
@@ -63,10 +63,11 @@ Sitenalyzer reads the destination and changes nothing. It checks that the addres
 - "You can copy to New Study. You're a site collection administrator there." You can go on.
 - "You can't copy to New Study. You need to be a site collection administrator there." Ask a site collection administrator of that site to add you, then check again.
 - "You can copy only to a site on contoso.sharepoint.com, the same SharePoint as this site." Use an address on the same SharePoint.
+- "You can't copy to this site. Copy site structure copies only to another site." You entered the address of this site, the one whose report is open. Enter the address of another site.
 
 If you paste a longer address, such as `https://contoso.sharepoint.com/sites/new-study/SitePages/Home.aspx`, Sitenalyzer uses only the site's part of it. If you change the address after a check, select **Check destination** again.
 
-You can choose this site as its own destination. Sitenalyzer then says so and asks you to give each list and library a new name and address. A copy into this site changes this site.
+Sitenalyzer never copies into this site, so the copy never changes this site. It knows this site by its address, and by its ID once it has read the destination, so another address that opens this site is refused too.
 
 ### Choose lists and libraries
 
@@ -165,7 +166,7 @@ When the destination already has a list or library that the copy uses, such as D
 
 1. Look at the hint under **Copy**. It says what you must do before you can copy, such as "Check the destination before you copy." When everything is ready, it says "Copies what you chose to New Study. Nothing changes in this site."
 2. Select **Copy to destination**.
-3. Sitenalyzer reads what the copy needs from this site. Then it asks you to confirm before it copies. If you don't confirm, nothing changes and the screen says "You didn't copy anything."
+3. Sitenalyzer reads what the copy needs from this site. Then it asks you to confirm before it copies. If you don't confirm, nothing changes and the screen says "You didn't copy anything." If the destination started using one of your list names or addresses after you checked it, the copy can't start. Select **Go back**, and change the name or address marked under **Lists and libraries**.
 4. Wait while it copies. **Copy progress** shows how far it is, and the line under it says what it's doing, such as "Copying lists and libraries."
 
 Sitenalyzer checks the destination again before it changes anything. Then it copies in this order: term sets, site columns, lists and libraries, content types, columns, views, form settings, Site Assets, site look, agents and site skills, site pages, navigation, and permissions. Each part comes after the parts it needs. For example, a managed metadata column needs its term set.

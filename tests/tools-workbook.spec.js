@@ -581,13 +581,16 @@ test('reads a file from another tool that has only display types, and shows its 
 
     expect(plan.warnings).toEqual([
         'The file lists 1 term of Visit Types with no name, so Sitenalyzer will skip it.',
-        'Sitenalyzer can\'t make the column Location in Study Visits from this file, because the file doesn\'t give a column type it can use, such as Text or Number. Sitenalyzer will skip that column. ' + SKIP_STEP,
         '1 lookup column will show the Title column of the list it reads from, because the file doesn\'t say which column to show. Change it in the destination if it should show another column.',
         'A data dictionary file has no views, so each list and library gets only the destination\'s default view.'
     ]);
     expect(plan.skippedItems.filter(function(i) { return i.kind !== 'View'; }).map(function(i) { return [i.kind, i.itemName, i.note]; })).toEqual([
         ['Term', '1 term with no name in Visit Types', 'Sitenalyzer skipped this term because it has no name in the file. Add it by hand in the destination if you need it.'],
         ['Column', 'Location', 'Sitenalyzer skipped this column because the file doesn\'t say what type of column it is. ' + SKIP_STEP]
+    ]);
+    // A skipped column keeps its internal name, so a formula that uses it can be found, and has the note Before you copy shows.
+    expect(plan.skippedItems.filter(function(i) { return i.kind === 'Column'; }).map(function(i) { return [i.internalName, i.beforeNote]; })).toEqual([
+        ['location', 'Sitenalyzer will skip this column because the file doesn\'t say what type of column it is. ' + SKIP_STEP]
     ]);
 });
 
@@ -611,17 +614,19 @@ test('skips lookup and managed metadata columns whose list or term set is not in
     const plan = await planFromFile(page, buffer);
     expect(plan.lists[0].fields.map(function(f) { return [f.internalName, f.builtIn]; })).toEqual([['count', false], ['Created', true]]);
     expect(plan.lists[0].fields[0].xml.children).toEqual([]);
-    expect(plan.warnings.slice(0, 7)).toEqual([
-        'Study Visits has a lookup column, Clinic, that reads from a list that isn\'t in the file. Sitenalyzer will skip that column. ' + SKIP_STEP,
-        'Study Visits has a lookup column, Arm, but the file doesn\'t say which list it reads from. Sitenalyzer will skip that column. ' + SKIP_STEP,
-        'Study Visits has a managed metadata column, Region, whose term set Sitenalyzer can\'t find in the file. Sitenalyzer will skip that column. ' + SKIP_STEP,
-        'Study Visits has a calculated column, Score, with no formula in the file. Sitenalyzer will skip that column. ' + SKIP_STEP,
-        // SharePoint's screens call a Thumbnail column an Image column.
-        'Sitenalyzer can\'t make the column Image in Study Visits from this file, because it can\'t make Image columns from a data dictionary file. Sitenalyzer will skip that column. ' + SKIP_STEP,
+    // The columns the copy skips are skipped items, which Before you copy lists, so the warnings don't name them again.
+    expect(plan.warnings.slice(0, 2)).toEqual([
         'Count in Study Visits has a default value that the column can\'t hold, so Sitenalyzer leaves the default out.',
         'Study Visits has a column, Created, with the same name as a column SharePoint adds to every list, so the copy uses SharePoint\'s own Created column instead.'
     ]);
-    expect(plan.skippedItems.filter(function(i) { return i.kind === 'Column'; }).map(function(i) { return i.itemName; })).toEqual(['Clinic', 'Arm', 'Region', 'Score', 'Image']);
+    expect(plan.skippedItems.filter(function(i) { return i.kind === 'Column'; }).map(function(i) { return [i.itemName, i.beforeNote]; })).toEqual([
+        ['Clinic', 'Sitenalyzer will skip this column because the list it reads from isn\'t in the file. ' + SKIP_STEP],
+        ['Arm', 'Sitenalyzer will skip this column because the file doesn\'t say which list it reads from. ' + SKIP_STEP],
+        ['Region', 'Sitenalyzer will skip this column because Sitenalyzer can\'t find its term set in the file. ' + SKIP_STEP],
+        ['Score', 'Sitenalyzer will skip this column because the file has no formula for it. ' + SKIP_STEP],
+        // SharePoint's screens call a Thumbnail column an Image column.
+        ['Image', 'Sitenalyzer will skip this column because Sitenalyzer can\'t make Image columns from a data dictionary file. ' + SKIP_STEP]
+    ]);
 });
 
 test('makes managed metadata columns whose type comes from display_type, with the term set the file lists', async function({ page }) {
@@ -676,11 +681,8 @@ test('renames columns from another tool that use a name SharePoint keeps, and na
     ]);
     expect(fields[0].xml.attrs).toMatchObject({ Type: 'Number', Name: 'Order2', StaticName: 'Order2', DisplayName: 'Order' });
     expect(fields[3].fieldRefs).toEqual(['Order2']);
-    expect(plan.warnings.slice(0, 2)).toEqual([
-        'Study Visits has a column, Row Number, of a type that only SharePoint makes, such as an ID column. Sitenalyzer will skip that column. To keep its data, make a Text or Number column by hand in the destination after the copy.',
-        // SharePoint's screens have no name for a Geolocation column, so the warning leaves the type out.
-        'Sitenalyzer can\'t make the column Clinic Point in Study Visits from this file, because it can\'t make that type of column from a data dictionary file. Sitenalyzer will skip that column. ' + SKIP_STEP
-    ]);
+    expect(plan.warnings.filter(function(w) { return /Row Number|Clinic Point/.test(w); })).toEqual([]);
+    // SharePoint's screens have no name for a Geolocation column, so the note leaves the type out.
     expect(plan.skippedItems.filter(function(i) { return i.kind === 'Column'; }).map(function(i) { return [i.itemName, i.note]; })).toEqual([
         ['Row Number', 'Sitenalyzer skipped this column because it\'s a type of column that only SharePoint makes. To keep its data, make a Text or Number column by hand in the destination after the copy.'],
         ['Clinic Point', 'Sitenalyzer skipped this column because it\'s a type of column Sitenalyzer can\'t make from a data dictionary file. ' + SKIP_STEP]
@@ -713,14 +715,51 @@ test('skips lookup columns with no field ID instead of matching them to the wron
     expect(plan.error).toBeUndefined();
     const visits = plan.lists.filter(function(l) { return l.title === 'Study Visits'; })[0];
     expect(visits.fields).toEqual([]);
-    expect(plan.warnings.slice(0, 2)).toEqual([
-        'Study Visits has a lookup column, Participant, but the file doesn\'t say which list it reads from. Sitenalyzer will skip that column. ' + SKIP_STEP,
-        'Study Visits has a lookup column, Clinic, but the file doesn\'t say which list it reads from. Sitenalyzer will skip that column. ' + SKIP_STEP
-    ]);
+    expect(plan.warnings.filter(function(w) { return /Participant|Clinic/.test(w); })).toEqual([]);
     expect(plan.skippedItems.filter(function(i) { return i.kind === 'Column'; }).map(function(i) { return [i.itemName, i.note]; })).toEqual([
         ['Participant', 'Sitenalyzer skipped this column because the file doesn\'t say which list it reads from. ' + SKIP_STEP],
         ['Clinic', 'Sitenalyzer skipped this column because the file doesn\'t say which list it reads from. ' + SKIP_STEP]
     ]);
+});
+
+test('names before the copy the columns of the chosen lists that the file can\'t make, and the calculated columns that use them', async function({ page }) {
+    const record = await openTools(page, { destination: true });
+    const buffer = buildFile({
+        Export_Info: [['tool', 'Example Catalog'], ['format_version', '1.1']],
+        Assets: sheetFrom([
+            { asset_id: 'TBL_V', asset_name: 'visits', asset_display_name: 'Study Visits', asset_type: 'Table' },
+            { asset_id: 'TBL_P', asset_name: 'participants', asset_display_name: 'Study Participants', asset_type: 'Table' }
+        ]),
+        Fields: sheetFrom([
+            { field_id: 'F1', asset_id: 'TBL_V', internal_name: 'location', display_name: 'Location', display_type: 'Unknown', field_order: '1' },
+            { field_id: 'F2', asset_id: 'TBL_V', internal_name: 'location_label', display_name: 'Location Label', display_type: 'Calculated',
+                calculation_formula: '=[Location]&"!"', field_order: '2' },
+            { field_id: 'F3', asset_id: 'TBL_V', internal_name: 'visit_count', display_name: 'Visit Count', display_type: 'Number', field_order: '3' },
+            { field_id: 'F4', asset_id: 'TBL_P', internal_name: 'site_code', display_name: 'Site Code', display_type: 'Unknown', field_order: '1' }
+        ])
+    });
+    await chooseFile(page, 'study-catalog.xlsx', buffer);
+    await checkDestination(page, DEST_URL);
+    // Study Participants isn't chosen, so its column Site Code isn't named.
+    await page.getByRole('table', { name: 'Lists and libraries to copy' }).getByRole('checkbox', { name: 'Study Participants', exact: true }).uncheck();
+    await page.getByRole('button', { name: 'Copy to destination' }).click();
+    const before = await beforeYouCopy(page);
+    expect(before.rows).toEqual([
+        ['Location in Study Visits', 'Column', 'Sitenalyzer will skip this column because the file doesn\'t say what type of column it is. ' + SKIP_STEP],
+        ['Location Label in Study Visits', 'Column', 'Its formula uses Location, which Sitenalyzer will skip, so it will skip this column too. Make it by hand ' +
+            'in the destination after you add that column.'],
+        ['This copy', 'Note', 'A data dictionary file has no views, so each list and library gets only the destination\'s default view.']
+    ]);
+
+    // The copy skips the calculated column too, without asking SharePoint to make it.
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
+    const label = resultRow(page, 'Location Label in Study Visits').filter({ has: page.locator('[tabulator-field="resultText"]', { hasText: /^Skipped$/ }) });
+    await expect(label).toHaveCount(1);
+    await expect(label.locator('[tabulator-field="note"]')).toHaveText('Sitenalyzer skipped this column, because its formula uses Location, which ' +
+        'wasn\'t copied. Make it by hand in the destination after you add that column.');
+    await expect(resultRow(page, 'Visit Count in Study Visits').locator('[tabulator-field="resultText"]')).toHaveText('Copied');
+    expect(record.writeRequests.filter(function(r) { return /location_label/i.test(r.body); })).toEqual([]);
 });
 
 test('says it could not read the file when building the plan fails in a way Sitenalyzer did not expect', async function({ page }) {
@@ -804,7 +843,7 @@ test('refuses a data dictionary saved with hidden values, and reads the one save
 
 // ### Switches ###
 
-test('keeps the switches off and disabled for a file it read, and copies with only Replace to choose', async function({ page }) {
+test('keeps the switches and Replace off and disabled for a file it read, and still copies', async function({ page }) {
     await openTools(page, { destination: true });
     await chooseFile(page, 'small.xlsx', smallFile());
     await expect(page.locator('#sna-tools-file-status')).toHaveText('Read small.xlsx: 1 list or library and 0 term sets.');
@@ -814,7 +853,11 @@ test('keeps the switches off and disabled for a file it read, and copies with on
         await expect(control).not.toBeChecked();
         await expect(control).toHaveAccessibleDescription('A data dictionary file doesn\'t include these.');
     }
-    await expect(page.getByRole('checkbox', { name: 'Replace pages and files that already exist in the destination' })).toBeEnabled();
+    // A file has no pages or files, so Replace has nothing to replace.
+    const replace = page.getByRole('checkbox', { name: 'Replace pages and files that already exist in the destination' });
+    await expect(replace).toBeDisabled();
+    await expect(replace).not.toBeChecked();
+    await expect(replace).toHaveAccessibleDescription('A data dictionary file doesn\'t include pages or files.');
     await checkDestination(page, DEST_URL);
     await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeEnabled();
     await expect(page.getByRole('table', { name: 'Lists and libraries to copy' }).getByRole('textbox', { name: 'New address for Study Participants' })).toHaveValue('participants');

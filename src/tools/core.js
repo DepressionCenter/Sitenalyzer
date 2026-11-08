@@ -53,8 +53,6 @@ var SNA_TOOLS_KIND_WORDS = {
 // check before copying found (see preflight.js); it isn't counted as copied, skipped, or failed.
 var SNA_TOOLS_RESULTS = { copied: 'Copied', partial: 'Partly copied', skipped: 'Skipped', failed: 'Failed', warning: 'Warning' };
 
-// The note for an item whose part of the copy Sitenalyzer can't do yet.
-var SNA_TOOLS_NOT_READY_NOTE = 'This part of the copy isn\'t available yet. Make it by hand in the destination if you need it.';
 
 // Throttled requests (HTTP 429 and 503) are sent again up to SNA_TOOLS_THROTTLE_RETRIES times, after the wait SharePoint
 // asks for in Retry-After, but never less than SNA_TOOLS_RETRY_MIN_SECONDS, or SNA_TOOLS_RETRY_DEFAULT_SECONDS when it
@@ -167,6 +165,33 @@ function snaToolsFriendlyError(err) {
         return 'SharePoint couldn\'t make this change.' + said + ' Try again later, or make it by hand in the destination.';
     }
     return 'SharePoint didn\'t accept this change.' + said + ' Check this item in the site you copy from, then copy again, or make it by hand in the destination.';
+}
+
+/**
+ * Returns a sentence that says why Sitenalyzer couldn't read what the copy needs from this site, the site it copies
+ * from, and what to do next. Used when reading this site fails before the copy changes anything.
+ * @param {Error} err The error, such as one from snaToolsError or snaToolsUserError.
+ * @returns {string} Plain English for people. Never the raw answer from SharePoint.
+ */
+function snaToolsSourceReadError(err) {
+    if (err && err.snaUserMessage) { return err.snaUserMessage; }
+    if (!err || !err.snaToolsError) {
+        return 'Sitenalyzer ran into an unexpected problem while it read this site. Select Refresh report, then copy again.';
+    }
+    var said = snaToolsServerSaid(err.serverMessage);
+    var status = err.status;
+    if (status === 0) { return 'Sitenalyzer couldn\'t reach SharePoint to read this site. Check your connection, then copy again.'; }
+    if (status === 401 || status === 403) {
+        return 'SharePoint didn\'t let you read part of this site that the copy needs.' + said + ' Check that you can still open this site, then ' +
+            'select Refresh report and copy again.';
+    }
+    if (status === 429 || status === 503) {
+        return 'SharePoint was too busy to answer, even after Sitenalyzer waited and tried again. Wait a few minutes, then copy again.';
+    }
+    if (status === 404) {
+        return 'SharePoint couldn\'t find part of this site that the copy needs.' + said + ' Select Refresh report, then copy again.';
+    }
+    return 'SharePoint couldn\'t answer when Sitenalyzer read this site.' + said + ' Try again in a few minutes.';
 }
 
 // ### Requests ###

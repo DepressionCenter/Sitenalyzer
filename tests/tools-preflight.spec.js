@@ -5,9 +5,10 @@ Author(s): Gabriel Mongefranco.
 Created: 2026-11-08
 Last Modified: 2026-11-08
 Summary: Browser tests for the check before copying in Copy site structure (src/tools/preflight.js) and its Before you
-         copy part of the screen: a copy with nothing to warn about, the term store warning and the columns it names,
-         each of the other checks, Copy anyway with the warnings in the results, Go back, a check that fails, keyboard
-         use, the status line while the check runs, and that the check sends no change to either site.
+         copy part of the screen: a copy with nothing to warn about, the term store warnings and the columns they name,
+         each of the other checks, a list name or address that stops the copy and leaves only Go back, Copy anyway with
+         the warnings in the results, Go back, a check that fails, keyboard use, the status line while the check runs,
+         and that the check sends no change to either site and refuses a CSOM request that could change something.
          The source site's extra answers are here; the destination's are in pretend-destination-preflight.js and the
          other pretend-destination-*.js files. All names, addresses, and IDs here are made up.
 Notes: See README file for documentation and full license information.
@@ -27,9 +28,12 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
+const fs = require('fs');
+const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { openPretendSite, SITE_PATH, SITE_PAGES_ID, LIST_ID, DEST_URL } = require('./pretend-sharepoint');
+const { openPretendSite, SITE_PATH, SITE_PAGES_ID, LIST_ID, DEST_URL, DEST_PATH } = require('./pretend-sharepoint');
 const { addOwnTermGroup } = require('./pretend-destination-taxonomy');
+const { addPretendFile } = require('./pretend-destination-files');
 
 // ### Source Site ###
 
@@ -195,6 +199,31 @@ function resultRow(page, name, resultText) {
         .filter({ has: page.locator('.tabulator-cell[tabulator-field="resultText"]', { hasText: new RegExp('^' + resultText + '$') }) });
 }
 
+// ### Running preflight.js on the Page ###
+
+const SRC_DIR = path.join(__dirname, '..', 'src');
+// The helpers from sitenalyzer.js that core.js and preflight.js use here. snaMaskText is replaced, because hidden values
+// don't matter for these tests.
+const MAIN_HELPERS = ['xlsxStripSlash', 'snaOrigin', 'snaSafeTenantUrl', 'getBaseUrl', 'snaDigestKey', 'getRequestDigest', 'snaClearRequestDigest',
+    'snaCancelledError', 'snaCountText', 'snaJoinWords', 'snaCleanListId'];
+
+// Runs body, the text of an async function body that can use arg, core.js, preflight.js, and the helpers they use, on
+// the page. The app's own copy of these functions isn't reachable from a test, so they are loaded again.
+async function runPreflight(page, body, arg) {
+    const main = fs.readFileSync(path.join(SRC_DIR, 'sitenalyzer.js'), 'utf8').replace(/\r/g, '');
+    const parts = MAIN_HELPERS.map(function(name) {
+        const match = new RegExp('^(?:async )?function ' + name + '\\([^]*?^\\}', 'm').exec(main);
+        if (!match) { throw new Error('sitenalyzer.js has no function ' + name + '.'); }
+        return match[0];
+    });
+    const guid = /^var SNA_GUID_PATTERN = .*$/m.exec(main);
+    if (!guid) { throw new Error('sitenalyzer.js has no setting SNA_GUID_PATTERN.'); }
+    parts.push(guid[0], 'var _snaRequestDigests = {};', 'var SNA_TOOLS_READ_MAX = 5000;',
+        'function snaMaskText(value) { return String(value === null || value === undefined ? \'\' : value); }');
+    ['core.js', 'preflight.js'].forEach(function(name) { parts.push(fs.readFileSync(path.join(SRC_DIR, 'tools', name), 'utf8').replace(/\r/g, '')); });
+    return page.evaluate('(async function(arg) {\n' + parts.join('\n') + '\n' + body + '\n})(' + JSON.stringify(arg) + ')');
+}
+
 const CUSTOM_SCRIPTS_FIX = 'Ask your SharePoint admin to allow custom scripts in the destination, then copy again. SharePoint turns them off again within 24 hours.';
 
 // ### No Warnings ###
@@ -265,17 +294,42 @@ test('warns, with the one column it names, that making the term group may be ref
         'copy it. That would skip the column that uses it: Arm Term in Study Visits.']]);
 });
 
-test('says nothing about the term store when the destination has its own term group', async function({ page }) {
-    await openTools(page, { destination: { setup: function(model) { addOwnTermGroup(model); } } });
+test('warns that changing term sets may be refused when the destination has its own term group', async function({ page }) {
+    const record = await openTools(page, { source: { visitColumns: managedMetadata('01', 'ArmTerm', 'Arm Term', SITE_TERM_SET) },
+        destination: { setup: function(model) { addOwnTermGroup(model); } } });
     await choose(page, [], true);
-    expect((await beforeYouCopy(page)).rows).toEqual([]);
+    const before = await beforeYouCopy(page);
+    expect(before.rows).toEqual([['Term store', 'Term set', 'Sitenalyzer will add Study Arms to the destination\'s own term group. Some organizations ' +
+        'don\'t let people change term sets from a browser. Sitenalyzer can only find out when it tries. If it can\'t, it won\'t copy it. That would ' +
+        'skip the column that uses it: Arm Term in Study Visits.']]);
+    expect(before.summary).toMatch(/: 1 item may fail\. /);
+    expect(record.destination.preflightCsomRequests).toHaveLength(1);
+});
+
+test('warns that changing term sets may fail when the destination has its own term group and refuses CSOM', async function({ page }) {
+    const columns = managedMetadata('01', 'ArmTerm', 'Arm Term', SITE_TERM_SET).concat([calculated('01', 'ArmText', 'Arm Text', ['ArmTerm'])]);
+    await openTools(page, { source: { visitColumns: columns },
+        destination: { termStoreRefusesRest: true, termStoreRefusesAll: true, setup: function(model) { addOwnTermGroup(model); } } });
+    await choose(page, [], true);
+    const before = await beforeYouCopy(page);
+    // The REST API may still take the changes, so the columns aren't marked as skipped, and Arm Text gets no row.
+    expect(before.rows).toEqual([['Term store', 'Term set', 'Sitenalyzer will add Study Arms to the destination\'s own term group. SharePoint refused one ' +
+        'of the two ways Sitenalyzer changes term sets there, so it may refuse the other way too. If it does, Sitenalyzer won\'t copy it. That would skip ' +
+        'the column that uses it: Arm Term in Study Visits. If that happens, ask your term store administrator to let you change term sets in the ' +
+        'destination, then copy again.']]);
+    expect(before.summary).toMatch(/: 1 item may fail\. Select Copy anyway to copy everything else/);
+    // The copy then finds that SharePoint refuses both ways, as the warning said it might.
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 30000 });
+    await expect(resultRow(page, 'Term store', 'Warning')).toHaveCount(1);
+    await expect(resultRow(page, 'Study Arms', 'Failed')).toHaveCount(1);
 });
 
 test('warns that term sets will fail when the destination has more than one term group of its own', async function({ page }) {
     await openTools(page, { destination: { setup: function(model) { addOwnTermGroup(model, 'First group'); addOwnTermGroup(model, 'Second group'); } } });
     await choose(page, [], true);
     expect((await beforeYouCopy(page)).rows).toEqual([['Term store', 'Term set', 'The destination has more than one term group of its own, so Sitenalyzer ' +
-        'can\'t tell which one to use, and it won\'t copy Study Arms. Ask a term store admin to check the destination\'s term groups, then copy again.']]);
+        'can\'t tell which one to use, and it won\'t copy Study Arms. Ask your term store administrator to check the destination\'s term groups, then copy again.']]);
 });
 
 // ### Columns ###
@@ -298,8 +352,32 @@ test('names columns whose term set or list the person left out, and columns whos
         ['Arm Pick in Study Visits', 'Column', 'It reads from Study Arms, a list you didn\'t choose that the destination doesn\'t have, so Sitenalyzer will ' +
             'skip this column. Choose that list too if you need the column.'],
         ['Old Clinic in Study Visits', 'Column', 'The destination\'s term store doesn\'t have the term set this column uses, so Sitenalyzer will skip it. ' +
-            'Ask a term store admin to make that term set available to the destination, then copy again.']
+            'Ask your term store administrator to make that term set available to the destination, then copy again.']
     ]);
+});
+
+test('names managed metadata columns with no term set, and the calculated columns that use them', async function({ page }) {
+    // An all-zero term set ID means the column isn't connected to a term set.
+    const columns = managedMetadata('04', 'Unsorted', 'Unsorted Tag', EMPTY_GUID).concat([calculated('03', 'TagText', 'Tag Text', ['Unsorted']),
+        calculated('04', 'TagTextAgain', 'Tag Text Again', ['TagText'])]);
+    await openTools(page, { source: { visitColumns: columns } });
+    await choose(page, [], false);
+    const before = await beforeYouCopy(page);
+    expect(before.rows).toEqual([
+        ['Unsorted Tag in Study Visits', 'Column', 'It isn\'t connected to a term set in the site you copy from, so Sitenalyzer will skip this column. Make ' +
+            'it by hand in the destination if you need it.'],
+        ['Tag Text in Study Visits', 'Column', 'Its formula uses Unsorted Tag, which Sitenalyzer will skip, so it will skip this column too. Make it by ' +
+            'hand in the destination after you add that column.'],
+        ['Tag Text Again in Study Visits', 'Column', 'Its formula uses Tag Text, which Sitenalyzer will skip, so it will skip this column too. Make it by ' +
+            'hand in the destination after you add that column.']
+    ]);
+    expect(before.summary).toMatch(/: 3 items will be skipped\. /);
+    // The copy skips all three, as Before you copy said.
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 30000 });
+    for (const name of ['Unsorted Tag in Study Visits', 'Tag Text in Study Visits', 'Tag Text Again in Study Visits']) {
+        await expect(resultRow(page, name, 'Skipped')).toHaveCount(1);
+    }
 });
 
 test('finds a list whose address the destination gave to another kind of list after the destination was checked', async function({ page }) {
@@ -311,13 +389,67 @@ test('finds a list whose address the destination gave to another kind of list af
     } }] } });
     await choose(page, [], false);
     const before = await beforeYouCopy(page);
-    expect(before.rows).toEqual([['Study Visits', 'List', 'The destination has a different kind of list or library at the address StudyVisits, so ' +
-        'Sitenalyzer will stop before it changes anything. Select Go back, give this one another address, then copy again.']]);
-    // Copy anyway stops before any change, as the warning says.
-    await page.getByRole('button', { name: 'Copy anyway' }).click();
-    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 30000 });
-    await expect(page.locator('.sna-tools-results-lead')).toHaveText(/^Sitenalyzer stopped the copy because of a problem\. Sitenalyzer didn't copy anything/);
+    expect(before.rows).toEqual([['Study Visits', 'List', 'The destination already has a list or library at this address. Choose another address. The ' +
+        'copy can\'t start until you do. Select Go back to change it, then copy again.']]);
+    // The copy would stop before any change, so Before you copy offers only Go back, and says why.
+    expect(before.summary).toBe('Sitenalyzer found 1 problem that stops the copy to Study Two before it changes anything. The copy can start only ' +
+        'after you fix it. Select Go back to change what you chose.');
+    await expect(page.getByRole('button', { name: 'Copy anyway' })).toHaveCount(0);
+    await expect(page.locator('#sna-tools-copy-hint')).toHaveText('Select Go back under Before you copy.');
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Go back' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    // Lists and libraries now marks the address, and focus goes there, because Copy to destination stays off until it changes.
+    const address = page.getByRole('textbox', { name: 'New address for Study Visits' });
+    await expect(address).toBeFocused();
+    await expect(address).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeDisabled();
+    await expect(page.locator('#sna-tools-copy-hint')).toHaveText('Fix the problem marked in Lists and libraries before you copy.');
+    await address.fill('StudyVisits2');
+    await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeEnabled();
     expect(record.destination.lists.filter(function(l) { return l.Title === 'Study Visits'; })).toEqual([]);
+});
+
+test('finds a list name the destination started using after the destination was checked', async function({ page }) {
+    let reads = 0;
+    const record = await openTools(page, { destination: { handlers: [{ pattern: /^\/_api\/web\/lists$/, answer: function(ctx) {
+        reads++;
+        if (reads === 2) { ctx.addList('Study Visits', 100, 'OtherVisits'); }
+        return undefined;
+    } }], setup: function(model) { addOwnTermGroup(model); } } });
+    await choose(page, [], false);
+    const from = record.writeRequests.length;
+    const before = await beforeYouCopy(page);
+    expect(before.rows).toEqual([['Study Visits', 'List', 'The destination already has a list or library with this name. Choose another name. The ' +
+        'copy can\'t start until you do. Select Go back to change it, then copy again.']]);
+    expect(before.summary).toMatch(/^Sitenalyzer found 1 problem that stops the copy to Study Two before it changes anything\. /);
+    await expect(page.getByRole('button', { name: 'Copy anyway' })).toHaveCount(0);
+    expect(changesFrom(record, from).filter(function(c) { return !isReadOnly(c); })).toEqual([]);
+    await page.getByRole('button', { name: 'Go back' }).click();
+    await expect(page.getByRole('textbox', { name: 'New name for Study Visits' })).toBeFocused();
+});
+
+test('says how many problems stop the copy, with 1 and 3 of them', async function({ page }) {
+    await openPretendSite(page);
+    const summaries = await runPreflight(page, [
+        'function warning(severity, stops) {',
+        '    return snaToolsPreflightWarning({ severity: severity, stops: stops, kind: "List", name: "Study Visits", note: "Note." });',
+        '}',
+        'var three = [warning("fail", true), warning("fail", true), warning("fail", true)];',
+        'return [',
+        '    snaToolsPreflightSummary(three, "Study Two"),',
+        '    snaToolsPreflightSummary([warning("fail", true), warning("skip", false), warning("info", false)], "Study Two"),',
+        '    snaToolsPreflightSummary(three.concat([warning("maybe", false)]), "Study Two"),',
+        // Only a warning that will fail can stop the copy.
+        '    snaToolsPreflightStops([warning("skip", true)])',
+        '];'
+    ].join('\n'), {});
+    expect(summaries).toEqual([
+        'Sitenalyzer found 3 problems that stop the copy to Study Two before it changes anything.',
+        'Sitenalyzer found 1 problem that stops the copy to Study Two before it changes anything. It also found 2 other things to know.',
+        'Sitenalyzer found 3 problems that stop the copy to Study Two before it changes anything. It also found 1 other thing to know.',
+        false
+    ]);
 });
 
 // ### Content Types, Agent Assets, Files, Custom Scripts, and Channel Sites ###
@@ -361,6 +493,19 @@ test('warns about classic pages and the site look when the destination doesn\'t 
             'theme. Sitenalyzer skips any it refuses and says which. ' + CUSTOM_SCRIPTS_FIX]
     ]);
     expect(before.summary).toMatch(/: 1 item will fail and 1 item may fail\. /);
+});
+
+test('leaves out a classic page the destination already has, unless Replace is checked', async function({ page }) {
+    await openTools(page, { source: { modernPages: [1] }, destination: { noCustomScripts: true, setup: function(model) {
+        addPretendFile(model, DEST_PATH + '/SitePages/About.aspx', { content: 'The destination\'s own page' });
+    } } });
+    await choose(page, ['Site pages'], false);
+    // With Replace off, the copy leaves the destination's page as it is, so the page can't fail.
+    expect((await beforeYouCopy(page)).rows).toEqual([]);
+    await page.getByRole('button', { name: 'Go back' }).click();
+    await page.getByRole('checkbox', { name: 'Replace pages and files that already exist in the destination' }).check();
+    expect((await beforeYouCopy(page)).rows).toEqual([['About the Study', 'Page', 'The destination doesn\'t allow custom scripts, and SharePoint doesn\'t ' +
+        'take a classic page, or a page in a folder, on such a site, so this page will fail to copy. ' + CUSTOM_SCRIPTS_FIX]]);
 });
 
 test('warns that permissions stay unchanged in a channel site destination', async function({ page }) {
@@ -467,4 +612,35 @@ test('sends no change to either site while it checks, even with every check turn
     expect(record.destination.lists.map(function(l) { return l.Title; })).toEqual(['Documents', 'Site Pages', 'Site Assets']);
     expect(record.destination.termStore.groups).toEqual([]);
     expect(Object.keys(record.destination.files)).toEqual([]);
+});
+
+test('refuses to send a CSOM request that could change something, and sends nothing', async function({ page }) {
+    const record = await openTools(page);
+    const from = record.writeRequests.length;
+    const store = '<StaticMethod Id="1" Name="GetTaxonomySession" TypeId="{981cbc68-9edc-4f8d-872f-71146fcbb84f}" />' +
+        '<Method Id="2" ParentId="1" Name="GetDefaultSiteCollectionTermStore" />';
+    const requests = {
+        setProperty: '<Request><Actions><ObjectPath Id="3" ObjectPathId="2" /><SetProperty Id="4" ObjectPathId="2" Name="DefaultLanguage">' +
+            '<Parameter Type="Int32">1033</Parameter></SetProperty></Actions><ObjectPaths>' + store + '</ObjectPaths></Request>',
+        method: '<Request><Actions><ObjectPath Id="3" ObjectPathId="2" /><Method Name="CommitAll" Id="4" ObjectPathId="2" /></Actions>' +
+            '<ObjectPaths>' + store + '</ObjectPaths></Request>',
+        groupPath: '<Request><Actions><ObjectPath Id="4" ObjectPathId="3" /></Actions><ObjectPaths>' + store +
+            '<Method Id="3" ParentId="2" Name="GetSiteCollectionGroup"><Parameters><Parameter Type="Boolean">true</Parameter></Parameters></Method>' +
+            '</ObjectPaths></Request>'
+    };
+    const answers = await runPreflight(page, [
+        'var out = {};',
+        'for (var name of Object.keys(arg.requests)) {',
+        '    try {',
+        '        await snaToolsPreflightCsomRead(arg.site, arg.requests[name]);',
+        '        out[name] = "sent";',
+        '    } catch (e) {',
+        '        out[name] = e.message;',
+        '    }',
+        '}',
+        'return out;'
+    ].join('\n'), { site: DEST_URL, requests: requests });
+    const refused = 'Sitenalyzer didn\'t send a request during the check before copying, because the request could change the destination.';
+    expect(answers).toEqual({ setProperty: refused, method: refused, groupPath: refused });
+    expect(changesFrom(record, from).filter(function(c) { return /ProcessQuery$/.test(c.path); })).toEqual([]);
 });

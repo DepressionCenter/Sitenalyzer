@@ -286,7 +286,7 @@ The printed report includes both tables and every row, even when a filter is set
 
 **Tools** is the last section in the section links. It has one tool, **Copy site structure**. It copies this site's lists and libraries, with their columns, views, and content types, and its term sets, into another site. It never copies list items or the files in your libraries. Switches under **Other content** can also copy site pages, Site Assets, agents and site skills, navigation, the site look, and permissions. The copy can also start from a data dictionary file instead of this site.
 
-You need to be a site collection administrator of the site you copy into. Sitenalyzer checks this before you can copy, and it never changes the site you copy from unless you choose that same site as the destination. For the steps, see [Copying a site's structure](how-to/copy-a-site.md).
+You need to be a site collection administrator of the site you copy into. Sitenalyzer checks this before you can copy. It never copies into the site you copy from, so it never changes that site. For the steps, see [Copying a site's structure](how-to/copy-a-site.md).
 
 | Address | Opens |
 | --- | --- |

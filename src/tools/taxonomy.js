@@ -326,7 +326,7 @@ async function snaToolsTaxonomyFindGroup(t) {
     var groups = await snaToolsTaxonomyOwnGroups(t, '');
     if (groups.length > 1) {
         var several = 'The destination has more than one term group of its own, so Sitenalyzer couldn\'t tell which one to use.';
-        return { reason: several, note: several + ' Ask a term store admin to check the destination\'s term groups, then copy again.' };
+        return { reason: several, note: several + ' Ask your term store administrator to check the destination\'s term groups, then copy again.' };
     }
     if (groups.length === 1) {
         t.groupId = snaToolsCleanGuid(groups[0].id);
@@ -809,7 +809,7 @@ function snaToolsTaxonomySetProblems(set, stats, fromFile) {
         if (stats.droppedDescriptions > 0) { parts.push(snaCountText(stats.droppedDescriptions, 'description', 'descriptions')); }
         var one = stats.languages.length === 1;
         problems.push('Left out ' + parts.join(' and ') + ' in ' + snaJoinWords(stats.languages.map(snaToolsTaxonomyLanguageName)) + ', because the destination\'s term store doesn\'t have ' +
-            (one ? 'that language' : 'those languages') + '. Ask a term store admin to add ' + (one ? 'it' : 'them') + ', then copy again.');
+            (one ? 'that language' : 'those languages') + '. Ask your term store administrator to add ' + (one ? 'it' : 'them') + ', then copy again.');
     }
     if (stats.unnamedLabels > 0 || stats.unnamedDescriptions > 0) {
         var unnamedParts = [];

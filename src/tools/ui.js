@@ -43,6 +43,9 @@ var SNA_TOOLS_SWITCHES = [
 // The hint of each switch that a data dictionary file has nothing for.
 var SNA_TOOLS_WORKBOOK_SWITCH_HINT = 'A data dictionary file doesn\'t include these.';
 
+// The hint of Replace for a data dictionary file, which has no pages or files to replace.
+var SNA_TOOLS_WORKBOOK_REPLACE_HINT = 'A data dictionary file doesn\'t include pages or files.';
+
 // Most list and library views counted at the same time for the Views column, and most lists whose content types are
 // read at the same time for the Content types part.
 var SNA_TOOLS_VIEW_COUNT_PARALLEL = 3;
@@ -138,10 +141,10 @@ function snaToolsTermSetChosen(row) {
     return sets[row.sourceId];
 }
 
-// Returns whether a switch under Other content is on. A data dictionary file has no pages, files, menus, look, or
-// permissions, so for that source only Replace stays as the person set it.
+// Returns whether a switch under Other content, or Replace, is on. A data dictionary file has no pages, files, menus,
+// look, or permissions, so for that source each one is off. The person's choices stay for this site's report.
 function snaToolsOption(name) {
-    if (_snaToolsState.source === 'workbook' && name !== 'replaceExisting') { return false; }
+    if (_snaToolsState.source === 'workbook') { return false; }
     return !!_snaToolsState.options[name];
 }
 
@@ -225,7 +228,8 @@ function snaToolsValidate(report) {
     if (state.running || snaToolsBusy()) {
         result.hint = 'Sitenalyzer is copying. Select Stop copying to stop.';
     } else if (state.preflight) {
-        result.hint = 'Select Copy anyway or Go back under Before you copy.';
+        result.hint = (!state.preflight.error && snaToolsPreflightStops(state.preflight.warnings))
+            ? 'Select Go back under Before you copy.' : 'Select Copy anyway or Go back under Before you copy.';
     } else if (state.source === 'workbook' && !state.workbook) {
         result.hint = 'Choose a data dictionary file before you copy.';
     } else if (!dest) {
@@ -401,11 +405,12 @@ function snaToolsOtherContentHtml(off) {
             '<label for="' + id + '">' + snaEscapeHtml(item.label) + '</label></div>' +
             '<p id="' + id + '-hint" class="sna-hint">' + snaEscapeHtml(isWorkbook ? SNA_TOOLS_WORKBOOK_SWITCH_HINT : item.hint) + '</p></li>';
     });
-    html += '</ul><div class="sna-tools-replace"><div class="sna-tools-choice">' +
+    html += '</ul><div class="sna-tools-replace' + (isWorkbook ? ' sna-tools-disabled' : '') + '"><div class="sna-tools-choice">' +
         '<input type="checkbox" id="sna-tools-option-replaceExisting" data-option="replaceExisting" aria-describedby="sna-tools-option-replaceExisting-hint"' +
-            (snaToolsOption('replaceExisting') ? ' checked' : '') + off + '>' +
+            (snaToolsOption('replaceExisting') ? ' checked' : '') + (isWorkbook ? ' disabled' : off) + '>' +
         '<label for="sna-tools-option-replaceExisting">Replace pages and files that already exist in the destination</label></div>' +
-        '<p id="sna-tools-option-replaceExisting-hint" class="sna-hint">Leave this off to keep the destination\'s own pages and files.</p></div>';
+        '<p id="sna-tools-option-replaceExisting-hint" class="sna-hint">' + snaEscapeHtml(isWorkbook ? SNA_TOOLS_WORKBOOK_REPLACE_HINT
+            : 'Leave this off to keep the destination\'s own pages and files.') + '</p></div>';
     return html;
 }
 
@@ -736,7 +741,7 @@ async function snaToolsCheckDestinationNow() {
     snaToolsRefreshForm();
     var result;
     try {
-        result = await snaToolsCheckDestination(typed, report.siteUrl);
+        result = await snaToolsCheckDestination(typed, report.siteUrl, snaToolsReportWebId(report));
     } catch (err) {
         result = { ok: false, message: 'Sitenalyzer couldn\'t check the destination. ' + snaToolsFriendlyError(err) };
     }
@@ -814,15 +819,19 @@ async function snaToolsStartCopy() {
             var found = await snaToolsPreflight(plan, dest);
             preflight.warnings = found.warnings;
             preflight.failedChecks = found.failedChecks;
+            // The lists the check read again replace the ones Check destination read, so after Go back, Lists and
+            // libraries marks a name or address the destination started using since.
+            if (found.destLists) { dest.lists = found.destLists; }
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
             preflight.error = 'Sitenalyzer couldn\'t finish checking the destination before the copy, so it can\'t say what the copy will skip.';
         }
     } catch (err) {
+        // Only the reads of this site get here: the check before copying catches its own problems.
         preflight = null;
         lead = snaToolsIsCancelled(err)
             ? 'You stopped the copy before it changed anything.'
-            : 'Sitenalyzer stopped the copy because of a problem. ' + snaToolsFriendlyError(err);
+            : 'Sitenalyzer stopped the copy before it changed anything. ' + snaToolsSourceReadError(err);
     }
     snaToolsEndRun(run);
     if (_snaToolsState !== state) { return; }
@@ -839,13 +848,17 @@ async function snaToolsStartCopy() {
     snaToolsRedraw('sna-tools-results-title');
 }
 
-// Go back: closes Before you copy without copying anything, and returns focus to Copy to destination.
+// Go back: closes Before you copy without copying anything, and returns focus to Copy to destination. When a name or
+// address must change first, Copy to destination is turned off, so focus goes to the first box marked with a problem.
 function snaToolsGoBack() {
     var state = _snaToolsState;
     if (!state.preflight || state.running) { return; }
     state.preflight = null;
     state.progressText = 'You didn\'t copy anything.';
     snaToolsRedraw('sna-tools-copy-button');
+    var button = document.getElementById('sna-tools-copy-button');
+    var marked = document.querySelector('#sna-tools [aria-invalid="true"]');
+    if (button && button.disabled && marked) { marked.focus(); }
     snaToolsAnnounce(true);
 }
 
@@ -855,6 +868,8 @@ async function snaToolsCopyAnyway() {
     var state = _snaToolsState;
     var preflight = state.preflight;
     if (!preflight || state.running || snaToolsBusy()) { return; }
+    // Before you copy shows no Copy anyway button when a warning stops the copy, and the copy never starts then.
+    if (!preflight.error && snaToolsPreflightStops(preflight.warnings)) { return; }
     var dest = preflight.dest;
     var run = snaToolsBeginRun(dest);
     state.preflight = null;

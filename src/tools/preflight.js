@@ -15,9 +15,11 @@ Notes: See README file for documentation and full license information.
        refuses any request that could change something.
 
        Adding a check: snaToolsAddPreflightCheck(name, fn), where fn(plan, dest, context) returns (or resolves to) a list
-       of warnings { severity, kind, name, note }:
+       of warnings { severity, kind, name, note, stops }:
          severity  'fail' (the copy will try and fail), 'skip' (the copy will leave it out), 'maybe' (only the copy can
                    find out, such as a term store change the organization may block), or 'info' (something to know).
+         stops     true for a 'fail' that stops the whole copy before it changes anything, such as a list name the
+                   destination already uses. Before you copy then offers only Go back. Left out otherwise.
          kind      One of SNA_TOOLS_KINDS, such as 'Column'.
          name      The item as people know it, such as 'Arm in Study Visits'.
          note      Plain English that says what will happen and what the person can do.
@@ -83,8 +85,9 @@ function snaToolsAddPreflightCheck(name, fn) {
  * couldn't check that part, and the other checks still run.
  * @param {object} plan The copy plan (see plan.js).
  * @param {object} dest The checked destination (see snaToolsCheckDestination in runner.js).
- * @returns {Promise<{warnings: object[], failedChecks: string[]}>} warnings sorted with what will fail first; failedChecks
- *          names the checks that couldn't finish. Reads only.
+ * @returns {Promise<{warnings: object[], failedChecks: string[], destLists: (object[]|null)}>} warnings sorted with what
+ *          will fail first; failedChecks names the checks that couldn't finish; destLists are the destination's lists
+ *          and libraries as the check read them again (see snaToolsCheckDestination in runner.js), or null. Reads only.
  * @throws {Error} snaCancelledError when the copy is stopped.
  */
 async function snaToolsPreflight(plan, dest) {
@@ -110,7 +113,7 @@ async function snaToolsPreflight(plan, dest) {
     var sorted = warnings.map(function(w, index) { return { w: w, index: index }; }).sort(function(a, b) {
         return (order.indexOf(a.w.severity) - order.indexOf(b.w.severity)) || (a.index - b.index);
     }).map(function(x) { return x.w; });
-    return { warnings: sorted, failedChecks: failedChecks };
+    return { warnings: sorted, failedChecks: failedChecks, destLists: context.destLists };
 }
 
 // Returns the shared state of one run of the checks (see the notes at the top of this file).
@@ -125,15 +128,23 @@ function snaToolsPreflightContext() {
     return context;
 }
 
-// Returns a warning with a known severity and kind, and text in its name and note.
+// Returns a warning with a known severity and kind, text in its name and note, and stops true or false. Only a 'fail'
+// can stop the copy.
 function snaToolsPreflightWarning(w) {
     var kinds = Object.keys(SNA_TOOLS_KINDS).map(function(k) { return SNA_TOOLS_KINDS[k]; });
+    var severity = SNA_TOOLS_PREFLIGHT_SEVERITIES.indexOf(w && w.severity) > -1 ? w.severity : 'maybe';
     return {
-        severity: SNA_TOOLS_PREFLIGHT_SEVERITIES.indexOf(w && w.severity) > -1 ? w.severity : 'maybe',
+        severity: severity,
         kind: kinds.indexOf(w && w.kind) > -1 ? w.kind : SNA_TOOLS_KINDS.note,
         name: String((w && w.name) || ''),
-        note: String((w && w.note) || '')
+        note: String((w && w.note) || ''),
+        stops: severity === 'fail' && !!(w && w.stops === true)
     };
+}
+
+// True when a warning stops the whole copy, so the copy can't start until the person changes what they chose.
+function snaToolsPreflightStops(warnings) {
+    return (warnings || []).some(function(w) { return w.stops; });
 }
 
 // Returns why a read for a check failed, and what the person can do, for the end of a warning.
@@ -220,8 +231,9 @@ function snaToolsPreflightColumnsSentence(labels, many, start) {
 
 // ### Lists and Libraries ###
 
-// A list or library whose new address the destination uses for another kind of list stops the whole copy, so the
-// destination's lists are read again in case they changed after Check destination.
+// A list or library whose new name or address the copy can't use stops the whole copy (see snaToolsRunCopy in
+// runner.js), so the destination's lists are read again in case they changed after Check destination, and each choice
+// gets the same checks as there.
 snaToolsAddPreflightCheck('Lists and libraries', async function(plan, dest, context) {
     var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/lists?$select=Id,Title,BaseTemplate,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder', SNA_TOOLS_READ_MAX);
     context.destLists = read.items.map(function(l) {
@@ -229,13 +241,16 @@ snaToolsAddPreflightCheck('Lists and libraries', async function(plan, dest, cont
             baseTemplate: l.BaseTemplate, hidden: l.Hidden === true };
     });
     var fresh = Object.assign({}, dest, { lists: context.destLists });
+    var newUrls = plan.lists.map(function(l) { return l.newUrl; });
+    var newTitles = plan.lists.map(function(l) { return l.newTitle; });
     var warnings = [];
-    plan.lists.forEach(function(list) {
-        var existing = snaToolsExistingDestinationList(fresh, list.newUrl, list.baseTemplate);
-        if (!existing.list || existing.usable) { return; }
-        warnings.push({ severity: 'fail', kind: list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list, name: snaMaskText(list.newTitle || list.title),
-            note: 'The destination has a different kind of list or library at the address ' + list.newUrl + ', so Sitenalyzer will stop before it ' +
-                'changes anything. Select Go back, give this one another address, then copy again.' });
+    plan.lists.forEach(function(list, index) {
+        var found = snaToolsListChoiceProblems(fresh, list, newTitles.filter(function(t, i) { return i !== index; }),
+            newUrls.filter(function(u, i) { return i !== index; }));
+        var problem = found.address || found.name;
+        if (!problem) { return; }
+        warnings.push({ severity: 'fail', stops: true, kind: list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list,
+            name: snaMaskText(list.newTitle || list.title), note: problem + ' The copy can\'t start until you do. Select Go back to change it, then copy again.' });
     });
     return warnings;
 });
@@ -243,10 +258,10 @@ snaToolsAddPreflightCheck('Lists and libraries', async function(plan, dest, cont
 // ### Term Sets ###
 
 // The chosen term sets go into the destination's own term group. Reads say whether that group is there and whether
-// there is more than one. Creating the group is possible only through CSOM, so when there is none, a CSOM read of the
-// term store says whether SharePoint answers CSOM there at all. Whether the person may change term sets can't be read:
-// a site collection administrator manages the site's own group, but some organizations block term store changes from a
-// browser, and only a change shows that.
+// there is more than one. The copy changes term sets through the REST API, and through CSOM when the REST API refuses,
+// and it can create the group only through CSOM, so a CSOM read of the term store says whether SharePoint answers CSOM
+// there at all. Whether the person may change term sets can't be read: a site collection administrator manages the
+// site's own group, but some organizations block term store changes from a browser, and only a change shows that.
 snaToolsAddPreflightCheck('Term sets', async function(plan, dest, context) {
     var chosen = ((plan.termGroup && plan.termGroup.sets) || []).filter(function(s) { return s.selected; });
     if (chosen.length === 0) { return []; }
@@ -283,11 +298,13 @@ snaToolsAddPreflightCheck('Term sets', async function(plan, dest, context) {
     if (groups.length > 1) {
         markSkipped();
         return row('fail', 'The destination has more than one term group of its own, so Sitenalyzer can\'t tell which one to use, and it won\'t copy ' +
-            names + '.' + columns + ' Ask a term store admin to check the destination\'s term groups, then copy again.');
+            names + '.' + columns + ' Ask your term store administrator to check the destination\'s term groups, then copy again.');
     }
-    if (groups.length === 1) { return []; }
+    var hasGroup = groups.length === 1;
+    var ifNot = ' If it can\'t, it won\'t copy ' + (many ? 'them' : 'it') + '.' + couldSkip;
 
-    // No group yet: the copy makes one through CSOM, so SharePoint refusing a CSOM read of the term store means it will fail.
+    // With no group yet, the copy makes one through CSOM, so SharePoint refusing a CSOM read of the term store means it
+    // will fail. With a group, the REST API may still take the changes, so a refusal only means it may fail.
     try {
         var request = snaToolsTaxonomyCsomRequest();
         var store = snaToolsTaxonomyCsomStore(request);
@@ -295,22 +312,33 @@ snaToolsAddPreflightCheck('Term sets', async function(plan, dest, context) {
         await snaToolsPreflightCsomRead(t.siteUrl, request.xml());
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
+        if (snaToolsTaxonomyIsCsomRefusal(err) && hasGroup) {
+            return row('maybe', 'Sitenalyzer will add ' + names + ' to the destination\'s own term group. SharePoint refused one of the two ways ' +
+                'Sitenalyzer changes term sets there, so it may refuse the other way too. If it does, Sitenalyzer won\'t copy ' +
+                (many ? 'them' : 'it') + '.' + couldSkip + ' If that happens, ask your term store administrator to let you change term sets in the ' +
+                'destination, then copy again.');
+        }
         if (snaToolsTaxonomyIsCsomRefusal(err)) {
             markSkipped();
             return row('fail', 'The destination has no term group of its own, and SharePoint didn\'t let Sitenalyzer reach the destination\'s term store to ' +
                 'make one, so it won\'t copy ' + names + '.' + columns + ' In the destination, add a Managed Metadata column to any list and choose ' +
                 'Customize your term set, then copy again.');
         }
-        return row('maybe', 'The destination has no term group of its own, and Sitenalyzer couldn\'t check whether it can make one. If it can\'t, it ' +
-            'won\'t copy ' + names + '.' + couldSkip + ' ' + snaToolsPreflightReadError(err));
+        return row('maybe', (hasGroup ? 'Sitenalyzer will add ' + names + ' to the destination\'s own term group, but it couldn\'t check whether it can ' +
+            'change term sets there.' : 'The destination has no term group of its own, and Sitenalyzer couldn\'t check whether it can make one.') +
+            ' If it can\'t, it won\'t copy ' + names + '.' + couldSkip + ' ' + snaToolsPreflightReadError(err));
+    }
+    if (hasGroup) {
+        return row('maybe', 'Sitenalyzer will add ' + names + ' to the destination\'s own term group. ' + SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT + ifNot);
     }
     return row('maybe', 'The destination has no term group of its own yet, so Sitenalyzer will make one for ' + names + '. ' +
-        SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT + ' If it can\'t, it won\'t copy ' + (many ? 'them' : 'it') + '.' + couldSkip);
+        SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT + ifNot);
 });
 
 // ### Columns ###
 
-// Columns that need a site term set the person didn't choose, and lookup columns that read from a list the copy doesn't
+// Columns that a data dictionary file already says the copy can't make, managed metadata columns with no term set,
+// columns that need a site term set the person didn't choose, and lookup columns that read from a list the copy doesn't
 // include and the destination doesn't have at the same address, or from a list on another site.
 snaToolsAddPreflightCheck('Columns', function(plan, dest, context) {
     var warnings = [];
@@ -318,6 +346,15 @@ snaToolsAddPreflightCheck('Columns', function(plan, dest, context) {
     ((plan.termGroup && plan.termGroup.sets) || []).forEach(function(s) { siteSets[s.sourceId] = s; });
     var chosenLists = {};
     plan.lists.forEach(function(l) { chosenLists[l.sourceId] = l; });
+    // A data dictionary file's columns that the copy can't make aren't in the plan's lists (see workbook.js).
+    (plan.skippedItems || []).forEach(function(item) {
+        var list = chosenLists[item.listSourceId];
+        if (item.kind !== SNA_TOOLS_KINDS.column || !list || !item.internalName) { return; }
+        if (context.skipColumn(list.sourceId, item.internalName, item.itemName)) {
+            warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: snaToolsPreflightColumnLabel(list, { title: item.itemName }),
+                note: item.beforeNote || item.note });
+        }
+    });
     var destination = Object.assign({}, dest, { lists: context.destLists || dest.lists || [] });
     var sourceWebId = snaToolsCleanGuid(plan.source && plan.source.webId);
 
@@ -326,7 +363,10 @@ snaToolsAddPreflightCheck('Columns', function(plan, dest, context) {
         var note = '';
         if (field.isTaxonomy) {
             var set = siteSets[field.termSetId];
-            if (set && !set.selected) {
+            if (!field.termSetId) {
+                note = 'It isn\'t connected to a term set in the site you copy from, so Sitenalyzer will skip this column. Make it by hand in the ' +
+                    'destination if you need it.';
+            } else if (set && !set.selected) {
                 note = 'It uses the term set ' + snaMaskText(set.name) + ', which you didn\'t choose, so Sitenalyzer will skip this column. ' +
                     'Choose that term set too if you need the column.';
             }
@@ -390,8 +430,8 @@ snaToolsAddPreflightCheck('Term sets of the organization', async function(plan, 
                     'destination\'s term store has the term set this column uses. If it doesn\'t, Sitenalyzer skips the column. ' + problem });
             } else if (!there && context.skipColumn(c.list.sourceId, c.field.internalName, c.field.title)) {
                 warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: c.label, note: 'The destination\'s term store doesn\'t ' +
-                    'have the term set this column uses, so Sitenalyzer will skip it. Ask a term store admin to make that term set available to the ' +
-                    'destination, then copy again.' });
+                    'have the term set this column uses, so Sitenalyzer will skip it. Ask your term store administrator to make that term set ' +
+                    'available to the destination, then copy again.' });
             }
         });
     }
@@ -470,8 +510,9 @@ snaToolsAddPreflightCheck('Site Assets', async function(plan) {
 // ### Custom Scripts ###
 
 // On a site that doesn't allow custom scripts, SharePoint doesn't take .aspx files, so pages the copy sends as files
-// (classic pages and pages in folders) fail. Some site look settings may be refused there too.
-snaToolsAddPreflightCheck('Custom scripts', async function(plan, dest) {
+// (classic pages and pages in folders) fail, unless the destination already has the page and Replace isn't checked, when
+// the copy leaves that page as it is. Some site look settings may be refused there too.
+snaToolsAddPreflightCheck('Custom scripts', async function(plan, dest, context) {
     var pages = (plan.pages && plan.siteContent && plan.siteContent.pages) || [];
     var isChannel = String(dest.webTemplate || '').toUpperCase() === SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE;
     var lookChecked = plan.siteLook && !isChannel;
@@ -483,7 +524,9 @@ snaToolsAddPreflightCheck('Custom scripts', async function(plan, dest) {
     var warnings = [];
     var fix = 'Ask your SharePoint admin to allow custom scripts in the destination, then copy again. SharePoint turns them off again within 24 hours.';
     if (pages.length > 0) {
-        var asFiles = await snaToolsPreflightPagesAsFiles(plan, pages);
+        var sourceLists = await snaToolsFilesReadLists(plan.source.siteUrl);
+        var asFiles = await snaToolsPreflightPagesAsFiles(plan, pages, sourceLists);
+        if (!plan.replaceExisting) { asFiles = await snaToolsPreflightPagesNotThere(plan, dest, context, asFiles, sourceLists); }
         asFiles.forEach(function(page) {
             warnings.push({ severity: 'fail', kind: SNA_TOOLS_KINDS.page, name: snaMaskText(page.name || page.fileName), note: 'The destination doesn\'t allow ' +
                 'custom scripts, and SharePoint doesn\'t take a classic page, or a page in a folder, on such a site, so this page will fail to copy. ' + fix });
@@ -497,9 +540,8 @@ snaToolsAddPreflightCheck('Custom scripts', async function(plan, dest) {
 });
 
 // Returns the pages the copy sends as files instead of making them again through the site pages API: classic pages, and
-// pages in a folder other than Templates. Reads each Site Pages library's pages once.
-async function snaToolsPreflightPagesAsFiles(plan, pages) {
-    var sourceLists = await snaToolsFilesReadLists(plan.source.siteUrl);
+// pages in a folder other than Templates. Reads each Site Pages library's pages once. sourceLists are this site's lists.
+async function snaToolsPreflightPagesAsFiles(plan, pages, sourceLists) {
     var modernById = {};
     var libraryIds = [];
     pages.forEach(function(p) { var id = snaToolsCleanGuid(p.libraryId); if (id && libraryIds.indexOf(id) === -1) { libraryIds.push(id); } });
@@ -516,6 +558,29 @@ async function snaToolsPreflightPagesAsFiles(plan, pages) {
         if (!place.srcPath) { return false; }
         return place.inFolder || !modernById[snaToolsCleanGuid(page.libraryId) + '/' + page.id];
     });
+}
+
+// Returns the pages the destination doesn't have yet at the place the copy puts them in its Site Pages library, which
+// the copy finds the same way (see snaToolsFilesCopyOnePage in files.js). Reads each folder once. When the destination
+// has no Site Pages library, returns pages as they are. sourceLists are this site's lists (see snaToolsFilesReadLists).
+async function snaToolsPreflightPagesNotThere(plan, dest, context, pages, sourceLists) {
+    var destLibrary = (context.destLists || dest.lists || []).filter(function(l) {
+        return Number(l.baseTemplate) === 119 && l.serverRelativeUrl;
+    })[0];
+    if (!destLibrary || pages.length === 0) { return pages; }
+    var folders = {};
+    var left = [];
+    for (var i = 0; i < pages.length; i++) {
+        var destPath = snaToolsJoinPath(destLibrary.serverRelativeUrl, snaToolsFilesPagePlace(plan, pages[i], sourceLists).relative);
+        var parent = snaToolsFilesKey(snaToolsFilesParent(destPath));
+        if (!folders[parent]) {
+            var info = await snaToolsFilesReadFolder(dest.siteUrl, snaToolsFilesParent(destPath));
+            folders[parent] = {};
+            info.files.forEach(function(f) { folders[parent][f.name.toLowerCase()] = true; });
+        }
+        if (!folders[parent][snaToolsFilesLeaf(destPath).toLowerCase()]) { left.push(pages[i]); }
+    }
+    return left;
 }
 
 // ### Channel Sites ###
@@ -547,10 +612,16 @@ snaToolsAddPreflightCheck('Notes', function(plan) {
 // ### Before You Copy ###
 
 // Returns the sentence above the warnings, such as "Sitenalyzer found 3 things to know before you copy to Study Two:
-// 1 item will fail and 2 items will be skipped."
+// 1 item will fail and 2 items will be skipped." When a warning stops the copy, the sentence says that instead.
 function snaToolsPreflightSummary(warnings, destName) {
     if (warnings.length === 0) {
         return 'Sitenalyzer checked ' + destName + ' and found nothing that will stop or change the copy.';
+    }
+    var stops = warnings.filter(function(w) { return w.stops; }).length;
+    if (stops > 0) {
+        var others = warnings.length - stops;
+        return 'Sitenalyzer found ' + snaCountText(stops, 'problem', 'problems') + ' that ' + (stops === 1 ? 'stops' : 'stop') + ' the copy to ' +
+            destName + ' before it changes anything.' + (others > 0 ? ' It also found ' + snaCountText(others, 'other thing', 'other things') + ' to know.' : '');
     }
     var counts = { fail: 0, skip: 0, maybe: 0, info: 0 };
     warnings.forEach(function(w) { counts[w.severity]++; });
@@ -565,21 +636,28 @@ function snaToolsPreflightSummary(warnings, destName) {
 
 /**
  * Returns the markup of the "Before you copy" part: what the copy includes, what the check found, a table of the
- * warnings, and the Copy anyway and Go back buttons.
+ * warnings, and the Copy anyway and Go back buttons. When a warning stops the copy, only Go back is offered.
  * @param {object} preflight { plan, dest, warnings, failedChecks, error (a sentence when the whole check failed, or '') }.
  * @returns {string} Markup. Every value from SharePoint or the person is escaped.
  */
 function snaToolsPreflightHtml(preflight) {
     var destName = snaMaskText(preflight.dest.title || preflight.dest.siteUrl);
     var lead = 'You chose to copy ' + snaToolsCopyContentsText(preflight.plan) + ' to ' + destName + '.';
+    var stops = !preflight.error && snaToolsPreflightStops(preflight.warnings);
     var summary;
     if (preflight.error) {
         summary = preflight.error + ' You can copy anyway, or go back.';
     } else {
+        var stopCount = preflight.warnings.filter(function(w) { return w.stops; }).length;
+        var next = ' Select Copy anyway to copy, or Go back to change what you chose.';
+        if (stops) {
+            next = ' The copy can start only after you fix ' + (stopCount === 1 ? 'it' : 'them') + '. Select Go back to change what you chose.';
+        } else if (preflight.warnings.length > 0) {
+            next = ' Select Copy anyway to copy everything else, or Go back to change what you chose.';
+        }
         summary = snaToolsPreflightSummary(preflight.warnings, destName) +
             (preflight.failedChecks.length > 0 ? ' Sitenalyzer couldn\'t finish every check, so the copy may run into problems that this table doesn\'t show.' : '') +
-            (preflight.warnings.length > 0 ? ' Select Copy anyway to copy everything else, or Go back to change what you chose.'
-                : ' Select Copy anyway to copy, or Go back to change what you chose.');
+            next;
     }
     var html = '<div class="sna-tools-preflight" id="sna-tools-preflight">' +
         '<h3 id="sna-tools-h-preflight" class="sna-subsection-title sna-tools-heading" tabindex="-1">Before you copy</h3>' +
@@ -594,8 +672,8 @@ function snaToolsPreflightHtml(preflight) {
             }).join('') + '</tbody></table>';
     }
     return html + '<div class="sna-tools-row sna-tools-preflight-actions">' +
-            '<button type="button" id="sna-tools-copy-anyway" class="sna-btn sna-btn-primary" data-action="tools-copy-anyway">Copy anyway</button>' +
-            '<button type="button" id="sna-tools-go-back" class="sna-btn sna-btn-outline" data-action="tools-go-back">Go back</button>' +
+            (stops ? '' : '<button type="button" id="sna-tools-copy-anyway" class="sna-btn sna-btn-primary" data-action="tools-copy-anyway">Copy anyway</button>') +
+            '<button type="button" id="sna-tools-go-back" class="sna-btn ' + (stops ? 'sna-btn-primary' : 'sna-btn-outline') + '" data-action="tools-go-back">Go back</button>' +
         '</div></div>';
 }
 
