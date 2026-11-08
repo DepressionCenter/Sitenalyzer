@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/usage.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-27
+Last Modified: 2026-11-05
 Summary: How to install, update, and use Sitenalyzer on a SharePoint Online site.
 Notes: See README file for documentation and full license information.
 
@@ -66,7 +66,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 ### Use Sitenalyzer
 
 1. Open the `sitenalyzer` page.
-2. Keep the current site's address in the **Site address** box, or type another site's address or choose one from the list. The list shows sites you can open.
+2. Keep the current site's address in the **Site address** box, or type another site's address or choose one from the list. The list shows sites you can open. To read the list again, select **Refresh sites list**, the round button next to the box. If SharePoint doesn't answer, Sitenalyzer says so under the box and keeps the sites from the last successful load, so you can still choose one or type an address.
 3. Select **Extract site information**. Sitenalyzer reads the site's lists, libraries, columns, pages, permissions, agents, and site skills, and says what it is reading, such as "Reading lists and libraries: 3 of 12". Large sites can take a minute.
 4. The report opens on the **Overview**. Use the section links in the dark blue bar under the site's name to move between sections. When you open a section, the page scrolls so the section links are at the top of the window. **Back to top**, at the bottom left of each section, scrolls back to them. See [Report sections](#report-sections).
 5. To find a list, library, column, folder, page, agent, site skill, or term, type part of its name in **Search this report** and select **Search**. See [Search this report](#search-this-report).
@@ -76,7 +76,7 @@ The page must be saved directly in the Site Pages library, not in a folder insid
 9. To save every permission as a spreadsheet, select **Permissions workbook (.xlsx)**. See [The permissions workbook](#the-permissions-workbook).
 10. To print the whole report or save it as a PDF, select **Print full report / PDF**. Your browser's print window opens with a printable copy of the whole report. See [Print the report](#print-the-report).
 11. To read the same site again, select **Refresh report** in the dark blue bar at the top. You stay in the section you were looking at.
-12. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. To close the box without changing the site, press Escape or select **Close**.
+12. To look at another site, select **Change site** next to **Refresh report**. In **Choose a site**, type part of the site's name in **Find a site** and select the site, or type its address in **Or enter a site address**, such as `https://contoso.sharepoint.com/sites/example`, and select **Open site report**. **Refresh sites list** reads the list again; if SharePoint doesn't answer, the status line says so and the sites from the last successful load stay listed. To close the box without changing the site, press Escape or select **Close**.
 13. To go back to the first screen, select **Start over**. It puts back the address of the site the page is on.
 
 Both workbooks and the printed report always include the whole report, whatever section is open or filter is set.
@@ -125,7 +125,7 @@ With **Show technical details** on, the **Columns** tab also shows the choices o
 Above the tabs are the **ID**, **Open**, and **Permissions** buttons. **ID** copies the list or library ID. **Permissions** opens SharePoint's own permissions page for it. On a narrow screen, the details replace the list; select **Back to results** to return to it.
 
 After you select **ID**, the ID appears beside the button for five seconds. A status message confirms when copying succeeds.
-If copying fails, the message tells you to select the displayed ID and copy it manually.
+If copying fails, the message tells you to select the ID shown and press Ctrl+C (Cmd+C on a Mac).
 The message hides after about ten seconds, but the ID stays visible so you can still copy it.
 A later status message replaces the error. Success messages hide after about two seconds.
 Keyboard focus returns to the control you used if it is still on the page.
@@ -134,7 +134,7 @@ Keyboard focus returns to the control you used if it is still on the page.
 
 Every table in the report works the same way, including the permission tables, the sharing links, the person check result, and the tables in **Site review**. The one exception is the short list of lists and libraries inside each card in **People and groups**, which keeps a plain table. To sort or filter the people and groups who can use one list or library, open its **Permissions** tab.
 
-- **Sort.** Select a column heading, or move to it with the Tab key and press Enter or Space. Select it again to sort the other way. Sorting sorts every row, not only the rows on the page you're looking at.
+- **Sort.** Select a column heading, or move to it with the Tab key and press Enter or Space. Select it again to sort the other way. Sorting sorts every row, not only the rows on the page you're looking at. Sitenalyzer remembers how you sorted each table while the report is open, so the table is still in that order when you open another section and come back. **Refresh report**, **Start over**, and opening another site from **Change site** put every table back in its usual order.
 - **Filter.** Tables with more than 10 rows have a filter box above them. It shows only the rows that contain what you type, with a row count under it.
 - **Pages.** Tables with more than 50 rows show 50 rows at a time. Use **First**, **Previous**, the page numbers, **Next**, and **Last** under the table to move between pages. Use **Rows per page** to show 25, 50, or 100 rows, or **All** of them. The row count names the rows you can see, such as "Showing 51 to 100 of 340 columns." With a filter, it names both totals, such as "Showing 51 to 100 of 120 columns that match, out of 340." A new filter starts on the first page.
 - **Size.** A table is as tall as its rows, so you never scroll inside it. On a narrow screen, a table whose columns don't fit scrolls sideways. To scroll it with the keyboard, move to it with the Tab key and press the arrow keys.
@@ -145,7 +145,7 @@ The page address changes as you move around the report, such as `.../SitePages/s
 
 ### Search this report
 
-**Search this report** looks through everything Sitenalyzer read from the site, including sections you haven't opened. It searches names, internal names, IDs, data types, term synonyms, and where each item is. It does not search the rest of SharePoint.
+**Search this report** looks through everything Sitenalyzer read from the site, including sections you haven't opened. It searches names, internal names, IDs, data types, term synonyms, and where each item is. It also searches the descriptions of lists, libraries, columns, terms, and site skills, so a list named Projects with the description "Recruitment schedules" is found by searching for `recruitment`. A description you save is searchable right away. It does not search the rest of SharePoint.
 
 - Results are grouped into **Columns**, **Lists and libraries**, **Folders**, **Site pages**, **Agents and skills**, and **Terms**. Columns whose names match come first. A system list is labeled **System list**.
 - Use `*` between words, such as `visit*date`, or put a phrase in quotes, such as `"Visit Date"`, to find it exactly.

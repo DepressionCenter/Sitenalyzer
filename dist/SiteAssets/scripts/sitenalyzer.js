@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-27
+Last Modified: 2026-11-05
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
@@ -75,7 +75,7 @@ var SNA_APP_HTML = [
     "\t\t\t\t\t<button type=\"button\" id=\"sna-sites-refresh-btn\" class=\"hide-on-print\" title=\"Refresh sites list\" aria-label=\"Refresh sites list\">&#8635;</button>",
     "\t\t\t\t</div>",
     "\t\t\t\t<ul id=\"site-suggestions\"></ul>",
-    "\t\t\t\t<div class=\"site-url-helper\" id=\"site-url-helper-message\">Type a site address or choose one from the list. To see every permission, you need to be a site owner.</div>",
+    "\t\t\t\t<div class=\"site-url-helper\" id=\"site-url-helper-message\" role=\"status\">Type a site address or choose one from the list. To see every permission, you need to be a site owner.</div>",
     "\t\t\t\t<button type=\"button\" id=\"sp-btn-gather\" class=\"sna-btn sna-btn-primary\">Extract site information</button>",
     "\t\t\t</div>",
     "\t\t\t<div id=\"sna-entry-message\" class=\"sna-entry-message\" role=\"alert\" hidden></div>",
@@ -342,10 +342,14 @@ function snaGetFieldTypeIcon(spType, calcType) {
 
 // _snaTablesQueue: tables the view being drawn asks for, built by initSnaTabulators once its markup is on the page.
 // _snaTabInstances: the Tabulator tables on screen, by element id. _snaTableFilters: filter box text by table id,
-// so a table's filter is kept when its view is closed and opened again.
+// so a table's filter is kept when its view is closed and opened again. _snaTableSorts: the order each table was
+// last sorted in, by table id, as Tabulator's initialSort setting, so a table opens in that order again while the
+// report is open. A table that was never sorted has no entry and opens in its usual order. Both are kept in memory
+// only, and snaClearReport empties them with the report.
 var _snaTablesQueue = [];
 var _snaTabInstances = {};
 var _snaTableFilters = {};
+var _snaTableSorts = {};
 var _snaOpenChoices = {};         // Columns whose choices are all shown, by the column's key from snaRowEditKey
 var _snaTabMeta = {};             // The _snaTablesQueue entry each table was built from, by element id
 
@@ -371,7 +375,7 @@ var _snaUserCheckResult = null;   // The finished person check { input, status, 
 var _snaDrafts = {};              // Descriptions being edited, by edit key; see renderAdminDescWrap
 var _snaEditFocus = {};           // The newest redraw of each description, by edit key; see snaRedrawDescription
 var _snaSiteDialogOpener = null;  // The button that opened Choose a site, which gets focus back when the dialog closes
-var _snaReloadSites = null;       // Reads the accessible sites again; set by startApplication
+var _snaReloadSites = null;       // Reads the accessible sites again and resolves to { loaded, kept }; set by startApplication
 var _snaUseAddressRoute = true;   // True until the first report from a ?siteUrl= link opens; other reports start on Overview or the kept view
 
 // Taxonomy and admin edit state.
@@ -597,7 +601,8 @@ function snaTableColumnSettings(type, tbl) {
       },
       { title: 'File name', field: 'fileName', sorter: 'string', widthGrow: 2 },
       { title: 'Last changed', field: 'modified', sorter: 'string', width: 130 },
-      { title: 'Address', field: 'url', sorter: 'string', widthGrow: 3, formatter: idFormatter }
+      // The address is plain text, not an ID, so a value in a file name, such as an email address, is hidden.
+      { title: 'Address', field: 'address', sorter: 'string', widthGrow: 3, formatter: function(cell) { return snaEscapeHtml(cell.getValue()); } }
     ];
   }
   function listLinkFormatter(cell) {
@@ -792,9 +797,10 @@ function snaColumnTermSetHtml(row) {
 
 // Shows only the rows that contain text in any value, including values in hidden technical columns. Values are
 // compared as they are shown, so a hidden value can't be found by typing it. personFields lists the fields that hold
-// people's and groups' names, which are shown as they are, so they are compared as they are. decodeFileUrls compares
-// agent and site skill addresses as decoded display text, so encoded spaces cannot interfere with hiding values.
-function snaApplyTableFilter(table, text, personFields, decodeFileUrls) {
+// people's and groups' names, which are shown as they are, so they are compared as they are. Addresses, in fields
+// whose names end in url or Url, are compared as decoded text, the way people read them, because an encoded character
+// such as %40 for @ would hide an email address in a file name from the check for hidden values.
+function snaApplyTableFilter(table, text, personFields) {
   var val = String(text || '').trim().toLowerCase();
   if (!val) { table.clearFilter(); return; }
   var asShown = personFields || [];
@@ -803,7 +809,7 @@ function snaApplyTableFilter(table, text, personFields, decodeFileUrls) {
     for (var k = 0; k < keys.length; k++) {
       var v = data[keys[k]];
       if (!v || typeof v === 'object') { continue; }
-      if (decodeFileUrls && keys[k] === 'url') { v = snaFileAddressText(v); }
+      if (/url$/i.test(keys[k])) { v = snaFileAddressText(v); }
       var shown = asShown.indexOf(keys[k]) > -1 ? String(v) : snaMaskText(v);
       if (shown.toLowerCase().indexOf(val) > -1) { return true; }
     }
@@ -918,9 +924,10 @@ function initSnaTabulators() {
     wrap.appendChild(el);
 
     // Every table grows with its rows, so its headings and frame stay in view. Long tables are split into pages.
+    var columns = snaTableColumns(tbl.type, tbl);
     var options = {
       data: tbl.data,
-      columns: snaTableColumns(tbl.type, tbl),
+      columns: columns,
       layout: 'fitColumns',
       renderVertical: 'basic',
       movableColumns: false,
@@ -941,6 +948,10 @@ function initSnaTabulators() {
       options.paginationSizeSelector = SNA_TABLE_PAGE_SIZES;
       options.langs = SNA_TABLE_TEXT;
     }
+    // The table opens in the order it was last sorted in. A sort by a column the table can't show now, such as a
+    // technical column while Show technical details is off, is left out, so Tabulator never sorts by a missing column.
+    var savedSort = snaUsableTableSort(_snaTableSorts[tbl.id], columns);
+    if (savedSort.length) { options.initialSort = savedSort; }
     var table = new Tabulator(el, options);
     _snaTabInstances[tbl.id] = table;
     _snaTabMeta[tbl.id] = tbl;
@@ -970,7 +981,7 @@ function initSnaTabulators() {
       if (filterInput) {
         var saved = _snaTableFilters[tbl.id] || '';
         filterInput.value = saved;
-        if (saved) { snaApplyTableFilter(table, saved, personFields, tbl.type === 'agents' || tbl.type === 'skills'); } else { updateCount(total); }
+        if (saved) { snaApplyTableFilter(table, saved, personFields); } else { updateCount(total); }
       }
       if (paged) { snaMarkCurrentPage(pagesEl); }
       // A table in a column the browser has only just laid out can measure its width too early, so it redraws once.
@@ -983,7 +994,7 @@ function initSnaTabulators() {
     if (filterInput) {
       filterInput.addEventListener('input', function() {
         _snaTableFilters[tbl.id] = filterInput.value;
-        snaApplyTableFilter(table, filterInput.value, personFields, tbl.type === 'agents' || tbl.type === 'skills');
+        snaApplyTableFilter(table, filterInput.value, personFields);
         // Tabulator keeps the open page number when the filter changes, so the matches start on the first page.
         if (paged) { table.setPage(1); }
       });
@@ -1021,14 +1032,39 @@ function snaMakeHeadingsSortableByKeyboard(table) {
   });
 }
 
-// Removes the Tabulator tables inside rootEl before its markup is replaced, keeping each filter box's text.
-// Tables whose elements are already gone from the page are removed too.
+// Returns the order a table is sorted in, in the form Tabulator's initialSort setting takes, such as
+// [{ column: 'title', dir: 'desc' }], or [] when the table is in its usual order.
+function snaTableSortState(table) {
+  return table.getSorters().filter(function(sorter) { return sorter.field && (sorter.dir === 'asc' || sorter.dir === 'desc'); })
+    .map(function(sorter) { return { column: sorter.field, dir: sorter.dir }; });
+}
+
+// Returns the part of a remembered sort order (see snaTableSortState) that a table can use now: the sorts by columns
+// that are in its column settings, shown, and sortable. saved may be undefined; columns is from snaTableColumns.
+function snaUsableTableSort(saved, columns) {
+  if (!saved || !saved.length) { return []; }
+  var sortable = {};
+  columns.forEach(function(column) {
+    if (column.field && column.sorter && column.visible !== false) { sortable[column.field] = true; }
+  });
+  return saved.filter(function(sort) { return sortable[sort.column] === true; });
+}
+
+// Removes the Tabulator tables inside rootEl before its markup is replaced, keeping each filter box's text and each
+// table's sort order. Tables whose elements are already gone from the page are removed too.
 function snaDisposeViewTables(rootEl) {
   Object.keys(_snaTabInstances).forEach(function(id) {
     var el = document.getElementById(id);
     if (el && rootEl && !rootEl.contains(el)) { return; }
     var filterInput = document.getElementById(id + '-s');
     if (filterInput) { _snaTableFilters[id] = filterInput.value; }
+    // A table in its usual order keeps the order remembered for it, because that order may be by a column the table
+    // couldn't show this time, such as a technical column while Show technical details was off. A column heading
+    // never returns a table to its usual order, so a table with no sort order was never sorted or is such a table.
+    try {
+      var sort = snaTableSortState(_snaTabInstances[id]);
+      if (sort.length) { _snaTableSorts[id] = sort; }
+    } catch(e) { /* The table was already removed with its element, so its last remembered order stays. */ }
     try { _snaTabInstances[id].destroy(); } catch(e) { /* The table was already removed with its element. */ }
     delete _snaTabInstances[id];
     delete _snaTabMeta[id];
@@ -1324,6 +1360,15 @@ function snaCountText(count, singular, plural) {
 // Returns the scheme and host of an address, such as https://contoso.sharepoint.com, or '' when it is not a web address.
 function snaOrigin(address) {
     try { return new URL(address).origin; } catch(e) { return ''; }
+}
+
+// Returns a server-relative path from SharePoint, such as /sites/example/Shared Documents/Study #1, as the path part of
+// an address, with each folder and file name encoded and the slashes between them kept. SharePoint's FileRef and
+// ServerRelativeUrl values hold the names as typed, so a # or % in a name must be encoded here, or the browser would
+// read it as the start of a fragment or of an escape. Use it only on such paths, never on an address SharePoint has
+// already formed, such as DefaultViewUrl, because that would encode its escapes a second time.
+function snaEncodeServerRelativePath(path) {
+    return String(path || '').split('/').map(encodeURIComponent).join('/');
 }
 
 // True when address is a page or file inside the site at siteUrl (same scheme, host, and site path).
@@ -2112,10 +2157,11 @@ async function snaCheckUserAccess() {
     if (!input || !status || !out || _snaUserCheckRunning) { return; }
 
     var text = input.value.trim();
-    // Removes the result table of an earlier check, and its filter text, before the result area is replaced.
+    // Removes the result table of an earlier check, with its filter text and sort order, before the result area is replaced.
     var clearResult = function(area) {
         snaDisposeViewTables(area);
         delete _snaTableFilters['sna-tbl-person'];
+        delete _snaTableSorts['sna-tbl-person'];
         area.innerHTML = '';
     };
     if (!text) {
@@ -2467,7 +2513,7 @@ async function snaLookUpSharedItems(targetUrl, itemIds, method, itemType, found)
         parts.forEach(function(part, index) {
             var id = batchIds[index];
             if (part.status === 200 && part.body && part.body.Name) {
-                var itemUrl = snaOrigin(targetUrl) + encodeURI(part.body.ServerRelativeUrl || '');
+                var itemUrl = snaOrigin(targetUrl) + snaEncodeServerRelativePath(part.body.ServerRelativeUrl);
                 found[id] = { name: String(part.body.Name), url: snaIsSameSiteUrl(itemUrl, targetUrl) ? itemUrl : '', itemType: itemType };
             } else if (part.status === 404) {
                 notFound.push(id);
@@ -3356,7 +3402,7 @@ async function snaCopyToClipboard(text, label) {
         }
     }
     snaShowToast(copied ? (label || 'ID') + ' copied!' :
-        "Couldn't copy the ID. Select the displayed ID and copy it manually.", !copied);
+        "Couldn't copy the ID. Select the ID shown and press Ctrl+C (Cmd+C on a Mac).", !copied);
     return copied;
 }
 
@@ -3537,6 +3583,7 @@ function snaClearReport() {
     _snaTablesQueue = [];
     _snaTabInstances = {};
     _snaTableFilters = {};
+    _snaTableSorts = {};
     _snaOpenChoices = {};
     _snaSearchIndex = [];
     snaResetPermissionState();
@@ -4047,17 +4094,15 @@ async function snaCollectList(list, targetUrl, listIdMap, stillWanted) {
         if (entry.foldersStatus !== 'failed') {
             var validFolders = ((folders && folders.value) ? folders.value : []).filter(function(fldr) { return fldr.Name !== 'Forms'; });
             validFolders.forEach(function(fldr) {
-                // Build folder URL from ServerRelativeUrl (preferred) or fallback construction
-                var folderUrl = '';
-                if (fldr.ServerRelativeUrl) {
-                    folderUrl = targetUrl.replace(/\/+$/, '').split('/').slice(0, 3).join('/') + fldr.ServerRelativeUrl;
-                } else {
-                    folderUrl = targetUrl.replace(/\/+$/, '') + '/' + list.EntityTypeName + '/' + encodeURIComponent(fldr.Name || '');
-                }
+                // The folder's own path from SharePoint is preferred; without one, a likely address comes from the library's
+                // internal name. Either way the link is kept only when it is inside the site being read.
+                var folderUrl = fldr.ServerRelativeUrl
+                    ? snaOrigin(targetUrl) + snaEncodeServerRelativePath(fldr.ServerRelativeUrl)
+                    : xlsxStripSlash(targetUrl) + '/' + list.EntityTypeName + '/' + encodeURIComponent(fldr.Name || '');
                 entry.folders.push({
                     icon:      '📂',
                     name:      fldr.Name || '',
-                    folderUrl: folderUrl,
+                    folderUrl: snaIsSameSiteUrl(folderUrl, targetUrl) ? folderUrl : '',
                     items:     (fldr.ItemCount !== undefined && fldr.ItemCount !== null) ? fldr.ItemCount : null,
                     folderId:  fldr.UniqueId || ''
                 });
@@ -4261,9 +4306,10 @@ var SNA_SEARCH_GROUPS = [
 ];
 
 // Builds the search index from the report's lists, columns, folders, pages, agents, site skills, and terms.
-// label, sublabel, and breadcrumb are searched; sublabel holds internal names and IDs, so they are always
-// searchable even while technical details are hidden. summary is shown under each result, and technicalText only
-// while Show technical details is on. route is the address of the view the result opens.
+// label, sublabel, breadcrumb, and description are searched; sublabel holds internal names and IDs, so they are
+// always searchable even while technical details are hidden. description holds the saved description of a list,
+// library, column, or term; snaSearchQuery hides values in it before comparing, like a name. summary is shown under
+// each result, and technicalText only while Show technical details is on. route is the address of the view the result opens.
 function buildSearchIndex() {
     _snaSearchIndex = [];
     if (!_snaReport) { return; }
@@ -4282,6 +4328,7 @@ function buildSearchIndex() {
             listId:        list.id,
             columnName:    '',
             dataType:      '',
+            description:   list.description || '',
             summary:       list.description || 'No description.',
             technicalText: list.internalName + ' • ' + list.id
         });
@@ -4306,6 +4353,7 @@ function buildSearchIndex() {
                 listId:        list.id,
                 columnName:    name,
                 dataType:      col.dataType || '',
+                description:   col.description || '',
                 summary:       list.title + (col.description ? ' / ' + col.description : ''),
                 technicalText: col.internalName || '',
                 filterTable:   hasFilter ? columnsTableId : '',
@@ -4387,6 +4435,7 @@ function buildSearchIndex() {
                     columnName:    term.termName || '',
                     dataType:      'Term',
                     synonyms:      term.synonyms || '',
+                    description:   term.termDescription || '',
                     summary:       group.groupName + ' / ' + set.setName + (term.synonyms ? ' / Synonyms: ' + term.synonyms : '') +
                         (term.termDescription ? ' / ' + term.termDescription : ''),
                     technicalText: term.termId || '',
@@ -4438,14 +4487,15 @@ function snaSearchQuery(query) {
         var dedupeKey = item.type + '|' + item.label + '|' + item.route + '|' + item.breadcrumb;
         if (seen[dedupeKey]) { return; }
 
-        // Names are compared as they are shown, so a hidden value can't be found by searching for it.
-        // The sublabel holds internal names and IDs, which are never hidden, except a site page's file name.
-        var labelMatch      = fieldMatches(snaMaskText(item.label));
-        var sublabelMatch   = fieldMatches(item.sublabelIsName ? snaMaskText(item.sublabel) : item.sublabel);
-        var breadcrumbMatch = fieldMatches(snaMaskText(item.breadcrumb));
-        var synonymsMatch   = !!item.synonyms && fieldMatches(snaMaskText(item.synonyms));
+        // Names, synonyms, and descriptions are compared as they are shown, so a hidden value can't be found by
+        // searching for it. The sublabel holds internal names and IDs, which are never hidden, except a site page's file name.
+        var labelMatch       = fieldMatches(snaMaskText(item.label));
+        var sublabelMatch    = fieldMatches(item.sublabelIsName ? snaMaskText(item.sublabel) : item.sublabel);
+        var breadcrumbMatch  = fieldMatches(snaMaskText(item.breadcrumb));
+        var synonymsMatch    = !!item.synonyms && fieldMatches(snaMaskText(item.synonyms));
+        var descriptionMatch = !!item.description && fieldMatches(snaMaskText(item.description));
 
-        if (!labelMatch && !sublabelMatch && !breadcrumbMatch && !synonymsMatch) { return; }
+        if (!labelMatch && !sublabelMatch && !breadcrumbMatch && !synonymsMatch && !descriptionMatch) { return; }
 
         seen[dedupeKey] = true;
 
@@ -4880,12 +4930,16 @@ async function snaFetchSitePages(targetUrl) {
                     var fileName = String(item.FileLeafRef || fileRef.split('/').pop() || '');
                     var isFolder = item.FSObjType === 1 || item.FSObjType === '1';
                     if (isFolder || !fileRef || !/\.aspx$/i.test(fileName)) { return; }
-                    var pageUrl = origin + encodeURI(fileRef);
+                    var pageUrl = origin + snaEncodeServerRelativePath(fileRef);
                     var itemId = /^\d+$/.test(String(item.Id)) ? String(item.Id) : '';
+                    var sameSite = snaIsSameSiteUrl(pageUrl, targetUrl);
+                    // url is for links. address is the same address as people read it, with the names as typed, so
+                    // a value in a file name, such as an email address, is hidden like any other text.
                     result.pages.push({
                         name:      (item.Title && String(item.Title).trim()) ? String(item.Title).trim() : fileName,
                         fileName:  fileName,
-                        url:       snaIsSameSiteUrl(pageUrl, targetUrl) ? pageUrl : '',
+                        url:       sameSite ? pageUrl : '',
+                        address:   sameSite ? snaFileAddressText(pageUrl) : '',
                         modified:  item.Modified ? String(item.Modified).substring(0, 10) : '',
                         id:        itemId,
                         libraryId: libraryId,
@@ -5032,7 +5086,7 @@ async function snaFetchSiteAgents(targetUrl, lists, stillWanted, listsRead) {
 
     function fileRow(item, library) {
         var fileRef = String(item.FileRef || '');
-        var url = origin + fileRef.split('/').map(encodeURIComponent).join('/');
+        var url = origin + snaEncodeServerRelativePath(fileRef);
         var root = snaAgentLibraryRoot(library, fileRef, targetUrl);
         var dir = String(item.FileDirRef || fileRef.substring(0, fileRef.lastIndexOf('/')));
         var author = item.Author || {};
@@ -6820,7 +6874,7 @@ function snaRenderPageDetail(page) {
         '<dl class="sna-facts">' +
             '<dt>File name</dt><dd>' + snaEscapeHtml(page.fileName) + '</dd>' +
             '<dt>Last changed</dt><dd>' + snaEscapeHtml(page.modified || 'Not reported.') + '</dd>' +
-            '<dt>Address</dt><dd class="sna-break-anywhere">' + snaEscapeHtml(page.url || 'Not available.') + '</dd>' +
+            '<dt>Address</dt><dd class="sna-break-anywhere">' + snaEscapeHtml(page.address || 'Not available.') + '</dd>' +
         '</dl>' +
         '<h4 class="sna-subsection-title">Page image</h4>' +
         '<div id="sna-page-image-area" class="sna-page-image-area" role="status" data-page-key="' + snaEscapeHtml(page.key) + '">' +
@@ -7102,7 +7156,7 @@ function snaRenderSearch(route, report) {
     var technical = snaTechnicalDetailsOn();
     html += '<p class="sna-lead">' + snaCountText(total, 'result', 'results') + ' for "' + snaEscapeHtml(q) + '" in ' + snaEscapeHtml(report.site.title) + '.</p>';
     if (groups.length > 1) { html += snaExpandCollapseHtml(); }
-    html += '<p class="sna-muted">Search looks at names, internal names, IDs, data types, and where each item is. ' +
+    html += '<p class="sna-muted">Search looks at names, descriptions, internal names, IDs, data types, and where each item is. ' +
         'Use * between words, or put a phrase in quotes to find it exactly. Columns come first.</p>';
     groups.forEach(function(group) {
         html += '<details class="sna-search-group" open><summary>' + snaEscapeHtml(group.title) + ' (' + group.items.length + ')</summary><ul class="sna-search-list">';
@@ -7261,7 +7315,7 @@ function snaBuildPrintDocument(report) {
     html += '<section class="sna-print-section"><h2>Site pages</h2>' +
         pageNotes.map(function(n) { return '<p>' + snaEscapeHtml(n) + '</p>'; }).join('') +
         snaPrintTableHtml('Site pages', ['Page', 'File name', 'Last changed', 'Address'],
-            pages.pages.map(function(p) { return [p.name, p.fileName, p.modified, p.url]; }), 'No site pages found.') + '</section>';
+            pages.pages.map(function(p) { return [p.name, p.fileName, p.modified, p.address]; }), 'No site pages found.') + '</section>';
 
     html += '<section class="sna-print-section"><h2>Agents and skills</h2>' + snaRenderAgentsSection(report.agents, true) + '</section>';
 
@@ -7514,11 +7568,27 @@ function snaRenderSiteChoices() {
     }
 }
 
-// Reads the list of sites again, then lists them in the open dialog.
+// Says that the sites list could not be read. With kept true, the sites from the last successful load are still
+// listed. addressHint names the way to go on without the list, such as 'type the site address'.
+function snaSitesLoadFailureMessage(kept, addressHint) {
+    return kept
+        ? "Couldn't refresh the list of sites. Showing the sites from the last successful load. Check your connection and try again."
+        : "Couldn't load the list of sites. Check your connection and try again, or " + addressHint + '.';
+}
+
+// Reads the list of sites again, then lists them in the open dialog. When the read fails, the sites from the last
+// successful load stay listed and the status line says so. The Find a site text and focus are left as they are.
 function snaRefreshSiteChoices() {
     var status = document.getElementById('sna-site-find-status');
     if (status) { status.textContent = 'Reading your sites...'; }
-    Promise.resolve(_snaReloadSites ? _snaReloadSites() : null).then(snaRenderSiteChoices, snaRenderSiteChoices);
+    Promise.resolve(_snaReloadSites ? _snaReloadSites() : { loaded: false, kept: false })
+        .catch(function() { return { loaded: false, kept: (globalAccessibleSites || []).length > 0 }; })
+        .then(function(outcome) {
+            snaRenderSiteChoices();
+            if (status && !outcome.loaded) {
+                status.textContent = snaSitesLoadFailureMessage(outcome.kept, 'enter the site address below');
+            }
+        });
 }
 
 // Opens the report of another site after checking its address and asking about unsaved descriptions.
@@ -7738,31 +7808,45 @@ function startApplication() {
         if (completedNaturally) { saveSitesCache(globalAccessibleSites, true); }
     }
 
-    // Loads accessible sites from localStorage cache or SharePoint search, refreshing stale cache in the background.
-    async function fetchAccessibleSites() {
+    // Loads the sites list from the saved copy in browser storage or from SharePoint search. With force true, it
+    // always asks SharePoint. The sites from the last successful load stay in memory and in the saved copy until
+    // a new answer arrives, so a failed request leaves the list as it was. Resolves to { loaded: true } when a
+    // list is in place, or { loaded: false, kept } when the request failed, where kept says whether earlier
+    // sites are still listed. The helper text under the Site address box says what happened.
+    async function fetchAccessibleSites(force) {
         var helperMessage = document.getElementById('site-url-helper-message');
         var helperDefault = 'Type a site address or choose one from the list. To see every permission, you need to be a site owner.';
 
+        // Puts text under the Site address box; failure text is shown in the error color as well as in words.
+        function showHelper(text, isFailure) {
+            if (!helperMessage) { return; }
+            helperMessage.textContent = text;
+            helperMessage.classList.toggle('sna-error-text', isFailure === true);
+        }
+
         if (helperMessage) {
+            helperMessage.classList.remove('sna-error-text');
             helperMessage.innerHTML = '<div class="helper-spinner"></div> Loading the sites you can open...';
         }
 
         var cacheStale = true;
-        try {
-            var cacheRaw = localStorage.getItem(SITES_CACHE_KEY);
-            if (cacheRaw) {
-                var cached = JSON.parse(cacheRaw);
-                if (cached.version === 1 && Array.isArray(cached.sites)) {
-                    globalAccessibleSites = cached.sites;
-                    if (helperMessage) { helperMessage.innerHTML = helperDefault; }
-                    if (cached.complete === true && cached.cachedAt && (Date.now() - cached.cachedAt < SITES_CACHE_TTL)) {
-                        cacheStale = false;
+        if (!force) {
+            try {
+                var cacheRaw = localStorage.getItem(SITES_CACHE_KEY);
+                if (cacheRaw) {
+                    var cached = JSON.parse(cacheRaw);
+                    if (cached.version === 1 && Array.isArray(cached.sites)) {
+                        globalAccessibleSites = cached.sites;
+                        showHelper(helperDefault);
+                        if (cached.complete === true && cached.cachedAt && (Date.now() - cached.cachedAt < SITES_CACHE_TTL)) {
+                            cacheStale = false;
+                        }
                     }
                 }
-            }
-        } catch(e) {}
+            } catch(e) {}
+        }
 
-        if (!cacheStale && globalAccessibleSites.length > 0) { return; }
+        if (!force && !cacheStale && globalAccessibleSites.length > 0) { return { loaded: true }; }
 
         try {
             var baseUrl = getBaseUrl();
@@ -7786,29 +7870,50 @@ function startApplication() {
                 searchData.PrimaryQueryResult.RelevantResults.Table.Rows)
                 ? searchData.PrimaryQueryResult.RelevantResults.Table.Rows : [];
 
+            // The first answer replaces the earlier sites, even when it lists none, because it is what SharePoint
+            // returns now. A failed request never reaches this point, so the earlier sites stay.
             var newSites = parseSiteRows(rows);
             globalAccessibleSites = newSites;
             var allLoadedInOneBatch = rows.length < batchSize;
             saveSitesCache(newSites, allLoadedInOneBatch);
 
-            if (helperMessage) { helperMessage.innerHTML = helperDefault; }
+            showHelper(helperDefault);
 
             if (!allLoadedInOneBatch) {
                 fetchMoreSitesBackground(baseUrl, sorted, batchSize, newSites);
             }
+            return { loaded: true };
         } catch (error) {
             console.warn('Could not fetch accessible sites: ' + error.message);
-            if (helperMessage) { helperMessage.innerHTML = helperDefault; }
+            var kept = (globalAccessibleSites || []).length > 0;
+            showHelper(snaSitesLoadFailureMessage(kept, 'type the site address'), true);
+            return { loaded: false, kept: kept };
         }
     }
 
+    // One request at a time: a second refresh while one is running gets the running request's outcome.
+    var sitesRequest = null;
+    function loadAccessibleSites(force) {
+        if (!sitesRequest) {
+            sitesRequest = fetchAccessibleSites(force).then(
+                function(outcome) { sitesRequest = null; return outcome; },
+                function(error) { sitesRequest = null; throw error; });
+        }
+        return sitesRequest;
+    }
+
+    // Redraws the suggestion list under the Site address box when it is open; set below, once the box is wired.
+    var redrawSuggestions = function() {};
+
     // Reads the sites list from SharePoint again, for the refresh buttons on the start screen and in Choose a site.
+    // The list and its saved copy are replaced only when SharePoint answers.
     _snaReloadSites = function() {
-        try { localStorage.removeItem(SITES_CACHE_KEY); } catch(e) {}
-        globalAccessibleSites = [];
-        return fetchAccessibleSites();
+        return loadAccessibleSites(true).then(function(outcome) {
+            if (outcome.loaded) { redrawSuggestions(); }
+            return outcome;
+        });
     };
-    fetchAccessibleSites().then(function() {
+    loadAccessibleSites(false).then(function() {
         var dialog = document.getElementById('sna-site-dialog');
         if (dialog && dialog.open) { snaRenderSiteChoices(); }
     });
@@ -7860,6 +7965,10 @@ function startApplication() {
 
             siteSuggestions.style.display = 'block';
         }
+
+        redrawSuggestions = function() {
+            if (siteSuggestions.style.display === 'block') { showSuggestions(getSearchQuery(siteUrlInput.value)); }
+        };
 
         siteUrlInput.addEventListener('input', function() {
             var query = getSearchQuery(siteUrlInput.value);

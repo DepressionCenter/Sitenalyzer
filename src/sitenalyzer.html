@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.html
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-21
+Last Modified: 2026-11-05
 Summary: Markup for the Sitenalyzer app: the start screen, and the frame of the report screen (site header,
          section navigation, search, report actions, and footer), and the Choose a site dialog. The build puts this markup inside sitenalyzer.js,
          which places it in the page's <div id="sitenalyzer-app"></div> at startup. It holds no site data;
@@ -38,7 +38,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 					<button type="button" id="sna-sites-refresh-btn" class="hide-on-print" title="Refresh sites list" aria-label="Refresh sites list">&#8635;</button>
 				</div>
 				<ul id="site-suggestions"></ul>
-				<div class="site-url-helper" id="site-url-helper-message">Type a site address or choose one from the list. To see every permission, you need to be a site owner.</div>
+				<div class="site-url-helper" id="site-url-helper-message" role="status">Type a site address or choose one from the list. To see every permission, you need to be a site owner.</div>
 				<button type="button" id="sp-btn-gather" class="sna-btn sna-btn-primary">Extract site information</button>
 			</div>
 			<div id="sna-entry-message" class="sna-entry-message" role="alert" hidden></div>
