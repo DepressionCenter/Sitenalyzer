@@ -648,7 +648,8 @@ function snaToolsListsSiteScope(plan, dest) {
  * and it is renamed only when the person chose another name.
  * @param {object} plan The copy plan.
  * @param {object} dest The checked destination.
- * @param {object} maps Source to destination IDs; fills maps.lists, maps.listUrls, and an empty maps.fields entry for each list.
+ * @param {object} maps Source to destination IDs; fills maps.lists, maps.existingLists, maps.listUrls, and an empty maps.fields
+ *     entry for each list.
  * @returns {Promise<void>} Side effects: creates and changes lists in the destination and adds results.
  */
 async function snaToolsCopyLists(plan, dest, maps) {
@@ -676,6 +677,7 @@ async function snaToolsListsUseExisting(list, existing, maps, run) {
     var word = snaToolsListsWord(list);
     var listId = existing.id;
     maps.lists[list.sourceId] = listId;
+    maps.existingLists[list.sourceId] = true;
     maps.fields[list.sourceId] = {};
     if (list.rootFolder) { maps.listUrls[list.rootFolder] = existing.serverRelativeUrl; }
     var title = existing.title;

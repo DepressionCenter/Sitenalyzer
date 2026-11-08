@@ -12,7 +12,8 @@ Summary: Checks the destination site of Copy site structure, and runs the copy's
 Notes: See README file for documentation and full license information.
 
        Shared map of source to destination IDs that every step reads and fills (see snaToolsNewMaps):
-       { lists: { srcListId: destListId }, listUrls: { srcServerRelativeUrl: destServerRelativeUrl },
+       { lists: { srcListId: destListId }, existingLists: { srcListId: true } for each list the destination already had,
+         listUrls: { srcServerRelativeUrl: destServerRelativeUrl },
          fields: { srcListId: { srcInternalName: destInternalName } }, fieldIds: { srcFieldId: destFieldId },
          termSets: { srcSetId: destSetId }, terms: { srcTermId: destTermId }, termSetsMissing: { srcSetId: reason },
          views: { srcViewId: destViewId }, contentTypes: { srcStringId: destStringId },
@@ -206,7 +207,7 @@ function snaToolsAddressProblem(newUrl, isLibrary, destination, others) {
 // Returns an empty map of source to destination IDs for one copy (see the notes at the top of this file).
 function snaToolsNewMaps(dest) {
     return {
-        lists: {}, listUrls: {}, fields: {}, fieldIds: {}, termSets: {}, terms: {}, termSetsMissing: {}, views: {},
+        lists: {}, existingLists: {}, listUrls: {}, fields: {}, fieldIds: {}, termSets: {}, terms: {}, termSetsMissing: {}, views: {},
         contentTypes: {}, principals: {}, roleDefinitions: {}, fileUrls: {}, fileIds: {},
         destination: { siteUrl: dest.siteUrl, webId: dest.webId, siteId: dest.siteId, serverRelativeUrl: dest.serverRelativeUrl,
             termStoreId: '', currentUserId: dest.currentUserId }

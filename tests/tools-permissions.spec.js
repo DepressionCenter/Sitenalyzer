@@ -351,8 +351,8 @@ test('maps the owners, members, and visitors groups by their role and adds their
     // Access the destination gives and this site doesn't stays, and the results say so.
     expect(record.destination.roleAssignments.filter(function(a) { return a.principalId === 60; })).toEqual([{ principalId: 60, roleIds: [ROLE_IDS.read] }]);
     expect(row(rows, 'Other access to the site', 'Permission')).toEqual({ name: 'Other access to the site', kind: 'Permission', result: 'Skipped',
-        note: 'In the destination, 1 person or group has access that it doesn\'t have in this site: Destination Reviewer. Sitenalyzer didn\'t remove its access. ' +
-            'Remove it in the destination if it shouldn\'t have access.' });
+        note: 'In the destination, 1 person has access that they don\'t have in this site: Destination Reviewer. Sitenalyzer didn\'t remove their access. ' +
+            'Remove it in the destination if they shouldn\'t have access.' });
     // The destination's members group keeps Edit, which this site's members group doesn't have, and the row says so.
     expect(row(rows, 'Test Site Members on the site', 'Permission')).toEqual({ name: 'Test Site Members on the site', kind: 'Permission', result: 'Partly copied',
         note: 'Gave access with Contribute. In the destination, Study Two Members also has Edit, which it doesn\'t have in this site. Sitenalyzer ' +
@@ -578,7 +578,7 @@ test('reports access that SharePoint kept on a list and that this site doesn\'t 
     expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Copied',
         note: 'Gave it its own permissions, as in this site.' });
     expect(row(rows, 'Other access to Study Visits', 'Permission')).toEqual({ name: 'Other access to Study Visits', kind: 'Permission', result: 'Skipped',
-        note: 'In the destination, 1 person or group has access to Study Visits that it doesn\'t have in this site: Study Two Members. Sitenalyzer ' +
+        note: 'In the destination, 1 group has access to Study Visits that it doesn\'t have in this site: Study Two Members. Sitenalyzer ' +
             'didn\'t remove its access. Remove it in the destination if it shouldn\'t have access.' });
 });
 
@@ -712,20 +712,84 @@ test('keeps the access the person running the copy already had on a list the des
         note: 'Gave access with Read. In the destination, you also have Full Control on Study Visits, which you don\'t have in this site. ' +
             'Sitenalyzer didn\'t remove that level. Remove it in the destination if you shouldn\'t have it.' });
     expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Copied',
-        note: 'It already had its own permissions in the destination, so Sitenalyzer added the access it has in this site and didn\'t remove any.' });
+        note: 'It already had its own permissions in the destination, so Sitenalyzer didn\'t remove any access from it.' });
 });
 
-test('reports the person running the copy as other access on a list the destination already gave its own permissions', async function({ page }, testInfo) {
+// The sentence the Permissions row of a list gets when the person running the copy has access to it in the destination
+// that this site doesn't give them, and the copy didn't remove it.
+const YOU_ALSO_HAVE_ACCESS = ' In the destination, you also have access to it that you don\'t have in this site. Sitenalyzer didn\'t remove ' +
+    'that access. Remove yourself from its permissions in the destination if you shouldn\'t have access.';
+
+test('tells the person running the copy about their own access to a list the destination already gave its own permissions', async function({ page }, testInfo) {
     const record = await openTools(page, { destination: { setup: function(model) { addStudyVisitsWithOwnPermissions(model); } } });
     await copyStudyVisits(page);
     const callerId = record.destination.currentUser.Id;
     expect(listAssignments(record, copiedList(record).Id)[callerId]).toEqual([ROLE_IDS.fullControl]);
     expect(destinationChanges(record).filter(function(c) { return /breakroleinheritance|removeroleassignment|getbyprincipalid/.test(c.path); })).toEqual([]);
     const rows = await savedResults(page, testInfo);
-    expect(row(rows, 'Other access to Study Visits', 'Permission')).toEqual({ name: 'Other access to Study Visits', kind: 'Permission', result: 'Skipped',
-        note: 'In the destination, 1 person or group has access to Study Visits that it doesn\'t have in this site: Test User. Sitenalyzer ' +
-            'didn\'t remove its access. Remove it in the destination if it shouldn\'t have access.' });
-    expect(row(rows, 'Permissions of Study Visits', 'Permission').note).not.toMatch(/Removed/);
+    // The results speak to the person running the copy as "you", so no Other access row names them.
+    expect(rows.filter(function(r) { return r.name === 'Other access to Study Visits'; })).toEqual([]);
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Copied',
+        note: 'It already had its own permissions in the destination, so Sitenalyzer didn\'t remove any access from it.' + YOU_ALSO_HAVE_ACCESS });
+});
+
+test('doesn\'t say it added access to a list that already had its own permissions when it couldn\'t give that access', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { listAddRefused: true, setup: function(model) { addStudyVisitsWithOwnPermissions(model); } } });
+    await copyStudyVisits(page);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Partly copied',
+        note: 'It already had its own permissions in the destination, so Sitenalyzer didn\'t remove any access from it. Couldn\'t give 2 people ' +
+            'and groups the access they have in this site. Give them access by hand in the destination.' + YOU_ALSO_HAVE_ACCESS });
+});
+
+// Adds Study Visits to the destination before the copy, using the site's permissions, and gives the person running the
+// copy Read on the site directly. The copy then uses this list.
+function addStudyVisitsWithSitePermissions(model) {
+    seedPermissions(model);
+    model.addList('Study Visits', 100, 'StudyVisits');
+    model.roleAssignments.push({ principalId: model.currentUser.Id, roleIds: [ROLE_IDS.read] });
+}
+
+test('keeps everyone\'s access to a list the destination already had that uses the site\'s permissions', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { setup: addStudyVisitsWithSitePermissions } });
+    await copyStudyVisits(page);
+    const list = copiedList(record);
+    const callerId = record.destination.currentUser.Id;
+    const base = "/_api/web/lists(guid'" + list.Id + "')";
+    const listChanges = destinationChanges(record).filter(function(c) { return c.path.indexOf(base + '/') === 0 && /\/(breakroleinheritance|roleassignments)/.test(c.path); })
+        .map(function(c) { return c.path.substring(base.length); });
+    expect(listChanges[0]).toBe('/breakroleinheritance(true,false)');
+    expect(listChanges.filter(function(p) { return /removeroleassignment|getbyprincipalid/.test(p); })).toEqual([]);
+    // The destination's visitors and members groups, and the person running the copy, keep the access they had through the site.
+    const access = listAssignments(record, list.Id);
+    expect(access[4]).toEqual([ROLE_IDS.read]);
+    expect(access[5]).toEqual([ROLE_IDS.edit, ROLE_IDS.contribute].sort());
+    expect(access[callerId]).toEqual([ROLE_IDS.read]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Copied',
+        note: 'Gave it its own permissions, as in this site, and kept the access anyone already had to it in the destination.' + YOU_ALSO_HAVE_ACCESS });
+    const other = row(rows, 'Other access to Study Visits', 'Permission');
+    expect(other.result).toBe('Skipped');
+    expect(other.note).toMatch(/^In the destination, \d+ people and groups have access to Study Visits that they don't have in this site: /);
+    expect(other.note).toContain('Study Two Visitors');
+    expect(other.note).not.toMatch(/Test User/);
+    // On the site, the person running the copy is told about their own access in the second person.
+    expect(row(rows, 'Other access to the site', 'Permission')).toEqual({ name: 'Other access to the site', kind: 'Permission', result: 'Skipped',
+        note: 'In the destination, you have access that you don\'t have in this site. Sitenalyzer didn\'t remove your access. Remove yourself ' +
+            'from the site\'s permissions in the destination if you shouldn\'t have access.' });
+    expect(rows.filter(function(r) { return r.kind === 'Permission' && /Removed/.test(r.note); })).toEqual([]);
+});
+
+test('keeps everyone\'s access to a list the destination already had when it can\'t check whether it has its own permissions', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { listUniqueReadRefused: true, setup: addStudyVisitsWithSitePermissions } });
+    await copyStudyVisits(page);
+    const list = copiedList(record);
+    const changes = destinationChanges(record).map(function(c) { return c.path; });
+    expect(changes).toContain("/_api/web/lists(guid'" + list.Id + "')/breakroleinheritance(true,false)");
+    expect(changes.filter(function(p) { return /removeroleassignment|getbyprincipalid/.test(p); })).toEqual([]);
+    const access = listAssignments(record, list.Id);
+    expect(access[4]).toEqual([ROLE_IDS.read]);
+    expect(access[record.destination.currentUser.Id]).toEqual([ROLE_IDS.read]);
 });
 
 test('removes no access from a list when it can\'t check whether the list already had its own permissions', async function({ page }, testInfo) {

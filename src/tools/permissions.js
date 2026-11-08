@@ -945,23 +945,47 @@ async function snaToolsPermissionsCopyAssignments(ctx, scope, assignments) {
 }
 
 // Logs one row that names the people and groups with access to the site or one list in the destination that they don't
-// have in this site. Never removes that access. skipId is a principal ID that another note reports, or 0.
-function snaToolsPermissionsLogOtherAccess(scope, destAssignments, skipId) {
+// have in this site. Never removes that access. The person running the copy (callerId) is left out of that list, so no
+// note names them in the third person. Returns true when they have such access. tellCaller adds a sentence about that
+// access to this row; pass false when another row tells them instead.
+function snaToolsPermissionsLogOtherAccess(scope, destAssignments, callerId, tellCaller) {
+    var callerHasOther = false;
     var others = destAssignments.filter(function(ra) {
         var member = ra.Member || {};
         var id = snaToolsPermissionsInt(ra.PrincipalId || member.Id);
-        if (!id || id === skipId || scope.matched[id]) { return false; }
+        if (!id || scope.matched[id]) { return false; }
         if (member.PrincipalType === 8 && snaIsSharePointSystemGroup(member.Title)) { return false; }
-        return snaToolsPermissionsGivesAccess(ra);
+        if (!snaToolsPermissionsGivesAccess(ra)) { return false; }
+        if (callerId && id === callerId) { callerHasOther = true; return false; }
+        return true;
     }).map(function(ra) { return ra.Member || {}; });
-    if (others.length === 0) { return; }
-    var one = others.length === 1;
+    var tellYou = callerHasOther && tellCaller;
+    if (others.length === 0 && !tellYou) { return callerHasOther; }
     var where = scope.listId ? ' to ' + scope.words : '';
-    snaToolsLog(SNA_TOOLS_KINDS.permission, 'Other access to ' + scope.words, 'skipped', 'In the destination, ' +
-        snaCountText(others.length, 'person or group', 'people and groups') +
-        (one ? ' has access' + where + ' that it doesn\'t' : ' have access' + where + ' that they don\'t') +
-        ' have in this site: ' + snaToolsPermissionsNames(others) + '. Sitenalyzer didn\'t remove ' + (one ? 'its' : 'their') +
-        ' access. Remove it in the destination if ' + (one ? 'it shouldn\'t' : 'they shouldn\'t') + ' have access.');
+    var sentences = [];
+    if (others.length > 0) {
+        var note;
+        if (others.length === 1) {
+            // One person is "they"; a SharePoint group, a security group, or a claim such as Everyone is "it".
+            var isPerson = others[0].PrincipalType === SNA_TOOLS_PERMISSIONS_PRINCIPAL_TYPES.person;
+            note = 'In the destination, 1 ' + (isPerson ? 'person has access' + where + ' that they don\'t' : 'group has access' + where +
+                ' that it doesn\'t') + ' have in this site: ' + snaToolsPermissionsNames(others) + '. Sitenalyzer didn\'t remove ' +
+                (isPerson ? 'their' : 'its') + ' access. Remove it in the destination if ' + (isPerson ? 'they shouldn\'t' : 'it shouldn\'t') +
+                ' have access.';
+        } else {
+            note = 'In the destination, ' + snaCountText(others.length, 'person or group', 'people and groups') + ' have access' + where +
+                ' that they don\'t have in this site: ' + snaToolsPermissionsNames(others) + '. Sitenalyzer didn\'t remove their access. ' +
+                'Remove it in the destination if they shouldn\'t have access.';
+        }
+        sentences.push(note);
+    }
+    if (tellYou) {
+        sentences.push((others.length > 0 ? 'You also have' : 'In the destination, you have') + ' access' + where + ' that you don\'t ' +
+            'have in this site. Sitenalyzer didn\'t remove your access. Remove yourself from ' +
+            (scope.listId ? 'the permissions of ' + scope.words : 'the site\'s permissions') + ' in the destination if you shouldn\'t have access.');
+    }
+    snaToolsLog(SNA_TOOLS_KINDS.permission, 'Other access to ' + scope.words, 'skipped', sentences.join(' '));
+    return callerHasOther;
 }
 
 // Adds a sentence to the note of a permission row. The destination check keeps it after a problem it finds, because
@@ -1061,15 +1085,16 @@ async function snaToolsPermissionsCopySiteAccess(ctx) {
         }
     }
     await snaToolsPermissionsCopyAssignments(ctx, scope, ctx.source.siteAssignments);
-    snaToolsPermissionsLogOtherAccess(scope, ctx.destSiteAssignments, 0);
+    snaToolsPermissionsLogOtherAccess(scope, ctx.destSiteAssignments, snaToolsPermissionsInt(ctx.dest.currentUserId), true);
     await snaToolsPermissionsReportExtraLevels(ctx, scope, ctx.destSiteAssignments, false);
 }
 
 // Gives each copied list or library with its own permissions the same permissions as in this site, then reports
 // access that the destination list has and that this site doesn't give. A list whose access in this site couldn't be
 // read has no entry in ctx.source.listAssignments and keeps the site's permissions. Access is removed only from the
-// person running the copy, and only on a list that used the site's permissions before the copy, because then
-// SharePoint gave that access when the copy gave the list its own permissions.
+// person running the copy, and only on a list the copy created, because then SharePoint gave that access when the copy
+// gave the list its own permissions. A list the destination already had that uses the site's permissions keeps
+// everyone's access to the site when it gets its own, and that access is reported instead.
 async function snaToolsPermissionsCopyListAccess(ctx) {
     var lists = ctx.plan.lists;
     for (var i = 0; i < lists.length; i++) {
@@ -1091,18 +1116,22 @@ async function snaToolsPermissionsCopyListAccess(ctx) {
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
         }
+        // reused is true for a list the destination already had, which the lists step used instead of creating one.
+        var reused = !!(ctx.maps.existingLists && ctx.maps.existingLists[list.sourceId]);
+        var keepSiteAccess = reused && hadOwn !== true;
         var entry;
         if (hadOwn === true) {
-            // Giving it its own permissions again would change nothing but could clear its items' own permissions.
+            // The list already has its own permissions, so the copy doesn't need to change it before giving access.
             entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'It already had its own permissions in the destination, so ' +
-                'Sitenalyzer added the access it has in this site and didn\'t remove any.', { verify: { type: 'ownPermissions', listId: destListId } });
+                'Sitenalyzer didn\'t remove any access from it.', { verify: { type: 'ownPermissions', listId: destListId } });
         } else {
             try {
-                // (false,false) doesn't copy the site's assignments, so the list starts with only what SharePoint keeps
-                // for the person running the copy, and keeps the own permissions of any items a list the destination
-                // already had holds.
-                await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(false,false)', { method: 'POST' });
-                entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'Gave it its own permissions, as in this site.',
+                // (true,false) copies the site's assignments, so everyone with access to the site keeps their access to
+                // a list the destination already had. (false,false) gives a new list only what SharePoint keeps for the
+                // person running the copy. Both leave alone any items that have their own permissions.
+                await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(' + (keepSiteAccess ? 'true' : 'false') + ',false)', { method: 'POST' });
+                entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'Gave it its own permissions, as in this site' +
+                    (keepSiteAccess ? ', and kept the access anyone already had to it in the destination.' : '.'),
                     { verify: { type: 'ownPermissions', listId: destListId } });
             } catch (err) {
                 if (snaToolsIsCancelled(err)) { throw err; }
@@ -1117,7 +1146,7 @@ async function snaToolsPermissionsCopyListAccess(ctx) {
                 'remove any access from it. Open its permissions in the destination and remove anyone who doesn\'t have access to it ' +
                 'in this site.';
         }
-        // When the copy gave the list its own permissions, SharePoint keeps one assignment that gives the person running
+        // When the copy gave a new list its own permissions, SharePoint keeps one assignment that gives the person running
         // the copy access: their own, or that of a group they are in, such as the destination's owners group.
         // destAssignments is null when it couldn't be read.
         var destAssignments = null;
@@ -1135,11 +1164,11 @@ async function snaToolsPermissionsCopyListAccess(ctx) {
                 (one ? 'it has' : 'they have') + ' in this site. Give ' + (one ? 'it' : 'them') + ' access by hand in the destination.';
         }
         if (!destAssignments) {
-            if (entry && hadOwn === false) {
+            if (entry && hadOwn === false && !reused) {
                 entry.result = 'partial';
                 entry.note += ' Sitenalyzer couldn\'t check who else SharePoint gave access to it, such as you or a group you\'re ' +
                     'in. In the destination, open its permissions and remove anyone who doesn\'t have access to it in this site.';
-            } else if (entry && hadOwn === true) {
+            } else if (entry && hadOwn !== null) {
                 entry.result = 'partial';
                 entry.note += ' Sitenalyzer couldn\'t check who else has access to it in the destination. Open its permissions there ' +
                     'and remove anyone who doesn\'t have access to it in this site.';
@@ -1147,9 +1176,13 @@ async function snaToolsPermissionsCopyListAccess(ctx) {
             continue;
         }
         var callerId = snaToolsPermissionsInt(ctx.dest.currentUserId);
-        var removeCallerAccess = hadOwn === false;
-        snaToolsPermissionsLogOtherAccess(scope, destAssignments, removeCallerAccess ? callerId : 0);
+        var removeCallerAccess = hadOwn === false && !reused;
+        var callerHasOther = snaToolsPermissionsLogOtherAccess(scope, destAssignments, callerId, false);
         await snaToolsPermissionsReportExtraLevels(ctx, scope, destAssignments, removeCallerAccess);
+        if (entry && callerHasOther && !removeCallerAccess) {
+            snaToolsPermissionsAddNote(entry, ' In the destination, you also have access to it that you don\'t have in this site. ' +
+                'Sitenalyzer didn\'t remove that access. Remove yourself from its permissions in the destination if you shouldn\'t have access.');
+        }
         if (!removeCallerAccess || !callerId || !scope.existing[callerId] || scope.matched[callerId]) { continue; }
         try {
             await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/roleassignments/getbyprincipalid(' + callerId + ')', { method: 'DELETE' });

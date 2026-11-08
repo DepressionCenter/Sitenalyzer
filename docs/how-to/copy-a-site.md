@@ -149,7 +149,9 @@ With **Permissions** on, the copy:
 - Adds the members of each group.
 - Gives each person and group the same permission levels on the site and on each list or library that has its own permissions.
 
-It leaves out sharing links, Limited Access, apps, and the Microsoft 365 group connected to this site, because that group would give its members access to the destination. It never removes access or members that the destination already has. When someone in the destination has more access than in this site, the results name them so you can decide whether to remove it. The one exception is you. SharePoint adds you to each group the copy makes, and gives you access to each list the copy gives its own permissions. When this site doesn't give you the same, the copy takes that membership or access away again and says so.
+It leaves out sharing links, Limited Access, apps, and the Microsoft 365 group connected to this site, because that group would give its members access to the destination. It never removes access or members that the destination already has. When someone in the destination has more access than in this site, the results name them so you can decide whether to remove it. The one exception is you. SharePoint adds you to each group the copy makes, and gives you access to each new list the copy gives its own permissions. When this site doesn't give you the same, the copy takes that membership or access away again and says so.
+
+When the destination already has a list or library that the copy uses, such as Documents, nobody loses access to it. If it uses the site's permissions, the copy keeps everyone's access to it when it gives it its own permissions. The results then name the people and groups who have access to it that they don't have in this site, so you can decide whether to remove them.
 
 ### Content that is never copied
 
