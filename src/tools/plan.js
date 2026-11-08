@@ -17,7 +17,7 @@ Notes: See README file for documentation and full license information.
        { source: { kind: 'site'|'workbook', siteUrl, siteId, webId, serverRelativeUrl, title, termStoreId, fileName },
          lists: [PlanList], siteColumns: [PlanField], siteContentTypes: [PlanContentType],
          hubContentTypes: [{ stringId, name }] (content types from the content type hub that the copy needs),
-         builtInSiteColumns: [{ id, internalName, title, rename }] (SharePoint's own site columns that the chosen lists or
+         builtInSiteColumns: [{ id, internalName, title, hidden, rename }] (SharePoint's own site columns that the chosen lists or
          content types use, with the name they have in the source site, such as TaxKeyword shown as Tags; rename is true
          when someone added the column, so the destination's column gets that name),
          termGroup: { name, sets: [PlanTermSet] } | null,
@@ -40,8 +40,8 @@ Notes: See README file for documentation and full license information.
        PlanContentType = { stringId, name, description, group, parentStringId, fieldLinks [{ internalName, id,
          required, hidden, displayName (the name the column shows in this content type, or '' when it's the column's
          own name) }], clientFormCustomFormatter, formComponents {}, readOnly, sealed, hidden, isBuiltIn, isHub,
-         builtInParentLinks [{ id, required, hidden, displayName }] (site content types in the plan only: the columns of
-         SharePoint's own content type it's based on, or null when that isn't known) }
+         parentLinks [{ id, required, hidden, displayName }] (site content types in the plan only: the columns of the
+         content type it's based on, or null when the source site's content types don't include that one) }
        PlanTermSet = { sourceId, name, description, isOpen, isAvailableForTagging, languageTag, terms [PlanTerm],
          selected, complete }
        PlanTerm = { sourceId, parentIds [the first is the main parent], labels [{ name, languageTag, isDefault }],
@@ -778,8 +778,9 @@ async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
         var parent = typesById[String(ct.parentStringId).toUpperCase()];
         var parentIds = {};
         if (parent) { parent.fieldLinks.forEach(function(link) { parentIds[link.id] = true; }); }
-        // The columns a content type gets from SharePoint's own content type it's based on, such as Title from Item.
-        ct.builtInParentLinks = parent && parent.isBuiltIn ? parent.fieldLinks.map(function(link) {
+        // The columns a content type gets from the content type it's based on, such as Title from Item. The parent can be
+        // SharePoint's own, one from the content type hub, or one in the plan.
+        ct.parentLinks = parent ? parent.fieldLinks.map(function(link) {
             return { id: link.id, required: link.required, hidden: link.hidden, displayName: ownName(link) };
         }) : null;
         ct.fieldLinks.forEach(function(link) {
@@ -794,7 +795,7 @@ async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
     // Only a column someone added gets its source name in the destination: SharePoint's core columns, such as Title,
     // have names in the site's language, so a destination in another language would get the source's names.
     plan.builtInSiteColumns = planFields.filter(function(f) { return f.builtIn && ((usedIds[f.id] && f.builtInSiteColumn) || linkedIds[f.id]); })
-        .map(function(f) { return { id: f.id, internalName: f.internalName, title: f.title, rename: !!(f.builtInSiteColumn && addedIds[f.id]) }; });
+        .map(function(f) { return { id: f.id, internalName: f.internalName, title: f.title, hidden: f.hidden, rename: !!(f.builtInSiteColumn && addedIds[f.id]) }; });
 
     var chosenSets = choices.termSetIds || [];
     plan.termGroup = await snaToolsReadSourceTermGroup(report, chosenSets, progress);

@@ -66,6 +66,9 @@ var SNA_TOOLS_LISTS_ADD_TO_DEFAULT_TYPE = 1;
 var SNA_TOOLS_LISTS_TAXONOMY_HELPERS = ['taxcatchall', 'taxcatchalllabel'];
 var SNA_TOOLS_LISTS_TAXONOMY_HELPER_IDS = ['f3b0adf9-c1a2-4b02-920d-943fba4b3611', '8f6b6dd8-9357-4019-8172-966fcd502ed2'];
 
+// The ID of the Content Type column every content type has. It isn't shown in a content type's settings.
+var SNA_TOOLS_LISTS_CONTENT_TYPE_FIELD_ID = 'c042a256-787d-4a6f-8a8a-cf6ab767f12d';
+
 // The ID SharePoint uses for "none", such as a managed metadata column with no starting term.
 var SNA_TOOLS_LISTS_EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
 
@@ -886,8 +889,8 @@ async function snaToolsListsCopySiteContentType(plan, dest, maps, run, ct) {
 
 // Returns the columns a new destination site content type already has, by lowercase destination column ID:
 // { required, hidden, displayName }. They come from its parent. When they can't be read, returns the source parent's
-// columns when the plan has that parent or the parent is one of SharePoint's own, or null.
-async function snaToolsListsReadTypeColumns(plan, dest, maps, ct, createdId) {
+// columns, or null when the source site's content types don't include the parent.
+async function snaToolsListsReadTypeColumns(dest, maps, ct, createdId) {
     try {
         var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/contenttypes/getbyid(@c)/fieldlinks?$select=Id,Name,DisplayName,Required,Hidden&@c=' +
             encodeURIComponent(snaToolsQuote(createdId)), SNA_TOOLS_READ_MAX);
@@ -899,8 +902,7 @@ async function snaToolsListsReadTypeColumns(plan, dest, maps, ct, createdId) {
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
     }
-    var parent = plan.siteContentTypes.filter(function(p) { return p.stringId.toUpperCase() === String(ct.parentStringId).toUpperCase(); })[0];
-    var parentLinks = parent ? parent.fieldLinks : ct.builtInParentLinks;
+    var parentLinks = ct.parentLinks;
     if (!parentLinks) { return null; }
     var fromParent = {};
     parentLinks.forEach(function(link) {
@@ -913,7 +915,7 @@ async function snaToolsListsReadTypeColumns(plan, dest, maps, ct, createdId) {
 // display name: the site columns this copy made, and SharePoint's own site columns, which the destination already has.
 // Columns that came with its parent are changed when their settings differ. A column it can't get is named in the note.
 async function snaToolsListsCopyTypeColumns(plan, dest, maps, run, ct, createdId, entry) {
-    var have = await snaToolsListsReadTypeColumns(plan, dest, maps, ct, createdId);
+    var have = await snaToolsListsReadTypeColumns(dest, maps, ct, createdId);
     var siteIds = {};
     plan.siteColumns.forEach(function(f) { if (!f.builtIn) { siteIds[f.id] = f; } });
     var builtInIds = {};
@@ -932,7 +934,9 @@ async function snaToolsListsCopyTypeColumns(plan, dest, maps, run, ct, createdId
         // A hidden Note column comes with its managed metadata column, and people don't see it, so it's never named.
         if (custom && !maps.fieldIds[link.id] && snaToolsListsIsHelperColumn(custom, noteIds)) { return; }
         if (have === null && !custom) {
-            unchecked.push(settings.name);
+            // Hidden columns and Content Type aren't shown in the content type's settings, so the note doesn't name them.
+            var builtIn = builtInIds[link.id];
+            if (link.id !== SNA_TOOLS_LISTS_CONTENT_TYPE_FIELD_ID && !(builtIn && builtIn.hidden)) { unchecked.push(settings.name); }
             return;
         }
         if (have && have[destId]) {
@@ -1056,9 +1060,9 @@ async function snaToolsListsCopyListContentTypes(plan, dest, maps, list, state) 
                 state.contentTypes[key] = there;
             } else if (!ct.hidden && String(ct.parentStringId).toUpperCase() !== '0X0120') {
                 // Folder and hidden content types aren't on the New menu, so one the destination lacks isn't reported.
-                snaToolsLog(K.contentType, snaToolsInList(list, ct.name), 'skipped', 'Sitenalyzer didn\'t add this content type, which comes from ' +
-                    'SharePoint, because the destination ' + snaToolsListsWord(list) + ' doesn\'t have it. Add it in the ' + snaToolsListsWord(list) +
-                    ' settings, under Content types, if you need it.');
+                snaToolsLog(K.contentType, snaToolsInList(list, ct.name), 'skipped', 'The destination ' + snaToolsListsWord(list) +
+                    ' doesn\'t have this content type, which comes from SharePoint, and Sitenalyzer doesn\'t add those. Add it in the ' +
+                    snaToolsListsWord(list) + ' settings, under Content types, if you need it.');
             }
             continue;
         }

@@ -53,6 +53,9 @@ const TITLE_ID = 'fa564e0f-0c70-4ab9-b863-0177e6ddd247';
 const START_DATE_ID = 'f1f1f1f1-0000-4000-8000-000000000001';
 const DUE_DATE_ID = 'f1f1f1f1-0000-4000-8000-000000000002';
 const KEYWORDS_ID = 'f1f1f1f1-0000-4000-8000-000000000003';
+// The Content Type column and the hidden Source Url column, which use the same IDs in every site.
+const CONTENT_TYPE_COLUMN_ID = 'c042a256-787d-4a6f-8a8a-cf6ab767f12d';
+const SOURCE_URL_ID = 'c63a459d-54ba-4ab7-933a-dcf1c6fadec2';
 const PROTOCOL_ID = 'cccccccc-2000-4000-8000-000000000009';
 const STUDY_DOCUMENT_ID = '0x010100DDDD0000000040008000000000000001';
 const ARCHIVE_RECORD_ID = '0x0100DDDD0000000040008000000000000002';
@@ -927,8 +930,8 @@ test('keeps SharePoint\'s own content types a new list has, matched by ID, and r
     await copyNow(page);
     const visits = destList(record, '/Lists/StudyVisits');
     expect(visits.contentTypes.map(function(t) { return t.Name; })).toEqual(['Item', 'Visit Record']);
-    await expectResult(page, 'Event in Study Visits', 'Content type', 'Skipped', 'Sitenalyzer didn\'t add this content type, which comes from SharePoint, ' +
-        'because the destination list doesn\'t have it. Add it in the list settings, under Content types, if you need it.');
+    await expectResult(page, 'Event in Study Visits', 'Content type', 'Skipped', 'The destination list doesn\'t have this content type, which comes from ' +
+        'SharePoint, and Sitenalyzer doesn\'t add those. Add it in the list settings, under Content types, if you need it.');
     await expect(resultRow(page, 'Elemento in Study Visits')).toHaveCount(0);
     await expect(resultRow(page, 'Item in Study Visits')).toHaveCount(0);
     expect(record.unexpectedRequests).toEqual([]);
@@ -977,16 +980,19 @@ test('doesn\'t name the Note column of a managed metadata site column the destin
 test('adds SharePoint\'s own site columns to a new content type when its columns can\'t be read, or says which to check', async function({ page }) {
     const siteFields = [
         Object.assign(builtInColumn(KEYWORDS_ID, 'TaxKeyword', 'Enterprise Keywords', 'TaxonomyFieldTypeMulti'), { Scope: SITE_PATH }),
-        Object.assign(builtInColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'), { Scope: SITE_PATH })
+        Object.assign(builtInColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'), { Scope: SITE_PATH }),
+        Object.assign(builtInColumn(SOURCE_URL_ID, '_SourceUrl', 'Source Url', 'Text'), { Scope: SITE_PATH, Hidden: true })
     ];
     // Item isn't among the site's content types here, so the copy doesn't know which columns Archive Record gets from it.
+    // Content Type isn't among the site's columns either, as in a subsite. The note names neither it nor Source Url.
     const siteTypes = [
         { StringId: '0x0101', Name: 'Document', Description: '', Group: 'Document Content Types', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] },
         { StringId: STUDY_DOCUMENT_ID, Name: 'Study Document', Description: '', Group: 'Study Content Types', FieldLinks: [
             { Id: TITLE_ID, Name: 'Title', DisplayName: 'Document Title' }, { Id: KEYWORDS_ID, Name: 'TaxKeyword', DisplayName: 'Tags' },
             { Id: START_DATE_ID, Name: 'StartDate' }] },
         { StringId: ARCHIVE_RECORD_ID, Name: 'Archive Record', Description: '', Group: 'Study Content Types', FieldLinks: [
-            { Id: TITLE_ID, Name: 'Title' }, { Id: START_DATE_ID, Name: 'StartDate' }] }
+            { Id: CONTENT_TYPE_COLUMN_ID, Name: 'ContentType' }, { Id: TITLE_ID, Name: 'Title' }, { Id: START_DATE_ID, Name: 'StartDate' },
+            { Id: SOURCE_URL_ID, Name: '_SourceUrl', Hidden: true }] }
     ];
     const record = await openTools(page, { source: { siteTypes: siteTypes, siteFields: siteFields }, setup: function(model) {
         model.siteColumns.push(destinationSiteColumn(KEYWORDS_ID, 'TaxKeyword', 'Enterprise Keywords', 'TaxonomyFieldTypeMulti'));
@@ -1005,5 +1011,31 @@ test('adds SharePoint\'s own site columns to a new content type when its columns
     await expectResult(page, 'Archive Record', 'Content type', 'Partly copied', 'Created the content type. Sitenalyzer couldn\'t read its columns in the ' +
         'destination, so it didn\'t check Title and Start Date, which come from SharePoint\'s own site columns. Check that it has those columns in the ' +
         'content type\'s settings in the destination.');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('uses the columns of a content type hub parent when a new content type\'s columns can\'t be read', async function({ page }) {
+    const siteFields = [Object.assign(builtInColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'), { Scope: SITE_PATH })];
+    const policyLinks = [{ Id: CONTENT_TYPE_COLUMN_ID, Name: 'ContentType' }, { Id: TITLE_ID, Name: 'Title' }];
+    const siteTypes = [
+        { StringId: '0x01', Name: 'Item', Description: '', Group: 'List Content Types', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] },
+        { StringId: POLICY_ID, Name: 'Policy Document', Description: '', Group: 'Policy Content Types', ReadOnly: true, FieldLinks: policyLinks },
+        { StringId: POLICY_SUMMARY_ID, Name: 'Policy Summary', Description: '', Group: 'Study Content Types',
+            FieldLinks: policyLinks.concat([{ Id: START_DATE_ID, Name: 'StartDate' }]) }
+    ];
+    const record = await openTools(page, { source: { siteTypes: siteTypes, siteFields: siteFields }, setup: function(model) {
+        // The content type hub has published Policy Document to the destination.
+        model.contentTypes.push({ StringId: POLICY_ID, Name: 'Policy Document', Group: 'Policy Content Types', Description: '',
+            FieldLinks: policyLinks.map(function(l) { return Object.assign({ Required: false, Hidden: false }, l); }) });
+        model.siteColumns.push(destinationSiteColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'));
+    }, destination: { handlers: [
+        { pattern: /^\/_api\/web\/contenttypes\/getbyid\(@c\)\/fieldlinks$/, answer: function(ctx) { return ctx.spError(404, 'The content type does not exist.'); } }
+    ] } });
+    await chooseLists(page, [{ name: 'Study Arms' }]);
+    await page.getByRole('checkbox', { name: 'Study Arms (2 terms)' }).uncheck();
+    await copyNow(page);
+    const summary = record.destination.contentTypes.filter(function(t) { return t.StringId === POLICY_SUMMARY_ID; })[0];
+    expect(summary.FieldLinks.map(function(l) { return l.Name; })).toEqual(['ContentType', 'Title', 'StartDate']);
+    await expectResult(page, 'Policy Summary', 'Content type', 'Copied', 'Created the content type.');
     expect(record.unexpectedRequests).toEqual([]);
 });
