@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-files.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Browser tests for the files part of Copy site structure: Site Assets folders and files, agents, site skills,
          and site pages. The source site's Site Assets, Agent Assets, and page content are answered here through
          answerOverrides, and the destination's answers are in pretend-destination-files.js.
@@ -458,11 +458,12 @@ test('copies the other Site Assets files when one folder can\'t be read, and mar
 
 test('still copies site skills when the destination\'s lists can\'t be read for the agents', async function({ page }) {
     const refuseLists = { pattern: /^\/_api\/web\/lists$/, answer: function(ctx) {
-        return /IsSiteAssetsLibrary/.test(ctx.url.searchParams.get('$select') || '') ? ctx.spError(500, 'Synthetic failure.') : undefined;
+        return /IsSiteAssetsLibrary/.test(ctx.url.searchParams.get('$select') || '') ? ctx.spError(403, 'Synthetic failure.') : undefined;
     } };
     const record = await copyWithFiles(page, { pages: false, siteAssets: false, destination: { handlers: [refuseLists] } });
-    const note = 'Sitenalyzer couldn\'t read the destination\'s lists and libraries, so it didn\'t copy this agent. SharePoint said: "Synthetic failure". ' +
-        'Copy again in a few minutes.';
+    // The advice fits the error: here SharePoint refused the read, so waiting a few minutes wouldn't help.
+    const note = 'Sitenalyzer couldn\'t read the destination\'s lists and libraries, so it didn\'t copy this agent. SharePoint didn\'t let you make ' +
+        'this change. SharePoint said: "Synthetic failure". Check that you\'re still a site collection administrator of the destination, then copy again.';
     await expectResult(page, 'Study Visits Helper', 'Agent', 'Failed', note);
     await expectResult(page, 'Protocol Reviewer', 'Agent', 'Failed', note);
     await expectResult(page, 'Weekly summary', 'Site skill', 'Copied', 'Copied the site skill.');
@@ -624,3 +625,92 @@ test('leaves no link to this site in a home page that holds many link forms, and
         '&guidFile=' + noHyphens(destFile(record, '/SiteAssets/images/welcome.png').uniqueId));
     await expect(resultRow(page, 'Welcome', 'Page').locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Copied');
 });
+
+// ### Site Skill Notes, Template Leftovers, Subsites, and Replaced Pages ###
+
+test('names a site skill folder that can\'t be read apart from a file that can\'t be copied', async function({ page }) {
+    const tree = sourceTree();
+    tree[SITE_PATH + '/Agent Assets/Skills/weekly-summary'].files.push({ name: 'extra.txt', content: 'Synthetic extra notes.' });
+    const refuseReferences = { pattern: /^\/_api\/web\/GetFolderByServerRelativePath\(decodedurl=@p\)$/, answer: function(url) {
+        if (url.searchParams.get('@p') !== "'" + SITE_PATH + "/Agent Assets/Skills/weekly-summary/references'") { return undefined; }
+        return reply(500, { 'odata.error': { code: '-1, System.Exception', message: { lang: 'en-US', value: 'Synthetic failure.' } } });
+    } };
+    const refuseExtra = { method: 'POST', pattern: /^\/_api\/SP\.MoveCopyUtil\.CopyFileByPath\(overwrite=@a1\)$/, answer: function(ctx) {
+        return ctx.text.indexOf('extra.txt') > -1 ? ctx.spError(500, 'Synthetic failure.') : undefined;
+    } };
+    const record = await copyWithFiles(page, { pages: false, siteAssets: false, tree: tree, answers: [refuseReferences],
+        destination: { handlers: [refuseExtra] } });
+    await expectResult(page, 'Weekly summary', 'Site skill', 'Partly copied', 'Copied the site skill, but not the references folder or extra.txt. ' +
+        'Copy them to the skill\'s folder in Agent Assets by hand.');
+    expect(destFile(record, '/Agent Assets/Skills/weekly-summary/SKILL.md')).toBeTruthy();
+});
+
+test('doesn\'t mistake the page a template was made from for a page of the destination', async function({ page }) {
+    const pages = Object.assign({}, SOURCE_PAGES, { 3: { Title: 'Visit Report', FileLeafRef: 'Visit Report.aspx', FileRef: SITE_PATH + '/SitePages/Visit Report.aspx',
+        modern: true, PageLayoutType: 'Article', CanvasContent1: '<div>Visit report text.</div>' } });
+    const refuseRecycle = { method: 'POST', pattern: /^\/_api\/web\/GetFileByServerRelativePath\(decodedurl=@p\)\/recycle$/, answer: function(ctx) {
+        return ctx.spError(403, 'Access denied.');
+    } };
+    const record = await copyWithFiles(page, { agents: false, siteAssets: false, sourcePages: pages, destination: { handlers: [refuseRecycle] } });
+    const rows = resultRow(page, 'Visit Report', 'Page');
+    await expect(rows).toHaveCount(2);
+    const results = await rows.evaluateAll(function(found) {
+        return found.map(function(row) {
+            return row.querySelector('[tabulator-field="resultText"]').textContent + ': ' + row.querySelector('[tabulator-field="note"]').textContent;
+        });
+    });
+    expect(results.sort()).toEqual([
+        'Failed: Sitenalyzer didn\'t copy this page, because Site Pages in the destination has a page with the same name that SharePoint made while ' +
+            'copying the page template, and Sitenalyzer couldn\'t remove it. Delete that page in the destination, then copy again.',
+        'Partly copied: Copied the page template. SharePoint made the template from a page named Visit Report.aspx in Site Pages, which Sitenalyzer ' +
+            'couldn\'t remove. Delete that page in the destination.'
+    ]);
+    // The page at the top of Site Pages is still the one the template was made from.
+    expect(destFile(record, '/SitePages/Visit Report.aspx').page.CanvasContent1).toBe('<div>Visit report template text.</div>');
+});
+
+test('leaves links into a subsite of this site as they are, and marks the page as partly copied', async function({ page }) {
+    const subsites = { pattern: /^\/_api\/web\/webinfos$/, body: { value: [{ ServerRelativeUrl: SITE_PATH + '/archive' }] } };
+    const home = Object.assign({}, SOURCE_PAGES[1], { CanvasContent1: '<div><a href="' + SITE_URL + '/archive/SitePages/A.aspx">Archive</a> ' +
+        '<a href="' + SITE_URL + '/SitePages/About.aspx">About</a></div>' });
+    const record = await copyWithFiles(page, { agents: false, siteAssets: false, answers: [subsites], sourcePages: Object.assign({}, SOURCE_PAGES, { 1: home }) });
+    const canvas = destFile(record, '/SitePages/Home.aspx').page.CanvasContent1;
+    expect(canvas).toContain('<a href="' + SITE_URL + '/archive/SitePages/A.aspx">Archive</a>');
+    expect(canvas).toContain('<a href="' + DEST_URL + '/SitePages/About.aspx">About</a>');
+    await expect(resultRow(page, 'Welcome', 'Page').locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Partly copied');
+});
+
+// For a source that is a subsite: the top site of its site collection, and a list there.
+const PARENT_WEB_ID = '33333333-0000-4000-8000-000000000000';
+const PARENT_LIST_ID = '33333333-0000-4000-8000-0000000000b1';
+
+test('changes the site collection ID of a subsite only next to the subsite\'s own ID', async function({ page }) {
+    const subsite = { pattern: /^\/_api\/site\/rootweb$/, body: { Id: PARENT_WEB_ID } };
+    const canvas = '<div>' +
+        webPart('d1d91016-032f-456d-98a4-721247c305e8', { imageSourceType: 2, siteid: SOURCE_SITE_ID, webid: SOURCE_WEB_ID, listid: SITE_ASSETS_ID,
+            uniqueid: WELCOME_IMAGE_ID }) +
+        webPart('c70391ea-0b10-4ee9-b2b4-006d3fcad0cd', { items: [{ siteId: SOURCE_SITE_ID, webId: PARENT_WEB_ID, listId: PARENT_LIST_ID }] }) + '</div>';
+    const home = Object.assign({}, SOURCE_PAGES[1], { CanvasContent1: canvas,
+        BannerImageUrl: SITE_URL + '/_layouts/15/getpreview.ashx?guidSite=' + noHyphens(SOURCE_SITE_ID) + '&guidWeb=' + noHyphens(SOURCE_WEB_ID) });
+    const record = await copyWithFiles(page, { agents: false, answers: [subsite], sourcePages: Object.assign({}, SOURCE_PAGES, { 1: home }) });
+    const saved = destFile(record, '/SitePages/Home.aspx').page;
+    // The Image web part shows a file of this site, so it gets the destination's site collection.
+    expect(saved.CanvasContent1).toContain('&quot;siteid&quot;:&quot;' + DEST_SITE_ID + '&quot;,&quot;webid&quot;:&quot;' + DEST_WEB_ID + '&quot;');
+    // The link to the parent site keeps its site collection, so it still opens the parent site's list.
+    expect(saved.CanvasContent1).toContain('&quot;siteId&quot;:&quot;' + SOURCE_SITE_ID + '&quot;,&quot;webId&quot;:&quot;' + PARENT_WEB_ID +
+        '&quot;,&quot;listId&quot;:&quot;' + PARENT_LIST_ID + '&quot;');
+    expect(saved.BannerImageUrl).toBe(DEST_URL + '/_layouts/15/getpreview.ashx?guidSite=' + noHyphens(DEST_SITE_ID) + '&guidWeb=' + noHyphens(DEST_WEB_ID));
+    await expect(resultRow(page, 'Welcome', 'Page').locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Partly copied');
+});
+
+test('says a page in a folder was replaced when Replace is checked and the destination had it', async function({ page }) {
+    function setup(model) {
+        model.folders[(DEST_PATH + '/SitePages/Archive').toLowerCase()] = { name: 'Archive', serverRelativeUrl: DEST_PATH + '/SitePages/Archive' };
+        addPretendPage(model, DEST_PATH + '/SitePages/Archive/Visit Notes.aspx', { Title: 'Visit Notes', CanvasContent1: 'Older notes' });
+    }
+    const record = await copyWithFiles(page, { agents: false, siteAssets: false, replace: true, sourcePages: Object.assign({}, SOURCE_PAGES, FOLDER_PAGE),
+        destination: { setup: setup } });
+    await expectResult(page, 'Visit Notes', 'Page', 'Copied', 'Replaced the page in the destination.');
+    expect(destFile(record, '/SitePages/Archive/Visit Notes.aspx').copiedWith).toBe('server');
+});
+

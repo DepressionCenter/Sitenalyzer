@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 files.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Copies the files Copy site structure copies: the folders and files in Site Assets, agents (.agent files) into
          the matching destination library, site skills into the destination's Agent Assets library, and the pages in
          Site Pages. Modern pages are made again through SharePoint's site pages API, with every link and ID of this
@@ -30,6 +30,7 @@ Notes: See README file for documentation and full license information.
 
        SharePoint addresses used here, all with parameter aliases (@p) so a quote, #, or % in a name is safe:
          GET  {site}/_api/web/lists?$select=...,IsSiteAssetsLibrary,RootFolder/ServerRelativeUrl&$expand=RootFolder
+         GET  {source}/_api/web/webinfos?$select=ServerRelativeUrl, GET {source}/_api/site/rootweb?$select=Id   (for page links)
          GET  {site}/_api/web/GetFolderByServerRelativePath(decodedurl=@p)?$expand=Folders,Files
          POST {dest}/_api/web/Folders/AddUsingPath(decodedurl=@p)
          POST {dest}/_api/SP.MoveCopyUtil.CopyFileByPath(overwrite=@a1)   (absolute addresses in the body)
@@ -96,7 +97,8 @@ var SNA_TOOLS_FOLDER_NOT_READ_NOTE = 'Sitenalyzer couldn\'t read this folder, so
 
 // ### Files State ###
 
-// What the file steps of one copy share: { maps, sourceLists, destLists, folders, folderErrors, fileResults, sourceIds }.
+// What the file steps of one copy share: { maps, sourceLists, destLists, folders, folderErrors, fileResults, sourceIds,
+// leftoverPages, subsites, sourceIsTopSite }.
 // It belongs to the maps object of that copy, so a new copy starts with a new state.
 var _snaToolsFilesState = null;
 
@@ -110,7 +112,10 @@ function snaToolsFilesState(maps) {
             folders: {},        // Destination folders by lowercase path: { exists, files: { lowercase name: { uniqueId } } }
             folderErrors: {},   // Destination folders Sitenalyzer couldn't create, by lowercase path
             fileResults: {},    // What happened to each source file, by lowercase path: { result, note, destPath }
-            sourceIds: {}       // IDs of this site's files, so a page that still uses one can be found
+            sourceIds: {},      // IDs of this site's files, so a page that still uses one can be found
+            leftoverPages: {},  // Pages SharePoint made a template from that Sitenalyzer couldn't remove, by lowercase path
+            subsites: [],       // Addresses of this site's subsites, which the copy doesn't include
+            sourceIsTopSite: null  // True for the top site of its site collection, false for a subsite, null when unknown
         };
     }
     maps.fileUrls = maps.fileUrls || {};
@@ -553,7 +558,7 @@ async function snaToolsFilesCopyAgentFiles(plan, dest, maps, state, agents) {
         // Only the agents need this read, so the site skills are still copied.
         agents.forEach(function(agent) {
             snaToolsLog(kind, agent.name || agent.fileName, 'failed', 'Sitenalyzer couldn\'t read the destination\'s lists and libraries, so it ' +
-                'didn\'t copy this agent.' + snaToolsServerSaid(err.serverMessage) + ' Copy again in a few minutes.');
+                'didn\'t copy this agent. ' + snaToolsFriendlyError(err));
         });
         return;
     }
@@ -684,7 +689,9 @@ async function snaToolsFilesCopyOneSkill(plan, dest, maps, state, skill, name, s
     if (!tree.files.some(function(f) { return snaToolsFilesKey(f.path) === snaToolsFilesKey(skillPath); })) {
         tree.files.unshift({ name: snaToolsFilesLeaf(skillPath), path: skillPath, size: 0, uniqueId: '' });
     }
-    var failedNames = tree.failedFolders.map(function(failed) { return 'the ' + snaToolsFilesUnder(failed.path, folder) + ' folder'; });
+    // Folders and files are kept apart, because a folder that couldn't be read may hold many files.
+    var failedFolders = tree.failedFolders.map(function(failed) { return 'the ' + snaToolsFilesUnder(failed.path, folder) + ' folder'; });
+    var failedFiles = [];
     var mainProblem = '';
     for (var i = 0; i < tree.files.length; i++) {
         var file = tree.files[i];
@@ -695,7 +702,7 @@ async function snaToolsFilesCopyOneSkill(plan, dest, maps, state, skill, name, s
             if (outcome.result !== 'copied' && outcome.note === SNA_TOOLS_TOO_LARGE_NOTE) { throw snaToolsUserError(SNA_TOOLS_TOO_LARGE_NOTE); }
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
-            if (isMain) { mainProblem = snaToolsFilesErrorNote(err); } else { failedNames.push(snaToolsFilesUnder(file.path, folder)); }
+            if (isMain) { mainProblem = snaToolsFilesErrorNote(err); } else { failedFiles.push(snaToolsFilesUnder(file.path, folder)); }
         }
     }
     if (mainProblem) {
@@ -703,21 +710,100 @@ async function snaToolsFilesCopyOneSkill(plan, dest, maps, state, skill, name, s
         return;
     }
     var verify = { verify: { type: 'file', serverRelativeUrl: destSkill } };
-    if (failedNames.length > 0) {
-        var them = failedNames.length === 1 ? 'it' : 'them';
-        snaToolsLog(kind, name, 'partial', 'Copied the site skill, but not ' + snaCountText(failedNames.length, 'of its files', 'of its files') + ': ' +
-            snaJoinWords(failedNames) + '. Copy ' + them + ' to the skill\'s folder in Agent Assets by hand.', verify);
+    var missed = failedFolders.concat(failedFiles);
+    if (missed.length > 0) {
+        var them = missed.length === 1 ? 'it' : 'them';
+        snaToolsLog(kind, name, 'partial', 'Copied the site skill, but not ' + snaToolsFilesJoinOr(missed) + '. Copy ' + them +
+            ' to the skill\'s folder in Agent Assets by hand.', verify);
         return;
     }
     snaToolsLog(kind, name, 'copied', 'Copied the site skill.', verify);
 }
 
+// Joins words into a list that reads as a sentence with "or", such as "a, b, or c".
+function snaToolsFilesJoinOr(words) {
+    if (words.length < 3) { return words.join(' or '); }
+    return words.slice(0, -1).join(', ') + ', or ' + words[words.length - 1];
+}
+
 // ### Page Content ###
+
+// Returns the server-relative addresses of this site's subsites, such as /sites/research/archive, or [] when they can't be
+// read. Links into them stay as they are, because the copy doesn't include them.
+async function snaToolsFilesSourceSubsites(plan) {
+    try {
+        var read = await snaToolsReadAll(plan.source.siteUrl, '/_api/web/webinfos?$select=ServerRelativeUrl', SNA_TOOLS_READ_MAX);
+        return read.items.map(function(w) { return String((w && w.ServerRelativeUrl) || ''); }).filter(Boolean);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return [];
+    }
+}
+
+// Returns true when this site is the top site of its site collection, false when it's a subsite, or null when that
+// can't be read.
+async function snaToolsFilesIsTopSite(plan) {
+    try {
+        var root = await snaToolsRead(plan.source.siteUrl, '/_api/site/rootweb?$select=Id');
+        var rootId = snaToolsCleanGuid(root && root.Id);
+        return rootId ? rootId === snaToolsCleanGuid(plan.source.webId) : null;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return null;
+    }
+}
+
+// True when the site collection ID in page content can be changed everywhere: this site is the top site of its site
+// collection, so the ID means this site. In a subsite, the same ID also belongs to the other sites in the collection.
+function snaToolsFilesMapsSiteIdEverywhere(plan, dest, state) {
+    var from = snaToolsCleanGuid(plan.source.siteId);
+    var to = snaToolsCleanGuid(dest.siteId);
+    return !from || !to || from === to || state.sourceIsTopSite === true;
+}
+
+// Returns a regular expression source that finds an ID in the forms page content uses, with hyphens, %2D, or none
+// between its parts, after a character that can't be part of it. Group 1 is that character; groups 2 to 5 the separators.
+function snaToolsFilesIdSource(id) {
+    return '(^|%[0-9a-f]{2}|&#\\d+;|[^0-9a-f])' + snaToolsCleanGuid(id).split('-').join('(-|%2d|)') + '(?![0-9a-f])';
+}
+
+// Returns the part of text around the ID from start to end, between the nearest { before it and the nearest } after it,
+// such as one item of a Quick links web part. Braces right next to the ID, as in {<id>} or %7B<id>%7D, don't count.
+function snaToolsFilesIdPart(text, start, end) {
+    var before = text.substring(0, start).replace(/(?:\{|&#123;|%7b)$/i, '');
+    var after = text.substring(end).replace(/^(?:\}|&#125;|%7d)/i, '');
+    var from = Math.max(before.lastIndexOf('{'), before.lastIndexOf('&#123;'), 0);
+    var ends = [after.indexOf('}'), after.indexOf('&#125;')].filter(function(i) { return i > -1; });
+    return before.substring(from) + after.substring(0, ends.length ? Math.min.apply(null, ends) : after.length);
+}
+
+// For a source that is a subsite: changes the site collection ID only where the destination site's own ID (destWebId)
+// is next to it, in the same part of the text (see snaToolsFilesIdPart). There it meant this site, whose own ID the
+// rewrite already changed. Elsewhere it may mean another site in the collection, such as the parent site, so it stays as it is.
+// Keeps the ID's capitals and separators. Returns { text, left } where left is true when the old ID is still there.
+function snaToolsFilesPairSiteId(text, siteId, destSiteId, destWebId) {
+    var siteRe = new RegExp(snaToolsFilesIdSource(siteId), 'gi');
+    var webRe = new RegExp(snaToolsFilesIdSource(destWebId), 'i');
+    var parts = snaToolsCleanGuid(destSiteId).split('-');
+    var left = false;
+    var out = text.replace(siteRe, function(found, before, s1, s2, s3, s4, offset) {
+        if (!webRe.test(snaToolsFilesIdPart(text, offset + before.length, offset + found.length))) {
+            left = true;
+            return found;
+        }
+        var digits = found.substring(before.length);
+        var upper = /[A-F]/.test(digits) && !/[a-f]/.test(digits);
+        var g = parts.map(function(p) { return upper ? p.toUpperCase() : p; });
+        return before + g[0] + s1 + g[1] + s2 + g[2] + s3 + g[3] + s4 + g[4];
+    });
+    return { text: out, left: left };
+}
 
 // Returns the map of this site's IDs to the destination's that page content can hold: lists, views, columns, term
 // sets, terms, files, the site, and the site collection. A library of this site that the copy didn't make, such as
 // Documents or Site Pages, maps to the destination's library at the same address, when there is one.
-function snaToolsFilesIdMap(plan, dest, maps, sourceLists, destLists) {
+// mapSiteId false leaves out the site collection ID (see snaToolsFilesMapsSiteIdEverywhere).
+function snaToolsFilesIdMap(plan, dest, maps, sourceLists, destLists, mapSiteId) {
     var map = {};
     function add(from, to) {
         var a = snaToolsCleanGuid(from);
@@ -728,7 +814,7 @@ function snaToolsFilesIdMap(plan, dest, maps, sourceLists, destLists) {
         Object.keys(m || {}).forEach(function(from) { add(from, m[from]); });
     });
     add(plan.source.webId, dest.webId);
-    add(plan.source.siteId, dest.siteId);
+    if (mapSiteId !== false) { add(plan.source.siteId, dest.siteId); }
     var sitePath = snaToolsFilesSourcePath(plan);
     sourceLists.forEach(function(l) {
         if (!l.id || map[l.id] || !l.root) { return; }
@@ -759,7 +845,7 @@ function snaToolsFilesKnownSourceIds(plan, state, sourceLists) {
 // Returns the options snaToolsRewriteSourceLinks needs for this copy's pages (see core.js). Lists and libraries both
 // sites have at the same address, such as Site Pages and Documents, and the Site Assets libraries, are paired, so links
 // to them and their IDs point at the destination's. A list or library of this site with no match in the destination is
-// listed as one the copy didn't make.
+// listed as one the copy didn't make. Links into a subsite of this site stay as they are and are listed too.
 function snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destLists) {
     var sitePath = snaToolsFilesSourcePath(plan);
     var copied = {};
@@ -780,7 +866,8 @@ function snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destList
         }
         if (match && match.root) { listUrls[l.root] = match.root; } else { uncopied.push(l.root); }
     });
-    var ids = snaToolsFilesIdMap(plan, dest, maps, sourceLists, destLists);
+    var mapSiteId = snaToolsFilesMapsSiteIdEverywhere(plan, dest, state);
+    var ids = snaToolsFilesIdMap(plan, dest, maps, sourceLists, destLists, mapSiteId);
     if (sourceAssets && destAssets && sourceAssets.id && destAssets.id && !ids[sourceAssets.id]) { ids[sourceAssets.id] = destAssets.id; }
     return {
         source: { siteUrl: plan.source.siteUrl, serverRelativeUrl: sitePath, webId: plan.source.webId, siteId: plan.source.siteId },
@@ -788,6 +875,8 @@ function snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destList
         ids: ids,
         knownIds: snaToolsFilesKnownSourceIds(plan, state, sourceLists),
         uncopied: uncopied,
+        subsites: state.subsites || [],
+        mapSiteId: mapSiteId,
         // Only used when this site is at the root of the host: the first parts of a path that belong to it.
         rootSegments: ['SitePages', 'SiteAssets', 'default.aspx']
     };
@@ -796,6 +885,7 @@ function snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destList
 // Returns the page's content with every link and ID of this site pointed at the destination (see
 // snaToolsRewriteSourceLinks in core.js): { body (for SavePage), changed, unmapped }. unmapped is true when the
 // content still points at this site or at something the copy didn't include, such as a list that wasn't copied.
+// For a source that is a subsite, the site collection ID is changed by snaToolsFilesPairSiteId.
 function snaToolsFilesRewritePage(item, fileName, maps, linkOptions) {
     var banner = item.BannerImageUrl && typeof item.BannerImageUrl === 'object' ? (item.BannerImageUrl.Url || '') : (item.BannerImageUrl || '');
     var parts = {
@@ -808,11 +898,22 @@ function snaToolsFilesRewritePage(item, fileName, maps, linkOptions) {
     var body = { Title: item.Title || fileName.replace(/\.aspx$/i, '') };
     var changed = false;
     var unmapped = false;
+    var siteKey = snaToolsCleanGuid(linkOptions.source.siteId);
+    var destination = maps.destination || {};
+    var pairSiteId = linkOptions.mapSiteId === false && !!siteKey && !!snaToolsCleanGuid(destination.siteId) && !!snaToolsCleanGuid(destination.webId);
     Object.keys(parts).forEach(function(name) {
         var rewritten = snaToolsRewriteSourceLinks(parts[name], maps, linkOptions);
-        body[name] = rewritten.text;
-        changed = changed || rewritten.changed;
-        unmapped = unmapped || rewritten.unmapped.length > 0;
+        var text = rewritten.text;
+        var left = rewritten.unmapped;
+        if (pairSiteId) {
+            var paired = snaToolsFilesPairSiteId(text, siteKey, destination.siteId, destination.webId);
+            text = paired.text;
+            left = left.filter(function(value) { return value !== siteKey; });
+            if (paired.left) { left.push(siteKey); }
+        }
+        body[name] = text;
+        changed = changed || text !== parts[name];
+        unmapped = unmapped || left.length > 0;
     });
     return { body: body, changed: changed, unmapped: unmapped };
 }
@@ -1003,6 +1104,8 @@ async function snaToolsCopyPages(plan, dest, maps) {
         return;
     }
     var welcome = await snaToolsFilesWelcomePage(plan.source.siteUrl);
+    state.subsites = await snaToolsFilesSourceSubsites(plan);
+    state.sourceIsTopSite = await snaToolsFilesIsTopSite(plan);
     // Page templates go first. SharePoint makes a template from a page with the same name at the top of Site Pages, so a
     // page copied before its template, such as Visit-Report.aspx before Templates/Visit-Report.aspx, would block it.
     var ordered = pages.map(function(page, index) {
@@ -1052,6 +1155,13 @@ async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLis
     var isTemplate = place.isTemplate;
     var inFolder = place.inFolder;
     var isHome = !!welcome && snaToolsFilesKey(snaToolsJoinPath(sitePath, welcome)) === snaToolsFilesKey(srcPath);
+    if (!isTemplate && state.leftoverPages[snaToolsFilesKey(destPath)]) {
+        // The page at this address is the one SharePoint made a template from, not a page of the destination.
+        snaToolsLog(kind, name, 'failed', 'Sitenalyzer didn\'t copy this page, because Site Pages in the destination has a page with the same ' +
+            'name that SharePoint made while copying the page template, and Sitenalyzer couldn\'t remove it. Delete that page in the ' +
+            'destination, then copy again.');
+        return;
+    }
 
     var item = null;
     if (libraryId && /^\d+$/.test(String(page.id || ''))) {
@@ -1069,24 +1179,25 @@ async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLis
         outcome = await snaToolsFilesTransfer(plan, dest, maps, state, { path: srcPath, size: 0, uniqueId: sourceId }, destLibrary.root, destPath,
             'page', modern);
         if (outcome.result === 'copied') {
+            var copiedText = outcome.replaced ? 'Replaced the page in the destination' : 'Copied the page as a file, because it\'s in a folder';
             if (modern) {
                 // A copied file keeps its content as it is, so its links are pointed at the destination afterwards.
                 var kept = snaToolsFilesRewritePage(item, page.fileName || name, maps, linkOptions);
-                outcome = { result: kept.unmapped ? 'partial' : 'copied',
-                    note: kept.unmapped ? SNA_TOOLS_PAGE_PARTIAL_NOTE : 'Copied the page as a file, because it\'s in a folder.' };
+                outcome = { result: kept.unmapped ? 'partial' : 'copied', note: kept.unmapped ? SNA_TOOLS_PAGE_PARTIAL_NOTE : copiedText + '.' };
                 if (kept.changed) {
                     try {
                         await snaToolsFilesReplacePage(dest, destPath, kept.body);
                     } catch (err) {
                         if (snaToolsIsCancelled(err)) { throw err; }
-                        outcome = { result: 'partial', note: 'Copied the page as a file, because it\'s in a folder, but Sitenalyzer couldn\'t point ' +
+                        outcome = { result: 'partial', note: copiedText + ', but Sitenalyzer couldn\'t point ' +
                             'its links at the destination, so some of them still open the original site. Open the page in the destination and ' +
                             'check its links.' + (err.snaToolsStillCheckedOut ? ' The page may still be checked out to you. Open Site Pages there ' +
                             'and discard the check out.' : '') };
                     }
                 }
             } else {
-                outcome.note = 'Copied the page as a file, because it\'s a classic page. Open it in the destination and check its links.';
+                outcome.note = (outcome.replaced ? 'Replaced the page in the destination. It\'s a classic page, so open it' :
+                    'Copied the page as a file, because it\'s a classic page. Open it') + ' in the destination and check its links.';
             }
         }
     } else {
@@ -1123,8 +1234,9 @@ async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLis
         var note = existing ? 'Replaced the page in the destination.' : (isTemplate ? 'Copied the page template.' : 'Copied the page.');
         outcome = content.unmapped ? { result: 'partial', note: SNA_TOOLS_PAGE_PARTIAL_NOTE } : { result: 'copied', note: note };
         if (saved.leftover) {
-            // The page SharePoint made the template from is still at the top of Site Pages.
+            // The page SharePoint made the template from is still at the top of Site Pages, so a page with its name can't go there.
             root.files[fileName.toLowerCase()] = { uniqueId: '' };
+            state.leftoverPages[snaToolsFilesKey(saved.leftover)] = true;
             outcome = { result: 'partial', note: outcome.note + ' SharePoint made the template from a page named ' + fileName +
                 ' in Site Pages, which Sitenalyzer couldn\'t remove. Delete that page in the destination.' };
         }

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-sharepoint.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: A pretend SharePoint Online site for the browser tests. Playwright answers every request to
          https://contoso.sharepoint.com itself: the page holds the code from dist/SitePages/sitenalyzer.html.txt,
          files under SiteAssets come from dist/SiteAssets, and REST API calls get the synthetic answers below.
@@ -391,6 +391,9 @@ const API_ANSWERS = [
         return lists;
     } },
     { pattern: /^\/_api\/site\/rootweb\/lists$/, body: { value: hiddenLists } },
+    // Copy site structure reads these before it copies pages: this site is the top site of its site collection, with no subsites.
+    { pattern: /^\/_api\/site\/rootweb$/, body: { Id: siteInfo.Id } },
+    { pattern: /^\/_api\/web\/webinfos$/, body: { value: [] } },
     { pattern: /^\/_api\/web\/GetList\(@listUrl\)$/, answer: function(url) {
         return url.searchParams.get('@listUrl') === "'" + SITE_PATH + "/Agent Assets'"
             ? { Id: AGENT_ASSETS_ID, Title: 'Agent Assets', BaseTemplate: 101, Hidden: true,

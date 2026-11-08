@@ -219,12 +219,12 @@ The Tools code is kept in its own files in `src/tools/`, one file for each part 
 
 | File | What it does |
 | --- | --- |
-| `core.js` | Shared helpers: the write helper, reads that check their addresses, CSOM requests, XML and ID helpers, the results log, the progress line, and stopping a copy. |
+| `core.js` | Shared helpers: the write helper, reads that check their addresses, CSOM requests, XML and ID helpers, the link rewrite (`snaToolsRewriteSourceLinks`) that points the source site's links and IDs in copied text at the destination, the results log, the progress line, and stopping a copy. |
 | `plan.js` | Builds the copy plan from the report, reading from the site what the report doesn't hold. |
 | `workbook.js` | Builds the same plan from a data dictionary file. |
 | `taxonomy.js` | Copies term sets and terms. |
 | `lists.js` | Copies lists and libraries, site columns, content types, columns, views, and form settings. |
-| `files.js` | Copies Site Assets, agents and site skills, and site pages. |
+| `files.js` | Copies Site Assets, agents and site skills, and site pages. It makes each modern page again through SharePoint's site pages API, with the source site's links and IDs pointed at the destination by the link rewrite in `core.js`. Links into a subsite of the source stay as they are. |
 | `permissions.js` | Copies permission levels, groups, and permissions, only when the **Permissions** switch is on. |
 | `verify.js` | Reads the destination after the copy and corrects the results of items it can't find. |
 | `runner.js` | Checks the destination and runs the copy's steps in order. |
