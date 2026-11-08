@@ -765,11 +765,14 @@ function snaToolsFilesMapsSiteIdEverywhere(plan, dest, state) {
 // text around an ID never reaches past one, so two links in a Text web part are two parts.
 var SNA_TOOLS_FILES_TAG_EDGE = '<|>|&lt;|&gt;|\\\\u003c|\\\\u003e';
 
-// Where a link ends: a space or a quote, in the forms page content stores it.
-var SNA_TOOLS_FILES_LINK_EDGE = '\\s|"|\'|&quot;|&#34;|&#39;';
+// Where a link ends: a space or a quote, in the forms page content stores it, such as &quot;, \u0022, %22, or %2522.
+var SNA_TOOLS_FILES_LINK_EDGE = '\\s|"|\'|&quot;|&#34;|&#39;|\\\\u0022|\\\\u0027|%22|%27|%2522|%2527';
 
 // The = before a value in a link, such as siteid=<id>, siteid%3D<id>, or siteid%253D<id>.
 var SNA_TOOLS_FILES_LINK_VALUE = /^(?:=|%3d|%253d|&#61;|\\u003d)$/i;
+
+// A link that names the site it opens, such as ?siteid=<id>&webid=<id> or getpreview.ashx?guidSite=<id>&guidWeb=<id>.
+var SNA_TOOLS_FILES_LINK_NAMES_SITE = /(?:^|[^a-z])(?:webid|guidweb)(?:=|%3d|%253d|&#61;|\\u003d)/i;
 
 // Returns text with the braces right around each ID, as in {<id>}, &#123;<id>&#125;, or %7B<id>%7D, changed to
 // underscores, so they aren't taken for the edges of a part of the text (see snaToolsFilesIdPart). The length stays the same.
@@ -792,9 +795,18 @@ function snaToolsFilesMaskIdBraces(text) {
 
 // Returns the part of masked around the ID from start to end, such as one item of a Quick links web part or one link:
 // from the nearest { or HTML tag edge before it to the nearest } or tag edge after it. For an ID that is a value in a
-// link (inLink), such as ?siteid=<id>, the part also ends at a space or a quote. masked is from snaToolsFilesMaskIdBraces.
+// link (inLink), such as ?siteid=<id>, the part ends at a space or a quote instead when that shorter part names a site
+// with webid= or guidWeb=, so two such links in one item are two parts. masked is from snaToolsFilesMaskIdBraces.
 function snaToolsFilesIdPart(masked, start, end, inLink) {
-    var edges = SNA_TOOLS_FILES_TAG_EDGE + (inLink ? '|' + SNA_TOOLS_FILES_LINK_EDGE : '');
+    var wide = snaToolsFilesTextBetween(masked, start, end, SNA_TOOLS_FILES_TAG_EDGE);
+    if (!inLink) { return wide; }
+    var link = snaToolsFilesTextBetween(masked, start, end, SNA_TOOLS_FILES_TAG_EDGE + '|' + SNA_TOOLS_FILES_LINK_EDGE);
+    return SNA_TOOLS_FILES_LINK_NAMES_SITE.test(link) ? link : wide;
+}
+
+// Returns the text of masked from the nearest { or match of edges before start to the nearest } or match of edges
+// after end. edges is a regular expression source, such as SNA_TOOLS_FILES_TAG_EDGE.
+function snaToolsFilesTextBetween(masked, start, end, edges) {
     var startEdge = new RegExp('\\{|&#123;|' + edges, 'gi');
     var before = masked.substring(0, start);
     var from = 0;

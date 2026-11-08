@@ -733,6 +733,30 @@ test('keeps the site collection ID of a link to the parent site that follows a l
     await expectResult(page, 'Welcome', 'Page', 'Partly copied');
 });
 
+test('keeps the site collection ID of a link to the parent site when the quotes around the links are written as codes', async function({ page }) {
+    const parentPath = '/sites/hub/SitePages/Hub.aspx?siteid=' + SOURCE_SITE_ID + '&webid=' + PARENT_WEB_ID;
+    const minePath = SITE_PATH + '/SitePages/About.aspx?siteid=' + SOURCE_SITE_ID + '&webid=' + SOURCE_WEB_ID;
+    const canvas = '<div><p>[\\u0022' + minePath + '\\u0022,\\u0022' + parentPath + '\\u0022]</p>' +
+        '<p>[%22' + minePath + '%22,%22' + parentPath + '%22]</p></div>';
+    const saved = await copySubsiteHome(page, canvas);
+    expect(saved.CanvasContent1).toContain('\\u0022' + parentPath + '\\u0022]</p>');
+    expect(saved.CanvasContent1).toContain('%22' + parentPath + '%22]</p>');
+    expect(saved.CanvasContent1.split('?siteid=' + DEST_SITE_ID + '&webid=' + DEST_WEB_ID).length - 1).toBe(2);
+    await expectResult(page, 'Welcome', 'Page', 'Partly copied');
+});
+
+test('changes a subsite\'s site collection ID in a link in a web part item that names the subsite elsewhere', async function({ page }) {
+    const canvas = '<div>' +
+        webPart('c70391ea-0b10-4ee9-b2b4-006d3fcad0cd', { items: [{ siteId: SOURCE_SITE_ID, webId: SOURCE_WEB_ID,
+            url: SITE_URL + '/SitePages/About.aspx?siteid=' + SOURCE_SITE_ID }] }) +
+        webPart('f92bf067-bc19-489e-a556-7fe95f508720', { queryText: 'SiteId=' + SOURCE_SITE_ID + ' WebId=' + SOURCE_WEB_ID }) + '</div>';
+    const saved = await copySubsiteHome(page, canvas);
+    expect(saved.CanvasContent1).toContain('/SitePages/About.aspx?siteid=' + DEST_SITE_ID + '&quot;');
+    expect(saved.CanvasContent1).toContain('SiteId=' + DEST_SITE_ID + ' WebId=' + DEST_WEB_ID);
+    expect(saved.CanvasContent1).not.toContain(SOURCE_SITE_ID);
+    await expectResult(page, 'Welcome', 'Page', 'Copied');
+});
+
 test('changes a subsite\'s site collection ID in a web part item that names its list in braces before it', async function({ page }) {
     const canvas = '<div>' + webPart('f92bf067-bc19-489e-a556-7fe95f508720', { webId: SOURCE_WEB_ID, selectedListId: '{' + LIST_ID + '}',
         siteId: SOURCE_SITE_ID }) + '</div>';
