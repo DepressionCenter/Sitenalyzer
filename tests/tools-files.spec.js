@@ -660,7 +660,7 @@ test('doesn\'t mistake the page a template was made from for a page of the desti
         });
     });
     expect(results.sort()).toEqual([
-        'Failed: Sitenalyzer didn\'t copy this page, because Site Pages in the destination has a page with the same name that SharePoint made while ' +
+        'Failed: Sitenalyzer didn\'t copy this page. Site Pages in the destination has a page with the same name, which SharePoint made while ' +
             'copying the page template, and Sitenalyzer couldn\'t remove it. Delete that page in the destination, then copy again.',
         'Partly copied: Copied the page template. SharePoint made the template from a page named Visit Report.aspx in Site Pages, which Sitenalyzer ' +
             'couldn\'t remove. Delete that page in the destination.'
@@ -701,6 +701,45 @@ test('changes the site collection ID of a subsite only next to the subsite\'s ow
         '&quot;,&quot;listId&quot;:&quot;' + PARENT_LIST_ID + '&quot;');
     expect(saved.BannerImageUrl).toBe(DEST_URL + '/_layouts/15/getpreview.ashx?guidSite=' + noHyphens(DEST_SITE_ID) + '&guidWeb=' + noHyphens(DEST_WEB_ID));
     await expect(resultRow(page, 'Welcome', 'Page').locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Partly copied');
+});
+
+// Copies the home page of a source that is a subsite, with this canvas, and returns the saved page.
+async function copySubsiteHome(page, canvas) {
+    const subsite = { pattern: /^\/_api\/site\/rootweb$/, body: { Id: PARENT_WEB_ID } };
+    const home = Object.assign({}, SOURCE_PAGES[1], { CanvasContent1: canvas });
+    const record = await copyWithFiles(page, { agents: false, answers: [subsite], sourcePages: Object.assign({}, SOURCE_PAGES, { 1: home }) });
+    return destFile(record, '/SitePages/Home.aspx').page;
+}
+
+test('marks a subsite\'s page as partly copied when its site collection ID is encoded twice and nothing is next to it', async function({ page }) {
+    const encodedTwice = '%253Fsiteid%253D%257B' + SOURCE_SITE_ID + '%257D';
+    const dashesEncodedTwice = SOURCE_SITE_ID.split('-').join('%252D');
+    const canvas = '<div><a href="' + SITE_URL + '/_layouts/15/viewer.aspx?u=' + encodedTwice + '">Viewer</a> ' +
+        '<a href="' + SITE_URL + '/_layouts/15/viewer.aspx?id=' + dashesEncodedTwice + '">Other viewer</a></div>';
+    const saved = await copySubsiteHome(page, canvas);
+    expect(saved.CanvasContent1).toContain('?u=' + encodedTwice + '">Viewer</a>');
+    expect(saved.CanvasContent1).toContain('?id=' + dashesEncodedTwice + '">Other viewer</a>');
+    await expectResult(page, 'Welcome', 'Page', 'Partly copied');
+});
+
+test('keeps the site collection ID of a link to the parent site that follows a link to the subsite itself', async function({ page }) {
+    const parentUrl = SITE_URL.replace(SITE_PATH, '') + '/sites/hub';
+    const canvas = '<div data-sp-rte=""><p><a href="' + SITE_URL + '/SitePages/About.aspx?siteid=' + SOURCE_SITE_ID + '&amp;webid=' + SOURCE_WEB_ID + '">Mine</a> ' +
+        '<a href="' + parentUrl + '/SitePages/Hub.aspx?siteid=' + SOURCE_SITE_ID + '&amp;webid=' + PARENT_WEB_ID + '">Parent</a></p></div>';
+    const saved = await copySubsiteHome(page, canvas);
+    expect(saved.CanvasContent1).toContain('<a href="' + DEST_URL + '/SitePages/About.aspx?siteid=' + DEST_SITE_ID + '&amp;webid=' + DEST_WEB_ID + '">Mine</a>');
+    expect(saved.CanvasContent1).toContain('<a href="' + parentUrl + '/SitePages/Hub.aspx?siteid=' + SOURCE_SITE_ID + '&amp;webid=' + PARENT_WEB_ID + '">Parent</a>');
+    await expectResult(page, 'Welcome', 'Page', 'Partly copied');
+});
+
+test('changes a subsite\'s site collection ID in a web part item that names its list in braces before it', async function({ page }) {
+    const canvas = '<div>' + webPart('f92bf067-bc19-489e-a556-7fe95f508720', { webId: SOURCE_WEB_ID, selectedListId: '{' + LIST_ID + '}',
+        siteId: SOURCE_SITE_ID }) + '</div>';
+    const saved = await copySubsiteHome(page, canvas);
+    expect(saved.CanvasContent1).toContain('&quot;webId&quot;:&quot;' + DEST_WEB_ID + '&quot;');
+    expect(saved.CanvasContent1).toContain('&quot;siteId&quot;:&quot;' + DEST_SITE_ID + '&quot;');
+    expect(saved.CanvasContent1).not.toContain(SOURCE_SITE_ID);
+    await expectResult(page, 'Welcome', 'Page', 'Copied');
 });
 
 test('says a page in a folder was replaced when Replace is checked and the destination had it', async function({ page }) {

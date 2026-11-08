@@ -761,42 +761,83 @@ function snaToolsFilesMapsSiteIdEverywhere(plan, dest, state) {
     return !from || !to || from === to || state.sourceIsTopSite === true;
 }
 
-// Returns a regular expression source that finds an ID in the forms page content uses, with hyphens, %2D, or none
-// between its parts, after a character that can't be part of it. Group 1 is that character; groups 2 to 5 the separators.
-function snaToolsFilesIdSource(id) {
-    return '(^|%[0-9a-f]{2}|&#\\d+;|[^0-9a-f])' + snaToolsCleanGuid(id).split('-').join('(-|%2d|)') + '(?![0-9a-f])';
+// An HTML tag edge in the forms page content stores it: < and >, &lt; and &gt;, or \u003c and \u003e. The part of the
+// text around an ID never reaches past one, so two links in a Text web part are two parts.
+var SNA_TOOLS_FILES_TAG_EDGE = '<|>|&lt;|&gt;|\\\\u003c|\\\\u003e';
+
+// Where a link ends: a space or a quote, in the forms page content stores it.
+var SNA_TOOLS_FILES_LINK_EDGE = '\\s|"|\'|&quot;|&#34;|&#39;';
+
+// The = before a value in a link, such as siteid=<id>, siteid%3D<id>, or siteid%253D<id>.
+var SNA_TOOLS_FILES_LINK_VALUE = /^(?:=|%3d|%253d|&#61;|\\u003d)$/i;
+
+// Returns text with the braces right around each ID, as in {<id>}, &#123;<id>&#125;, or %7B<id>%7D, changed to
+// underscores, so they aren't taken for the edges of a part of the text (see snaToolsFilesIdPart). The length stays the same.
+function snaToolsFilesMaskIdBraces(text) {
+    function mask(brace) { return brace ? new Array(brace.length + 1).join('_') : ''; }
+    var guids = new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi');
+    var out = '';
+    var last = 0;
+    var found;
+    while ((found = guids.exec(text)) !== null) {
+        var open = found.index + found[1].length;
+        var close = found.index + found[0].length - (found[12] || '').length;
+        out += text.substring(last, open) + mask(found[2]) + text.substring(open + (found[2] || '').length, close) + mask(found[12]);
+        last = found.index + found[0].length;
+        // The next ID may start right after this one's closing brace, as in {<id>}{<id>}, so that brace is looked at again.
+        guids.lastIndex = Math.max(last - 1, found.index + 1);
+    }
+    return out + text.substring(last);
 }
 
-// Returns the part of text around the ID from start to end, between the nearest { before it and the nearest } after it,
-// such as one item of a Quick links web part. Braces right next to the ID, as in {<id>} or %7B<id>%7D, don't count.
-function snaToolsFilesIdPart(text, start, end) {
-    var before = text.substring(0, start).replace(/(?:\{|&#123;|%7b)$/i, '');
-    var after = text.substring(end).replace(/^(?:\}|&#125;|%7d)/i, '');
-    var from = Math.max(before.lastIndexOf('{'), before.lastIndexOf('&#123;'), 0);
-    var ends = [after.indexOf('}'), after.indexOf('&#125;')].filter(function(i) { return i > -1; });
-    return before.substring(from) + after.substring(0, ends.length ? Math.min.apply(null, ends) : after.length);
+// Returns the part of masked around the ID from start to end, such as one item of a Quick links web part or one link:
+// from the nearest { or HTML tag edge before it to the nearest } or tag edge after it. For an ID that is a value in a
+// link (inLink), such as ?siteid=<id>, the part also ends at a space or a quote. masked is from snaToolsFilesMaskIdBraces.
+function snaToolsFilesIdPart(masked, start, end, inLink) {
+    var edges = SNA_TOOLS_FILES_TAG_EDGE + (inLink ? '|' + SNA_TOOLS_FILES_LINK_EDGE : '');
+    var startEdge = new RegExp('\\{|&#123;|' + edges, 'gi');
+    var before = masked.substring(0, start);
+    var from = 0;
+    var edge;
+    while ((edge = startEdge.exec(before)) !== null) { from = edge.index; }
+    var after = masked.substring(end);
+    var stop = after.search(new RegExp('\\}|&#125;|' + edges, 'i'));
+    return before.substring(from) + after.substring(0, stop > -1 ? stop : after.length);
 }
 
-// For a source that is a subsite: changes the site collection ID only where the destination site's own ID (destWebId)
-// is next to it, in the same part of the text (see snaToolsFilesIdPart). There it meant this site, whose own ID the
-// rewrite already changed. Elsewhere it may mean another site in the collection, such as the parent site, so it stays as it is.
-// Keeps the ID's capitals and separators. Returns { text, left } where left is true when the old ID is still there.
+// True when text holds the ID (lowercase, with hyphens) in any form SNA_TOOLS_LINK_GUID_SOURCE finds.
+function snaToolsFilesHasId(text, id) {
+    var guids = new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi');
+    var found;
+    while ((found = guids.exec(text)) !== null) {
+        if (snaToolsLinkGuidOf(found) === id) { return true; }
+    }
+    return false;
+}
+
+// For a source that is a subsite: changes the site collection ID (siteId) only where the destination site's own ID
+// (destWebId) is in the same part of the text (see snaToolsFilesIdPart). There it meant this site, whose own ID the
+// rewrite already changed. Elsewhere it may mean another site in the collection, such as the parent site, so it stays
+// as it is. Finds the ID in every form the rewrite in core.js does, leaves a file name alone, and keeps the ID's
+// capitals, braces, and separators. Returns the new text.
 function snaToolsFilesPairSiteId(text, siteId, destSiteId, destWebId) {
-    var siteRe = new RegExp(snaToolsFilesIdSource(siteId), 'gi');
-    var webRe = new RegExp(snaToolsFilesIdSource(destWebId), 'i');
-    var parts = snaToolsCleanGuid(destSiteId).split('-');
-    var left = false;
-    var out = text.replace(siteRe, function(found, before, s1, s2, s3, s4, offset) {
-        if (!webRe.test(snaToolsFilesIdPart(text, offset + before.length, offset + found.length))) {
-            left = true;
-            return found;
-        }
-        var digits = found.substring(before.length);
+    var from = snaToolsCleanGuid(siteId);
+    var webKey = snaToolsCleanGuid(destWebId);
+    var to = snaToolsCleanGuid(destSiteId).split('-');
+    var masked = snaToolsFilesMaskIdBraces(text);
+    return text.replace(new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi'), function() {
+        var parts = arguments;
+        var offset = parts[13];
+        var end = offset + parts[0].length;
+        if (snaToolsLinkGuidOf(parts) !== from || snaToolsLinkIsFileName(parts[1], parts[14], end)) { return parts[0]; }
+        var inLink = SNA_TOOLS_FILES_LINK_VALUE.test(parts[1]);
+        if (!snaToolsFilesHasId(snaToolsFilesIdPart(masked, offset + parts[1].length, end, inLink), webKey)) { return parts[0]; }
+        var digits = parts[3] + parts[5] + parts[7] + parts[9] + parts[11];
         var upper = /[A-F]/.test(digits) && !/[a-f]/.test(digits);
-        var g = parts.map(function(p) { return upper ? p.toUpperCase() : p; });
-        return before + g[0] + s1 + g[1] + s2 + g[2] + s3 + g[3] + s4 + g[4];
+        var g = to.map(function(p) { return upper ? p.toUpperCase() : p; });
+        return parts[1] + (parts[2] || '') + g[0] + (parts[4] || '') + g[1] + (parts[6] || '') + g[2] + (parts[8] || '') + g[3] +
+            (parts[10] || '') + g[4] + (parts[12] || '');
     });
-    return { text: out, left: left };
 }
 
 // Returns the map of this site's IDs to the destination's that page content can hold: lists, views, columns, term
@@ -906,10 +947,10 @@ function snaToolsFilesRewritePage(item, fileName, maps, linkOptions) {
         var text = rewritten.text;
         var left = rewritten.unmapped;
         if (pairSiteId) {
-            var paired = snaToolsFilesPairSiteId(text, siteKey, destination.siteId, destination.webId);
-            text = paired.text;
+            text = snaToolsFilesPairSiteId(text, siteKey, destination.siteId, destination.webId);
+            // Listed again only while the old ID is still in the text in some form, found by its 32 hex digits.
             left = left.filter(function(value) { return value !== siteKey; });
-            if (paired.left) { left.push(siteKey); }
+            if (snaToolsLinkHexDigits(text).indexOf(siteKey.replace(/-/g, '')) > -1) { left.push(siteKey); }
         }
         body[name] = text;
         changed = changed || text !== parts[name];
@@ -1157,8 +1198,8 @@ async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLis
     var isHome = !!welcome && snaToolsFilesKey(snaToolsJoinPath(sitePath, welcome)) === snaToolsFilesKey(srcPath);
     if (!isTemplate && state.leftoverPages[snaToolsFilesKey(destPath)]) {
         // The page at this address is the one SharePoint made a template from, not a page of the destination.
-        snaToolsLog(kind, name, 'failed', 'Sitenalyzer didn\'t copy this page, because Site Pages in the destination has a page with the same ' +
-            'name that SharePoint made while copying the page template, and Sitenalyzer couldn\'t remove it. Delete that page in the ' +
+        snaToolsLog(kind, name, 'failed', 'Sitenalyzer didn\'t copy this page. Site Pages in the destination has a page with the same name, ' +
+            'which SharePoint made while copying the page template, and Sitenalyzer couldn\'t remove it. Delete that page in the ' +
             'destination, then copy again.');
         return;
     }

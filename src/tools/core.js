@@ -465,6 +465,30 @@ var SNA_TOOLS_LINK_ANY_SLASH = '(?:/|\\\\\\\\/|\\\\/|\\\\u002f|%2f|%252f|&#47;|&
 // First parts of a path at the root of a host that belong to the whole tenant, not to the site at the root of the host.
 var SNA_TOOLS_LINK_TENANT_PARTS = ['sites', 'teams', 'personal', 'portals', '_layouts', '_api', '_vti_bin', '_forms'];
 
+// Returns the GUID a match of SNA_TOOLS_LINK_GUID_SOURCE found, in lowercase with hyphens, from the match's groups.
+function snaToolsLinkGuidOf(parts) {
+    return (parts[3] + '-' + parts[5] + '-' + parts[7] + '-' + parts[9] + '-' + parts[11]).toLowerCase();
+}
+
+// True for a GUID that is a file or folder name in a path, such as /SiteAssets/<guid>.png. Copied files keep their names.
+// left is the text right before the GUID (group 1 of SNA_TOOLS_LINK_GUID_SOURCE), and end is where the GUID ends in whole.
+function snaToolsLinkIsFileName(left, whole, end) {
+    var next = whole.substring(end, end + 8);
+    if (/^\.[a-z0-9]{2,5}(?![a-z0-9])/i.test(next)) { return true; }
+    return /^(?:\/|%2f|%252f|\\u002f)$/i.test(left) && /^(?:\/|\\\/|%2f|%252f|\\u002f)/i.test(next);
+}
+
+// Returns the hex digits of text in lowercase, with each GUID's 32 digits side by side whatever is between its parts,
+// such as %252D, and with each GUID that is a file name left out. An ID still in the text in any form is then found by
+// its 32 digits.
+function snaToolsLinkHexDigits(text) {
+    return String(text).replace(new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi'), function() {
+        var parts = arguments;
+        if (snaToolsLinkIsFileName(parts[1], parts[14], parts[13] + parts[0].length)) { return parts[1]; }
+        return parts[1] + ' ' + snaToolsLinkGuidOf(parts) + ' ';
+    }).replace(/[^0-9a-f]/gi, '').toLowerCase();
+}
+
 // Returns text with the characters that have meaning in a regular expression escaped.
 function snaToolsRegExpText(text) {
     return String(text).replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
@@ -748,13 +772,8 @@ function snaToolsRewriteSourceLinks(text, maps, options) {
         var key = snaToolsCleanGuid(id);
         if (key) { known[key] = true; }
     });
-    function guidOf(parts) { return (parts[3] + '-' + parts[5] + '-' + parts[7] + '-' + parts[9] + '-' + parts[11]).toLowerCase(); }
-    // True for a GUID that is a file or folder name in a path, such as /SiteAssets/<guid>.png. Copied files keep their names.
-    function isFileName(left, whole, end) {
-        var next = whole.substring(end, end + 8);
-        if (/^\.[a-z0-9]{2,5}(?![a-z0-9])/i.test(next)) { return true; }
-        return /^(?:\/|%2f|%252f|\\u002f)$/i.test(left) && /^(?:\/|\\\/|%2f|%252f|\\u002f)/i.test(next);
-    }
+    var guidOf = snaToolsLinkGuidOf;
+    var isFileName = snaToolsLinkIsFileName;
 
     // A file ID next to a list or site ID that changes, when no map has the file, such as a document in Documents.
     var fileKey = /(?:"|\\"|&quot;|')(?:uniqueid|sourcedoc)(?:"|\\"|&quot;|')\s*(?::|&#58;)\s*(?:"|\\"|&quot;|')(?:\{|%7b|&#123;)?([0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12})/gi;
@@ -835,11 +854,7 @@ function snaToolsRewriteSourceLinks(text, maps, options) {
     Object.keys(ids).forEach(function(k) { if (ids[k] !== k) { watched[k.replace(/-/g, '')] = k; } });
     Object.keys(known).forEach(function(k) { watched[k.replace(/-/g, '')] = k; });
     if (Object.keys(watched).length > 0) {
-        var guidScan = out.replace(new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi'), function() {
-            var parts = arguments;
-            return isFileName(parts[1], parts[14], parts[13] + parts[0].length) ? parts[1] : parts[0];
-        });
-        var hexOnly = guidScan.replace(/[^0-9a-f]/gi, '').toLowerCase();
+        var hexOnly = snaToolsLinkHexDigits(out);
         for (var i = 0; i + 32 <= hexOnly.length; i++) {
             var seen = watched[hexOnly.substr(i, 32)];
             if (seen) { report(seen); }
