@@ -24,11 +24,13 @@ Notes: See README file for documentation and full license information.
          themeRefused        ApplyTheme answers 403 with this text as SharePoint's message.
          chromeRefused       SetChromeOptions answers 403 with this text as SharePoint's message.
          groupImageRefused   SetGroupImage answers 403, as for someone who isn't an owner of the group.
+         groupImageSetsLogo  SetGroupImage changes the site logo to the group's picture too.
          groupKeepsLogo      setsitelogo doesn't change the logo, as on some sites with a Microsoft 365 group.
          sourceSite          The source site's menus and look, for the source answers below:
            { quickLaunch: [Link], topNavigationBar: [Link], footer: { name, logoUrl, links: [Link] },
              theme: { palette: { slot: '#rrggbb' }, isInverted, isDefault }, hubName, communicationSite (true gives
-             it the communication site feature), refuse: ['quickLaunch', ...] }
+             it the communication site feature), refuse: ['quickLaunch', 'topNavigationBar', 'footer', 'theme',
+             'features'] (the reads to refuse) }
            Link = { title, url, hidden, audiences: [GUIDs], newTab, children: [Link] }. Menus left out are empty.
        The destination's model.web gets SharePoint's usual header, menu, and footer settings, such as HeaderLayout 1,
        for each one the test's setup(model) didn't set.
@@ -335,6 +337,7 @@ addDestinationHandlers([
     { method: 'POST', pattern: /^\/_api\/GroupService\/SetGroupImage$/, answer: function(ctx) {
         if (ctx.options.groupImageRefused) { return ctx.spError(403, 'Access denied. You do not have permission to perform this action or access this resource.', ACCESS_DENIED_CODE); }
         ctx.model.groupImage = { contentType: ctx.headers['content-type'], content: ctx.text };
+        if (ctx.options.groupImageSetsLogo) { ctx.model.web.SiteLogoUrl = DEST_PATH + '/_api/GroupService/GetGroupImage?id=example'; }
         return ctx.reply(204, null);
     } },
 
@@ -435,6 +438,7 @@ function answerSource(source, method, url, helpers) {
         return { value: themeData(source.options.theme || { palette: { themePrimary: '#0078d4' }, isDefault: true }) };
     }
     if (apiPath === '/_api/web/features') {
+        if (source.refuse.indexOf('features') > -1) { return refused(); }
         return { value: source.options.communicationSite ? [{ DefinitionId: COMMUNICATION_FEATURE }] : [] };
     }
     if (apiPath === '/_api/web/HubSiteData(true)') {
