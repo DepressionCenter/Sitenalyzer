@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-taxonomy.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Browser tests for copying term sets with Copy site structure (src/tools/taxonomy.js): creating the
          destination's own term group through CSOM, copying terms with their children, synonyms, descriptions, second
          parents, and deprecated setting, using what a second copy finds instead of making it again, using CSOM when
@@ -255,9 +255,11 @@ function planTerm(id, name, parentIds) {
 }
 
 // Returns a copy plan with only these term sets, each { id, name, selected, terms }, and optionally isOpen,
-// isAvailableForTagging, and complete (false when the source couldn't read every term of the set).
-function termPlan(sets) {
+// isAvailableForTagging, and complete (false when the source couldn't read every term of the set). sourceKind is
+// 'site' (the default) or 'workbook', for a copy from a data dictionary file.
+function termPlan(sets, sourceKind) {
     return {
+        source: { kind: sourceKind || 'site' },
         lists: [], siteColumns: [],
         termGroup: { name: 'Test Term Group', sets: sets.map(function(s) {
             return { sourceId: s.id, name: s.name, description: '', isOpen: s.isOpen === true, isAvailableForTagging: s.isAvailableForTagging !== false,
@@ -270,6 +272,24 @@ function termPlan(sets) {
 function csomFailure(message, code, typeName) {
     return [{ SchemaVersion: '15.0.0.0', LibraryVersion: '16.0.0.0', ErrorInfo: { ErrorMessage: message, ErrorValue: null,
         TraceCorrelationId: '00000000-0000-4000-8000-0000000000cc', ErrorCode: code, ErrorTypeName: typeName } }];
+}
+
+// Returns a pretend destination handler that refuses REST API changes whose address matches pattern with HTTP 403.
+function restRefusal(method, pattern) {
+    return { method: method, pattern: pattern, answer: function(ctx) {
+        return ctx.reply(403, { error: { code: 'notAllowed', message: 'This operation needs an OAuth token.' } });
+    } };
+}
+
+// Returns a pretend destination handler that refuses CSOM requests holding marker with Access denied, and adds the
+// text of each refused request to refused.
+function csomRefusal(marker, refused) {
+    return { method: 'POST', pattern: /^\/_vti_bin\/client\.svc\/ProcessQuery$/, answer: function(ctx) {
+        if (ctx.text.indexOf(marker) === -1) { return undefined; }
+        refused.push(ctx.text);
+        return csomFailure('Access denied. You do not have permission to perform this action or access this resource.', -2147024891,
+            'System.UnauthorizedAccessException');
+    } };
 }
 
 // ### Term Group ###
@@ -570,6 +590,69 @@ test('uses CSOM for a new term set\'s settings when the REST API refuses them', 
     expect(csom[0]).toContain('<Method Name="CommitAll"');
     expect(csom[1]).toContain('Name="CreateTerm"');
     expect(outcome.results).toEqual([{ kind: 'Term set', name: 'Study Arms', result: 'copied', note: 'Created the term set with 1 term.' }]);
+});
+
+test('keeps copying through the REST API when it and CSOM both refuse a new term set\'s settings', async function({ page }) {
+    const refused = [];
+    const record = await openPretendSite(page, { destination: {
+        setup: function(model) { addOwnTermGroup(model); },
+        handlers: [restRefusal('PATCH', /^\/_api\/v2\.1(?:\/sites\/[^/]+)?\/termStore\/sets\/[^/]+$/), csomRefusal('Name="IsOpenForTermCreation"', refused)]
+    } });
+    const outcome = await copyTermSetsOnPage(page, termPlan([
+        { id: SET_ARMS, name: 'Study Arms', selected: true, isOpen: true, terms: [planTerm(CONTROL, 'Control')] },
+        { id: SET_VISITS, name: 'Visit Types', selected: true, terms: [planTerm(SCREENING, 'Screening')] }
+    ]));
+    const arms = findTermSet(record.destination, 'Study Arms');
+    const visits = findTermSet(record.destination, 'Visit Types');
+    expect(arms.isOpen).toBe(false);
+    expect(findTerm(arms, 'Control')).toBeTruthy();
+    expect(findTerm(visits, 'Screening')).toBeTruthy();
+    expect(outcome.maps.termSetsMissing).toEqual({});
+    expect(Object.keys(outcome.maps.terms).sort()).toEqual([CONTROL, SCREENING].sort());
+    // CSOM was tried once, for the settings. The terms and the second term set went through the REST API.
+    expect(termStoreChanges(record).map(function(c) { return c.line; })).toEqual(['POST /sets', 'PATCH /sets/' + arms.id,
+        'POST /sets/' + arms.id + '/children', 'POST /sets', 'POST /sets/' + visits.id + '/children']);
+    expect(refused).toHaveLength(1);
+    expect(csomTaxonomyRequests(record.destination)).toEqual([]);
+    expect(outcome.results).toEqual([
+        { kind: 'Term set', name: 'Study Arms', result: 'partial', note: 'Created the term set with 1 term. Couldn\'t make the term set open to new terms. ' +
+            'Change this by hand in the destination\'s term store.' },
+        { kind: 'Term set', name: 'Visit Types', result: 'copied', note: 'Created the term set with 1 term.' }
+    ]);
+});
+
+test('keeps copying through the REST API when it and CSOM both refuse one term\'s settings', async function({ page }) {
+    const refused = [];
+    const record = await openPretendSite(page, { destination: {
+        setup: function(model) { addOwnTermGroup(model); },
+        handlers: [restRefusal('PATCH', /^\/_api\/v2\.1(?:\/sites\/[^/]+)?\/termStore\/sets\/[^/]+\/terms\/[^/]+$/), csomRefusal('Name="Deprecate"', refused)]
+    } });
+    const retired = Object.assign(planTerm(RETIRED, 'Retired arm'), { isDeprecated: true });
+    const outcome = await copyTermSetsOnPage(page, termPlan([
+        { id: SET_ARMS, name: 'Study Arms', selected: true, terms: [retired] },
+        { id: SET_VISITS, name: 'Visit Types', selected: true, terms: [planTerm(SCREENING, 'Screening')] }
+    ]));
+    expect(findTerm(findTermSet(record.destination, 'Study Arms'), 'Retired arm').isDeprecated).toBe(false);
+    expect(findTerm(findTermSet(record.destination, 'Visit Types'), 'Screening')).toBeTruthy();
+    expect(outcome.maps.termSetsMissing).toEqual({});
+    // CSOM was tried once, for the deprecated setting. Everything else went through the REST API.
+    expect(refused).toHaveLength(1);
+    expect(csomTaxonomyRequests(record.destination)).toEqual([]);
+    expect(outcome.results).toEqual([
+        { kind: 'Term', name: 'Retired arm in Study Arms', result: 'partial', note: 'Sitenalyzer created the term, but couldn\'t deprecate it. ' +
+            'Change this by hand in the destination\'s term store.' },
+        { kind: 'Term set', name: 'Study Arms', result: 'partial', note: 'Created the term set with 1 term. Partly copied 1 term, which has its own row.' },
+        { kind: 'Term set', name: 'Visit Types', result: 'copied', note: 'Created the term set with 1 term.' }
+    ]);
+});
+
+test('says the data dictionary file is incomplete, not a site, when the file doesn\'t list every term', async function({ page }) {
+    await openPretendSite(page, { destination: true });
+    const outcome = await copyTermSetsOnPage(page, termPlan([{ id: SET_ARMS, name: 'Study Arms', selected: true, complete: false,
+        terms: [planTerm(CONTROL, 'Control')] }], 'workbook'));
+    expect(outcome.results).toEqual([{ kind: 'Term set', name: 'Study Arms', result: 'partial', note: 'Created the term set with 1 term. ' +
+        'The data dictionary file doesn\'t list every term of this term set, so some terms may be missing. Check the term set in the destination, ' +
+        'and add any missing terms by hand.' }]);
 });
 
 test('names the language and says what to do in the notes of a term set it couldn\'t copy in full', async function({ page }) {

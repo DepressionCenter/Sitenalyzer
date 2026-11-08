@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 taxonomy.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Copies the chosen term sets of this site collection's own term group into the destination site collection's
          own term group, with their terms, synonyms, descriptions, custom properties, second parents, and the
          deprecated setting. Term sets in tenant-level groups are never copied. Also has the helpers the columns step
@@ -135,9 +135,11 @@ function snaToolsTaxonomyDefaultLanguageId(t) {
 
 /**
  * Sends one term store change: first through the REST API, then through CSOM when the REST API refuses it. After one
- * refusal, every later change of the same copy goes through CSOM. When SharePoint refuses CSOM too before CSOM has
- * worked once in this copy, every later change fails with the same error, marked with snaToolsTaxonomyBlocked, without
- * being sent. A CSOM error about the change itself, such as a label SharePoint doesn't accept, fails only that change.
+ * refusal, every later change of the same copy goes through CSOM. When SharePoint refuses CSOM too before CSOM or the
+ * REST API has worked once in this copy, every later change fails with the same error, marked with
+ * snaToolsTaxonomyBlocked, without being sent. When the REST API has worked, only that change fails, and later changes
+ * go through the REST API again. A CSOM error about the change itself, such as a label SharePoint doesn't accept,
+ * fails only that change.
  * @param {object} t The state of this copy's term store work (see snaToolsCopyTermSets).
  * @param {function(): Promise<*>} restWork Makes the change through the REST API.
  * @param {function(): Promise<*>} csomWork Makes the same change through CSOM.
@@ -148,7 +150,9 @@ async function snaToolsTaxonomyLadder(t, restWork, csomWork) {
     if (t.mode === 'blocked') { throw t.blockedError; }
     if (t.mode === 'rest') {
         try {
-            return await restWork();
+            var result = await restWork();
+            t.restWorked = true;
+            return result;
         } catch (err) {
             if (snaToolsIsCancelled(err) || !snaToolsTaxonomyIsRefusal(err)) { throw err; }
             t.mode = 'csom';
@@ -159,7 +163,8 @@ async function snaToolsTaxonomyLadder(t, restWork, csomWork) {
 
 /**
  * Sends one term store change through CSOM, and marks the term store as blocked when SharePoint refuses the request
- * before CSOM has worked once in this copy (see snaToolsTaxonomyLadder).
+ * before CSOM or the REST API has worked once in this copy (see snaToolsTaxonomyLadder). When SharePoint refuses it
+ * after the REST API has worked, later changes go through the REST API again.
  * @param {object} t The state of this copy's term store work.
  * @param {function(): Promise<*>} csomWork Makes the change through CSOM.
  * @returns {Promise<*>} What csomWork returns.
@@ -173,9 +178,14 @@ async function snaToolsTaxonomyCsomWork(t, csomWork) {
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
         if (!t.csomWorked && snaToolsTaxonomyIsCsomRefusal(err)) {
-            err.snaToolsTaxonomyBlocked = true;
-            t.mode = 'blocked';
-            t.blockedError = err;
+            if (t.restWorked) {
+                // SharePoint takes other changes through the REST API in this copy, so only this change fails.
+                t.mode = 'rest';
+            } else {
+                err.snaToolsTaxonomyBlocked = true;
+                t.mode = 'blocked';
+                t.blockedError = err;
+            }
         }
         throw err;
     }
@@ -721,6 +731,7 @@ async function snaToolsTaxonomyCreateSet(t, set, stats) {
         var created = await snaToolsWrite(t.siteUrl, t.base + '/sets', { method: 'POST', body: body });
         var id = snaToolsCleanGuid(created && created.id);
         if (!id) { throw snaToolsError(500, '', ''); }
+        t.restWorked = true;
         if (wantOpen || wantHidden) {
             var patch = {};
             if (wantOpen) { patch.isOpen = true; }
@@ -730,10 +741,11 @@ async function snaToolsTaxonomyCreateSet(t, set, stats) {
             } catch (err) {
                 if (snaToolsIsCancelled(err)) { throw err; }
                 if (!snaToolsTaxonomyIsRefusal(err)) { settingsFailed(); return id; }
-                // The REST API refused the change, so it and every later change go through CSOM.
-                t.mode = 'csom';
+                // The REST API refused the change, so it goes through CSOM. When CSOM works, every later change goes
+                // through CSOM too. When CSOM fails, later changes go through the REST API, which created the term set.
                 try {
                     await snaToolsTaxonomyCsomWork(t, function() { return snaToolsTaxonomySetSettingsCsom(t, id, wantOpen, wantHidden); });
+                    t.mode = 'csom';
                 } catch (csomErr) {
                     if (snaToolsIsCancelled(csomErr)) { throw csomErr; }
                     settingsFailed();
@@ -781,8 +793,9 @@ function snaToolsTaxonomyLanguageName(languageTag) {
     return tag;
 }
 
-// Returns the sentences about problems in a copied term set, for the end of its row's note.
-function snaToolsTaxonomySetProblems(set, stats) {
+// Returns the sentences about problems in a copied term set, for the end of its row's note. fromFile is true when the
+// copy comes from a data dictionary file instead of a site.
+function snaToolsTaxonomySetProblems(set, stats, fromFile) {
     var problems = [];
     if (stats.failed > 0) {
         problems.push('Couldn\'t copy ' + snaCountText(stats.failed, 'term', 'terms') + ', which ' + (stats.failed === 1 ? 'has its own row.' : 'have their own rows.'));
@@ -811,7 +824,10 @@ function snaToolsTaxonomySetProblems(set, stats) {
     if (stats.setSettings.length > 0) {
         problems.push('Couldn\'t make the term set ' + snaJoinWords(stats.setSettings) + '. Change this by hand in the destination\'s term store.');
     }
-    if (set.complete === false) {
+    if (set.complete === false && fromFile) {
+        problems.push('The data dictionary file doesn\'t list every term of this term set, so some terms may be missing. ' +
+            'Check the term set in the destination, and add any missing terms by hand.');
+    } else if (set.complete === false) {
         problems.push('Sitenalyzer couldn\'t read every term of this term set in the site you copy from, so some terms may be missing. ' +
             'Check the term set in the destination, and add any missing terms by hand.');
     }
@@ -857,7 +873,7 @@ async function snaToolsTaxonomyCopySet(t, set, existingSets, maps) {
     } else {
         lead = 'Created the term set with ' + snaCountText(stats.added, 'term', 'terms') + '.';
     }
-    var problems = snaToolsTaxonomySetProblems(set, stats);
+    var problems = snaToolsTaxonomySetProblems(set, stats, t.fromFile);
     snaToolsLog(K.termSet, set.name, problems.length > 0 ? 'partial' : 'copied', [lead].concat(problems).join(' '),
         { verify: { type: 'termSet', groupId: t.groupId, setId: destSetId, termCount: termCount } });
 }
@@ -897,9 +913,11 @@ async function snaToolsCopyTermSets(plan, dest, maps) {
     });
     if (chosen.length === 0 && !snaToolsTaxonomyPlanHasColumns(plan)) { return; }
 
-    // t holds this copy's term store work: where to send changes, which way works (mode), and the destination's languages.
+    // t holds this copy's term store work: where to send changes, which way works (mode), the destination's languages,
+    // and whether the copy comes from a data dictionary file.
     var t = { siteUrl: xlsxStripSlash(dest.siteUrl), siteId: snaToolsCleanGuid(dest.siteId), base: '', mode: 'rest', csomWorked: false,
-        blockedError: null, defaultLanguage: '', languages: [], groupId: '' };
+        restWorked: false, blockedError: null, defaultLanguage: '', languages: [], groupId: '',
+        fromFile: !!(plan.source && plan.source.kind === 'workbook') };
     function missAll(reason, note) {
         chosen.forEach(function(set) {
             maps.termSetsMissing[set.sourceId] = reason;
