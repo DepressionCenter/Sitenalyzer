@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 lists.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Copies lists and libraries without their items or files, with their settings, columns, site columns, content
          types, views, and form settings. Columns are made in an order that lets each one find what it needs: plain
          columns, then lookup columns (after every list exists), then managed metadata columns (after the term sets),
@@ -556,7 +556,14 @@ async function snaToolsCopySiteColumns(plan, dest, maps) {
     for (var i = 0; i < ordered.length; i++) {
         await snaToolsListsCopySiteColumn(plan, dest, maps, ordered[i]);
     }
-    var builtIn = plan.builtInSiteColumns || [];
+    // A hidden Note column the copy didn't make, because the destination already had its managed metadata column, is
+    // matched with the destination's Note column of the same ID or internal name, so content types can still show it.
+    plan.siteColumns.filter(function(f) { return !f.builtIn && !maps.fieldIds[f.id] && snaToolsListsIsHelperColumn(f, noteIds); }).forEach(function(f) {
+        var key = String(f.internalName || '').toLowerCase();
+        var there = (dest.siteColumns || []).filter(function(c) { return c.id === f.id || String(c.internalName).toLowerCase() === key; })[0];
+        if (there) { maps.fieldIds[f.id] = there.id; }
+    });
+    var builtIn = (plan.builtInSiteColumns || []).filter(function(f) { return f.rename; });
     for (var b = 0; b < builtIn.length; b++) {
         await snaToolsListsRenameBuiltInSiteColumn(dest, builtIn[b]);
     }
@@ -879,7 +886,7 @@ async function snaToolsListsCopySiteContentType(plan, dest, maps, run, ct) {
 
 // Returns the columns a new destination site content type already has, by lowercase destination column ID:
 // { required, hidden, displayName }. They come from its parent. When they can't be read, returns the source parent's
-// columns when the plan has that parent, or null.
+// columns when the plan has that parent or the parent is one of SharePoint's own, or null.
 async function snaToolsListsReadTypeColumns(plan, dest, maps, ct, createdId) {
     try {
         var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/contenttypes/getbyid(@c)/fieldlinks?$select=Id,Name,DisplayName,Required,Hidden&@c=' +
@@ -893,9 +900,10 @@ async function snaToolsListsReadTypeColumns(plan, dest, maps, ct, createdId) {
         if (snaToolsIsCancelled(err)) { throw err; }
     }
     var parent = plan.siteContentTypes.filter(function(p) { return p.stringId.toUpperCase() === String(ct.parentStringId).toUpperCase(); })[0];
-    if (!parent) { return null; }
+    var parentLinks = parent ? parent.fieldLinks : ct.builtInParentLinks;
+    if (!parentLinks) { return null; }
     var fromParent = {};
-    parent.fieldLinks.forEach(function(link) {
+    parentLinks.forEach(function(link) {
         fromParent[snaToolsCleanGuid(maps.fieldIds[link.id] || link.id)] = { required: link.required, hidden: link.hidden, displayName: link.displayName };
     });
     return fromParent;
@@ -910,16 +918,23 @@ async function snaToolsListsCopyTypeColumns(plan, dest, maps, run, ct, createdId
     plan.siteColumns.forEach(function(f) { if (!f.builtIn) { siteIds[f.id] = f; } });
     var builtInIds = {};
     (plan.builtInSiteColumns || []).forEach(function(f) { builtInIds[f.id] = f; });
+    var noteIds = snaToolsListsNoteFieldIds(plan.siteColumns);
     var adds = [];
     var builtInAdds = [];
     var changes = [];
     var notCopied = [];
+    var unchecked = [];
     ct.fieldLinks.forEach(function(link) {
         var custom = siteIds[link.id];
         var destId = snaToolsCleanGuid(maps.fieldIds[link.id] || link.id);
         var settings = { fieldId: destId, required: link.required, hidden: link.hidden, displayName: link.displayName || '',
             name: link.displayName || (custom && custom.title) || (builtInIds[link.id] && builtInIds[link.id].title) || link.internalName };
-        if (have === null && !custom) { return; }
+        // A hidden Note column comes with its managed metadata column, and people don't see it, so it's never named.
+        if (custom && !maps.fieldIds[link.id] && snaToolsListsIsHelperColumn(custom, noteIds)) { return; }
+        if (have === null && !custom) {
+            unchecked.push(settings.name);
+            return;
+        }
         if (have && have[destId]) {
             var now = have[destId];
             var differs = now.required !== link.required || now.hidden !== link.hidden || (!!link.displayName && now.displayName !== link.displayName);
@@ -945,6 +960,11 @@ async function snaToolsListsCopyTypeColumns(plan, dest, maps, run, ct, createdId
     if (notCopied.length > 0) {
         snaToolsListsAddProblem(entry, 'Sitenalyzer couldn\'t add ' + snaJoinWords(notCopied) + ' to it, because ' +
             (notCopied.length === 1 ? 'that column wasn\'t' : 'those columns weren\'t') + ' copied.');
+    }
+    if (unchecked.length > 0) {
+        snaToolsListsAddProblem(entry, 'Sitenalyzer couldn\'t read its columns in the destination, so it didn\'t check ' + snaJoinWords(unchecked) +
+            ', which ' + (unchecked.length === 1 ? 'comes' : 'come') + ' from SharePoint\'s own site columns. Check that it has ' +
+            (unchecked.length === 1 ? 'that column' : 'those columns') + ' in the content type\'s settings in the destination.');
     }
     if (adds.length > 0 || changes.length > 0) {
         try {
@@ -1031,7 +1051,15 @@ async function snaToolsListsCopyListContentTypes(plan, dest, maps, list, state) 
         var key = ct.stringId.toUpperCase();
         var there = byName(ct.name);
         if (ct.isBuiltIn) {
-            if (there) { state.contentTypes[key] = there; }
+            there = there || snaToolsListsSameBuiltInType(destTypes, ct);
+            if (there) {
+                state.contentTypes[key] = there;
+            } else if (!ct.hidden && String(ct.parentStringId).toUpperCase() !== '0X0120') {
+                // Folder and hidden content types aren't on the New menu, so one the destination lacks isn't reported.
+                snaToolsLog(K.contentType, snaToolsInList(list, ct.name), 'skipped', 'Sitenalyzer didn\'t add this content type, which comes from ' +
+                    'SharePoint, because the destination ' + snaToolsListsWord(list) + ' doesn\'t have it. Add it in the ' + snaToolsListsWord(list) +
+                    ' settings, under Content types, if you need it.');
+            }
             continue;
         }
         snaToolsCheckCancelled();
@@ -1065,16 +1093,31 @@ async function snaToolsListsCopyListContentTypes(plan, dest, maps, list, state) 
     if (enabled) { await snaToolsListsSetTypeOrder(dest, list, state); }
 }
 
+// Returns the destination list's content type that comes from the same SharePoint content type as a source list's
+// built-in content type, such as Item, or undefined. Its name can differ when the destination uses another language.
+function snaToolsListsSameBuiltInType(destTypes, ct) {
+    var parent = String(ct.parentStringId || '').toUpperCase();
+    if (!parent) { return undefined; }
+    return destTypes.filter(function(d) {
+        var id = String(d.stringId).toUpperCase();
+        return id.length === parent.length + 34 && id.indexOf(parent + '00') === 0;
+    })[0];
+}
+
 // Removes the content types SharePoint gave a new list that the source list doesn't have, such as Item on a list that
 // uses only its own content type. The Folder content type always stays, and nothing is removed until at least one content
 // type the source list has, other than Folder, is in the destination list, so people can always add items.
 async function snaToolsListsRemoveExtraTypes(dest, list, state, destTypes) {
     var wanted = {};
     list.contentTypes.forEach(function(ct) { wanted[String(ct.name).toLowerCase()] = true; });
+    // A content type matched by its ID, such as Item under a name in another language, is wanted too.
+    var matchedIds = {};
+    Object.keys(state.contentTypes).forEach(function(k) { matchedIds[String(state.contentTypes[k].stringId).toUpperCase()] = true; });
+    function isWanted(d) { return wanted[String(d.name).toLowerCase()] || !!(d.stringId && matchedIds[String(d.stringId).toUpperCase()]); }
     function isFolder(d) { return String(d.name).toLowerCase() === 'folder'; }
-    var kept = destTypes.filter(function(d) { return wanted[String(d.name).toLowerCase()] && !isFolder(d); });
+    var kept = destTypes.filter(function(d) { return isWanted(d) && !isFolder(d); });
     if (kept.length === 0) { return; }
-    var extra = destTypes.filter(function(d) { return !wanted[String(d.name).toLowerCase()] && !isFolder(d) && d.stringId; });
+    var extra = destTypes.filter(function(d) { return !isWanted(d) && !isFolder(d) && d.stringId; });
     for (var i = 0; i < extra.length; i++) {
         try {
             await snaToolsWrite(dest.siteUrl, snaToolsListsApi(state.destId) + '/contenttypes(' + encodeURIComponent(snaToolsQuote(extra[i].stringId)) + ')', { method: 'DELETE' });
@@ -1502,7 +1545,10 @@ async function snaToolsListsMakeTaxonomyColumn(plan, dest, maps, scope, field) {
     var root = snaToolsListsCleanDefinition(field);
     if (!root) { return { result: 'failed', note: SNA_TOOLS_LISTS_BAD_DEFINITION_NOTE }; }
 
+    var sourceNoteId = snaToolsCleanGuid(snaToolsListsCustomizationValue(root, 'TextField'));
     var noteId = await snaToolsListsMakeNoteColumn(dest, scope, field, root);
+    // A site content type that shows the managed metadata column links to its Note column too.
+    if (!scope.list && sourceNoteId && noteId) { maps.fieldIds[sourceNoteId] = noteId; }
     root.setAttribute('List', '{' + targets.hiddenListId + '}');
     root.setAttribute('WebId', targets.rootWebId);
     snaToolsListsSetCustomization(root, 'SspId', targets.termStoreId);

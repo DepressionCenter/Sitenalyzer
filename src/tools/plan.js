@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 plan.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-08
 Summary: Builds the copy plan for Copy site structure from this site's report. The report doesn't hold everything a
          copy needs, so for each list or library the person chose, this reads its full settings, every column with its
          definition (SchemaXml), its views and their columns, and its content types and their columns. It also reads
@@ -16,8 +16,9 @@ Notes: See README file for documentation and full license information.
        { source: { kind: 'site'|'workbook', siteUrl, siteId, webId, serverRelativeUrl, title, termStoreId, fileName },
          lists: [PlanList], siteColumns: [PlanField], siteContentTypes: [PlanContentType],
          hubContentTypes: [{ stringId, name }] (content types from the content type hub that the copy needs),
-         builtInSiteColumns: [{ id, internalName, title }] (SharePoint's own site columns that the chosen lists or content
-         types use, with the name they have in the source site, such as TaxKeyword shown as Tags),
+         builtInSiteColumns: [{ id, internalName, title, rename }] (SharePoint's own site columns that the chosen lists or
+         content types use, with the name they have in the source site, such as TaxKeyword shown as Tags; rename is true
+         when someone added the column, so the destination's column gets that name),
          termGroup: { name, sets: [PlanTermSet] } | null,
          siteContent: { pages: [report page], agents: [report agent], skills: [report site skill] },
          pages, siteAssets, agents, permissions, replaceExisting (booleans from the person's choices),
@@ -35,7 +36,9 @@ Notes: See README file for documentation and full license information.
          jsLink, tabularView, includeRootFolder, mobileView, mobileDefaultView, url }
        PlanContentType = { stringId, name, description, group, parentStringId, fieldLinks [{ internalName, id,
          required, hidden, displayName (the name the column shows in this content type, or '' when it's the column's
-         own name) }], clientFormCustomFormatter, formComponents {}, readOnly, sealed, hidden, isBuiltIn, isHub }
+         own name) }], clientFormCustomFormatter, formComponents {}, readOnly, sealed, hidden, isBuiltIn, isHub,
+         builtInParentLinks [{ id, required, hidden, displayName }] (site content types in the plan only: the columns of
+         SharePoint's own content type it's based on, or null when that isn't known) }
        PlanTermSet = { sourceId, name, description, isOpen, isAvailableForTagging, languageTag, terms [PlanTerm],
          selected, complete }
        PlanTerm = { sourceId, parentIds [the first is the main parent], labels [{ name, languageTag, isDefault }],
@@ -96,10 +99,29 @@ var SNA_TOOLS_SITE_CONTENT_TYPE_SELECT = SNA_TOOLS_CONTENT_TYPE_SELECT + ',Field
 var SNA_TOOLS_CONTENT_TYPE_CHOICE_SELECT = 'StringId,Name,Group,Sealed,ReadOnly';
 
 // SharePoint's own content types whose IDs end in 00 and 32 hexadecimal digits, the same as a content type someone
-// made, by the start of their ID: Site Page (and Repost Page), Rich Media Asset (and Image, Audio, and Video), the
-// publishing Page, and Page Layout. The copy never makes these.
-var SNA_TOOLS_BUILT_IN_CONTENT_TYPE_STARTS = ['0x0101009D1CB255DA76424F860D91F20E6C4118', '0x0101009148F5A04DDD49CBA7127AADA5FB792B',
-    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2', '0x01010007FF3E057FA8AB4AA42FCB67B453FFC1'];
+// made. Each ID must match in full: a content type someone based on Site Page, such as a news page of their own, starts
+// with Site Page's ID but isn't one of SharePoint's own. The copy never makes these.
+var SNA_TOOLS_BUILT_IN_CONTENT_TYPE_IDS = [
+    '0x0101009D1CB255DA76424F860D91F20E6C4118',                                     // Site Page
+    '0x0101009D1CB255DA76424F860D91F20E6C4118002A50BFCFB7614729B56886FADA02339B',   // Repost Page
+    '0x0101009D1CB255DA76424F860D91F20E6C41180043153F945E98468297E67C3EEE43AB70',   // Spaces page
+    '0x0101009148F5A04DDD49CBA7127AADA5FB792B',                                     // Rich Media Asset
+    '0x0101009148F5A04DDD49CBA7127AADA5FB792B00AADE34325A8B49CDA8BB4DB53328F214',   // Image
+    '0x0101009148F5A04DDD49CBA7127AADA5FB792B006973ACD696DC4858A76371B2FB2F439A',   // Audio
+    '0x0101009148F5A04DDD49CBA7127AADA5FB792B00291D173ECE694D56B19D111489C4369D',   // Video Rendition
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2',                                     // System Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF39',   // Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF3900242457EFB8B24247815D688C526CD44D', // Article Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF39004C1F8B46085B4D22B1CDC3DE08CFFB9C', // Enterprise Wiki Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF39004C1F8B46085B4D22B1CDC3DE08CFFB9C' +
+        '0055EF50AAFF2E4BADA437E4BAE09A30F8',                                       // Project Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF390064DEA0F50FC8C147B0B6EA0636C4A7D4', // Welcome Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF3900796F542FC5E446758C697981E370458C', // Error Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF3900FD0E870BA06948879DBD5F9813CD8799', // Redirect Page
+    '0x01010007FF3E057FA8AB4AA42FCB67B453FFC1',                                     // System Page Layout
+    '0x01010007FF3E057FA8AB4AA42FCB67B453FFC100E214EEE741181F4E9F7ACC43278EE811',   // Page Layout
+    '0x01010007FF3E057FA8AB4AA42FCB67B453FFC100E214EEE741181F4E9F7ACC43278EE8110003D357F861E29844953D5CAA1D4D8A3B' // Html Page Layout
+];
 
 // ### Choosing What to Copy ###
 
@@ -420,11 +442,11 @@ function snaToolsPlanView(view) {
 
 // True when a content type ID is one of SharePoint's own, such as 0x01 (Item) or 0x0101 (Document). The ID of a
 // content type someone made ends in 00 and a GUID's 32 hexadecimal digits, as do a few of SharePoint's own
-// (see SNA_TOOLS_BUILT_IN_CONTENT_TYPE_STARTS).
+// (see SNA_TOOLS_BUILT_IN_CONTENT_TYPE_IDS).
 function snaToolsIsBuiltInContentTypeId(stringId) {
     var id = String(stringId || '').toUpperCase();
     if (!/00[0-9A-F]{32}$/.test(id)) { return true; }
-    return SNA_TOOLS_BUILT_IN_CONTENT_TYPE_STARTS.some(function(start) { return id.indexOf(start.toUpperCase()) === 0; });
+    return SNA_TOOLS_BUILT_IN_CONTENT_TYPE_IDS.some(function(builtIn) { return id === builtIn.toUpperCase(); });
 }
 
 // Returns a PlanContentType from a content type read from SharePoint. A list's content type ID is its site content
@@ -734,20 +756,34 @@ async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
     planFields.forEach(function(f) { siteById[f.id] = f; });
     var usedIds = {};
     var linkedIds = {};
-    plan.lists.forEach(function(l) { l.fields.forEach(function(f) { if (f.isSiteColumn) { usedIds[f.id] = true; } }); });
+    var addedIds = {};
+    plan.lists.forEach(function(l) { l.fields.forEach(function(f) { if (f.isSiteColumn) { usedIds[f.id] = true; addedIds[f.id] = true; } }); });
+    // A content type that shows a column by the column's own name has no name of its own for it.
+    function ownName(link) {
+        var column = siteById[link.id];
+        return column && link.displayName === column.title ? '' : link.displayName;
+    }
     plan.siteContentTypes.forEach(function(ct) {
+        var parent = typesById[String(ct.parentStringId).toUpperCase()];
+        var parentIds = {};
+        if (parent) { parent.fieldLinks.forEach(function(link) { parentIds[link.id] = true; }); }
+        // The columns a content type gets from SharePoint's own content type it's based on, such as Title from Item.
+        ct.builtInParentLinks = parent && parent.isBuiltIn ? parent.fieldLinks.map(function(link) {
+            return { id: link.id, required: link.required, hidden: link.hidden, displayName: ownName(link) };
+        }) : null;
         ct.fieldLinks.forEach(function(link) {
             usedIds[link.id] = true;
             linkedIds[link.id] = true;
-            // A content type that shows a column by the column's own name has no name of its own for it.
-            var column = siteById[link.id];
-            if (column && link.displayName === column.title) { link.displayName = ''; }
+            if (!parentIds[link.id]) { addedIds[link.id] = true; }
+            link.displayName = ownName(link);
         });
     });
     plan.siteColumns = planFields.filter(function(f) { return usedIds[f.id] && !f.builtIn; });
     // A list gets only the ones someone added (see snaToolsIsBuiltInSiteColumn); a content type can link to any of them.
+    // Only a column someone added gets its source name in the destination: SharePoint's core columns, such as Title,
+    // have names in the site's language, so a destination in another language would get the source's names.
     plan.builtInSiteColumns = planFields.filter(function(f) { return f.builtIn && ((usedIds[f.id] && f.builtInSiteColumn) || linkedIds[f.id]); })
-        .map(function(f) { return { id: f.id, internalName: f.internalName, title: f.title }; });
+        .map(function(f) { return { id: f.id, internalName: f.internalName, title: f.title, rename: !!(f.builtInSiteColumn && addedIds[f.id]) }; });
 
     var chosenSets = choices.termSetIds || [];
     plan.termGroup = await snaToolsReadSourceTermGroup(report, chosenSets, progress);
