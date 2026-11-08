@@ -1067,6 +1067,52 @@ function snaToolsPermissionsExisting(assignments) {
     return existing;
 }
 
+// Returns the destination ID of a copied list or library whose permissions the copy gives, or '' when the copy gives
+// it none: it uses the site's permissions in this site, it wasn't copied, or its access in this site couldn't be read.
+function snaToolsPermissionsDestListId(ctx, list) {
+    var destListId = snaToolsCleanGuid(ctx.maps.lists[list.sourceId]);
+    if (!list.ownPermissions || !destListId || !Array.isArray(ctx.source.listAssignments[list.sourceId])) { return ''; }
+    return destListId;
+}
+
+// Returns true when a destination list has its own permissions, false when it uses the site's, and null when that
+// couldn't be read.
+async function snaToolsPermissionsHasOwn(ctx, apiBase) {
+    try {
+        var destList = await snaToolsRead(ctx.dest.siteUrl, apiBase + '?$select=Id,HasUniqueRoleAssignments');
+        if (destList && typeof destList.HasUniqueRoleAssignments === 'boolean') { return destList.HasUniqueRoleAssignments; }
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    return null;
+}
+
+// Gives each list the destination already had, that the copy gives permissions to, its own permissions before the
+// copy gives anyone access to the site. (true,false) copies the site's access as it is before the copy, so everyone
+// keeps the access they had to the list, and nobody gets access to it only because the copy gave them access to the
+// site. It leaves alone any items that have their own permissions. Fills ctx.reusedLists with
+// { sourceListId: { hadOwn: true, false, or null when it couldn't be read, error: the failed request's error or null } }.
+async function snaToolsPermissionsKeepReusedListAccess(ctx) {
+    var lists = ctx.plan.lists;
+    for (var i = 0; i < lists.length; i++) {
+        snaToolsCheckCancelled();
+        var list = lists[i];
+        var destListId = snaToolsPermissionsDestListId(ctx, list);
+        if (!destListId || !(ctx.maps.existingLists && ctx.maps.existingLists[list.sourceId])) { continue; }
+        var apiBase = snaToolsPermissionsListBase(destListId);
+        var state = { hadOwn: await snaToolsPermissionsHasOwn(ctx, apiBase), error: null };
+        ctx.reusedLists[list.sourceId] = state;
+        if (state.hadOwn === true) { continue; }
+        // When hadOwn is null, the list may already have its own permissions; SharePoint then leaves it unchanged.
+        try {
+            await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(true,false)', { method: 'POST' });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            state.error = err;
+        }
+    }
+}
+
 // Copies who has access to the site, then reports access the destination gives that this site doesn't. Never removes
 // any access from the destination.
 async function snaToolsPermissionsCopySiteAccess(ctx) {
@@ -1093,52 +1139,53 @@ async function snaToolsPermissionsCopySiteAccess(ctx) {
 // access that the destination list has and that this site doesn't give. A list whose access in this site couldn't be
 // read has no entry in ctx.source.listAssignments and keeps the site's permissions. Access is removed only from the
 // person running the copy, and only on a list the copy created, because then SharePoint gave that access when the copy
-// gave the list its own permissions. A list the destination already had that uses the site's permissions keeps
-// everyone's access to the site when it gets its own, and that access is reported instead.
+// gave the list its own permissions. A list the destination already had got its own permissions before the copy gave
+// anyone access to the site (see snaToolsPermissionsKeepReusedListAccess), so it keeps the access people had to it
+// before the copy, and access this site doesn't give is reported instead.
 async function snaToolsPermissionsCopyListAccess(ctx) {
     var lists = ctx.plan.lists;
     for (var i = 0; i < lists.length; i++) {
         snaToolsCheckCancelled();
         var list = lists[i];
-        var destListId = snaToolsCleanGuid(ctx.maps.lists[list.sourceId]);
+        var destListId = snaToolsPermissionsDestListId(ctx, list);
+        if (!destListId) { continue; }
         var sourceAssignments = ctx.source.listAssignments[list.sourceId];
-        if (!list.ownPermissions || !destListId || !Array.isArray(sourceAssignments)) { continue; }
         var listName = list.newTitle || list.title;
         var name = 'Permissions of ' + listName;
         var apiBase = snaToolsPermissionsListBase(destListId);
         snaToolsProgress('Copying permissions: ' + snaMaskText(listName) + '.');
-        // hadOwn is true when the destination list already had its own permissions, such as a list the destination
-        // already had that the copy used, false when it used the site's, and null when that couldn't be read.
-        var hadOwn = null;
-        try {
-            var destList = await snaToolsRead(ctx.dest.siteUrl, apiBase + '?$select=Id,HasUniqueRoleAssignments');
-            if (destList && typeof destList.HasUniqueRoleAssignments === 'boolean') { hadOwn = destList.HasUniqueRoleAssignments; }
-        } catch (err) {
-            if (snaToolsIsCancelled(err)) { throw err; }
-        }
-        // reused is true for a list the destination already had, which the lists step used instead of creating one.
-        var reused = !!(ctx.maps.existingLists && ctx.maps.existingLists[list.sourceId]);
-        var keepSiteAccess = reused && hadOwn !== true;
+        // reusedState is set for a list the destination already had, which the lists step used instead of creating one.
+        var reusedState = ctx.reusedLists[list.sourceId];
+        var reused = !!reusedState;
+        // hadOwn is true when the destination list had its own permissions before the copy, false when it used the
+        // site's, and null when that couldn't be read.
+        var hadOwn = reused ? reusedState.hadOwn : await snaToolsPermissionsHasOwn(ctx, apiBase);
         var entry;
         if (hadOwn === true) {
             // The list already has its own permissions, so the copy doesn't need to change it before giving access.
             entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'It already had its own permissions in the destination, so ' +
                 'Sitenalyzer didn\'t remove any access from it.', { verify: { type: 'ownPermissions', listId: destListId } });
         } else {
-            try {
-                // (true,false) copies the site's assignments, so everyone with access to the site keeps their access to
-                // a list the destination already had. (false,false) gives a new list only what SharePoint keeps for the
-                // person running the copy. Both leave alone any items that have their own permissions.
-                await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(' + (keepSiteAccess ? 'true' : 'false') + ',false)', { method: 'POST' });
-                entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'Gave it its own permissions, as in this site' +
-                    (keepSiteAccess ? ', and kept the access anyone already had to it in the destination.' : '.'),
-                    { verify: { type: 'ownPermissions', listId: destListId } });
-            } catch (err) {
-                if (snaToolsIsCancelled(err)) { throw err; }
+            // A list the destination already had got its own permissions in snaToolsPermissionsKeepReusedListAccess.
+            var breakError = reused ? reusedState.error : null;
+            if (!reused) {
+                try {
+                    // (false,false) gives a new list only what SharePoint keeps for the person running the copy, and
+                    // leaves alone any items that have their own permissions.
+                    await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(false,false)', { method: 'POST' });
+                } catch (err) {
+                    if (snaToolsIsCancelled(err)) { throw err; }
+                    breakError = err;
+                }
+            }
+            if (breakError) {
                 snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'failed', 'Sitenalyzer couldn\'t give it its own permissions, so it uses the ' +
-                    'site\'s permissions in the destination. ' + snaToolsPermissionsErrorNote(err));
+                    'site\'s permissions in the destination. ' + snaToolsPermissionsErrorNote(breakError));
                 continue;
             }
+            entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'Gave it its own permissions, as in this site' +
+                (reused ? ', and kept the access anyone had to it in the destination before the copy.' : '.'),
+                { verify: { type: 'ownPermissions', listId: destListId } });
         }
         if (entry && hadOwn === null) {
             entry.result = 'partial';
@@ -1269,7 +1316,8 @@ async function snaToolsCopyPermissions(plan, dest, maps) {
     var ctx = {
         plan: plan, dest: dest, maps: maps, report: snaToolsPermissionsReport(plan), sourceUrl: xlsxStripSlash(plan.source.siteUrl),
         source: { listAssignments: {}, groupId: '', groupIdUnknown: false }, users: {}, usersGone: {},
-        destRoles: [], destGroups: [], destAssociated: {}, destSiteAssignments: [], destIsRoot: true, rolesSiteUrl: dest.siteUrl, webUnique: true
+        destRoles: [], destGroups: [], destAssociated: {}, destSiteAssignments: [], destIsRoot: true, rolesSiteUrl: dest.siteUrl, webUnique: true,
+        reusedLists: {}
     };
     snaToolsProgress('Copying permissions: reading them.');
     await snaToolsPermissionsReadSource(ctx);
@@ -1279,6 +1327,7 @@ async function snaToolsCopyPermissions(plan, dest, maps) {
     snaToolsProgress('Copying permissions: groups.');
     await snaToolsPermissionsCopyGroups(ctx);
     snaToolsProgress('Copying permissions: who has access to the site.');
+    await snaToolsPermissionsKeepReusedListAccess(ctx);
     await snaToolsPermissionsCopySiteAccess(ctx);
     await snaToolsPermissionsCopyListAccess(ctx);
     await snaToolsPermissionsUpdatePeoplePickers(ctx);

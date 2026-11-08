@@ -751,23 +751,36 @@ function addStudyVisitsWithSitePermissions(model) {
 }
 
 test('keeps everyone\'s access to a list the destination already had that uses the site\'s permissions', async function({ page }, testInfo) {
-    const record = await openTools(page, { destination: { setup: addStudyVisitsWithSitePermissions } });
+    let siteAccessBefore = [];
+    const record = await openTools(page, { destination: { setup: function(model) {
+        addStudyVisitsWithSitePermissions(model);
+        siteAccessBefore = model.roleAssignments.map(function(a) { return a.principalId; });
+    } } });
     await copyStudyVisits(page);
     const list = copiedList(record);
     const callerId = record.destination.currentUser.Id;
+    // The copy gives the site's groups, people, and Everyone except external users access to the destination site. The
+    // list gets its own permissions before that, so only the groups this site gives access to Study Visits get it there.
+    const listGroups = ['Test Site Owners', 'Test Study Team'].map(function(title) { return destGroup(record, title); })
+        .filter(Boolean).map(function(g) { return g.Id; });
+    const addedToSite = record.destination.roleAssignments.map(function(a) { return a.principalId; })
+        .filter(function(id) { return siteAccessBefore.indexOf(id) === -1 && listGroups.indexOf(id) === -1; });
+    expect(addedToSite.length).toBeGreaterThanOrEqual(3);
+    expect(Object.keys(listAssignments(record, list.Id)).map(Number).filter(function(id) { return addedToSite.indexOf(id) !== -1; })).toEqual([]);
     const base = "/_api/web/lists(guid'" + list.Id + "')";
     const listChanges = destinationChanges(record).filter(function(c) { return c.path.indexOf(base + '/') === 0 && /\/(breakroleinheritance|roleassignments)/.test(c.path); })
         .map(function(c) { return c.path.substring(base.length); });
     expect(listChanges[0]).toBe('/breakroleinheritance(true,false)');
     expect(listChanges.filter(function(p) { return /removeroleassignment|getbyprincipalid/.test(p); })).toEqual([]);
-    // The destination's visitors and members groups, and the person running the copy, keep the access they had through the site.
+    // The destination's visitors and members groups, and the person running the copy, keep the access they had through
+    // the site before the copy. The members group doesn't get the Contribute that the copy gave it on the site.
     const access = listAssignments(record, list.Id);
     expect(access[4]).toEqual([ROLE_IDS.read]);
-    expect(access[5]).toEqual([ROLE_IDS.edit, ROLE_IDS.contribute].sort());
+    expect(access[5]).toEqual([ROLE_IDS.edit]);
     expect(access[callerId]).toEqual([ROLE_IDS.read]);
     const rows = await savedResults(page, testInfo);
     expect(row(rows, 'Permissions of Study Visits', 'Permission')).toEqual({ name: 'Permissions of Study Visits', kind: 'Permission', result: 'Copied',
-        note: 'Gave it its own permissions, as in this site, and kept the access anyone already had to it in the destination.' + YOU_ALSO_HAVE_ACCESS });
+        note: 'Gave it its own permissions, as in this site, and kept the access anyone had to it in the destination before the copy.' + YOU_ALSO_HAVE_ACCESS });
     const other = row(rows, 'Other access to Study Visits', 'Permission');
     expect(other.result).toBe('Skipped');
     expect(other.note).toMatch(/^In the destination, \d+ people and groups have access to Study Visits that they don't have in this site: /);
