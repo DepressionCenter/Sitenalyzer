@@ -15,7 +15,11 @@ Notes: See README file for documentation and full license information.
          communicationSite   The destination has the communication site feature, so it has a footer.
          menuAddsFirst       A new menu link goes first among its siblings instead of last, so the copy must move it.
          restRefusesOtherSites  The REST API refuses a menu link to another site collection, as SharePoint does for
-                             an address it can't check; the CSOM answer takes it.
+                             an address it can't check, when adding it and when changing it; the CSOM answer takes it.
+         restRefusesAudiences  The REST API refuses AudienceIds, when adding a link and when changing one.
+         menuStateHiddenApart  The menu editor (MenuState) keeps its own hidden state for each link, which starts out
+                             as shown, as SharePoint may keep it apart from IsVisible. SaveMenuState sets both.
+         menuStateIgnoresAudiences  SaveMenuState saves everything but AudienceIds.
          footerRefused       The menu editor (MenuState and SaveMenuState) refuses every request.
          themeRefused        ApplyTheme answers 403 with this text as SharePoint's message.
          chromeRefused       SetChromeOptions answers 403 with this text as SharePoint's message.
@@ -23,8 +27,11 @@ Notes: See README file for documentation and full license information.
          groupKeepsLogo      setsitelogo doesn't change the logo, as on some sites with a Microsoft 365 group.
          sourceSite          The source site's menus and look, for the source answers below:
            { quickLaunch: [Link], topNavigationBar: [Link], footer: { name, logoUrl, links: [Link] },
-             theme: { palette: { slot: '#rrggbb' }, isInverted, isDefault }, hubName, refuse: ['quickLaunch', ...] }
+             theme: { palette: { slot: '#rrggbb' }, isInverted, isDefault }, hubName, communicationSite (true gives
+             it the communication site feature), refuse: ['quickLaunch', ...] }
            Link = { title, url, hidden, audiences: [GUIDs], newTab, children: [Link] }. Menus left out are empty.
+       The destination's model.web gets SharePoint's usual header, menu, and footer settings, such as HeaderLayout 1,
+       for each one the test's setup(model) didn't set.
        Use addMenuLink(model, menu, props) in a destination setup(model) to give the destination a link first, and
        menuTree(model, menu) to read a menu as [{ title, url, hidden, audiences, newTab, children }]. menu is
        'QuickLaunch', 'TopNavigationBar', 'footer' (the footer's links), or a link's ID.
@@ -122,7 +129,8 @@ function nodeJson(node) {
 function menuStateNodes(model, parent) {
     return (siblings(model, parent) || []).map(function(id) {
         const node = menus(model).nodes[id];
-        return { Key: String(node.Id), Title: node.Title, SimpleUrl: node.Url, IsHidden: !node.IsVisible, AudienceIds: node.AudienceIds.slice(),
+        const hidden = model.options.menuStateHiddenApart ? !!node.menuHidden : !node.IsVisible;
+        return { Key: String(node.Id), Title: node.Title, SimpleUrl: node.Url, IsHidden: hidden, AudienceIds: node.AudienceIds.slice(),
             OpenInNewWindow: node.OpenInNewWindow, NodeType: 0, Nodes: menuStateNodes(model, node.Id) };
     });
 }
@@ -158,16 +166,28 @@ function isCommunication(ctx) {
     return !!ctx.options.communicationSite || String(ctx.model.web.WebTemplate || '').toUpperCase() === 'SITEPAGEPUBLISHING';
 }
 
-// Adds a link from a REST body, refusing an address in another site collection when the test asks for that.
+// Returns SharePoint's refusal of a REST body that adds or changes a link, or null when it's taken: an address in
+// another site collection, or audiences, when the test asks for that.
+function refusalOf(ctx, body) {
+    const url = String(body.Url || '');
+    // A label's address is SharePoint's own, so it's never refused.
+    const isLabel = /^http:\/\/linkless\.header\/?$/i.test(url);
+    if (ctx.options.restRefusesOtherSites && 'Url' in body && !isLabel && /^https?:\/\//i.test(url) && url.toLowerCase().indexOf((TENANT_ORIGIN + DEST_PATH).toLowerCase()) !== 0) {
+        return ctx.spError(400, 'Cannot open "' + url + '": no such file or folder.', NO_SUCH_URL_CODE);
+    }
+    if (ctx.options.restRefusesAudiences && audiencesOf(body.AudienceIds).length) {
+        return ctx.spError(400, 'The property "AudienceIds" does not exist on type "SP.NavigationNode".');
+    }
+    return null;
+}
+
+// Adds a link from a REST body, unless refusalOf refuses it.
 function addFromBody(ctx, parent) {
     if (!siblings(ctx.model, parent)) { return ctx.spError(404, 'The navigation node does not exist.'); }
     const body = ctx.body || {};
     const url = String(body.Url || '');
-    // A label's address is SharePoint's own, so it's never refused.
-    const isLabel = /^http:\/\/linkless\.header\/?$/i.test(url);
-    if (ctx.options.restRefusesOtherSites && !isLabel && /^https?:\/\//i.test(url) && url.toLowerCase().indexOf((TENANT_ORIGIN + DEST_PATH).toLowerCase()) !== 0) {
-        return ctx.spError(400, 'Cannot open "' + url + '": no such file or folder.', NO_SUCH_URL_CODE);
-    }
+    const refusal = refusalOf(ctx, body);
+    if (refusal) { return refusal; }
     const node = addMenuLink(ctx.model, parent, { Title: String(body.Title || ''), Url: url, IsVisible: body.IsVisible !== false,
         AudienceIds: audiencesOf(body.AudienceIds) }, !!ctx.options.menuAddsFirst);
     return nodeJson(node);
@@ -229,9 +249,14 @@ addDestinationHandlers([
         }
         if (ctx.xHttpMethod !== 'MERGE') { return undefined; }
         const body = ctx.body || {};
+        const refusal = refusalOf(ctx, body);
+        if (refusal) { return refusal; }
         if ('Title' in body) { node.Title = String(body.Title); }
         if ('Url' in body) { node.Url = String(body.Url); }
-        if ('IsVisible' in body) { node.IsVisible = body.IsVisible !== false; }
+        if ('IsVisible' in body) {
+            node.IsVisible = body.IsVisible !== false;
+            node.menuHidden = !node.IsVisible;
+        }
         if ('AudienceIds' in body) { node.AudienceIds = audiencesOf(body.AudienceIds); }
         return ctx.reply(204, null);
     } },
@@ -260,7 +285,9 @@ addDestinationHandlers([
                 const node = nav.nodes[Number(n.Key)];
                 if (node) {
                     node.OpenInNewWindow = !!n.OpenInNewWindow;
-                    node.AudienceIds = (n.AudienceIds || []).slice();
+                    if (!ctx.options.menuStateIgnoresAudiences) { node.AudienceIds = (n.AudienceIds || []).slice(); }
+                    node.menuHidden = !!n.IsHidden;
+                    node.IsVisible = !n.IsHidden;
                 }
                 walk(n.Nodes);
             });
@@ -392,6 +419,7 @@ function answerSource(source, method, url, helpers) {
     if (apiPath === '/_api/navigation/MenuState') {
         const key = String(url.searchParams.get('menuNodeKey') || '').replace(/'/g, '');
         if (key === '1025') { return { StartingNodeKey: '1025', Nodes: sourceMenuState(source.quickLaunch) }; }
+        if (key === '1002') { return { StartingNodeKey: '1002', Nodes: sourceMenuState(source.topNavigationBar) }; }
         if (key === FOOTER_KEY) {
             if (source.refuse.indexOf('footer') > -1) { return refused(); }
             const footer = source.options.footer || {};
@@ -406,6 +434,9 @@ function answerSource(source, method, url, helpers) {
         if (source.refuse.indexOf('theme') > -1) { return refused(); }
         return { value: themeData(source.options.theme || { palette: { themePrimary: '#0078d4' }, isDefault: true }) };
     }
+    if (apiPath === '/_api/web/features') {
+        return { value: source.options.communicationSite ? [{ DefinitionId: COMMUNICATION_FEATURE }] : [] };
+    }
     if (apiPath === '/_api/web/HubSiteData(true)') {
         return { value: JSON.stringify({ name: source.options.hubName || '', url: TENANT_ORIGIN + '/sites/hub' }) };
     }
@@ -413,7 +444,8 @@ function answerSource(source, method, url, helpers) {
 }
 
 // The source site's addresses that answerSource answers. No other test of the source reads them.
-const SOURCE_ADDRESSES = [/^\/_api\/web\/navigation\//, /^\/_api\/navigation\//, /^\/_api\/SP\.Web\.GetContextWebThemeData$/, /^\/_api\/web\/HubSiteData\(true\)$/];
+const SOURCE_ADDRESSES = [/^\/_api\/web\/navigation\//, /^\/_api\/navigation\//, /^\/_api\/SP\.Web\.GetContextWebThemeData$/, /^\/_api\/web\/HubSiteData\(true\)$/,
+    /^\/_api\/web\/features$/];
 
 // The pretend destination is the one part of the tests that openPretendSite asks for each copy, so the source's
 // answers for this part are added to it: its answer is checked first, and it passes on anything it doesn't answer.
@@ -421,6 +453,12 @@ const createStandardDestination = destinationModule.createDestination;
 destinationModule.createDestination = function(options, helpers) {
     const destination = createStandardDestination(options, helpers);
     const settings = (options && typeof options === 'object') ? options : {};
+    // The header, menu, and footer settings every SharePoint site has, unless the test's setup gave others.
+    const chromeDefaults = { HeaderLayout: 1, HeaderEmphasis: 0, HideTitleInHeader: false, LogoAlignment: 0, MegaMenuEnabled: false,
+        HorizontalQuickLaunch: false, FooterEnabled: !!settings.communicationSite, FooterLayout: 0, FooterEmphasis: 0 };
+    Object.keys(chromeDefaults).forEach(function(name) {
+        if (destination.model.web[name] === undefined) { destination.model.web[name] = chromeDefaults[name]; }
+    });
     const source = sourceModel(settings.sourceSite || {});
     function isSource(pathname) {
         return pathname.indexOf(SOURCE_PATH + '/') === 0 && SOURCE_ADDRESSES.some(function(p) { return p.test(pathname.substring(SOURCE_PATH.length)); });

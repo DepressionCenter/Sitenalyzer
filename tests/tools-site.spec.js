@@ -46,10 +46,15 @@ const GROUP_ID = '6a6b6c6d-0000-4000-8000-000000000001';
 const AUDIENCE_ID = '5d5e5f60-0000-4000-8000-000000000001';
 const LABEL = 'http://linkless.header/';
 const NAVIGATION_HINT = 'Copies the site\'s menus, and points links to this site at the destination.';
-const SITE_LOOK_HINT = 'Copies the theme, logo, header, and footer. Changes how the whole destination looks.';
+const SITE_LOOK_HINT = 'Copies the theme, logo, header, and footer, which changes how the whole destination looks.';
 const WORKBOOK_HINT = 'A data dictionary file doesn\'t include these.';
 const FOOTER_REFUSED_NOTE = 'SharePoint didn\'t let Sitenalyzer set up the footer in the destination. Add it by hand in Settings > Change the look > Footer.';
 const REMOVED_NOTE = 'Removed the destination\'s own links from its left menu, so it matches this site\'s.';
+const THEME_NOTE = 'Applied this site\'s main theme colors. The colors of page sections might differ. If they do, choose a theme in Settings > Change the look > Theme.';
+const NOT_CONFIRMED_NOTE = 'Copied the links, but SharePoint didn\'t confirm which of them are hidden, open in a new tab, or show only to their audiences. ' +
+    'Check those links with Edit in the destination\'s left menu.';
+const GROUP_PICTURE_REFUSED_NOTE = 'The destination\'s site logo thumbnail is the picture of its Microsoft 365 group, and SharePoint didn\'t let Sitenalyzer ' +
+    'change it. Ask an owner of the group to change it in Settings > Site information.';
 const PALETTE = { themePrimary: '#007780', themeLighterAlt: '#d4fbff', neutralPrimary: '#323130', white: '#ffffff' };
 
 // This site's lists and libraries as the copy reads them to point links at the destination.
@@ -116,7 +121,8 @@ function sourceFiles() {
  * @param {object} options { web (changes to this site's settings), collection (changes to its hub settings), sourceSite
  *        (its menus and look, see pretend-destination-site.js), destination (more destination options), lists (names
  *        of lists to choose, none when left out), address (a new address for Study Visits), navigation (on when left
- *        out), siteLook (off when left out), times (how many copies to run, 1 when left out) }.
+ *        out), siteLook (off when left out), times (how many copies to run, 1 when left out), resultsTimeout (how long
+ *        to wait for each copy, in milliseconds, 30000 when left out) }.
  * @returns {Promise<object>} The record of requests, with record.destination the destination's model.
  */
 async function copySite(page, options) {
@@ -140,7 +146,7 @@ async function copySite(page, options) {
     await page.getByRole('switch', { name: 'Site look' }).setChecked(!!settings.siteLook);
     for (let i = 0; i < (settings.times || 1); i++) {
         await page.getByRole('button', { name: 'Copy to destination' }).click();
-        await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 30000 });
+        await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: settings.resultsTimeout || 30000 });
     }
     return record;
 }
@@ -259,6 +265,8 @@ test('makes the same menu on a second copy, without any link twice', async funct
     const rows = await savedResults(page, testInfo);
     expect(row(rows, 'Left menu', 'Menu link')).toEqual({ result: 'Copied', note: REMOVED_NOTE });
     expect(row(rows, 'Destination check', 'Menu link').note).toBe('Found 3 of 3 menu links in the destination.');
+    // The row about the removed links isn't a copied item, so the count has only the 3 links.
+    await expect(page.locator('.sna-tools-results-summary')).toHaveText(/^Copied 3 items\./);
     expect(record.unexpectedRequests).toEqual([]);
 });
 
@@ -295,7 +303,7 @@ test('reports the hub menu of a hub site without reading or copying it', async f
 test('reports a footer menu the destination refused, and changes nothing else in the footer', async function({ page }, testInfo) {
     const record = await copySite(page, {
         web: { FooterEnabled: true },
-        sourceSite: { footer: { links: [{ title: 'Accessibility', url: SITE_PATH + '/SitePages/Accessibility.aspx' }] } },
+        sourceSite: { communicationSite: true, footer: { links: [{ title: 'Accessibility', url: SITE_PATH + '/SitePages/Accessibility.aspx' }] } },
         destination: { communicationSite: true, footerRefused: true }
     });
     expect(record.destination.navigation.footerRoot).toBe(0);
@@ -313,9 +321,11 @@ const LOOK = { HeaderLayout: 2, HeaderEmphasis: 2, HideTitleInHeader: false, Log
 test('copies the theme, logo, header, and footer, and the destination keeps its own title', async function({ page }, testInfo) {
     const footerLinks = [];
     for (let i = 1; i <= 9; i++) { footerLinks.push({ title: 'Policy ' + i, url: SITE_PATH + '/SitePages/Policy-' + i + '.aspx' }); }
+    footerLinks[0].newTab = true;
     const record = await copySite(page, {
         siteLook: true, web: LOOK,
-        sourceSite: { theme: { palette: PALETTE, isInverted: false }, footer: { name: 'Study One', logoUrl: SITE_PATH + '/SiteAssets/footer-logo.png', links: footerLinks } },
+        sourceSite: { communicationSite: true, theme: { palette: PALETTE, isInverted: false },
+            footer: { name: 'Study One', logoUrl: SITE_PATH + '/SiteAssets/footer-logo.png', links: footerLinks } },
         destination: { communicationSite: true }
     });
     const model = record.destination;
@@ -339,7 +349,7 @@ test('copies the theme, logo, header, and footer, and the destination keeps its 
 
     const rows = await savedResults(page, testInfo);
     const K = 'Site look setting';
-    expect(row(rows, 'Theme', K)).toEqual({ result: 'Copied', note: 'Applied this site\'s theme colors.' });
+    expect(row(rows, 'Theme', K)).toEqual({ result: 'Copied', note: THEME_NOTE });
     expect(row(rows, 'Header layout', K)).toEqual({ result: 'Copied', note: 'Set to Compact, as in this site.' });
     expect(row(rows, 'Header background', K)).toEqual({ result: 'Copied', note: 'Set to Soft, as in this site.' });
     expect(row(rows, 'Menu style', K)).toEqual({ result: 'Copied', note: 'Set to Mega menu, as in this site.' });
@@ -352,8 +362,12 @@ test('copies the theme, logo, header, and footer, and the destination keeps its 
     expect(row(rows, 'Footer logo', K).result).toBe('Copied');
     expect(row(rows, 'Footer menu: Policy 9', 'Menu link')).toEqual({ result: 'Skipped',
         note: 'The footer shows at most 8 links, so Sitenalyzer didn\'t copy this one. Change the footer by hand to choose which links it shows.' });
+    // SharePoint keeps "open in new tab" only for the left menu.
+    expect(row(rows, 'Footer menu: Policy 1', 'Menu link')).toEqual({ result: 'Partly copied', note: 'Copied the link and pointed it at the destination. ' +
+        'It opens in a new tab in this site, but Sitenalyzer can\'t copy that for the footer, so it opens in the same tab in the destination.' });
     expect(row(rows, 'Destination check', K).note).toMatch(/^Found (\d+) of \1 site look settings in the destination\.$/);
-    expect(rows.filter(function(r) { return r.result === 'Failed' || r.result === 'Partly copied'; })).toEqual([]);
+    expect(rows.filter(function(r) { return (r.result === 'Failed' || r.result === 'Partly copied') && r.name !== 'Footer menu: Policy 1' &&
+        !(r.name === 'Destination check' && r.kind === 'Menu link'); })).toEqual([]);
     expect(sourceChanges(record)).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
 });
@@ -377,18 +391,238 @@ test('skips the parts SharePoint refused, and says what to do instead', async fu
     });
     expect(record.destination.theme).toBeUndefined();
     expect(record.destination.groupImage).toBeUndefined();
+    // Microsoft's way around a refused group picture: the picture saved as __siteIcon__.png in Site Assets.
+    expect(record.destination.files[(DEST_PATH + '/SiteAssets/__siteIcon__.png').toLowerCase()].content).toBe('Logo bytes');
     const rows = await savedResults(page, testInfo);
     const K = 'Site look setting';
     expect(row(rows, 'Theme', K)).toEqual({ result: 'Skipped', note: 'The destination doesn\'t allow custom scripts, so SharePoint didn\'t let Sitenalyzer change this. ' +
         'Ask your SharePoint admin to allow custom scripts there, or change it by hand in Settings > Change the look > Theme.' });
     expect(row(rows, 'Header layout', K)).toEqual({ result: 'Skipped', note: 'Only a SharePoint admin can change this in the destination. ' +
         'Ask your SharePoint admin, or change it by hand in Settings > Change the look > Header.' });
-    expect(row(rows, 'Site logo thumbnail', K)).toEqual({ result: 'Skipped', note: 'The destination\'s site logo thumbnail is the picture of its Microsoft 365 group, ' +
-        'and SharePoint didn\'t let Sitenalyzer change it. Ask an owner of the group to change it in Settings > Site information.' });
+    expect(row(rows, 'Site logo thumbnail', K)).toEqual({ result: 'Copied', note: 'SharePoint didn\'t let Sitenalyzer change the picture of the destination\'s ' +
+        'Microsoft 365 group, so Sitenalyzer saved the copied logo as __siteIcon__.png in Site Assets, as Microsoft suggests. If the site logo thumbnail ' +
+        'doesn\'t change, ask an owner of the group to change it in Settings > Site information.' });
     // The settings SharePoint took are still copied.
     expect(row(rows, 'Site logo', K).result).toBe('Copied');
     expect(row(rows, 'Site navigation visibility', K).result).toBe('Copied');
     expect(rows.filter(function(r) { return r.result === 'Failed'; })).toEqual([]);
+});
+
+// ### What SharePoint Refuses or Changes ###
+
+// Returns a destination answer that refuses requests, with SharePoint's 400 answer, when refuse(ctx) is true.
+function refuseWhen(method, pattern, refuse) {
+    return { method: method, pattern: pattern, answer: function(ctx) { return refuse(ctx) ? ctx.spError(400, 'The request was refused.') : undefined; } };
+}
+
+test('adds a hidden link the REST API refuses with CSOM and still hides it, and reports a link SharePoint won\'t give its audiences', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        web: { NavAudienceTargetingEnabled: true },
+        sourceSite: { quickLaunch: [
+            { title: 'Partner portal', url: 'https://example.org/portal', hidden: true },
+            { title: 'Partner news', url: 'https://example.org/news', audiences: [AUDIENCE_ID] }
+        ] },
+        destination: { restRefusesOtherSites: true, restRefusesAudiences: true, menuStateIgnoresAudiences: true }
+    });
+    expect(menuTree(record.destination, 'QuickLaunch')).toEqual([
+        link('Partner portal', 'https://example.org/portal', { hidden: true }),
+        link('Partner news', 'https://example.org/news')
+    ]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Left menu: Partner portal', 'Menu link')).toEqual({ result: 'Copied',
+        note: 'Copied the link. It points outside this site, so it stays the same. It\'s hidden, as in this site.' });
+    expect(row(rows, 'Left menu: Partner news', 'Menu link')).toEqual({ result: 'Partly copied', note: 'Copied the link. It points outside this site, so it ' +
+        'stays the same. SharePoint didn\'t let Sitenalyzer show it only to its audiences, so it shows to everyone. Change it with Edit in the destination\'s left menu.' });
+    // The menu editor saved everything but the audiences, which the read-back after the save shows.
+    expect(row(rows, 'Left menu', 'Menu link')).toEqual({ result: 'Partly copied', note: NOT_CONFIRMED_NOTE });
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('reports a link with its audiences when the menu editor sets the audiences the REST API refused', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        web: { NavAudienceTargetingEnabled: true },
+        sourceSite: { quickLaunch: [{ title: 'Partner news', url: 'https://example.org/news', audiences: [AUDIENCE_ID] }] },
+        destination: { restRefusesOtherSites: true, restRefusesAudiences: true }
+    });
+    expect(menuTree(record.destination, 'QuickLaunch')).toEqual([link('Partner news', 'https://example.org/news', { audiences: [AUDIENCE_ID] })]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Left menu: Partner news', 'Menu link')).toEqual({ result: 'Copied',
+        note: 'Copied the link. It points outside this site, so it stays the same. Only its audiences see it, as in this site.' });
+    expect(rows.filter(function(r) { return r.name === 'Left menu'; })).toEqual([]);
+});
+
+test('keeps hidden links hidden when the menu editor keeps its own hidden state', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        sourceSite: { quickLaunch: [
+            { title: 'Draft notes', url: SITE_PATH + '/SitePages/Draft.aspx', hidden: true },
+            { title: 'Forms', url: SITE_PATH + '/SitePages/Forms.aspx', newTab: true }
+        ] },
+        destination: { menuStateHiddenApart: true }
+    });
+    expect(menuTree(record.destination, 'QuickLaunch')).toEqual([
+        link('Draft notes', DEST_PATH + '/SitePages/Draft.aspx', { hidden: true }),
+        link('Forms', DEST_PATH + '/SitePages/Forms.aspx', { newTab: true })
+    ]);
+    const saves = destinationChanges(record).filter(function(c) { return c.path === '/_api/navigation/SaveMenuState'; });
+    expect(saves).toHaveLength(1);
+    expect(JSON.parse(saves[0].body).menuState.Nodes.map(function(n) { return n.IsHidden; })).toEqual([true, false]);
+    const rows = await savedResults(page, testInfo);
+    expect(rows.filter(function(r) { return r.name === 'Left menu' || r.result === 'Failed'; })).toEqual([]);
+    expect(row(rows, 'Destination check', 'Menu link').note).toBe('Found 2 of 2 menu links in the destination.');
+});
+
+test('copies links without their audiences when this site has audience targeting off, and says which top menu links lose "open in new tab"', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        web: { WebTemplate: 'STS', Configuration: 0, NavAudienceTargetingEnabled: false },
+        sourceSite: { topNavigationBar: [
+            { title: 'Projects', url: SITE_PATH + '/SitePages/Projects.aspx', audiences: [AUDIENCE_ID] },
+            { title: 'Reports', url: SITE_PATH + '/SitePages/Reports.aspx', newTab: true }
+        ] },
+        // Audience targeting is already on in the destination, so audiences copied there would hide the links.
+        destination: { setup: function(model) { model.web.NavAudienceTargetingEnabled = true; } }
+    });
+    expect(menuTree(record.destination, 'TopNavigationBar')).toEqual([
+        link('Projects', DEST_PATH + '/SitePages/Projects.aspx'),
+        link('Reports', DEST_PATH + '/SitePages/Reports.aspx')
+    ]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Audience targeting in menus', 'Menu link')).toEqual({ result: 'Skipped', note: 'Some links in this site\'s menus have audiences, but ' +
+        'audience targeting is off in this site, so Sitenalyzer copied them without their audiences. They show to everyone, as in this site.' });
+    expect(row(rows, 'Top menu: Projects', 'Menu link')).toEqual({ result: 'Copied', note: 'Copied the link and pointed it at the destination.' });
+    expect(row(rows, 'Top menu: Reports', 'Menu link')).toEqual({ result: 'Partly copied', note: 'Copied the link and pointed it at the destination. ' +
+        'It opens in a new tab in this site, but Sitenalyzer can\'t copy that for the top menu, so it opens in the same tab in the destination.' });
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('keeps links to the group\'s notebook, Teams, and Planner as they are and reports them, and copies other kept links as they are', async function({ page }, testInfo) {
+    const kept = [
+        { title: 'Top of page', url: '#' },
+        { title: 'Home page', url: 'SitePages/Home.aspx' },
+        { title: 'Site home', url: '~site/SitePages/Home.aspx' }
+    ];
+    const groupLinks = [
+        { title: 'Notebook', url: SITE_PATH + '/SiteAssets/Test Research Site Notebook', app: 'the notebook of this site\'s Microsoft 365 group' },
+        { title: 'Team chat', url: 'https://teams.microsoft.com/l/team/example/conversations', app: 'Microsoft Teams for this site\'s Microsoft 365 group' },
+        { title: 'Tasks', url: 'https://tasks.office.com/example.org/Home/PlanViews/example', app: 'Planner for this site\'s Microsoft 365 group' }
+    ];
+    const record = await copySite(page, { collection: { GroupId: GROUP_ID }, sourceSite: { quickLaunch: groupLinks.concat(kept) } });
+    expect(menuTree(record.destination, 'QuickLaunch').map(function(n) { return n.url; })).toEqual(groupLinks.concat(kept).map(function(l) { return l.url; }));
+    const rows = await savedResults(page, testInfo);
+    groupLinks.forEach(function(l) {
+        expect(row(rows, 'Left menu: ' + l.title, 'Menu link')).toEqual({ result: 'Partly copied', note: 'Copied the link as it is. It opens ' + l.app +
+            ', so it still points to the old group. Change or remove it with Edit in the destination\'s left menu.' });
+    });
+    kept.forEach(function(l) {
+        expect(row(rows, 'Left menu: ' + l.title, 'Menu link')).toEqual({ result: 'Copied', note: 'Copied the link as it is.' });
+    });
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('says how many of the destination\'s links it removed when SharePoint stops it partway', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        sourceSite: { quickLaunch: [{ title: 'Home', url: SITE_PATH }] },
+        destination: {
+            setup: function(model) {
+                ['One', 'Two', 'Three'].forEach(function(title) { addMenuLink(model, 'QuickLaunch', { Title: title, Url: DEST_PATH + '/SitePages/' + title + '.aspx' }); });
+            },
+            // The first removal works, and the others are refused.
+            handlers: [refuseWhen('POST', /^\/_api\/web\/navigation\/GetNodeById\(\d+\)$/, function(ctx) {
+                if (ctx.xHttpMethod !== 'DELETE') { return false; }
+                ctx.model.removals = (ctx.model.removals || 0) + 1;
+                return ctx.model.removals > 1;
+            })]
+        }
+    });
+    expect(menuTree(record.destination, 'QuickLaunch').map(function(n) { return n.title; })).toEqual(['One', 'Two']);
+    const rows = await savedResults(page, testInfo);
+    const menuRow = row(rows, 'Left menu', 'Menu link');
+    expect(menuRow.result).toBe('Failed');
+    expect(menuRow.note.startsWith('Sitenalyzer removed 1 of the 3 links the destination had in its left menu, but SharePoint didn\'t let it remove the rest. ' +
+        'It didn\'t add this site\'s links, which would have put some links there twice. Check the destination\'s left menu, then copy again. ')).toBe(true);
+});
+
+test('reports a footer it couldn\'t read apart from one SharePoint didn\'t let it set up', async function({ page }, testInfo) {
+    await copySite(page, {
+        web: { FooterEnabled: true },
+        sourceSite: { communicationSite: true, footer: { links: [{ title: 'Accessibility', url: SITE_PATH + '/SitePages/Accessibility.aspx' }] } },
+        destination: { communicationSite: true, handlers: [refuseWhen('GET', /^\/_api\/web\/navigation\/GetNodeById\((\d+)\)\/Children$/, function(ctx) {
+            return !!ctx.model.navigation && Number(ctx.match[1]) === ctx.model.navigation.footerRoot;
+        })] }
+    });
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Footer menu', 'Menu link')).toEqual({ result: 'Failed', note: 'Sitenalyzer couldn\'t read the destination\'s footer, so it left the footer ' +
+        'as it is. Copy again later, or change it by hand in Settings > Change the look > Footer.' });
+});
+
+test('says when this site\'s menu has more links than Sitenalyzer reads', async function({ page }, testInfo) {
+    test.setTimeout(300000);
+    const pages = [];
+    for (let i = 1; i <= 499; i++) { pages.push({ title: 'Page ' + i, url: SITE_PATH + '/SitePages/Page-' + i + '.aspx' }); }
+    const record = await copySite(page, { resultsTimeout: 240000, sourceSite: { quickLaunch: [
+        { title: 'Pages', url: LABEL, children: pages },
+        { title: 'More', url: LABEL, children: [{ title: 'Last page', url: SITE_PATH + '/SitePages/Last.aspx' }] }
+    ] } });
+    const tree = menuTree(record.destination, 'QuickLaunch');
+    expect(tree[0].children).toHaveLength(499);
+    // The read stopped at 500 links, before the links under More.
+    expect(tree[1].children).toEqual([]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Left menu', 'Menu link')).toEqual({ result: 'Partly copied', note: 'This site\'s left menu has more than 500 links, and Sitenalyzer reads at ' +
+        'most 500 links from one menu, so some links under others might be missing in the destination. Compare the two menus, and add any missing links ' +
+        'with Edit in the destination\'s left menu.' });
+});
+
+test('keeps the destination\'s footer settings when this site has no footer', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        siteLook: true, navigation: false,
+        web: { HeaderLayout: 2, HeaderEmphasis: 1, HideTitleInHeader: false, LogoAlignment: 0, MegaMenuEnabled: false, HorizontalQuickLaunch: false,
+            FooterEnabled: false, FooterLayout: 0, FooterEmphasis: 0 },
+        destination: { communicationSite: true, setup: function(model) { model.web.FooterLayout = 1; model.web.FooterEmphasis = 2; } }
+    });
+    expect(record.destination.chromeOptions).toEqual({ headerLayout: 2, headerEmphasis: 1, hideTitleInHeader: false, logoAlignment: 0, megaMenuEnabled: false,
+        horizontalQuickLaunch: false, footerEnabled: true, footerLayout: 1, footerEmphasis: 2 });
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Footer', 'Site look setting')).toEqual({ result: 'Skipped',
+        note: 'This site isn\'t a communication site, so it has no footer, and the destination keeps its own footer settings.' });
+    expect(rows.filter(function(r) { return r.name === 'Footer layout'; })).toEqual([]);
+    expect(row(rows, 'Header layout', 'Site look setting').result).toBe('Copied');
+});
+
+test('changes no header or footer setting when the destination\'s settings can\'t be read', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        siteLook: true, navigation: false, web: LOOK, sourceSite: { communicationSite: true },
+        destination: { communicationSite: true, handlers: [refuseWhen('GET', /^\/_api\/web$/, function(ctx) {
+            return /Configuration,SiteLogoUrl,QuickLaunchEnabled/.test(ctx.url.searchParams.get('$select') || '');
+        })] }
+    });
+    expect(record.destination.chromeOptions).toBeUndefined();
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Header and footer', 'Site look setting')).toEqual({ result: 'Skipped', note: 'Sitenalyzer couldn\'t read the destination\'s header and ' +
+        'footer settings, and SharePoint changes them all at once, so Sitenalyzer didn\'t change any of them. Copy again later, or set them by hand in ' +
+        'Settings > Change the look > Header.' });
+    expect(rows.filter(function(r) { return r.name === 'Header layout'; })).toEqual([]);
+});
+
+test('reports a group site\'s logo as copied when only its read-back failed, and goes on to the thumbnail', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        siteLook: true, navigation: false, web: { SiteLogoUrl: SITE_PATH + '/SiteAssets/study-logo.png' },
+        destination: { groupImageRefused: true, setup: function(model) { model.site.GroupId = GROUP_ID; }, handlers: [
+            // The first read of the logo after setting it fails.
+            refuseWhen('GET', /^\/_api\/web$/, function(ctx) {
+                if (ctx.url.searchParams.get('$select') !== 'SiteLogoUrl' || ctx.model.logoReadRefused) { return false; }
+                ctx.model.logoReadRefused = true;
+                return true;
+            }),
+            // Saving the picture as __siteIcon__.png in Site Assets is refused too.
+            refuseWhen('POST', /\/Files\/AddUsingPath\(decodedurl=@n,overwrite=@o\)$/, function(ctx) {
+                return /__siteIcon__/.test(ctx.url.searchParams.get('@n') || '');
+            })
+        ] }
+    });
+    expect(record.destination.logos).toEqual([{ relativeLogoUrl: DEST_PATH + '/SiteAssets/study-logo.png', type: 0, aspect: 1 }]);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Site logo', 'Site look setting')).toEqual({ result: 'Copied', note: 'Copied this site\'s logo into Site Assets and made it the destination\'s logo.' });
+    expect(row(rows, 'Site logo thumbnail', 'Site look setting')).toEqual({ result: 'Skipped', note: GROUP_PICTURE_REFUSED_NOTE });
 });
 
 // ### Switches ###

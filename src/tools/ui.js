@@ -36,7 +36,7 @@ var SNA_TOOLS_SWITCHES = [
     { option: 'siteAssets', label: 'Site Assets', hint: 'Copies the files in Site Assets, such as images that pages show.' },
     { option: 'agents', label: 'Agents and site skills', hint: 'Copies agents and the site skills in Agent Assets.' },
     { option: 'navigation', label: 'Navigation', hint: 'Copies the site\'s menus, and points links to this site at the destination.' },
-    { option: 'siteLook', label: 'Site look', hint: 'Copies the theme, logo, header, and footer. Changes how the whole destination looks.' },
+    { option: 'siteLook', label: 'Site look', hint: 'Copies the theme, logo, header, and footer, which changes how the whole destination looks.' },
     { option: 'permissions', label: 'Permissions', hint: 'Copies permission levels, groups and their members, and who has access to the site and to each list or library. Off unless you turn it on.' }
 ];
 
@@ -418,7 +418,7 @@ function snaToolsCopyHtml() {
 }
 
 // Returns the counts sentence of the results, such as "Copied 12 items. Partly copied 2. Skipped 1. Failed 0."
-// Summary rows from the destination check are not counted.
+// Summary rows, such as the destination check, are not counted.
 function snaToolsResultsSummary(results) {
     var counts = { copied: 0, partial: 0, skipped: 0, failed: 0 };
     results.forEach(function(r) { if (!r.summary && counts[r.result] !== undefined) { counts[r.result]++; } });

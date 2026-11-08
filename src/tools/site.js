@@ -21,10 +21,13 @@ Notes: See README file for documentation and full license information.
        { web: { WebTemplate, Configuration, SiteLogoUrl, QuickLaunchEnabled, NavAudienceTargetingEnabled, HeaderLayout,
                 ... } | null,
          site: { IsHubSite, HubSiteId, GroupId } | null, hubName,
+         communication: true when this site has the communication site feature, false when it hasn't or that
+                        couldn't be read, null when it wasn't needed,
          menus: { quickLaunch: MenuRead, topNavigationBar: MenuRead | null },
          footer: { links: [MenuNode], name, logoUrl } | { error: true } | null (null when the footer is off),
          theme: { palette { slot: '#rrggbb' }, isInverted, isDefault } | { error: true } | null }
-       MenuRead = { nodes: [MenuNode] } or { error: true }
+       MenuRead = { nodes: [MenuNode], overLimit (true when the menu has more links than SNA_TOOLS_SITE_MENU_MAX, so
+                  some links under others weren't read) } or { error: true }
        MenuNode = { id, title, url, isVisible, audienceIds [GUIDs], openInNewWindow, children [MenuNode] }
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -93,21 +96,32 @@ var SNA_TOOLS_SITE_WEB_SELECT_SHORT = 'Title,WebTemplate,Configuration,SiteLogoU
 var SNA_TOOLS_SITE_MODERN_TEMPLATES = ['GROUP', 'SITEPAGEPUBLISHING', 'TEAMCHANNEL'];
 
 // The header, menu, and footer settings that SetChromeOptions sets together. part says which part of the look each
-// belongs to, and words names each value the way Change the look shows it.
+// belongs to, and words names each value the way Change the look shows it. SetChromeOptions needs every one of them,
+// so a setting that isn't copied is sent with the destination's own value.
 var SNA_TOOLS_SITE_CHROME = [
-    { property: 'HeaderLayout', option: 'headerLayout', part: 'header', name: 'Header layout', words: ['None', 'Standard', 'Compact', 'Minimal', 'Extended'], fallback: 1 },
-    { property: 'HeaderEmphasis', option: 'headerEmphasis', part: 'header', name: 'Header background', words: ['None', 'Neutral', 'Soft', 'Strong'], fallback: 0 },
-    { property: 'HideTitleInHeader', option: 'hideTitleInHeader', part: 'header', name: 'Site title in the header', words: { 'true': 'Hidden', 'false': 'Shown' }, fallback: false },
-    { property: 'LogoAlignment', option: 'logoAlignment', part: 'header', name: 'Logo alignment', words: ['Left', 'Middle', 'Right'], fallback: 0 },
-    { property: 'MegaMenuEnabled', option: 'megaMenuEnabled', part: 'menu', name: 'Menu style', words: { 'true': 'Mega menu', 'false': 'Cascading' }, fallback: false },
-    { property: 'HorizontalQuickLaunch', option: 'horizontalQuickLaunch', part: 'orientation', name: 'Menu orientation', words: { 'true': 'Horizontal', 'false': 'Vertical' }, fallback: false },
-    { property: 'FooterEnabled', option: 'footerEnabled', part: 'footer', name: 'Footer', words: { 'true': 'On', 'false': 'Off' }, fallback: false },
-    { property: 'FooterLayout', option: 'footerLayout', part: 'footer', name: 'Footer layout', words: ['Simple', 'Extended', 'Stacked'], fallback: 0 },
-    { property: 'FooterEmphasis', option: 'footerEmphasis', part: 'footer', name: 'Footer background', words: ['Strong', 'Neutral', 'Soft', 'None'], fallback: 0 }
+    { property: 'HeaderLayout', option: 'headerLayout', part: 'header', name: 'Header layout', words: ['None', 'Standard', 'Compact', 'Minimal', 'Extended'] },
+    { property: 'HeaderEmphasis', option: 'headerEmphasis', part: 'header', name: 'Header background', words: ['None', 'Neutral', 'Soft', 'Strong'] },
+    { property: 'HideTitleInHeader', option: 'hideTitleInHeader', part: 'header', name: 'Site title in the header', words: { 'true': 'Hidden', 'false': 'Shown' } },
+    { property: 'LogoAlignment', option: 'logoAlignment', part: 'header', name: 'Logo alignment', words: ['Left', 'Middle', 'Right'] },
+    { property: 'MegaMenuEnabled', option: 'megaMenuEnabled', part: 'menu', name: 'Menu style', words: { 'true': 'Mega menu', 'false': 'Cascading' } },
+    { property: 'HorizontalQuickLaunch', option: 'horizontalQuickLaunch', part: 'orientation', name: 'Menu orientation', words: { 'true': 'Horizontal', 'false': 'Vertical' } },
+    { property: 'FooterEnabled', option: 'footerEnabled', part: 'footer', name: 'Footer', words: { 'true': 'On', 'false': 'Off' } },
+    { property: 'FooterLayout', option: 'footerLayout', part: 'footer', name: 'Footer layout', words: ['Simple', 'Extended', 'Stacked'] },
+    { property: 'FooterEmphasis', option: 'footerEmphasis', part: 'footer', name: 'Footer background', words: ['Strong', 'Neutral', 'Soft', 'None'] }
 ];
 
 // Picture types SetGroupImage takes, by file extension.
 var SNA_TOOLS_SITE_IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp' };
+
+// The name Microsoft gives for a site picture saved in Site Assets, which a site with a Microsoft 365 group shows when
+// the group's picture can't be changed (Microsoft's troubleshooting page "Error when changing site logo on Microsoft
+// 365 group SharePoint site").
+var SNA_TOOLS_SITE_ICON_NAME = '__siteIcon__.png';
+
+// Web addresses of the apps of a Microsoft 365 group, with the app's name. A link to one of them from a site with a
+// group opens that group, not the destination's.
+var SNA_TOOLS_SITE_GROUP_APPS = { 'teams.microsoft.com': 'Microsoft Teams', 'teams.cloud.microsoft': 'Microsoft Teams',
+    'tasks.office.com': 'Planner', 'planner.cloud.microsoft': 'Planner' };
 
 // Where a person changes each part of the look by hand in the destination.
 var SNA_TOOLS_SITE_WHERE = {
@@ -218,21 +232,28 @@ async function snaToolsSiteReadNodes(siteUrl, collectionPath) {
 }
 
 // Reads one menu of a site with every level of links under it, one request for each link that has links under it.
-// counter.count stops the read at SNA_TOOLS_SITE_MENU_MAX links.
+// counter.count stops the read at SNA_TOOLS_SITE_MENU_MAX links, and counter.overLimit is then set to true, because
+// the links under the links not yet read are left out.
 async function snaToolsSiteReadTree(siteUrl, collectionPath, depth, counter) {
     var nodes = await snaToolsSiteReadNodes(siteUrl, collectionPath);
     counter.count += nodes.length;
     for (var i = 0; i < nodes.length; i++) {
-        if (depth >= SNA_TOOLS_SITE_MENU_DEPTH || counter.count >= SNA_TOOLS_SITE_MENU_MAX) { break; }
+        if (depth >= SNA_TOOLS_SITE_MENU_DEPTH) { break; }
+        if (counter.count >= SNA_TOOLS_SITE_MENU_MAX) {
+            counter.overLimit = true;
+            break;
+        }
         nodes[i].children = await snaToolsSiteReadTree(siteUrl, '/_api/web/navigation/GetNodeById(' + nodes[i].id + ')/Children', depth + 1, counter);
     }
     return nodes;
 }
 
-// Reads one of the site's own menus (see SNA_TOOLS_SITE_MENUS). Returns { nodes } or { error: true }.
+// Reads one of the site's own menus (see SNA_TOOLS_SITE_MENUS). Returns { nodes, overLimit } or { error: true }.
 async function snaToolsSiteReadMenu(siteUrl, menu) {
     try {
-        return { nodes: await snaToolsSiteReadTree(siteUrl, '/_api/web/navigation/' + menu.collection, 1, { count: 0 }) };
+        var counter = { count: 0, overLimit: false };
+        var nodes = await snaToolsSiteReadTree(siteUrl, '/_api/web/navigation/' + menu.collection, 1, counter);
+        return { nodes: nodes, overLimit: counter.overLimit };
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
         return { error: true };
@@ -268,7 +289,7 @@ function snaToolsSiteMarkNewTabs(nodes, newTabs) {
 // Returns a footer link from the menu editor's MenuState, with the links under it.
 function snaToolsSiteFooterNode(node) {
     return { id: Number(node.Key) || 0, title: String(node.Title || ''), url: String(node.SimpleUrl || ''), isVisible: node.IsHidden !== true,
-        audienceIds: snaToolsSiteAudiences(node.AudienceIds), openInNewWindow: false,
+        audienceIds: snaToolsSiteAudiences(node.AudienceIds), openInNewWindow: node.OpenInNewWindow === true,
         children: (node.Nodes || []).filter(function(n) { return n && n.IsDeleted !== true; }).map(snaToolsSiteFooterNode) };
 }
 
@@ -349,7 +370,7 @@ async function snaToolsSiteReadHubName(siteUrl) {
 async function snaToolsSiteReadSource(plan, onProgress) {
     var progress = typeof onProgress === 'function' ? onProgress : function() {};
     var siteUrl = plan.source.siteUrl;
-    var settings = { web: null, site: null, hubName: '', menus: { quickLaunch: null, topNavigationBar: null }, footer: null, theme: null };
+    var settings = { web: null, site: null, hubName: '', communication: null, menus: { quickLaunch: null, topNavigationBar: null }, footer: null, theme: null };
     progress('Reading this site\'s menus and look.');
     try {
         settings.web = await snaToolsReadWithFallback(siteUrl, '/_api/web?$select=' + SNA_TOOLS_SITE_WEB_SELECT, '/_api/web?$select=' + SNA_TOOLS_SITE_WEB_SELECT_SHORT);
@@ -371,10 +392,22 @@ async function snaToolsSiteReadSource(plan, onProgress) {
             snaToolsSiteMarkNewTabs(settings.menus.quickLaunch.nodes, await snaToolsSiteReadNewTabs(siteUrl, SNA_TOOLS_SITE_MENUS.quickLaunch));
         }
         // A hub's top menu is its hub menu, which the copy reports without reading.
-        if (!isHub) { settings.menus.topNavigationBar = await snaToolsSiteReadMenu(siteUrl, SNA_TOOLS_SITE_MENUS.topNavigationBar); }
+        if (!isHub) {
+            var top = settings.menus.topNavigationBar = await snaToolsSiteReadMenu(siteUrl, SNA_TOOLS_SITE_MENUS.topNavigationBar);
+            // Only a classic site shows its top menu. Its links that open in a new tab are read so the copy can say that
+            // this isn't copied.
+            if (top.nodes && top.nodes.length && settings.web && !snaToolsSiteIsModern(settings.web)) {
+                snaToolsSiteMarkNewTabs(top.nodes, await snaToolsSiteReadNewTabs(siteUrl, SNA_TOOLS_SITE_MENUS.topNavigationBar));
+            }
+        }
         if (isHub || inHub) { settings.hubName = await snaToolsSiteReadHubName(siteUrl); }
     }
-    if ((plan.navigation || plan.siteLook) && settings.web && settings.web.FooterEnabled === true) {
+    // Only a site with the communication site feature has a footer, whatever its FooterEnabled says.
+    var footerOn = !!settings.web && settings.web.FooterEnabled === true;
+    if (settings.web && (plan.siteLook || (plan.navigation && footerOn))) {
+        settings.communication = await snaToolsSiteHasCommunicationFeature(siteUrl, settings.web.WebTemplate);
+    }
+    if ((plan.navigation || plan.siteLook) && footerOn && settings.communication) {
         settings.footer = await snaToolsSiteReadFooter(siteUrl);
     }
     if (plan.siteLook) { settings.theme = await snaToolsSiteReadTheme(siteUrl); }
@@ -392,20 +425,23 @@ async function snaToolsSiteDestWeb(dest, state, refresh) {
     return state.destWeb;
 }
 
-// True when the destination has the communication site feature, which gives it a footer. False when it can't be read.
-async function snaToolsSiteIsCommunication(dest, state) {
-    if (state.communication !== null) { return state.communication; }
-    var found = String(dest.webTemplate || '').toUpperCase() === 'SITEPAGEPUBLISHING';
-    if (!found) {
-        try {
-            var features = (await snaToolsReadAll(dest.siteUrl, '/_api/web/features?$select=DefinitionId', SNA_TOOLS_READ_MAX)).items;
-            found = features.some(function(f) { return snaToolsCleanGuid(f.DefinitionId) === SNA_TOOLS_SITE_COMMUNICATION_FEATURE; });
-        } catch (err) {
-            if (snaToolsIsCancelled(err)) { throw err; }
-        }
+// True when a site has the communication site feature, which gives it a footer: a site made as a communication site,
+// or one whose features include it. False when its features can't be read.
+async function snaToolsSiteHasCommunicationFeature(siteUrl, webTemplate) {
+    if (String(webTemplate || '').toUpperCase() === 'SITEPAGEPUBLISHING') { return true; }
+    try {
+        var features = (await snaToolsReadAll(siteUrl, '/_api/web/features?$select=DefinitionId', SNA_TOOLS_READ_MAX)).items;
+        return features.some(function(f) { return snaToolsCleanGuid(f.DefinitionId) === SNA_TOOLS_SITE_COMMUNICATION_FEATURE; });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return false;
     }
-    state.communication = found;
-    return found;
+}
+
+// True when the destination has the communication site feature, read once for each copy.
+async function snaToolsSiteIsCommunication(dest, state) {
+    if (state.communication === null) { state.communication = await snaToolsSiteHasCommunicationFeature(dest.siteUrl, dest.webTemplate); }
+    return state.communication;
 }
 
 // Returns the settings for pointing menu links at the destination (see snaToolsRewriteSourceLinks in core.js), built
@@ -422,36 +458,66 @@ async function snaToolsSiteLinkContext(plan, dest, maps, state) {
     }
     var options = snaToolsFilesLinkOptions(plan, dest, maps, fileState, sourceLists, destLists);
     options.wholeLink = true;
-    state.links = { maps: maps, options: options, destHasGroup: snaToolsSiteHasGroup(dest.groupId) };
+    var sourceSite = (plan.siteSettings && plan.siteSettings.site) || {};
+    var sourceHasGroup = snaToolsSiteHasGroup(sourceSite.GroupId);
+    // A group's notebook is a folder right inside the Site Assets library of the group's site.
+    var sourceAssets = sourceHasGroup ? snaToolsFilesSiteAssetsOf(sourceLists, snaToolsFilesSourcePath(plan)) : null;
+    state.links = { maps: maps, options: options, destHasGroup: snaToolsSiteHasGroup(dest.groupId), sourceHasGroup: sourceHasGroup,
+        notebookRoot: sourceAssets && sourceAssets.root ? sourceAssets.root : '', origin: snaToolsSiteParts(plan.source.siteUrl).origin };
     return state.links;
+}
+
+// Returns the name of the Microsoft 365 group app that an address opens, such as 'Microsoft Teams', 'the notebook' for
+// the group's notebook in this site, or '' for any other address. Only for a site with a group.
+function snaToolsSiteGroupApp(text, context) {
+    if (!context.sourceHasGroup) { return ''; }
+    var url;
+    try { url = new URL(text, context.origin + '/'); } catch (e) { return ''; }
+    var app = SNA_TOOLS_SITE_GROUP_APPS[url.hostname.toLowerCase()];
+    if (app) { return app; }
+    if (!context.notebookRoot || url.origin.toLowerCase() !== String(context.origin).toLowerCase()) { return ''; }
+    var path = url.pathname;
+    try { path = decodeURIComponent(path); } catch (e) { return ''; }
+    var under = snaToolsFilesUnder(path, context.notebookRoot);
+    // A folder has no file extension, such as /sites/a/SiteAssets/Study Notebook.
+    return under && under.indexOf('/') === -1 && !/\.[a-z0-9]+$/i.test(under) ? 'the notebook' : '';
 }
 
 /**
  * Returns a menu link's address for the destination.
  * @param {string} url The link's address in this site.
  * @param {object} context From snaToolsSiteLinkContext.
- * @returns {{url: string, isLabel: boolean, kept: boolean, changed: boolean, unmapped: boolean, skipNote: string}}
- *          kept is true for an address the copy never changes, such as a label, #, or an email link. skipNote says
- *          why the link isn't copied, or is ''.
+ * @returns {{url: string, isLabel: boolean, kept: boolean, changed: boolean, unmapped: boolean, groupApp: string,
+ *          skipNote: string}} kept is true for an address the copy never changes, such as a label, #, or an email
+ *          link. groupApp names the app of this site's Microsoft 365 group the link opens (see snaToolsSiteGroupApp),
+ *          or is ''. skipNote says why the link isn't copied, or is ''.
  */
 function snaToolsSiteRewriteLink(url, context) {
     var text = String(url || '').trim();
-    var result = { url: text, isLabel: false, kept: false, changed: false, unmapped: false, skipNote: '' };
+    var result = { url: text, isLabel: false, kept: false, changed: false, unmapped: false, groupApp: '', skipNote: '' };
     if (!text || text.toLowerCase().replace(/\/$/, '') === SNA_TOOLS_SITE_LABEL_URL.replace(/\/$/, '')) {
         result.isLabel = true;
         result.kept = true;
         return result;
     }
-    // #, tokens such as ~site/ that SharePoint fills in for each site, and addresses that aren't web pages, such as
-    // email links, stay as they are.
+    // Links to a part of the site's Microsoft 365 group, such as its conversations, work only in a site with a group.
+    if (/(^|\/)_layouts\/15\/groupstatus\.aspx/i.test(text) && !context.destHasGroup) {
+        result.skipNote = 'This link opens a part of this site\'s Microsoft 365 group, such as its conversations, and the destination has no group, so Sitenalyzer didn\'t copy it.';
+        return result;
+    }
+    // #, tokens such as ~site/ that SharePoint fills in for each site, addresses that aren't web pages, such as email
+    // links, and addresses relative to the site the menu is in, such as SitePages/Home.aspx, stay as they are.
     var scheme = /^([a-z][a-z0-9+.-]*):/i.exec(text);
-    if (text.charAt(0) === '#' || /^~(site|sitecollection)\//i.test(text) || (scheme && !/^https?$/i.test(scheme[1]))) {
+    if (text.charAt(0) === '#' || /^~(site|sitecollection)\//i.test(text) || (scheme && !/^https?$/i.test(scheme[1])) ||
+        (!scheme && !/^[\/\\]/.test(text))) {
         result.kept = true;
         return result;
     }
-    // Links to a part of the site's Microsoft 365 group, such as its conversations, work only in a site with a group.
-    if (/\/_layouts\/15\/groupstatus\.aspx/i.test(text) && !context.destHasGroup) {
-        result.skipNote = 'This link opens a part of this site\'s Microsoft 365 group, such as its conversations, and the destination has no group, so Sitenalyzer didn\'t copy it.';
+    // A link to the group's notebook, Teams, or Planner would still open this site's group, so it stays as it is and
+    // is reported. Copied notebook files in the destination's Site Assets aren't a working notebook.
+    result.groupApp = snaToolsSiteGroupApp(text, context);
+    if (result.groupApp) {
+        result.kept = true;
         return result;
     }
     var rewritten = snaToolsRewriteSourceLinks(text, context.maps, context.options);
@@ -502,7 +568,9 @@ async function snaToolsSiteAddNodeCsom(dest, target, title, url) {
  * @param {string} url The link's address in the destination.
  * @param {boolean} isVisible False adds a hidden link.
  * @param {string[]} audienceIds Microsoft Entra group IDs of the people who see it, or [].
- * @returns {Promise<number>} The new link's ID. Side effects: changes the destination's menu.
+ * @returns {Promise<{id: number, notSet: boolean}>} The new link's ID. notSet is true when the link was added but
+ *          SharePoint refused to hide it or to give it its audiences, so it shows to everyone. Side effects: changes the
+ *          destination's menu.
  */
 async function snaToolsSiteAddNode(dest, target, title, url, isVisible, audienceIds) {
     var body = { __metadata: { type: 'SP.NavigationNode' }, Title: title, Url: url, IsVisible: isVisible };
@@ -510,7 +578,7 @@ async function snaToolsSiteAddNode(dest, target, title, url, isVisible, audience
     try {
         var made = await snaToolsWrite(dest.siteUrl, target.path, { body: body, verbose: true });
         var id = made && (made.Id !== undefined ? made.Id : (made.d && made.d.Id));
-        if (typeof id === 'number') { return id; }
+        if (typeof id === 'number') { return { id: id, notSet: false }; }
         throw snaToolsError(500, 'menu', '');
     } catch (err) {
         if (snaToolsIsCancelled(err) || err.status === 401 || err.status === 403 || err.status === 429 || err.status === 0) { throw err; }
@@ -521,19 +589,28 @@ async function snaToolsSiteAddNode(dest, target, title, url, isVisible, audience
             if (snaToolsIsCancelled(csomErr)) { throw csomErr; }
             throw err;
         }
+        // CSOM adds a visible link for everyone. The change leaves out Title and Url, which SharePoint may refuse again
+        // for the same reason it refused the REST request.
         if (!isVisible || audienceIds.length) {
-            var change = { __metadata: { type: 'SP.NavigationNode' }, Title: title, Url: url, IsVisible: isVisible };
+            var change = { __metadata: { type: 'SP.NavigationNode' }, IsVisible: isVisible };
             if (audienceIds.length) { change.AudienceIds = body.AudienceIds; }
-            await snaToolsWrite(dest.siteUrl, '/_api/web/navigation/GetNodeById(' + csomId + ')', { method: 'MERGE', body: change, verbose: true });
+            try {
+                await snaToolsWrite(dest.siteUrl, '/_api/web/navigation/GetNodeById(' + csomId + ')', { method: 'MERGE', body: change, verbose: true });
+            } catch (mergeErr) {
+                if (snaToolsIsCancelled(mergeErr)) { throw mergeErr; }
+                return { id: csomId, notSet: true };
+            }
         }
-        return csomId;
+        return { id: csomId, notSet: false };
     }
 }
 
-// Removes links from the destination's menu, last first. Removing a link removes the links under it too.
-async function snaToolsSiteRemoveNodes(dest, nodes) {
+// Removes links from the destination's menu, last first. Removing a link removes the links under it too. done.count,
+// when given, counts the links removed, so a stop partway can say how many are gone.
+async function snaToolsSiteRemoveNodes(dest, nodes, done) {
     for (var i = nodes.length - 1; i >= 0; i--) {
         await snaToolsWrite(dest.siteUrl, '/_api/web/navigation/GetNodeById(' + nodes[i].id + ')', { method: 'DELETE' });
+        if (done) { done.count++; }
     }
 }
 
@@ -550,16 +627,45 @@ async function snaToolsSiteFixOrder(dest, target, ids) {
     }
 }
 
-// Returns the note for a copied link, from what happened to its address.
-function snaToolsSiteLinkNote(node, link) {
+/**
+ * Returns the result and note for a copied link, from what happened to its address, its hidden state, its audiences,
+ * and whether it opens in a new tab.
+ * @param {object} node The source link (MenuNode).
+ * @param {object} link From snaToolsSiteRewriteLink.
+ * @param {object} menu { words, menuStateKey }. A menu without menuStateKey can't keep links that open in a new tab.
+ * @param {string[]} audienceIds The audiences given to the copy, which are [] when this site doesn't use them.
+ * @param {boolean} notSet True when SharePoint refused to hide the copy or to give it its audiences.
+ * @returns {{result: string, note: string}}
+ */
+function snaToolsSiteLinkRow(node, link, menu, audienceIds, notSet) {
     var parts = [];
+    var partial = false;
+    var edit = 'with Edit in the destination\'s ' + menu.words + '.';
     if (link.isLabel) { parts.push('Copied the label, which has no link.'); }
-    else if (link.unmapped) { parts.push('Copied the link, but it still points to this site or to something the copy didn\'t include. Change it in the destination\'s menu.'); }
-    else if (link.changed) { parts.push('Copied the link and pointed it at the destination.'); }
+    else if (link.groupApp) {
+        var opens = link.groupApp === 'the notebook' ? 'the notebook of this site\'s Microsoft 365 group' : link.groupApp + ' for this site\'s Microsoft 365 group';
+        parts.push('Copied the link as it is. It opens ' + opens + ', so it still points to the old group. Change or remove it ' + edit);
+        partial = true;
+    } else if (link.unmapped) {
+        parts.push('Copied the link, but it still points to this site or to something the copy didn\'t include. Change it in the destination\'s menu.');
+        partial = true;
+    } else if (link.changed) { parts.push('Copied the link and pointed it at the destination.'); }
+    else if (link.kept) { parts.push('Copied the link as it is.'); }
     else { parts.push('Copied the link. It points outside this site, so it stays the same.'); }
-    if (!node.isVisible) { parts.push('It\'s hidden, as in this site.'); }
-    if (node.audienceIds.length) { parts.push('Only its audiences see it, as in this site.'); }
-    return parts.join(' ');
+    var hidden = !node.isVisible;
+    if (notSet) {
+        var what = hidden && audienceIds.length ? 'hide it or show it only to its audiences' : (hidden ? 'hide it' : 'show it only to its audiences');
+        parts.push('SharePoint didn\'t let Sitenalyzer ' + what + ', so it shows to everyone. Change it ' + edit);
+        partial = true;
+    } else {
+        if (hidden) { parts.push('It\'s hidden, as in this site.'); }
+        if (audienceIds.length) { parts.push('Only its audiences see it, as in this site.'); }
+    }
+    if (node.openInNewWindow && !menu.menuStateKey) {
+        parts.push('It opens in a new tab in this site, but Sitenalyzer can\'t copy that for the ' + menu.words + ', so it opens in the same tab in the destination.');
+        partial = true;
+    }
+    return { result: partial ? 'partial' : 'copied', note: parts.join(' ') };
 }
 
 // Logs a Skipped row for each link under a link that wasn't copied.
@@ -577,8 +683,9 @@ function snaToolsSiteSkipChildren(menu, nodes, trail, parentTitle) {
  * a result for each. The links under a link are added after all the links beside it.
  * @param {object} dest The checked destination.
  * @param {object} context From snaToolsSiteLinkContext.
- * @param {object} menu { label (such as 'Left menu'), max (most links at the top level, or 0), created ([{ id, node }],
- *        filled here), orderProblem (set to true when the order couldn't be fixed) }.
+ * @param {object} menu { label (such as 'Left menu'), words, menuStateKey, useAudiences (false copies the links without
+ *        their audiences), max (most links at the top level, or 0), created ([{ id, node, link, audienceIds, notSet,
+ *        row }], filled here), orderProblem (set to true when the order couldn't be fixed) }.
  * @param {object} target Where the links go (see snaToolsSiteAddNode).
  * @param {object[]} nodes The source links (MenuNode).
  * @param {string[]} trail The titles of the links above these, for the names in the results.
@@ -604,20 +711,23 @@ async function snaToolsSiteAddLinks(dest, context, menu, target, nodes, trail) {
             snaToolsSiteSkipChildren(menu, node.children, path, node.title);
             continue;
         }
-        var id;
+        var audienceIds = menu.useAudiences ? node.audienceIds : [];
+        var made;
         try {
-            id = await snaToolsSiteAddNode(dest, target, node.title, link.url, node.isVisible, node.audienceIds);
+            made = await snaToolsSiteAddNode(dest, target, node.title, link.url, node.isVisible, audienceIds);
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
             snaToolsLog(K, name, 'failed', snaToolsFriendlyError(err));
             snaToolsSiteSkipChildren(menu, node.children, path, node.title);
             continue;
         }
+        var id = made.id;
         ids.push(id);
         added.push({ id: id, node: node, path: path });
-        menu.created.push({ id: id, node: node });
-        snaToolsLog(K, name, link.unmapped ? 'partial' : 'copied', snaToolsSiteLinkNote(node, link),
-            { verify: { type: 'menuLink', path: target.path, nodeId: id, title: node.title, url: link.url, hidden: !node.isVisible } });
+        var outcome = snaToolsSiteLinkRow(node, link, menu, audienceIds, made.notSet);
+        var row = snaToolsLog(K, name, outcome.result, outcome.note,
+            { verify: { type: 'menuLink', path: target.path, nodeId: id, title: node.title, url: link.url, hidden: !node.isVisible && !made.notSet } });
+        menu.created.push({ id: id, node: node, link: link, audienceIds: audienceIds, notSet: made.notSet, row: row });
     }
     try {
         await snaToolsSiteFixOrder(dest, target, ids);
@@ -632,33 +742,62 @@ async function snaToolsSiteAddLinks(dest, context, menu, target, nodes, trail) {
     }
 }
 
-// Sets which links open in a new tab and who sees them through the menu editor (SaveMenuState), which PnP says the
-// audiences need to take effect. Only for the left menu, the one menu where SharePoint keeps new-tab links. Returns
-// false when SharePoint didn't save them.
+// True when two lists of audience GUIDs hold the same GUIDs.
+function snaToolsSiteSameAudiences(a, b) {
+    var left = snaToolsSiteAudiences(a).sort();
+    var right = snaToolsSiteAudiences(b).sort();
+    return left.length === right.length && left.every(function(id, i) { return id === right[i]; });
+}
+
+// Sets which links open in a new tab, who sees them, and which are hidden through the menu editor (SaveMenuState),
+// which PnP says the audiences need to take effect. Only for the left menu, the one menu where SharePoint keeps new-tab
+// links. The menu editor keeps its own hidden state, which can differ from the one the links were added with, so every
+// link the copy added gets all three, and they are read back after the save. A link whose hidden state or audiences
+// SharePoint refused earlier gets its usual row when the read-back shows them set. Returns false when SharePoint
+// didn't save them, or the read-back shows something else.
 async function snaToolsSiteSaveMenuExtras(dest, menu) {
-    var wanted = {};
+    if (!menu.menuStateKey) { return true; }
+    var made = {};
+    var needed = false;
     menu.created.forEach(function(c) {
-        if (c.node.openInNewWindow || c.node.audienceIds.length) { wanted[String(c.id)] = c.node; }
+        made[String(c.id)] = c;
+        if (c.node.openInNewWindow || c.audienceIds.length || !c.node.isVisible) { needed = true; }
     });
-    if (Object.keys(wanted).length === 0 || !menu.menuStateKey) { return true; }
+    if (!needed) { return true; }
+    var address = '/_api/navigation/MenuState?menuNodeKey=' + snaToolsSiteMenuKey(menu.menuStateKey);
+    function walk(nodes, visit) {
+        (nodes || []).forEach(function(n) {
+            var created = made[String(n.Key)];
+            if (created) { visit(n, created); }
+            walk(n.Nodes, visit);
+        });
+    }
     try {
-        var state = await snaToolsRead(dest.siteUrl, '/_api/navigation/MenuState?menuNodeKey=' + snaToolsSiteMenuKey(menu.menuStateKey));
+        var state = await snaToolsRead(dest.siteUrl, address);
         var changed = 0;
-        var walk = function(nodes) {
-            (nodes || []).forEach(function(n) {
-                var source = wanted[String(n.Key)];
-                if (source) {
-                    n.OpenInNewWindow = !!source.openInNewWindow;
-                    n.AudienceIds = source.audienceIds.slice();
-                    changed++;
-                }
-                walk(n.Nodes);
-            });
-        };
-        walk(state && state.Nodes);
+        walk(state && state.Nodes, function(n, c) {
+            n.OpenInNewWindow = !!c.node.openInNewWindow;
+            n.AudienceIds = c.audienceIds.slice();
+            n.IsHidden = !c.node.isVisible;
+            changed++;
+        });
         if (changed === 0) { return false; }
         snaToolsSiteCheckSaved(await snaToolsWrite(dest.siteUrl, '/_api/navigation/SaveMenuState', { body: { menuState: state } }));
-        return true;
+        var confirmed = {};
+        walk((await snaToolsRead(dest.siteUrl, address) || {}).Nodes, function(n, c) {
+            if ((n.OpenInNewWindow === true) === !!c.node.openInNewWindow && (n.IsHidden === true) === !c.node.isVisible &&
+                snaToolsSiteSameAudiences(n.AudienceIds, c.audienceIds)) {
+                confirmed[String(c.id)] = true;
+            }
+        });
+        menu.created.forEach(function(c) {
+            if (!confirmed[String(c.id)] || !c.notSet || !c.row) { return; }
+            var fixed = snaToolsSiteLinkRow(c.node, c.link, menu, c.audienceIds, false);
+            c.row.result = fixed.result;
+            c.row.note = fixed.note;
+            if (c.row.verify) { c.row.verify.hidden = !c.node.isVisible; }
+        });
+        return menu.created.every(function(c) { return confirmed[String(c.id)]; });
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
         return false;
@@ -671,7 +810,7 @@ async function snaToolsSiteSaveMenuExtras(dest, menu) {
  * @param {object} dest The checked destination.
  * @param {object} context From snaToolsSiteLinkContext.
  * @param {object} menu { label, words (the menu in a sentence, such as 'left menu'), target (see snaToolsSiteAddNode),
- *        menuStateKey, source (MenuRead), keep (IDs of the destination's links to leave, such as the footer's name),
+ *        menuStateKey, useAudiences (see snaToolsSiteAddLinks), source (MenuRead), keep (IDs of the destination's links to leave, such as the footer's name),
  *        max (most links at the top level, or 0), newTarget (async function that makes and returns the target after
  *        the old links are removed, or null) }.
  * @returns {Promise<boolean>} True when this site's links were added. Side effects: changes the destination's menu.
@@ -696,18 +835,24 @@ async function snaToolsSiteCopyMenu(dest, context, menu) {
         snaToolsLog(K, label, 'skipped', 'This site\'s ' + menu.words + ' has no links, so there was nothing to copy.');
         return false;
     }
+    var removed = { count: 0 };
     try {
-        await snaToolsSiteRemoveNodes(dest, existing);
+        await snaToolsSiteRemoveNodes(dest, existing, removed);
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
-        snaToolsLog(K, label, 'failed', 'Sitenalyzer couldn\'t remove the destination\'s own links from its ' + menu.words + ', so it didn\'t add this site\'s ' +
-            'links, which would have put some links there twice. ' + snaToolsFriendlyError(err));
+        var gone = removed.count === 0
+            ? 'Sitenalyzer couldn\'t remove the destination\'s own links from its ' + menu.words + ', so it didn\'t add this site\'s links, '
+            : 'Sitenalyzer removed ' + removed.count + ' of the ' + snaCountText(existing.length, 'link', 'links') + ' the destination had in its ' +
+                menu.words + ', but SharePoint didn\'t let it remove the rest. It didn\'t add this site\'s links, ';
+        snaToolsLog(K, label, 'failed', gone + 'which would have put some links there twice. Check the destination\'s ' + menu.words +
+            ', then copy again. ' + snaToolsFriendlyError(err));
         return false;
     }
+    // This row isn't a copied item, so it isn't counted with them.
     if (existing.length > 0) {
         snaToolsLog(K, label, 'copied', nodes.length === 0
             ? 'This site\'s ' + menu.words + ' has no links, so Sitenalyzer removed the destination\'s own links to match it.'
-            : 'Removed the destination\'s own links from its ' + menu.words + ', so it matches this site\'s.');
+            : 'Removed the destination\'s own links from its ' + menu.words + ', so it matches this site\'s.', { summary: true });
     }
     if (nodes.length === 0) { return true; }
     var target = menu.target;
@@ -723,12 +868,17 @@ async function snaToolsSiteCopyMenu(dest, context, menu) {
     menu.created = [];
     menu.orderProblem = false;
     await snaToolsSiteAddLinks(dest, context, menu, target, nodes, []);
+    if (menu.source.overLimit) {
+        snaToolsLog(K, label, 'partial', 'This site\'s ' + menu.words + ' has more than ' + SNA_TOOLS_SITE_MENU_MAX + ' links, and Sitenalyzer reads at most ' +
+            SNA_TOOLS_SITE_MENU_MAX + ' links from one menu, so some links under others might be missing in the destination. Compare the two menus, and add ' +
+            'any missing links with Edit in the destination\'s ' + menu.words + '.');
+    }
     if (menu.orderProblem) {
         snaToolsLog(K, label, 'partial', 'Copied the links, but they may be in a different order than in this site. Put them in order with Edit in the destination\'s ' + menu.words + '.');
     }
     if (!(await snaToolsSiteSaveMenuExtras(dest, menu))) {
-        snaToolsLog(K, label, 'partial', 'Copied the links, but SharePoint didn\'t confirm which of them open in a new tab and who sees them. ' +
-            'Check those links with Edit in the destination\'s ' + menu.words + '.');
+        snaToolsLog(K, label, 'partial', 'Copied the links, but SharePoint didn\'t confirm which of them are hidden, open in a new tab, or show only to their ' +
+            'audiences. Check those links with Edit in the destination\'s ' + menu.words + '.');
     }
     return true;
 }
@@ -756,12 +906,35 @@ async function snaToolsSiteFooterRoot(dest, state) {
     return state.footerRoot;
 }
 
-// The note for a footer the destination can't have, and for one it didn't let Sitenalyzer set up.
+// The note for a footer the destination can't have, for one it didn't let Sitenalyzer set up, and for one whose items
+// couldn't be read.
 var SNA_TOOLS_SITE_NO_FOOTER_NOTE = 'The destination isn\'t a communication site, so it has no footer. Sitenalyzer didn\'t copy ';
 var SNA_TOOLS_SITE_FOOTER_REFUSED_NOTE = 'SharePoint didn\'t let Sitenalyzer set up the footer in the destination. Add it by hand in ' + SNA_TOOLS_SITE_WHERE.footer + '.';
+var SNA_TOOLS_SITE_FOOTER_UNREAD_NOTE = 'Sitenalyzer couldn\'t read the destination\'s footer, so it left the footer as it is. Copy again later, or change it by hand in ' +
+    SNA_TOOLS_SITE_WHERE.footer + '.';
+
+// Returns the destination's footer, { root, children }, setting it up first when needed. When that fails, logs a row
+// named each of names with the reason, and returns null.
+async function snaToolsSiteOpenFooter(dest, state, kind, names) {
+    var root;
+    try {
+        root = await snaToolsSiteFooterRoot(dest, state);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        names.forEach(function(name) { snaToolsLog(kind, name, 'skipped', SNA_TOOLS_SITE_FOOTER_REFUSED_NOTE); });
+        return null;
+    }
+    try {
+        return { root: root, children: await snaToolsSiteReadNodes(dest.siteUrl, root.path) };
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        names.forEach(function(name) { snaToolsLog(kind, name, 'failed', SNA_TOOLS_SITE_FOOTER_UNREAD_NOTE); });
+        return null;
+    }
+}
 
 // Copies the footer's links. The footer's display name and logo are part of the site look (see snaToolsSiteCopyFooterLook).
-async function snaToolsSiteCopyFooterMenu(plan, dest, state, context) {
+async function snaToolsSiteCopyFooterMenu(plan, dest, state, context, useAudiences) {
     var K = SNA_TOOLS_KINDS.menuLink;
     var footer = plan.siteSettings && plan.siteSettings.footer;
     if (!footer) { return; }
@@ -773,22 +946,16 @@ async function snaToolsSiteCopyFooterMenu(plan, dest, state, context) {
         if (footer.links.length) { snaToolsLog(K, 'Footer menu', 'skipped', SNA_TOOLS_SITE_NO_FOOTER_NOTE + 'the footer links.'); }
         return;
     }
-    var root;
-    var children;
-    try {
-        root = await snaToolsSiteFooterRoot(dest, state);
-        children = await snaToolsSiteReadNodes(dest.siteUrl, root.path);
-    } catch (err) {
-        if (snaToolsIsCancelled(err)) { throw err; }
-        snaToolsLog(K, 'Footer menu', 'skipped', SNA_TOOLS_SITE_FOOTER_REFUSED_NOTE);
-        return;
-    }
+    var opened = await snaToolsSiteOpenFooter(dest, state, K, ['Footer menu']);
+    if (!opened) { return; }
+    var root = opened.root;
     // The footer's name and logo stay; every other item under the footer holds links.
-    var keep = children.filter(function(n) { return n.title === SNA_TOOLS_SITE_FOOTER_NAME || n.title === SNA_TOOLS_SITE_FOOTER_LOGO; }).map(function(n) { return n.id; });
+    var keep = opened.children.filter(function(n) { return n.title === SNA_TOOLS_SITE_FOOTER_NAME || n.title === SNA_TOOLS_SITE_FOOTER_LOGO; }).map(function(n) { return n.id; });
     var copied = await snaToolsSiteCopyMenu(dest, context, {
-        label: 'Footer menu', words: 'footer', target: root, menuStateKey: '', source: { nodes: footer.links }, keep: keep, max: SNA_TOOLS_SITE_FOOTER_MAX,
+        label: 'Footer menu', words: 'footer', target: root, menuStateKey: '', useAudiences: useAudiences, source: { nodes: footer.links }, keep: keep,
+        max: SNA_TOOLS_SITE_FOOTER_MAX,
         newTarget: async function() {
-            var id = await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_LINKS, '', true, []);
+            var id = (await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_LINKS, '', true, [])).id;
             return { path: '/_api/web/navigation/GetNodeById(' + id + ')/Children', parentId: id };
         }
     });
@@ -867,20 +1034,24 @@ async function snaToolsCopyNavigation(plan, dest, maps) {
     });
     var context = anyLinks ? await snaToolsSiteLinkContext(plan, dest, maps, state) : null;
 
+    // Audiences hide links only while audience targeting is on, so the links of a site that has it off are copied
+    // without their audiences: they show to everyone there, and must show to everyone in the destination too.
+    var useAudiences = !!settings.web && settings.web.NavAudienceTargetingEnabled === true;
     var anyAudience = false;
     (function walk(nodes) {
         (nodes || []).forEach(function(n) { if (n.audienceIds.length) { anyAudience = true; } walk(n.children); });
-    })((menus.quickLaunch && menus.quickLaunch.nodes) || []);
-    if (settings.web && settings.web.NavAudienceTargetingEnabled === true) { await snaToolsSiteTurnOnAudiences(dest); }
+    })([].concat((menus.quickLaunch && menus.quickLaunch.nodes) || [], showsTop ? (topRead.nodes || []) : [],
+        footer && !footer.error ? footer.links : []));
+    if (useAudiences) { await snaToolsSiteTurnOnAudiences(dest); }
     else if (anyAudience) {
-        snaToolsLog(K, 'Audience targeting in menus', 'skipped', 'Some links in this site\'s menu have audiences, but audience targeting is off in this ' +
-            'site, so Sitenalyzer left it off in the destination too. The links show to everyone, as in this site.');
+        snaToolsLog(K, 'Audience targeting in menus', 'skipped', 'Some links in this site\'s menus have audiences, but audience targeting is off in this ' +
+            'site, so Sitenalyzer copied them without their audiences. They show to everyone, as in this site.');
     }
 
     snaToolsSiteReportHub(settings);
     var quick = SNA_TOOLS_SITE_MENUS.quickLaunch;
-    await snaToolsSiteCopyMenu(dest, context, { label: quick.label, words: quick.words, menuStateKey: quick.menuStateKey, source: menus.quickLaunch,
-        target: { path: '/_api/web/navigation/' + quick.collection, collection: quick.collection }, keep: [], max: 0, newTarget: null });
+    await snaToolsSiteCopyMenu(dest, context, { label: quick.label, words: quick.words, menuStateKey: quick.menuStateKey, useAudiences: useAudiences,
+        source: menus.quickLaunch, target: { path: '/_api/web/navigation/' + quick.collection, collection: quick.collection }, keep: [], max: 0, newTarget: null });
 
     var top = SNA_TOOLS_SITE_MENUS.topNavigationBar;
     if (topRead && !showsTop) {
@@ -890,10 +1061,11 @@ async function snaToolsCopyNavigation(plan, dest, maps) {
                 'don\'t show the top menu, so Sitenalyzer didn\'t copy it. Add any links you need to the destination\'s left menu.');
         }
     } else if (topRead) {
-        await snaToolsSiteCopyMenu(dest, context, { label: top.label, words: top.words, menuStateKey: '', source: topRead,
+        // SharePoint keeps "open in new tab" only for the left menu, so the top menu has no menu editor key here.
+        await snaToolsSiteCopyMenu(dest, context, { label: top.label, words: top.words, menuStateKey: '', useAudiences: useAudiences, source: topRead,
             target: { path: '/_api/web/navigation/' + top.collection, collection: top.collection }, keep: [], max: 0, newTarget: null });
     }
-    await snaToolsSiteCopyFooterMenu(plan, dest, state, context);
+    await snaToolsSiteCopyFooterMenu(plan, dest, state, context, useAudiences);
 }
 
 // ### Copy the Site Look ###
@@ -1012,12 +1184,15 @@ async function snaToolsSiteCopyTheme(plan, dest, destSite) {
         return;
     }
     var inHub = destSite && snaToolsSiteHasGroup(destSite.HubSiteId);
-    snaToolsLog(K, 'Theme', 'copied', 'Applied this site\'s theme colors.' + (inHub ? ' The destination is connected to a hub, so the hub\'s colors may replace them.' : ''),
+    // SharePoint's read of a theme gives only its main colors, not the color pairs that newer themes use for page sections.
+    snaToolsLog(K, 'Theme', 'copied', 'Applied this site\'s main theme colors. The colors of page sections might differ. If they do, choose a theme in ' +
+        SNA_TOOLS_SITE_WHERE.theme + '.' + (inHub ? ' The destination is connected to a hub, so the hub\'s colors may replace them.' : ''),
         { verify: { type: 'siteLook', property: 'theme', value: theme.palette.themePrimary || '' } });
 }
 
 // Sets the header, menu style, and footer settings together with SetChromeOptions, which takes all of them at once.
-// Settings this site has are copied; the others keep the destination's values. Returns true when SharePoint took them.
+// Settings this site has are copied; the others keep the destination's values. The footer settings are copied only
+// between two sites with footers. Returns true when SharePoint took them.
 async function snaToolsSiteCopyChrome(plan, dest, state) {
     var K = SNA_TOOLS_KINDS.siteLookSetting;
     var web = plan.siteSettings.web;
@@ -1027,28 +1202,39 @@ async function snaToolsSiteCopyChrome(plan, dest, state) {
             'Set them by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
         return false;
     }
-    var destWeb = {};
-    try { destWeb = await snaToolsSiteDestWeb(dest, state, false) || {}; } catch (err) { if (snaToolsIsCancelled(err)) { throw err; } }
+    var destWeb = null;
+    try { destWeb = await snaToolsSiteDestWeb(dest, state, false); } catch (err) { if (snaToolsIsCancelled(err)) { throw err; } }
     var communication = await snaToolsSiteIsCommunication(dest, state);
+    var sourceCommunication = plan.siteSettings.communication === true;
     function copies(setting) {
         if (web[setting.property] === undefined || web[setting.property] === null) { return false; }
-        if (setting.part === 'footer') { return communication; }
+        if (setting.part === 'footer') { return communication && sourceCommunication; }
         if (setting.part === 'orientation') { return !communication; }
         return true;
     }
-    var body = {};
-    SNA_TOOLS_SITE_CHROME.forEach(function(s) {
-        var value = copies(s) ? web[s.property] : destWeb[s.property];
-        body[s.option] = (value === undefined || value === null) ? s.fallback : value;
-    });
     var copied = SNA_TOOLS_SITE_CHROME.filter(copies);
-    if (web.FooterEnabled === true && !communication) {
+    if (web.FooterEnabled === true && sourceCommunication && !communication) {
         snaToolsLog(K, 'Footer', 'skipped', SNA_TOOLS_SITE_NO_FOOTER_NOTE + 'the footer settings.');
+    }
+    if (communication && !sourceCommunication) {
+        snaToolsLog(K, 'Footer', 'skipped', 'This site isn\'t a communication site, so it has no footer, and the destination keeps its own footer settings.');
     }
     if (web.HorizontalQuickLaunch === false && communication) {
         snaToolsLog(K, 'Menu orientation', 'skipped', 'Communication sites always show the menu across the top, so the destination keeps it there.');
     }
     if (copied.length === 0) { return false; }
+    // SetChromeOptions changes every setting at once, so the destination's own value of each setting that isn't
+    // copied must be known, or the call would change it.
+    var unknown = !destWeb || SNA_TOOLS_SITE_CHROME.some(function(s) {
+        return !copies(s) && (destWeb[s.property] === undefined || destWeb[s.property] === null);
+    });
+    if (unknown) {
+        snaToolsLog(K, 'Header and footer', 'skipped', 'Sitenalyzer couldn\'t read the destination\'s header and footer settings, and SharePoint changes ' +
+            'them all at once, so Sitenalyzer didn\'t change any of them. Copy again later, or set them by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
+        return false;
+    }
+    var body = {};
+    SNA_TOOLS_SITE_CHROME.forEach(function(s) { body[s.option] = copies(s) ? web[s.property] : destWeb[s.property]; });
     try {
         await snaToolsWrite(dest.siteUrl, '/_api/web/SetChromeOptions', { body: body });
     } catch (err) {
@@ -1108,35 +1294,45 @@ async function snaToolsSiteCopyLogo(plan, dest, maps) {
         return;
     }
     var keptNote = copy.kept ? ' The destination already had a picture at ' + snaToolsFilesLeaf(copy.path) + ' in Site Assets, so Sitenalyzer used that one.' : '';
+    var copiedNote = 'Copied this site\'s logo into Site Assets and made it the destination\'s logo.' + keptNote;
     var hasGroup = snaToolsSiteHasGroup(dest.groupId);
     try {
         await snaToolsWrite(dest.siteUrl, '/_api/siteiconmanager/setsitelogo', { body: { relativeLogoUrl: copy.path, type: 0, aspect: 1 } });
-        if (hasGroup) {
-            // SharePoint may keep a group's picture as the logo, so the logo is read back before the thumbnail changes it.
-            var origin = snaToolsSiteParts(dest.siteUrl).origin;
-            var after = await snaToolsRead(dest.siteUrl, '/_api/web?$select=SiteLogoUrl');
-            if (snaToolsSiteUrlKey(after && after.SiteLogoUrl, origin) !== snaToolsSiteUrlKey(copy.path, origin)) {
-                snaToolsLog(K, 'Site logo', 'skipped', 'Sitenalyzer copied this site\'s logo into Site Assets, but SharePoint kept the destination\'s logo, which can ' +
-                    'happen on a site with a Microsoft 365 group. Choose the copied logo by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
-            } else {
-                snaToolsLog(K, 'Site logo', 'copied', 'Copied this site\'s logo into Site Assets and made it the destination\'s logo.' + keptNote);
-            }
-        } else {
-            snaToolsLog(K, 'Site logo', 'copied', 'Copied this site\'s logo into Site Assets and made it the destination\'s logo.' + keptNote,
-                { verify: { type: 'siteLook', property: 'SiteLogoUrl', value: copy.path } });
-        }
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
         var refusal = snaToolsSiteRefusal(err, SNA_TOOLS_SITE_WHERE.header);
         snaToolsLog(K, 'Site logo', refusal.result, refusal.note);
         return;
     }
-    await snaToolsSiteCopyThumbnail(plan, dest, image, copy, hasGroup);
+    var verify = { verify: { type: 'siteLook', property: 'SiteLogoUrl', value: copy.path } };
+    if (!hasGroup) {
+        snaToolsLog(K, 'Site logo', 'copied', copiedNote, verify);
+    } else {
+        // SharePoint may keep a group's picture as the logo, so the logo is read back before the thumbnail changes it.
+        // When the read fails, SharePoint did take the logo, and the destination check reads it again later.
+        var after = null;
+        try {
+            after = await snaToolsRead(dest.siteUrl, '/_api/web?$select=SiteLogoUrl');
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+        }
+        var origin = snaToolsSiteParts(dest.siteUrl).origin;
+        if (!after) {
+            snaToolsLog(K, 'Site logo', 'copied', copiedNote, verify);
+        } else if (snaToolsSiteUrlKey(after.SiteLogoUrl, origin) !== snaToolsSiteUrlKey(copy.path, origin)) {
+            snaToolsLog(K, 'Site logo', 'skipped', 'Sitenalyzer copied this site\'s logo into Site Assets, but SharePoint kept the destination\'s logo, which can ' +
+                'happen on a site with a Microsoft 365 group. Choose the copied logo by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
+        } else {
+            snaToolsLog(K, 'Site logo', 'copied', copiedNote);
+        }
+    }
+    await snaToolsSiteCopyThumbnail(plan, dest, maps, image, copy, hasGroup);
 }
 
 // Sets the site logo thumbnail to the copied logo: with setsitelogo on a site without a group, or by changing the group's
-// picture on a site with one.
-async function snaToolsSiteCopyThumbnail(plan, dest, image, copy, hasGroup) {
+// picture on a site with one. When SharePoint refuses the group's picture, the logo is saved as __siteIcon__.png in
+// Site Assets, which Microsoft gives as the way around that refusal.
+async function snaToolsSiteCopyThumbnail(plan, dest, maps, image, copy, hasGroup) {
     var K = SNA_TOOLS_KINDS.siteLookSetting;
     var name = 'Site logo thumbnail';
     if (!hasGroup) {
@@ -1152,16 +1348,32 @@ async function snaToolsSiteCopyThumbnail(plan, dest, image, copy, hasGroup) {
     }
     var refusedNote = 'The destination\'s site logo thumbnail is the picture of its Microsoft 365 group, and SharePoint didn\'t let Sitenalyzer change it. ' +
         'Ask an owner of the group to change it in ' + SNA_TOOLS_SITE_WHERE.picture + '.';
+    var blob = null;
     try {
-        var blob = await snaToolsSiteDownload(plan, image);
+        blob = await snaToolsSiteDownload(plan, image);
         var type = SNA_TOOLS_SITE_IMAGE_TYPES[snaToolsSiteImageExtension(image.path || '', blob.type).substring(1)];
         await snaToolsWrite(dest.siteUrl, '/_api/GroupService/SetGroupImage', { body: blob, headers: { 'Content-Type': type } });
+        snaToolsLog(K, name, 'copied', 'Changed the picture of the destination\'s Microsoft 365 group, which SharePoint shows as its site logo thumbnail, to the copied logo.');
+        return;
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
-        snaToolsLog(K, name, 'skipped', refusedNote);
-        return;
     }
-    snaToolsLog(K, name, 'copied', 'Changed the picture of the destination\'s Microsoft 365 group, which SharePoint shows as its site logo thumbnail, to the copied logo.');
+    if (blob) {
+        try {
+            var assets = await snaToolsFilesDestSiteAssets(dest, snaToolsFilesState(maps), false);
+            if (assets) {
+                await snaToolsWrite(dest.siteUrl, '/_api/web/GetFolderByServerRelativePath(decodedurl=@f)/Files/AddUsingPath(decodedurl=@n,overwrite=@o)' +
+                    '?@f=' + snaToolsFilesAlias(assets) + '&@n=' + snaToolsFilesAlias(SNA_TOOLS_SITE_ICON_NAME) + '&@o=true', { body: blob });
+                snaToolsLog(K, name, 'copied', 'SharePoint didn\'t let Sitenalyzer change the picture of the destination\'s Microsoft 365 group, so Sitenalyzer saved ' +
+                    'the copied logo as ' + SNA_TOOLS_SITE_ICON_NAME + ' in Site Assets, as Microsoft suggests. If the site logo thumbnail doesn\'t change, ask an ' +
+                    'owner of the group to change it in ' + SNA_TOOLS_SITE_WHERE.picture + '.');
+                return;
+            }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+        }
+    }
+    snaToolsLog(K, name, 'skipped', refusedNote);
 }
 
 // Copies the footer's display name and logo, which SharePoint keeps in the footer menu.
@@ -1175,22 +1387,18 @@ async function snaToolsSiteCopyFooterLook(plan, dest, maps, state) {
         return;
     }
     if (!(await snaToolsSiteIsCommunication(dest, state))) { return; }
-    var children;
-    var root;
-    try {
-        root = await snaToolsSiteFooterRoot(dest, state);
-        children = await snaToolsSiteReadNodes(dest.siteUrl, root.path);
-    } catch (err) {
-        if (snaToolsIsCancelled(err)) { throw err; }
-        if (footer.name) { snaToolsLog(K, 'Footer display name', 'skipped', SNA_TOOLS_SITE_FOOTER_REFUSED_NOTE); }
-        if (footer.logoUrl) { snaToolsLog(K, 'Footer logo', 'skipped', SNA_TOOLS_SITE_FOOTER_REFUSED_NOTE); }
-        return;
-    }
+    var names = [];
+    if (footer.name) { names.push('Footer display name'); }
+    if (footer.logoUrl) { names.push('Footer logo'); }
+    var opened = await snaToolsSiteOpenFooter(dest, state, K, names);
+    if (!opened) { return; }
+    var root = opened.root;
+    var children = opened.children;
     function itemsTitled(title) { return children.filter(function(n) { return n.title === title; }); }
     if (footer.name) {
         try {
             await snaToolsSiteRemoveNodes(dest, itemsTitled(SNA_TOOLS_SITE_FOOTER_NAME));
-            var nameId = await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_NAME, '', true, []);
+            var nameId = (await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_NAME, '', true, [])).id;
             await snaToolsSiteAddNode(dest, { path: '/_api/web/navigation/GetNodeById(' + nameId + ')/Children', parentId: nameId }, footer.name, '', true, []);
             snaToolsLog(K, 'Footer display name', 'copied', 'Set to ' + snaMaskText(footer.name) + ', as in this site.',
                 { verify: { type: 'menuLink', path: '/_api/web/navigation/GetNodeById(' + nameId + ')/Children', title: footer.name, url: '', hidden: false } });
@@ -1210,7 +1418,7 @@ async function snaToolsSiteCopyFooterLook(plan, dest, maps, state) {
         try {
             var copy = await snaToolsSiteCopyImage(plan, dest, maps, image, 'footer-logo-copied');
             await snaToolsSiteRemoveNodes(dest, itemsTitled(SNA_TOOLS_SITE_FOOTER_LOGO));
-            var logoId = await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_LOGO, copy.path, true, []);
+            var logoId = (await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_LOGO, copy.path, true, [])).id;
             snaToolsLog(K, 'Footer logo', 'copied', 'Copied this site\'s footer logo into Site Assets and made it the destination\'s footer logo.',
                 { verify: { type: 'menuLink', path: root.path, nodeId: logoId, title: SNA_TOOLS_SITE_FOOTER_LOGO, url: copy.path, hidden: false } });
         } catch (err) {
