@@ -432,6 +432,22 @@ test('never replaces a __siteIcon__.png the destination already has, and says ho
     expect(record.unexpectedRequests).toEqual([]);
 });
 
+test('reports the thumbnail as copied on a second copy when __siteIcon__.png already has the copied logo', async function({ page }, testInfo) {
+    const iconPath = DEST_PATH + '/SiteAssets/__siteIcon__.png';
+    const record = await copySite(page, {
+        siteLook: true, navigation: false, times: 2, web: { SiteLogoUrl: SITE_PATH + '/SiteAssets/study-logo.png' },
+        destination: { groupImageRefused: true, setup: function(model) { model.site.GroupId = GROUP_ID; } }
+    });
+    expect(record.destination.files[iconPath.toLowerCase()].content).toBe('Logo bytes');
+    // Only the first copy saves the picture.
+    expect(destinationChanges(record).filter(function(c) { return /__siteIcon__/.test(decodeURIComponent(c.url)); })).toHaveLength(1);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Site logo thumbnail', 'Site look setting')).toEqual({ result: 'Copied', note: 'SharePoint didn\'t let Sitenalyzer change the picture ' +
+        'of the destination\'s Microsoft 365 group, and Site Assets in the destination already has the copied logo as __siteIcon__.png, as Microsoft ' +
+        'suggests. If the site logo thumbnail doesn\'t change, ask an owner of the group to change it in Settings > Site information.' });
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
 test('saves only a PNG logo as __siteIcon__.png when SharePoint refuses the group picture', async function({ page }, testInfo) {
     const record = await copySite(page, {
         siteLook: true, navigation: false, web: { SiteLogoUrl: SITE_PATH + '/SiteAssets/study-logo.jpg' },
@@ -761,6 +777,24 @@ test('reports a group site\'s logo as copied when only its read-back failed, and
     const rows = await savedResults(page, testInfo);
     expect(row(rows, 'Site logo', 'Site look setting')).toEqual({ result: 'Copied', note: LOGO_COPIED_NOTE });
     expect(row(rows, 'Site logo thumbnail', 'Site look setting')).toEqual({ result: 'Skipped', note: GROUP_PICTURE_REFUSED_NOTE });
+});
+
+test('says how to change the thumbnail by hand when the destination\'s __siteIcon__.png can\'t be read', async function({ page }, testInfo) {
+    const iconPath = DEST_PATH + '/SiteAssets/__siteIcon__.png';
+    const record = await copySite(page, {
+        siteLook: true, navigation: false, web: { SiteLogoUrl: SITE_PATH + '/SiteAssets/study-logo.png' },
+        destination: { groupImageRefused: true, setup: function(model) {
+            model.site.GroupId = GROUP_ID;
+            addPretendFile(model, iconPath, { content: 'Logo bytes' });
+        }, handlers: [
+            refuseWhen('GET', /\/\$value$/, function(ctx) { return /__siteIcon__/.test(ctx.url.searchParams.get('@p') || ''); })
+        ] }
+    });
+    expect(destinationChanges(record).filter(function(c) { return /__siteIcon__/.test(decodeURIComponent(c.url)); })).toEqual([]);
+    const rows = await savedResults(page, testInfo);
+    const thumbnail = row(rows, 'Site logo thumbnail', 'Site look setting');
+    expect(thumbnail.result).toBe('Skipped');
+    expect(thumbnail.note).toContain('already has a __siteIcon__.png, so Sitenalyzer didn\'t replace it.');
 });
 
 test('doesn\'t check a group site\'s logo whose read-back failed, because the new group picture changes the logo', async function({ page }, testInfo) {

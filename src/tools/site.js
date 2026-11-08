@@ -1199,6 +1199,24 @@ async function snaToolsSiteFileExists(dest, path) {
     }
 }
 
+// Returns true when the destination's file at path has the same contents as blob, and false when it differs or
+// SharePoint doesn't send it.
+async function snaToolsSiteFileMatches(dest, path, blob) {
+    try {
+        var saved = await snaToolsReadBlob(dest.siteUrl, path);
+        if (saved.size !== blob.size) { return false; }
+        var savedBytes = new Uint8Array(await saved.arrayBuffer());
+        var blobBytes = new Uint8Array(await blob.arrayBuffer());
+        for (var i = 0; i < savedBytes.length; i++) {
+            if (savedBytes[i] !== blobBytes[i]) { return false; }
+        }
+        return true;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return false;
+    }
+}
+
 // Returns the note for a picture the copy couldn't take, or '' when it can: none of its own, SharePoint's own, or one
 // saved in another site.
 function snaToolsSiteImageProblem(image, what, where) {
@@ -1396,7 +1414,7 @@ async function snaToolsSiteCopyLogo(plan, dest, maps) {
 // Sets the site logo thumbnail to the copied logo: with setsitelogo on a site without a group, or by changing the group's
 // picture on a site with one. When SharePoint refuses the group's picture, a PNG logo is saved as __siteIcon__.png in
 // Site Assets, which Microsoft gives as the way around that refusal. A __siteIcon__.png the destination already has is
-// never replaced, because a site owner may have put it there.
+// never replaced, because a site owner may have put it there; when it already holds the copied logo, the row says Copied.
 async function snaToolsSiteCopyThumbnail(plan, dest, maps, image, copy, hasGroup) {
     var K = SNA_TOOLS_KINDS.siteLookSetting;
     var name = 'Site logo thumbnail';
@@ -1431,7 +1449,15 @@ async function snaToolsSiteCopyThumbnail(plan, dest, maps, image, copy, hasGroup
     }
     try {
         var assets = await snaToolsFilesDestSiteAssets(dest, snaToolsFilesState(maps), false);
-        var exists = assets ? await snaToolsSiteFileExists(dest, assets + '/' + SNA_TOOLS_SITE_ICON_NAME) : null;
+        var iconPath = assets + '/' + SNA_TOOLS_SITE_ICON_NAME;
+        var exists = assets ? await snaToolsSiteFileExists(dest, iconPath) : null;
+        // An earlier copy may have saved the copied logo there already, so a file with the same contents counts as copied.
+        if (exists === true && await snaToolsSiteFileMatches(dest, iconPath, blob)) {
+            snaToolsLog(K, name, 'copied', 'SharePoint didn\'t let Sitenalyzer change the picture of the destination\'s Microsoft 365 group, and Site Assets in ' +
+                'the destination already has the copied logo as ' + SNA_TOOLS_SITE_ICON_NAME + ', as Microsoft suggests. If the site logo thumbnail doesn\'t ' +
+                'change, ask an owner of the group to change it in ' + SNA_TOOLS_SITE_WHERE.picture + '.');
+            return;
+        }
         if (exists === true) {
             snaToolsLog(K, name, 'skipped', 'SharePoint didn\'t let Sitenalyzer change the picture of the destination\'s Microsoft 365 group, and Site Assets in ' +
                 'the destination already has a ' + SNA_TOOLS_SITE_ICON_NAME + ', so Sitenalyzer didn\'t replace it. To change the site logo thumbnail by hand, ' +
