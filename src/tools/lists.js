@@ -891,7 +891,7 @@ async function snaToolsListsCopySiteContentType(plan, dest, maps, run, ct) {
 
 // Returns the columns a new destination site content type already has, by lowercase destination column ID:
 // { required, hidden, displayName }. They come from its parent. When they can't be read, returns the source parent's
-// columns, or null when the source site's content types don't include the parent.
+// columns, or null when Sitenalyzer couldn't read the parent in the source site.
 async function snaToolsListsReadTypeColumns(dest, maps, ct, createdId) {
     try {
         var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/contenttypes/getbyid(@c)/fieldlinks?$select=Id,Name,DisplayName,Required,Hidden&@c=' +

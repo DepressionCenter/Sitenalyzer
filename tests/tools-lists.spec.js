@@ -29,7 +29,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 const { test, expect } = require('@playwright/test');
-const { openPretendSite, SITE_PATH, LIST_ID, LIBRARY_ID, DEST_URL, DEST_PATH } = require('./pretend-sharepoint');
+const { openPretendSite, reply, SITE_PATH, LIST_ID, LIBRARY_ID, DEST_URL, DEST_PATH } = require('./pretend-sharepoint');
 const { TAXONOMY_HIDDEN_LIST_ID: DEST_HIDDEN_LIST_ID } = require('./pretend-destination-lists');
 const { DEST_WEB_ID } = require('./pretend-destination');
 
@@ -53,9 +53,12 @@ const TITLE_ID = 'fa564e0f-0c70-4ab9-b863-0177e6ddd247';
 const START_DATE_ID = 'f1f1f1f1-0000-4000-8000-000000000001';
 const DUE_DATE_ID = 'f1f1f1f1-0000-4000-8000-000000000002';
 const KEYWORDS_ID = 'f1f1f1f1-0000-4000-8000-000000000003';
-// The Content Type column and the hidden Source Url column, which use the same IDs in every site.
+// SharePoint's own columns that use the same IDs in every site: Content Type, the hidden Source Url, Name (FileLeafRef),
+// and the hidden Template Link (TemplateUrl).
 const CONTENT_TYPE_COLUMN_ID = 'c042a256-787d-4a6f-8a8a-cf6ab767f12d';
 const SOURCE_URL_ID = 'c63a459d-54ba-4ab7-933a-dcf1c6fadec2';
+const FILE_LEAF_REF_ID = '8553196d-ec8d-4564-9861-3dbe931050c8';
+const TEMPLATE_URL_ID = '4b1bf6c6-4f39-45ac-acd5-16fe7a214e5e';
 const PROTOCOL_ID = 'cccccccc-2000-4000-8000-000000000009';
 const STUDY_DOCUMENT_ID = '0x010100DDDD0000000040008000000000000001';
 const ARCHIVE_RECORD_ID = '0x0100DDDD0000000040008000000000000002';
@@ -250,7 +253,8 @@ const STUDY_ARMS_LIST = {
 // Returns the source answers the copy plan reads: columns, views, and content types for Study Visits, Study Arms, and
 // Documents, and the site's columns and content types. contentTypes turns on content types for Study Visits.
 // Other options replace one answer: visitViews, documentColumns, siteFields (added to the site's columns), siteTypes (the
-// site's content types), and visitListTypes (the content types of Study Visits).
+// site's content types), availableTypes (the content types the site can use, or false to refuse that read), and
+// visitListTypes (the content types of Study Visits).
 function sourceAnswers(options) {
     const settings = options || {};
     const fieldsByList = { [LIST_ID]: settings.visitColumns || visitColumns(), [ARMS_ID]: armColumns(), [LIBRARY_ID]: settings.documentColumns || documentColumns() };
@@ -276,6 +280,12 @@ function sourceAnswers(options) {
         { pattern: /^\/_api\/web\/contenttypes$/, answer: function() {
             if (settings.siteTypes) { return { value: settings.siteTypes }; }
             return settings.contentTypes ? { value: SITE_TYPES } : undefined;
+        } },
+        { pattern: /^\/_api\/web\/availablecontenttypes$/, answer: function() {
+            if (settings.availableTypes === false) {
+                return reply(403, { 'odata.error': { code: '-2147024891, System.UnauthorizedAccessException', message: { lang: 'en-US', value: 'Access denied.' } } });
+            }
+            return settings.availableTypes ? { value: settings.availableTypes } : undefined;
         } },
         { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIST_ID + "'\\)$"), answer: function() {
             return {
@@ -984,8 +994,9 @@ test('adds SharePoint\'s own site columns to a new content type when its columns
         Object.assign(builtInColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'), { Scope: SITE_PATH }),
         Object.assign(builtInColumn(SOURCE_URL_ID, '_SourceUrl', 'Source Url', 'Text'), { Scope: SITE_PATH, Hidden: true })
     ];
-    // Item isn't among the site's content types here, so the copy doesn't know which columns Archive Record gets from it.
-    // Content Type isn't among the site's columns either, as in a subsite. The note names neither it nor Source Url.
+    // Item isn't among the site's content types here, and the read of the content types the site can use is refused, so
+    // the copy doesn't know which columns Archive Record gets from it. Content Type isn't among the site's columns either.
+    // The note names neither it nor the hidden column Source Url.
     const siteTypes = [
         { StringId: '0x0101', Name: 'Document', Description: '', Group: 'Document Content Types', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] },
         { StringId: STUDY_DOCUMENT_ID, Name: 'Study Document', Description: '', Group: 'Study Content Types', FieldLinks: [
@@ -995,7 +1006,7 @@ test('adds SharePoint\'s own site columns to a new content type when its columns
             { Id: CONTENT_TYPE_COLUMN_ID, Name: 'ContentType' }, { Id: TITLE_ID, Name: 'Title' }, { Id: START_DATE_ID, Name: 'StartDate' },
             { Id: SOURCE_URL_ID, Name: '_SourceUrl', Hidden: true }] }
     ];
-    const record = await openTools(page, { source: { siteTypes: siteTypes, siteFields: siteFields }, setup: function(model) {
+    const record = await openTools(page, { source: { siteTypes: siteTypes, siteFields: siteFields, availableTypes: false }, setup: function(model) {
         model.siteColumns.push(destinationSiteColumn(KEYWORDS_ID, 'TaxKeyword', 'Enterprise Keywords', 'TaxonomyFieldTypeMulti'));
         model.siteColumns.push(destinationSiteColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'));
     }, destination: { handlers: [
@@ -1012,6 +1023,31 @@ test('adds SharePoint\'s own site columns to a new content type when its columns
     await expectResult(page, 'Archive Record', 'Content type', 'Partly copied', 'Created the content type. Sitenalyzer couldn\'t read its columns in the ' +
         'destination, so it didn\'t check Title and Start Date, which come from SharePoint\'s own site columns. Check that it has those columns in the ' +
         'content type\'s settings in the destination.');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('uses the columns of a parent from a site above a subsite when a new content type\'s columns can\'t be read', async function({ page }) {
+    // As in a subsite: the site's own columns and content types leave out Document and its columns, which come from the
+    // top site. Only the content types the site can use include Document.
+    const siteFields = [Object.assign(builtInColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'), { Scope: SITE_PATH })];
+    const documentLinks = [{ Id: CONTENT_TYPE_COLUMN_ID, Name: 'ContentType' }, { Id: FILE_LEAF_REF_ID, Name: 'FileLeafRef', Required: true },
+        { Id: TITLE_ID, Name: 'Title' }, { Id: TEMPLATE_URL_ID, Name: 'TemplateUrl', Hidden: true }, { Id: SOURCE_URL_ID, Name: '_SourceUrl', Hidden: true }];
+    const siteTypes = [{ StringId: STUDY_DOCUMENT_ID, Name: 'Study Document', Description: '', Group: 'Study Content Types',
+        FieldLinks: documentLinks.concat([{ Id: START_DATE_ID, Name: 'StartDate' }]) }];
+    const availableTypes = [{ StringId: '0x0101', Name: 'Document', Description: '', Group: 'Document Content Types', FieldLinks: documentLinks }]
+        .concat(siteTypes);
+    const record = await openTools(page, { source: { siteTypes: siteTypes, siteFields: siteFields, availableTypes: availableTypes }, setup: function(model) {
+        model.siteColumns.push(destinationSiteColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'));
+    }, destination: { handlers: [
+        { pattern: /^\/_api\/web\/contenttypes\/getbyid\(@c\)\/fieldlinks$/, answer: function(ctx) { return ctx.spError(404, 'The content type does not exist.'); } }
+    ] } });
+    await chooseLists(page, [{ name: 'Study Arms' }]);
+    await page.getByRole('checkbox', { name: 'Study Arms (2 terms)' }).uncheck();
+    await copyNow(page);
+    const studyDocument = record.destination.contentTypes.filter(function(t) { return t.StringId === STUDY_DOCUMENT_ID; })[0];
+    expect(studyDocument.FieldLinks.map(function(l) { return l.Name; })).toContain('StartDate');
+    await expectResult(page, 'Study Document', 'Content type', 'Copied', 'Created the content type.');
+    expect(record.apiRequests.filter(function(url) { return /\/_api\/web\/availablecontenttypes\?/.test(url); }).length).toBe(1);
     expect(record.unexpectedRequests).toEqual([]);
 });
 

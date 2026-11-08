@@ -41,7 +41,7 @@ Notes: See README file for documentation and full license information.
          required, hidden, displayName (the name the column shows in this content type, or '' when it's the column's
          own name) }], clientFormCustomFormatter, formComponents {}, readOnly, sealed, hidden, isBuiltIn, isHub,
          parentLinks [{ id, required, hidden, displayName }] (site content types in the plan only: the columns of the
-         content type it's based on, or null when the source site's content types don't include that one) }
+         content type it's based on, or null when Sitenalyzer couldn't read that one in the source site) }
        PlanTermSet = { sourceId, name, description, isOpen, isAvailableForTagging, languageTag, terms [PlanTerm],
          selected, complete }
        PlanTerm = { sourceId, parentIds [the first is the main parent], labels [{ name, languageTag, isDefault }],
@@ -656,6 +656,24 @@ function snaToolsPlanWarnings(plan) {
     }
 }
 
+// Returns the content types this site can use, including the ones it gets from the sites above it, by uppercase ID.
+// Returns an empty object when they can't be read, so the copy treats those content types' columns as unknown.
+async function snaToolsReadAvailableTypes(siteUrl, progress) {
+    progress('Reading the content types this site gets from the sites above it.');
+    var byId = {};
+    try {
+        (await snaToolsReadAllWithFallback(siteUrl,
+            '/_api/web/availablecontenttypes?$select=' + SNA_TOOLS_SITE_CONTENT_TYPE_SELECT + '&$expand=FieldLinks',
+            '/_api/web/availablecontenttypes?$expand=FieldLinks')).forEach(function(item) {
+            var ct = snaToolsPlanContentType(item, false);
+            if (ct.stringId) { byId[ct.stringId.toUpperCase()] = ct; }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    return byId;
+}
+
 /**
  * Builds the copy plan from this site's report, reading from this site what the report doesn't hold. Reads only the
  * lists and term sets the person chose, and every one of the site's own content types except the ones the person left out.
@@ -753,12 +771,17 @@ async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
         var column = siteById[link.id];
         return column && link.displayName === column.title ? '' : link.displayName;
     }
+    // A subsite's own content types leave out the ones it gets from the sites above it, such as Document, so a parent
+    // missing from them is looked for among the content types the site can use.
+    var parentsById = typesById;
+    var missingParent = plan.siteContentTypes.some(function(ct) { return !!ct.parentStringId && !typesById[ct.parentStringId.toUpperCase()]; });
+    if (missingParent) { parentsById = Object.assign(await snaToolsReadAvailableTypes(siteUrl, progress), typesById); }
     plan.siteContentTypes.forEach(function(ct) {
-        var parent = typesById[String(ct.parentStringId).toUpperCase()];
+        var parent = parentsById[String(ct.parentStringId).toUpperCase()];
         var parentIds = {};
         if (parent) { parent.fieldLinks.forEach(function(link) { parentIds[link.id] = true; }); }
         // The columns a content type gets from the content type it's based on, such as Title from Item. The parent can be
-        // SharePoint's own, one from the content type hub, or one in the plan.
+        // SharePoint's own, one from the content type hub, one from a site above this one, or one in the plan.
         ct.parentLinks = parent ? parent.fieldLinks.map(function(link) {
             return { id: link.id, required: link.required, hidden: link.hidden, displayName: ownName(link) };
         }) : null;

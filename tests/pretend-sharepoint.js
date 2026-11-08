@@ -433,6 +433,7 @@ const API_ANSWERS = [
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/views$/, answer: viewsAnswer },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/contenttypes$/, body: listContentTypes },
     { pattern: /^\/_api\/web\/contenttypes$/, body: siteContentTypes },
+    { pattern: /^\/_api\/web\/availablecontenttypes$/, body: siteContentTypes },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, body: fields },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/RootFolder\/Folders$/, body: folders },
     { pattern: /^\/_api\/site$/, body: siteCollection },
