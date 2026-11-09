@@ -6,6 +6,7 @@ src/*.js text eol=lf
 src/*.html text eol=lf
 src/*.css text eol=lf
 src/*.txt text eol=lf
+src/tools/*.js text eol=lf
 *.sh text eol=lf
 
 # Library copies must stay byte for byte, because the build checks them against src/lib/sha256sums.txt.

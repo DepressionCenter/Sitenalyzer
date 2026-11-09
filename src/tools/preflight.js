@@ -1,0 +1,794 @@
+/*
+This file is part of Sitenalyzer
+preflight.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-08
+Last Modified: 2026-11-09
+Summary: The check before copying in Copy site structure. After the person selects Copy to destination and before
+         anything changes, snaToolsPreflight reads the destination (and, for a few checks, this site) and lists what the
+         copy will skip, what will fail, and what may fail, so the person can copy anyway or go back. Also draws the
+         "Before you copy" part of the screen from that list.
+Notes: See README file for documentation and full license information.
+
+       Every check only reads. Requests go through snaToolsRead and snaToolsReadAll, and the one CSOM request, which
+       finds out whether the destination's term store answers CSOM at all, goes through snaToolsPreflightCsomRead, which
+       refuses any request that could change something.
+
+       Adding a check: snaToolsAddPreflightCheck(name, fn), where fn(plan, dest, context) returns (or resolves to) a list
+       of warnings { severity, kind, name, note, stops }:
+         severity  'fail' (the copy will try and fail), 'skip' (the copy will leave it out), 'maybe' (only the copy can
+                   find out, such as a term store change the organization may block), or 'info' (something to know).
+         stops     true for a 'fail' that stops the whole copy before it changes anything, such as a list name the
+                   destination already uses. Before you copy then offers only Go back. Left out otherwise.
+         kind      One of SNA_TOOLS_KINDS, such as 'Column'.
+         name      The item as people know it, such as 'Arm in Study Visits'.
+         note      Plain English that says what will happen and what the person can do.
+       context is shared by the checks of one run: { destLists (the destination's lists and libraries read again, or
+       null), destContentTypes (the destination's content types read again, or null), skipColumn(listId, internalName,
+       title) (marks a column the copy will skip, and returns false when it was already marked), skippedColumns
+       { listId: { internalName: title } }, couldNotFinish() (counts the check that is running as one that couldn't
+       finish, for a check that lists its own warning about a failed read instead of throwing) }. Checks run in the
+       order they were added, so a check that depends on skipped columns, such as the one for calculated columns, is
+       added after the checks that mark them.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Check Settings ###
+
+// The order warnings are listed in: what will fail first, then what will be skipped, what may fail, and notes.
+var SNA_TOOLS_PREFLIGHT_SEVERITIES = ['fail', 'skip', 'maybe', 'info'];
+
+// The permission that SharePoint takes away from everyone, site collection administrators too, on a site that doesn't
+// allow custom scripts: Add and Customize Pages, PermissionKind 19, which is bit 18 of the Low part of a permission mask.
+var SNA_TOOLS_PREFLIGHT_CUSTOMIZE_PAGES_BIT = 0x40000;
+
+// The site template of a Microsoft Teams private or shared channel site.
+var SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE = 'TEAMCHANNEL';
+
+// Most columns a term store warning names one by one. The rest are counted.
+var SNA_TOOLS_PREFLIGHT_COLUMNS_NAMED = 10;
+
+// The sentence for a term store change that only the copy itself can test.
+var SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT = 'Some organizations don\'t let people change term sets from a browser. Sitenalyzer can only find out when it tries.';
+
+// The result row that says the whole check before copying failed and the person copied anyway.
+var SNA_TOOLS_PREFLIGHT_FAILED_NAME = 'Check before copying';
+var SNA_TOOLS_PREFLIGHT_FAILED_NOTE = 'Sitenalyzer couldn\'t finish checking the destination before the copy, so it couldn\'t say what the copy ' +
+    'would skip, and you chose to copy anyway. The other rows say what the copy did. Look for any item marked Skipped or Failed.';
+
+// ### Check State ###
+
+var _snaToolsPreflightChecks = [];  // [{ name, fn }], in the order added
+
+// ### Running the Checks ###
+
+/**
+ * Adds a check to the check before copying. A check with the same name as one added before replaces it.
+ * @param {string} name What the check looks at, in plain words, such as 'Term sets'. Shown as the item when the check
+ *        itself fails.
+ * @param {function(object, object, object): (object[]|Promise<object[]>)} fn Returns the warnings; see the notes at the
+ *        top of this file. Must only read.
+ */
+function snaToolsAddPreflightCheck(name, fn) {
+    _snaToolsPreflightChecks = _snaToolsPreflightChecks.filter(function(c) { return c.name !== name; });
+    _snaToolsPreflightChecks.push({ name: String(name || ''), fn: fn });
+}
+
+/**
+ * Runs every check before copying, one after another. A check that fails adds one warning that says Sitenalyzer
+ * couldn't check that part, and the other checks still run.
+ * @param {object} plan The copy plan (see plan.js).
+ * @param {object} dest The checked destination (see snaToolsCheckDestination in runner.js).
+ * @returns {Promise<{warnings: object[], failedChecks: string[], destLists: (object[]|null)}>} warnings sorted with what
+ *          will fail first; failedChecks names the checks that couldn't finish; destLists are the destination's lists
+ *          and libraries as the check read them again (see snaToolsCheckDestination in runner.js), or null. Reads only.
+ * @throws {Error} snaCancelledError when the copy is stopped.
+ */
+async function snaToolsPreflight(plan, dest) {
+    var context = snaToolsPreflightContext();
+    var warnings = [];
+    var failedChecks = context.failedChecks;
+    for (var i = 0; i < _snaToolsPreflightChecks.length; i++) {
+        var check = _snaToolsPreflightChecks[i];
+        snaToolsCheckCancelled();
+        context.checkName = check.name;
+        var found;
+        try {
+            found = await check.fn(plan, dest, context);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            context.couldNotFinish();
+            found = [{ severity: 'maybe', kind: SNA_TOOLS_KINDS.note, name: check.name,
+                note: 'Sitenalyzer couldn\'t check this before the copy, so the copy may run into a problem here that this table doesn\'t show. ' +
+                    snaToolsPreflightReadError(err) }];
+        }
+        (found || []).forEach(function(w) { warnings.push(snaToolsPreflightWarning(w)); });
+    }
+    var order = SNA_TOOLS_PREFLIGHT_SEVERITIES;
+    var sorted = warnings.map(function(w, index) { return { w: w, index: index }; }).sort(function(a, b) {
+        return (order.indexOf(a.w.severity) - order.indexOf(b.w.severity)) || (a.index - b.index);
+    }).map(function(x) { return x.w; });
+    return { warnings: sorted, failedChecks: failedChecks, destLists: context.destLists };
+}
+
+// Returns the shared state of one run of the checks (see the notes at the top of this file). checkName and failedChecks
+// are for snaToolsPreflight.
+function snaToolsPreflightContext() {
+    var context = { destLists: null, destContentTypes: null, skippedColumns: {}, checkName: '', failedChecks: [] };
+    context.couldNotFinish = function() {
+        if (context.failedChecks.indexOf(context.checkName) === -1) { context.failedChecks.push(context.checkName); }
+    };
+    context.skipColumn = function(listId, internalName, title) {
+        var list = context.skippedColumns[listId] = context.skippedColumns[listId] || {};
+        if (Object.prototype.hasOwnProperty.call(list, internalName)) { return false; }
+        list[internalName] = String(title || internalName);
+        return true;
+    };
+    return context;
+}
+
+// Returns a warning with a known severity and kind, text in its name and note, and stops true or false. Only a 'fail'
+// can stop the copy.
+function snaToolsPreflightWarning(w) {
+    var kinds = Object.keys(SNA_TOOLS_KINDS).map(function(k) { return SNA_TOOLS_KINDS[k]; });
+    var severity = SNA_TOOLS_PREFLIGHT_SEVERITIES.indexOf(w && w.severity) > -1 ? w.severity : 'maybe';
+    return {
+        severity: severity,
+        kind: kinds.indexOf(w && w.kind) > -1 ? w.kind : SNA_TOOLS_KINDS.note,
+        name: String((w && w.name) || ''),
+        note: String((w && w.note) || ''),
+        stops: severity === 'fail' && !!(w && w.stops === true)
+    };
+}
+
+// True when a warning stops the whole copy, so the copy can't start until the person changes what they chose.
+function snaToolsPreflightStops(warnings) {
+    return (warnings || []).some(function(w) { return w.stops; });
+}
+
+// Returns why a read for a check failed, and what the person can do, for the end of a warning.
+function snaToolsPreflightReadError(err) {
+    var status = err && err.snaToolsError ? err.status : -1;
+    var what = 'Sitenalyzer ran into an unexpected problem.';
+    if (status === 0) { what = 'Sitenalyzer couldn\'t reach SharePoint.'; }
+    else if (status === 401 || status === 403) { what = 'SharePoint didn\'t let Sitenalyzer read what it needed.'; }
+    else if (status === 429 || status === 503) { what = 'SharePoint was too busy to answer.'; }
+    else if (status > 0) { what = 'SharePoint couldn\'t answer.'; }
+    return what + ' You can copy anyway, or go back and try again in a few minutes.';
+}
+
+/**
+ * Sends a CSOM request that only reads, such as one that loads the term store. Refuses, without sending it, any request
+ * whose actions could change something: a SetProperty, a Method action, or an object path method that isn't on the list
+ * of reads below.
+ * @param {string} siteUrl The site address, with no slash at the end.
+ * @param {string} requestXml The whole <Request> element.
+ * @returns {Promise<object[]>} SharePoint's answer (see snaToolsCsom).
+ * @throws {Error} snaToolsUserError when the request isn't read-only; snaToolsError when SharePoint refuses it.
+ */
+async function snaToolsPreflightCsomRead(siteUrl, requestXml) {
+    var text = String(requestXml || '');
+    var actions = (/<Actions>([\s\S]*)<\/Actions>/.exec(text) || ['', ''])[1];
+    var allowedMethods = ['GetDefaultSiteCollectionTermStore'];
+    var methods = [];
+    text.replace(/<(?:Method|StaticMethod)\b[^>]*\bName="([^"]*)"/g, function(m, name) { methods.push(name); return m; });
+    var readOnly = !/<(?:SetProperty|Method)\b/.test(actions) &&
+        methods.every(function(name) { return name === 'GetTaxonomySession' || allowedMethods.indexOf(name) > -1; });
+    if (!readOnly) {
+        throw snaToolsUserError('Sitenalyzer didn\'t send a request during the check before copying, because the request could change the destination.');
+    }
+    return snaToolsCsom(siteUrl, text);
+}
+
+// ### Helpers for Columns ###
+
+// Returns the label of a list's column for a warning, such as 'Arm in Study Visits'.
+function snaToolsPreflightColumnLabel(list, field) {
+    return snaMaskText(field.title) + ' in ' + snaMaskText(list.newTitle || list.title);
+}
+
+// Returns the columns the copy creates in each chosen list, leaving out the ones lists.js never makes on its own: built-in
+// columns, and the helper columns SharePoint makes beside managed metadata columns, such as their hidden Note columns.
+// Each is { list, field, label }.
+function snaToolsPreflightColumns(plan) {
+    var columns = [];
+    plan.lists.forEach(function(list) {
+        var noteIds = snaToolsListsNoteFieldIds(list.fields || []);
+        (list.fields || []).forEach(function(field) {
+            if (field.isTaxonomyNote || snaToolsListsIsMadeElsewhere(field, noteIds)) { return; }
+            columns.push({ list: list, field: field, label: snaToolsPreflightColumnLabel(list, field) });
+        });
+    });
+    return columns;
+}
+
+// Returns the managed metadata columns of the chosen lists and the copied site columns that use each term set, by term
+// set ID: { setId: [labels] }. A site column has its own name as its label.
+function snaToolsPreflightTermSetColumns(plan) {
+    var bySet = {};
+    function add(setId, label) {
+        if (!setId) { return; }
+        bySet[setId] = bySet[setId] || [];
+        if (bySet[setId].indexOf(label) === -1) { bySet[setId].push(label); }
+    }
+    snaToolsPreflightColumns(plan).forEach(function(c) { if (c.field.isTaxonomy) { add(c.field.termSetId, c.label); } });
+    (plan.siteColumns || []).forEach(function(f) { if (f.isTaxonomy && !f.builtIn) { add(f.termSetId, snaMaskText(f.title)); } });
+    return bySet;
+}
+
+// Returns a sentence that names the columns a warning is about, such as ' It will skip the 2 columns that use them: Arm
+// in Study Visits and Arm in Participants.', or '' when there are none. many is true when the warning is about more than
+// one term set. start begins the sentence, such as 'It will skip' or 'That would skip'.
+function snaToolsPreflightColumnsSentence(labels, many, start) {
+    if (labels.length === 0) { return ''; }
+    var named = labels.slice(0, SNA_TOOLS_PREFLIGHT_COLUMNS_NAMED);
+    var rest = labels.length - named.length;
+    var list = rest > 0 ? named.join(', ') + ', and ' + snaCountText(rest, 'more column', 'more columns') : snaJoinWords(named);
+    return ' ' + start + ' ' + (labels.length === 1 ? 'the column' : 'the ' + labels.length + ' columns') + ' that ' +
+        (labels.length === 1 ? 'uses ' : 'use ') + (many ? 'them' : 'it') + ': ' + list + '.';
+}
+
+// ### Lists and Libraries ###
+
+// A list or library whose new name or address the copy can't use stops the whole copy (see snaToolsRunCopy in
+// runner.js), so the destination's lists are read again in case they changed after Check destination, and each choice
+// gets the same checks as there.
+snaToolsAddPreflightCheck('Lists and libraries', async function(plan, dest, context) {
+    var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/lists?$select=Id,Title,BaseTemplate,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder', SNA_TOOLS_READ_MAX);
+    context.destLists = read.items.map(function(l) {
+        return { id: snaToolsCleanGuid(l.Id), title: l.Title || '', serverRelativeUrl: (l.RootFolder && l.RootFolder.ServerRelativeUrl) || '',
+            baseTemplate: l.BaseTemplate, hidden: l.Hidden === true };
+    });
+    var fresh = Object.assign({}, dest, { lists: context.destLists });
+    var newUrls = plan.lists.map(function(l) { return l.newUrl; });
+    var newTitles = plan.lists.map(function(l) { return l.newTitle; });
+    var warnings = [];
+    plan.lists.forEach(function(list, index) {
+        var found = snaToolsListChoiceProblems(fresh, list, newTitles.filter(function(t, i) { return i !== index; }),
+            newUrls.filter(function(u, i) { return i !== index; }));
+        var problem = found.address || found.name;
+        if (!problem) {
+            // A list or library the destination already has is renamed when the Name box holds another name.
+            var reused = snaToolsExistingDestinationList(fresh, list.newUrl, list.baseTemplate);
+            if (reused.usable && list.newTitle && list.newTitle !== reused.list.title) {
+                warnings.push({ severity: 'info', kind: list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list,
+                    name: snaMaskText(list.newTitle), note: snaMaskText(snaToolsExistingListNote(reused.list.title, list.newTitle, true)) });
+            }
+            return;
+        }
+        warnings.push({ severity: 'fail', stops: true, kind: list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list,
+            name: snaMaskText(list.newTitle || list.title), note: problem + ' The copy can\'t start until you do. Select Go back to change it, then copy again.' });
+    });
+    return warnings;
+});
+
+// ### Term Sets ###
+
+// The chosen term sets go into the destination's own term group. Reads say whether that group is there and whether
+// there is more than one. The copy changes term sets through the REST API, and through CSOM when the REST API refuses,
+// and it can create the group only through CSOM, so a CSOM read of the term store says whether SharePoint answers CSOM
+// there at all. Whether the person may change term sets can't be read: a site collection administrator manages the
+// site's own group, but some organizations block term store changes from a browser, and only a change shows that.
+snaToolsAddPreflightCheck('Term sets', async function(plan, dest, context) {
+    var chosen = ((plan.termGroup && plan.termGroup.sets) || []).filter(function(s) { return s.selected; });
+    if (chosen.length === 0) { return []; }
+    var bySet = snaToolsPreflightTermSetColumns(plan);
+    var names = snaJoinWords(chosen.map(function(s) { return snaMaskText(s.name); }));
+    var labels = [];
+    chosen.forEach(function(s) { (bySet[s.sourceId] || []).forEach(function(l) { if (labels.indexOf(l) === -1) { labels.push(l); } }); });
+    var many = chosen.length > 1;
+    var columns = snaToolsPreflightColumnsSentence(labels, many, 'It will skip');
+    var couldSkip = snaToolsPreflightColumnsSentence(labels, many, 'That would skip');
+    function row(severity, note) {
+        return [{ severity: severity, kind: SNA_TOOLS_KINDS.termSet, name: 'Term store', note: note }];
+    }
+    // Columns are marked as skipped only when the copy will certainly skip them.
+    function markSkipped() {
+        snaToolsPreflightColumns(plan).forEach(function(c) {
+            if (c.field.isTaxonomy && chosen.some(function(s) { return s.sourceId === c.field.termSetId; })) {
+                context.skipColumn(c.list.sourceId, c.field.internalName, c.field.title);
+            }
+        });
+    }
+
+    var t = { siteUrl: xlsxStripSlash(dest.siteUrl), siteId: snaToolsCleanGuid(dest.siteId), base: '' };
+    t.base = snaToolsTaxonomyBase(t.siteId);
+    var groups;
+    try {
+        await snaToolsRead(t.siteUrl, t.base);
+        groups = await snaToolsTaxonomyOwnGroups(t, '');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        context.couldNotFinish();
+        return row('maybe', 'Sitenalyzer couldn\'t read the destination\'s term store, so it can\'t tell yet whether it can copy ' + names +
+            '. If it can\'t, it won\'t copy ' + (many ? 'them' : 'it') + '.' + couldSkip + ' ' + snaToolsPreflightReadError(err));
+    }
+    if (groups.length > 1) {
+        markSkipped();
+        return row('fail', 'The destination has more than one term group of its own, so Sitenalyzer can\'t tell which one to use, and it won\'t copy ' +
+            names + '.' + columns + ' Ask your term store administrator to check the destination\'s term groups, then copy again.');
+    }
+    var hasGroup = groups.length === 1;
+    var ifNot = ' If it can\'t, it won\'t copy ' + (many ? 'them' : 'it') + '.' + couldSkip;
+
+    // With no group yet, the copy makes one through CSOM, so SharePoint refusing a CSOM read of the term store means it
+    // will fail. With a group, the REST API may still take the changes, so a refusal only means it may fail.
+    try {
+        var request = snaToolsTaxonomyCsomRequest();
+        var store = snaToolsTaxonomyCsomStore(request);
+        request.query(store, ['Id']);
+        await snaToolsPreflightCsomRead(t.siteUrl, request.xml());
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        if (snaToolsTaxonomyIsCsomRefusal(err) && hasGroup) {
+            return row('maybe', 'Sitenalyzer will add ' + names + ' to the destination\'s own term group. SharePoint refused one of the two ways ' +
+                'Sitenalyzer changes term sets there, so it may refuse the other way too. If it does, Sitenalyzer won\'t copy ' +
+                (many ? 'them' : 'it') + '.' + couldSkip + ' If that happens, ask your term store administrator to let you change term sets in the ' +
+                'destination, then copy again.');
+        }
+        if (snaToolsTaxonomyIsCsomRefusal(err)) {
+            markSkipped();
+            return row('fail', 'The destination has no term group of its own, and SharePoint didn\'t let Sitenalyzer reach the destination\'s term store to ' +
+                'make one, so it won\'t copy ' + names + '.' + columns + ' In the destination, add a Managed Metadata column to any list and choose ' +
+                'Customize your term set, then copy again.');
+        }
+        context.couldNotFinish();
+        return row('maybe', (hasGroup ? 'Sitenalyzer will add ' + names + ' to the destination\'s own term group, but it couldn\'t check whether it can ' +
+            'change term sets there.' : 'The destination has no term group of its own, and Sitenalyzer couldn\'t check whether it can make one.') +
+            ' If it can\'t, it won\'t copy ' + names + '.' + couldSkip + ' ' + snaToolsPreflightReadError(err));
+    }
+    if (hasGroup) {
+        return row('maybe', 'Sitenalyzer will add ' + names + ' to the destination\'s own term group. ' + SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT + ifNot);
+    }
+    return row('maybe', 'The destination has no term group of its own yet, so Sitenalyzer will make one for ' + names + '. ' +
+        SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT + ifNot);
+});
+
+// ### Columns ###
+
+// Columns that a data dictionary file already says the copy can't make, managed metadata columns with no term set,
+// columns that need a site term set the person didn't choose, and lookup columns that read from a list the copy doesn't
+// include and the destination doesn't have at the same address, or from a list on another site. For a data dictionary
+// file, every lookup column that reads from a list the copy doesn't include is skipped.
+snaToolsAddPreflightCheck('Columns', function(plan, dest, context) {
+    var warnings = [];
+    var siteSets = {};
+    ((plan.termGroup && plan.termGroup.sets) || []).forEach(function(s) { siteSets[s.sourceId] = s; });
+    var chosenLists = {};
+    plan.lists.forEach(function(l) { chosenLists[l.sourceId] = l; });
+    // A data dictionary file's columns that the copy can't make aren't in the plan's lists (see workbook.js).
+    (plan.skippedItems || []).forEach(function(item) {
+        var list = chosenLists[item.listSourceId];
+        if (item.kind !== SNA_TOOLS_KINDS.column || !list || !item.internalName) { return; }
+        if (context.skipColumn(list.sourceId, item.internalName, item.itemName)) {
+            warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: snaToolsPreflightColumnLabel(list, { title: item.itemName }),
+                note: item.beforeNote || item.note });
+        }
+    });
+    var destination = Object.assign({}, dest, { lists: context.destLists || dest.lists || [] });
+    var sourceWebId = snaToolsCleanGuid(plan.source && plan.source.webId);
+
+    snaToolsPreflightColumns(plan).forEach(function(c) {
+        var field = c.field;
+        var note = '';
+        if (field.isTaxonomy) {
+            var set = siteSets[field.termSetId];
+            if (!field.termSetId) {
+                note = 'It isn\'t connected to a term set in the site you copy from, so Sitenalyzer will skip this column. Make it by hand in the ' +
+                    'destination if you need it.';
+            } else if (set && !set.selected) {
+                note = 'It uses the term set ' + snaMaskText(set.name) + ', which you didn\'t choose, so Sitenalyzer will skip this column. ' +
+                    'Choose that term set too if you need the column.';
+            }
+        } else if (field.lookupListId && field.lookupListId !== c.list.sourceId && !chosenLists[field.lookupListId]) {
+            if (field.lookupWebId && sourceWebId && field.lookupWebId !== sourceWebId) {
+                note = 'It reads from a list on another site, so Sitenalyzer will skip this column. Make it by hand in the destination if you need it.';
+            } else {
+                var source = snaToolsPreflightSourceList(plan, field.lookupListId);
+                if (!source) {
+                    // Without the list's address, the copy can't look for that list in the destination, so it skips the
+                    // column whatever the destination has. A data dictionary file never gives the copy that address.
+                    var title = snaToolsPreflightFileListTitle(plan, field.lookupListId);
+                    note = 'It reads from ' + (title ? snaMaskText(title) + ', a list' : 'a list') + ' you didn\'t choose, so Sitenalyzer will ' +
+                        'skip this column. Choose that list too if you need the column.';
+                } else if (!snaToolsExistingDestinationList(destination, source.url, source.baseTemplate).usable) {
+                    note = 'It reads from ' + snaMaskText(source.title) + ', a list you didn\'t choose that the destination doesn\'t have, so ' +
+                        'Sitenalyzer will skip this column. Choose that list too if you need the column.';
+                }
+            }
+        }
+        if (note && context.skipColumn(c.list.sourceId, field.internalName, field.title)) {
+            warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: c.label, note: note });
+        }
+    });
+    return warnings;
+});
+
+// Returns a list of this site that a lookup reads from, by ID: { title, url (its address), baseTemplate }, or null when
+// the report doesn't have it, such as for a plan from a data dictionary file.
+function snaToolsPreflightSourceList(plan, listId) {
+    if (plan.source.kind !== 'site' || !_snaReport || !_snaReport.lists) { return null; }
+    var other = _snaReport.lists.filter(function(l) { return snaCleanListId(l.id) === listId; })[0];
+    if (!other) { return null; }
+    return { title: other.title || '', url: snaToolsCleanAddress(snaToolsListAddress(other)), baseTemplate: other.baseTemplate };
+}
+
+// Returns the name of a list in the data dictionary file the person chose, by ID, or '' when it isn't known. The plan
+// holds only the lists the person chose, so the name comes from the whole file.
+function snaToolsPreflightFileListTitle(plan, listId) {
+    if (plan.source.kind !== 'workbook' || typeof _snaToolsState === 'undefined' || !_snaToolsState || !_snaToolsState.workbook) { return ''; }
+    var list = _snaToolsState.workbook.plan.lists.filter(function(l) { return l.sourceId === listId; })[0];
+    return list ? String(list.title || '') : '';
+}
+
+// ### Term Sets of the Whole Organization ###
+
+// A managed metadata column whose term set isn't one of this site's own keeps its term set ID, so the destination's
+// term store must have that term set.
+snaToolsAddPreflightCheck('Term sets of the organization', async function(plan, dest, context) {
+    var siteSets = {};
+    ((plan.termGroup && plan.termGroup.sets) || []).forEach(function(s) { siteSets[s.sourceId] = true; });
+    var bySet = {};
+    snaToolsPreflightColumns(plan).forEach(function(c) {
+        var setId = snaToolsCleanGuid(c.field.termSetId);
+        if (!c.field.isTaxonomy || !setId || siteSets[c.field.termSetId]) { return; }
+        bySet[setId] = bySet[setId] || [];
+        bySet[setId].push(c);
+    });
+    var warnings = [];
+    var setIds = Object.keys(bySet);
+    for (var i = 0; i < setIds.length; i++) {
+        snaToolsCheckCancelled();
+        var there;
+        var problem = '';
+        try {
+            there = await snaToolsTaxonomySetExists(dest.siteUrl, dest.siteId, setIds[i]);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            problem = snaToolsPreflightReadError(err);
+            context.couldNotFinish();
+        }
+        bySet[setIds[i]].forEach(function(c) {
+            if (problem) {
+                warnings.push({ severity: 'maybe', kind: SNA_TOOLS_KINDS.column, name: c.label, note: 'Sitenalyzer couldn\'t check that the ' +
+                    'destination\'s term store has the term set this column uses. If it doesn\'t, Sitenalyzer skips the column. ' + problem });
+            } else if (!there && context.skipColumn(c.list.sourceId, c.field.internalName, c.field.title)) {
+                warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: c.label, note: 'The destination\'s term store doesn\'t ' +
+                    'have the term set this column uses, so Sitenalyzer will skip it. Ask your term store administrator to make that term set ' +
+                    'available to the destination, then copy again.' });
+            }
+        });
+    }
+    return warnings;
+});
+
+// ### Calculated Columns ###
+
+// A calculated column whose formula uses a column the copy skips is skipped too, and so is a calculated column that
+// uses that one, so the check repeats until nothing more is marked.
+snaToolsAddPreflightCheck('Calculated columns', function(plan, dest, context) {
+    var warnings = [];
+    var calculated = snaToolsPreflightColumns(plan).filter(function(c) { return c.field.type === 'Calculated'; });
+    var changed = true;
+    while (changed) {
+        changed = false;
+        calculated.forEach(function(c) {
+            var skipped = context.skippedColumns[c.list.sourceId] || {};
+            var missing = (c.field.fieldRefs || []).filter(function(ref) { return ref !== c.field.internalName && Object.prototype.hasOwnProperty.call(skipped, ref); });
+            if (missing.length === 0 || !context.skipColumn(c.list.sourceId, c.field.internalName, c.field.title)) { return; }
+            changed = true;
+            var used = snaJoinWords(missing.map(function(ref) { return snaMaskText(skipped[ref]); }));
+            warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: c.label, note: 'Its formula uses ' + used + ', which Sitenalyzer ' +
+                'will skip, so it will skip this column too. Make it by hand in the destination after you add ' + (missing.length === 1 ? 'that column' : 'those columns') + '.' });
+        });
+    }
+    return warnings;
+});
+
+// ### Content Types from the Content Type Hub ###
+
+// The copy never makes a content type that comes from the content type hub, so one the destination doesn't have yet is
+// skipped. The destination's content types are read again, in case the hub published one after Check destination.
+snaToolsAddPreflightCheck('Content types from the content type hub', async function(plan, dest, context) {
+    var hubTypes = plan.hubContentTypes || [];
+    if (hubTypes.length === 0) { return []; }
+    var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/contenttypes?$select=StringId,Name', SNA_TOOLS_READ_MAX);
+    context.destContentTypes = read.items.map(function(ct) { return { stringId: ct.StringId || '', name: ct.Name || '' }; });
+    return hubTypes.filter(function(hub) {
+        return !context.destContentTypes.some(function(d) { return String(d.stringId).toUpperCase() === String(hub.stringId).toUpperCase(); });
+    }).map(function(hub) {
+        return { severity: 'skip', kind: SNA_TOOLS_KINDS.contentType, name: snaMaskText(hub.name), note: 'It comes from the content type hub, and ' +
+            'the destination doesn\'t have it yet, so Sitenalyzer will skip it and anything based on it. Publish it to the destination from the ' +
+            'content type gallery, then copy again.' };
+    });
+});
+
+// ### SharePoint's Own Site Columns ###
+
+// SharePoint's own site columns that someone renamed in this site, such as Enterprise Keywords shown as Tags, get the same
+// name in the destination's top-level site, which changes it in every site of that site collection. A column is renamed
+// only when both sites use the same language (see snaToolsListsBuiltInRename in lists.js).
+snaToolsAddPreflightCheck('SharePoint\'s own site columns', async function(plan, dest) {
+    var columns = (plan.builtInSiteColumns || []).filter(function(f) { return f.rename && f.title; });
+    var warnings = [];
+    var sameLanguage;
+    for (var i = 0; i < columns.length; i++) {
+        snaToolsCheckCancelled();
+        var there = await snaToolsListsReadBuiltInSiteColumn(dest, columns[i]);
+        if (!there || !there.Title || there.Title === columns[i].title) { continue; }
+        if (sameLanguage === undefined) { sameLanguage = await snaToolsListsSameLanguage(plan, dest); }
+        var decision = snaToolsListsBuiltInRename(columns[i], there.Title, sameLanguage, true);
+        warnings.push({ severity: decision.rename ? 'info' : 'skip', kind: SNA_TOOLS_KINDS.column,
+            name: snaMaskText(snaToolsListsSiteColumnName(columns[i])), note: snaMaskText(decision.note) });
+    }
+    return warnings;
+});
+
+// ### Agent Assets ###
+
+// Site skills go in the destination's Agent Assets library. When it has none, the copy turns on the feature that makes
+// it, which only the copy can test.
+snaToolsAddPreflightCheck('Agent Assets', function(plan, dest, context) {
+    var skills = (plan.agents && plan.siteContent && plan.siteContent.skills) || [];
+    if (skills.length === 0) { return []; }
+    var path = snaToolsJoinPath(dest.serverRelativeUrl, SNA_AGENT_ASSETS_FOLDER);
+    var lists = context.destLists || dest.lists || [];
+    if (lists.some(function(l) { return snaToolsSamePath(l.serverRelativeUrl, path); })) { return []; }
+    return skills.map(function(skill) {
+        return { severity: 'maybe', kind: SNA_TOOLS_KINDS.siteSkill, name: snaMaskText(skill.name || skill.folderName), note: 'The destination has no ' +
+            'Agent Assets library, so Sitenalyzer will try to turn on site skills there. If it can\'t, it skips this site skill. You can turn on ' +
+            'site skills in the destination, then copy again.' };
+    });
+});
+
+// ### Files Too Large to Copy ###
+
+// The copy skips any file in Site Assets larger than SNA_TOOLS_FILES_MAX_BYTES (see files.js). Reads Site Assets the
+// same way the copy does.
+snaToolsAddPreflightCheck('Site Assets', async function(plan) {
+    if (!plan.siteAssets || !plan.source.siteUrl) { return []; }
+    var lists = await snaToolsFilesReadLists(plan.source.siteUrl);
+    var library = snaToolsFilesSiteAssetsOf(lists, snaToolsFilesSourcePath(plan));
+    if (!library || !library.root) { return []; }
+    var tree = await snaToolsFilesWalk(plan.source.siteUrl, library.root, SNA_TOOLS_SKIPPED_ROOT_FOLDERS);
+    return tree.files.filter(function(f) { return f.size > SNA_TOOLS_FILES_MAX_BYTES; }).map(function(f) {
+        return { severity: 'skip', kind: SNA_TOOLS_KINDS.siteAssetsFile, name: snaMaskText(snaToolsFilesUnder(f.path, library.root) || f.name),
+            note: 'This file is larger than 250 MB, so Sitenalyzer will skip it. Copy it to the destination by hand, such as with Copy to in Site Assets.' };
+    });
+});
+
+// ### Custom Scripts ###
+
+// On a site that doesn't allow custom scripts, SharePoint doesn't take .aspx files, so pages the copy sends as files
+// (classic pages and pages in folders) fail, unless the destination already has the page and Replace isn't checked, when
+// the copy leaves that page as it is. Some site look settings may be refused there too.
+snaToolsAddPreflightCheck('Custom scripts', async function(plan, dest, context) {
+    var pages = (plan.pages && plan.siteContent && plan.siteContent.pages) || [];
+    var isChannel = String(dest.webTemplate || '').toUpperCase() === SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE;
+    var lookChecked = plan.siteLook && !isChannel;
+    if (pages.length === 0 && !lookChecked) { return []; }
+    var permissions = await snaToolsRead(dest.siteUrl, '/_api/web/effectivebasepermissions');
+    var low = Number(permissions && permissions.Low);
+    if (!isFinite(low) || (low & SNA_TOOLS_PREFLIGHT_CUSTOMIZE_PAGES_BIT) !== 0) { return []; }
+
+    var warnings = [];
+    var fix = 'Ask your SharePoint admin to allow custom scripts in the destination, then copy again. SharePoint turns them off again within 24 hours.';
+    if (pages.length > 0) {
+        var sourceLists = await snaToolsFilesReadLists(plan.source.siteUrl);
+        var asFiles = await snaToolsPreflightPagesAsFiles(plan, pages, sourceLists);
+        if (!plan.replaceExisting) { asFiles = await snaToolsPreflightPagesNotThere(plan, dest, context, asFiles, sourceLists); }
+        asFiles.forEach(function(page) {
+            warnings.push({ severity: 'fail', kind: SNA_TOOLS_KINDS.page, name: snaMaskText(page.name || page.fileName), note: 'The destination doesn\'t allow ' +
+                'custom scripts, and SharePoint doesn\'t take a classic page, or a page in a folder, on such a site, so this page will fail to copy. ' + fix });
+        });
+    }
+    if (lookChecked) {
+        warnings.push({ severity: 'maybe', kind: SNA_TOOLS_KINDS.siteLookSetting, name: 'Site look', note: 'The destination doesn\'t allow custom ' +
+            'scripts, so SharePoint may refuse some site look settings, such as the theme. Sitenalyzer skips any it refuses and says which. ' + fix });
+    }
+    return warnings;
+});
+
+// Returns the pages the copy sends as files instead of making them again through the site pages API: classic pages, and
+// pages in a folder other than Templates. Reads each Site Pages library's pages once. sourceLists are this site's lists.
+async function snaToolsPreflightPagesAsFiles(plan, pages, sourceLists) {
+    var modernById = {};
+    var libraryIds = [];
+    pages.forEach(function(p) { var id = snaToolsCleanGuid(p.libraryId); if (id && libraryIds.indexOf(id) === -1) { libraryIds.push(id); } });
+    for (var i = 0; i < libraryIds.length; i++) {
+        var read = await snaToolsReadAll(plan.source.siteUrl, "/_api/web/lists(guid'" + libraryIds[i] + "')/items?$select=Id,ClientSideApplicationId,PageLayoutType&$top=500",
+            SNA_TOOLS_READ_MAX);
+        read.items.forEach(function(item) {
+            modernById[libraryIds[i] + '/' + item.Id] = snaToolsCleanGuid(item.ClientSideApplicationId) === SNA_TOOLS_MODERN_PAGE_APP_ID &&
+                item.PageLayoutType !== 'RepostPage';
+        });
+    }
+    return pages.filter(function(page) {
+        var place = snaToolsFilesPagePlace(plan, page, sourceLists);
+        if (!place.srcPath) { return false; }
+        return place.inFolder || !modernById[snaToolsCleanGuid(page.libraryId) + '/' + page.id];
+    });
+}
+
+// Returns the pages the destination doesn't have yet at the place the copy puts them in its Site Pages library, which
+// the copy finds the same way (see snaToolsFilesCopyOnePage in files.js). Reads each folder once. When the destination
+// has no Site Pages library, returns pages as they are. sourceLists are this site's lists (see snaToolsFilesReadLists).
+async function snaToolsPreflightPagesNotThere(plan, dest, context, pages, sourceLists) {
+    var destLibrary = (context.destLists || dest.lists || []).filter(function(l) {
+        return Number(l.baseTemplate) === 119 && l.serverRelativeUrl;
+    })[0];
+    if (!destLibrary || pages.length === 0) { return pages; }
+    var folders = {};
+    var left = [];
+    for (var i = 0; i < pages.length; i++) {
+        var destPath = snaToolsJoinPath(destLibrary.serverRelativeUrl, snaToolsFilesPagePlace(plan, pages[i], sourceLists).relative);
+        var parent = snaToolsFilesKey(snaToolsFilesParent(destPath));
+        if (!folders[parent]) {
+            var info = await snaToolsFilesReadFolder(dest.siteUrl, snaToolsFilesParent(destPath));
+            folders[parent] = {};
+            info.files.forEach(function(f) { folders[parent][f.name.toLowerCase()] = true; });
+        }
+        if (!folders[parent][snaToolsFilesLeaf(destPath).toLowerCase()]) { left.push(pages[i]); }
+    }
+    return left;
+}
+
+// ### Channel Sites ###
+
+// Microsoft Teams manages a channel site's permissions and look, so the copy leaves them as they are.
+snaToolsAddPreflightCheck('Channel site', function(plan, dest) {
+    if (String(dest.webTemplate || '').toUpperCase() !== SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE) { return []; }
+    var warnings = [];
+    if (plan.permissions) {
+        warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.permission, name: 'Permissions', note: 'The destination is a Microsoft Teams channel site, ' +
+            'whose permissions Teams manages, so Sitenalyzer will leave them unchanged. Give people access to the channel in Microsoft Teams.' });
+    }
+    if (plan.siteLook) {
+        warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.siteLookSetting, name: 'Site look', note: 'The destination is a Microsoft Teams channel ' +
+            'site, which takes its look from its team, so Sitenalyzer will leave its look unchanged.' });
+    }
+    return warnings;
+});
+
+// ### Groups of a Subsite ###
+
+// A subsite often uses its parent site's owners, members, or visitors group as its own. SharePoint groups belong to the
+// whole site collection, so the copy makes a new group instead of adding people to such a group (see
+// snaToolsPermissionsMapGroup in permissions.js). The reads are the same ones the copy makes.
+snaToolsAddPreflightCheck('Groups of the destination', async function(plan, dest) {
+    if (!plan.permissions || plan.source.kind !== 'site') { return []; }
+    if (String(dest.webTemplate || '').toUpperCase() === SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE) { return []; }
+    var rootPath = await snaToolsPermissionsReadRootPath(dest);
+    if (snaToolsSamePath(rootPath, dest.serverRelativeUrl)) { return []; }
+    var web = await snaToolsPermissionsReadWebGroups(dest.siteUrl);
+    var shared = await snaToolsPermissionsReadSharedGroups(dest, rootPath, web.groups);
+    var warnings = [];
+    SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+        var info = shared[web.groups[a.property]];
+        if (!info) { return; }
+        var title = web.groupTitles[a.property];
+        warnings.push({ severity: 'info', kind: SNA_TOOLS_KINDS.group, name: snaMaskText(title || 'The destination\'s ' + a.words),
+            note: 'The destination\'s ' + a.words + (title ? ', ' + snaMaskText(title) + ',' : '') + ' is also the ' + info.roleWords + ' of ' +
+                info.siteWords + (info.siteTitle ? ', ' + snaMaskText(info.siteTitle) : '') + '. Sitenalyzer won\'t add anyone to it, because ' +
+                'that would give them access to that site too. Instead, it will copy this site\'s ' + a.words + ' the way it copies other ' +
+                'groups: to a group with the same name, which it makes when the destination doesn\'t have one.' });
+    });
+    return warnings;
+});
+
+// ### Notes from the Plan ###
+
+// Things noticed while the plan was read, such as that Navigation replaces the destination's menu links.
+snaToolsAddPreflightCheck('Notes', function(plan) {
+    return (plan.warnings || []).map(function(text) {
+        return { severity: 'info', kind: SNA_TOOLS_KINDS.note, name: 'This copy', note: text };
+    });
+});
+
+// ### Before You Copy ###
+
+// Returns the sentence above the warnings, such as "Sitenalyzer found 3 things to know before you copy to Study Two:
+// 1 item will fail and 2 items will be skipped." When a warning stops the copy, the sentence says that instead.
+function snaToolsPreflightSummary(warnings, destName) {
+    if (warnings.length === 0) {
+        return 'Sitenalyzer checked ' + destName + ' and found nothing that will stop or change the copy.';
+    }
+    var stops = warnings.filter(function(w) { return w.stops; }).length;
+    if (stops > 0) {
+        var others = warnings.length - stops;
+        return 'Sitenalyzer found ' + snaCountText(stops, 'problem', 'problems') + ' that ' + (stops === 1 ? 'stops' : 'stop') + ' the copy to ' +
+            destName + ' before it changes anything.' + (others > 0 ? ' It also found ' + snaCountText(others, 'other thing', 'other things') + ' to know.' : '');
+    }
+    var counts = { fail: 0, skip: 0, maybe: 0, info: 0 };
+    warnings.forEach(function(w) { counts[w.severity]++; });
+    var parts = [];
+    if (counts.fail) { parts.push(snaCountText(counts.fail, 'item', 'items') + ' will fail'); }
+    if (counts.skip) { parts.push(snaCountText(counts.skip, 'item', 'items') + ' will be skipped'); }
+    if (counts.maybe) { parts.push(snaCountText(counts.maybe, 'item', 'items') + ' may fail'); }
+    if (counts.info) { parts.push(snaCountText(counts.info, 'note', 'notes')); }
+    return 'Sitenalyzer found ' + snaCountText(warnings.length, 'thing', 'things') + ' to know before you copy to ' + destName + ': ' +
+        snaJoinWords(parts) + '.';
+}
+
+/**
+ * Returns the markup of the "Before you copy" part: what the copy includes, what the check found, a table of the
+ * warnings, and the Copy anyway and Go back buttons. When a warning stops the copy, only Go back is offered.
+ * @param {object} preflight { plan, dest, warnings, failedChecks, error (a sentence when the whole check failed, or '') }.
+ * @returns {string} Markup. Every value from SharePoint or the person is escaped.
+ */
+function snaToolsPreflightHtml(preflight) {
+    var destName = snaMaskText(preflight.dest.title || preflight.dest.siteUrl);
+    var lead = 'You chose to copy ' + snaToolsCopyContentsText(preflight.plan) + ' to ' + destName + '.';
+    var stops = !preflight.error && snaToolsPreflightStops(preflight.warnings);
+    var summary;
+    if (preflight.error) {
+        summary = preflight.error + ' You can copy anyway, or go back.';
+    } else {
+        var stopCount = preflight.warnings.filter(function(w) { return w.stops; }).length;
+        var next = ' Select Copy anyway to copy, or Go back to change what you chose.';
+        if (stops) {
+            next = ' The copy can start only after you fix ' + (stopCount === 1 ? 'it' : 'them') + '. Select Go back to change what you chose.';
+        } else if (preflight.warnings.length > 0) {
+            next = ' Select Copy anyway to copy everything else, or Go back to change what you chose.';
+        }
+        summary = snaToolsPreflightSummary(preflight.warnings, destName) +
+            (preflight.failedChecks.length > 0 ? ' Sitenalyzer couldn\'t finish every check, so the copy may run into problems that this table doesn\'t show.' : '') +
+            next;
+    }
+    var html = '<div class="sna-tools-preflight" id="sna-tools-preflight">' +
+        '<h4 id="sna-tools-h-preflight" class="sna-subsection-title sna-tools-heading" tabindex="-1">Before you copy</h4>' +
+        '<p class="sna-tools-preflight-lead">' + snaEscapeHtml(lead) + '</p>' +
+        '<p id="sna-tools-preflight-summary" class="sna-tools-preflight-summary">' + snaEscapeHtml(summary) + '</p>';
+    if (preflight.warnings.length > 0) {
+        html += '<table class="sna-perm-list-table sna-tools-preflight-table" aria-describedby="sna-tools-preflight-summary">' +
+            '<caption class="sna-visually-hidden">What Sitenalyzer found before the copy</caption>' +
+            '<thead><tr><th scope="col">Item</th><th scope="col">Kind</th><th scope="col">What will happen</th></tr></thead><tbody>' +
+            preflight.warnings.map(function(w) {
+                return '<tr><td>' + snaEscapeHtml(w.name) + '</td><td>' + snaEscapeHtml(w.kind) + '</td><td>' + snaEscapeHtml(w.note) + '</td></tr>';
+            }).join('') + '</tbody></table>';
+    }
+    return html + '<div class="sna-tools-row sna-tools-preflight-actions">' +
+            (stops ? '' : '<button type="button" id="sna-tools-copy-anyway" class="sna-btn sna-btn-primary" data-action="tools-copy-anyway">Copy anyway</button>') +
+            '<button type="button" id="sna-tools-go-back" class="sna-btn ' + (stops ? 'sna-btn-primary' : 'sna-btn-outline') + '" data-action="tools-go-back">Go back</button>' +
+        '</div></div>';
+}
+
+// Returns what a plan copies, such as "2 lists, 1 term set, site pages, and Site Assets".
+function snaToolsCopyContentsText(plan) {
+    var lists = plan.lists.filter(function(l) { return !l.isLibrary; }).length;
+    var libraries = plan.lists.length - lists;
+    var sets = plan.termGroup ? plan.termGroup.sets.filter(function(s) { return s.selected; }).length : 0;
+    var parts = [];
+    if (lists) { parts.push(snaCountText(lists, 'list', 'lists')); }
+    if (libraries) { parts.push(snaCountText(libraries, 'library', 'libraries')); }
+    if (sets) { parts.push(snaCountText(sets, 'term set', 'term sets')); }
+    if ((plan.siteContentTypes || []).length) { parts.push(snaCountText(plan.siteContentTypes.length, 'content type', 'content types')); }
+    if (plan.pages) { parts.push('site pages'); }
+    if (plan.siteAssets) { parts.push('Site Assets'); }
+    if (plan.agents) { parts.push('agents and site skills'); }
+    if (plan.navigation) { parts.push('navigation'); }
+    if (plan.siteLook) { parts.push('the site look'); }
+    if (plan.permissions) { parts.push('permissions'); }
+    return parts.length ? snaJoinWords(parts) : 'nothing';
+}
+
+// Adds the warnings to the results of the copy that is running, with the result Warning, so they are in the same
+// table as what the copy did. They aren't counted as copied, skipped, or failed. error is the sentence Before you copy
+// showed when the whole check failed, or ''; then one Warning row says so, and it isn't counted either.
+function snaToolsLogPreflightWarnings(warnings, error) {
+    if (error) { snaToolsLog(SNA_TOOLS_KINDS.note, SNA_TOOLS_PREFLIGHT_FAILED_NAME, 'warning', SNA_TOOLS_PREFLIGHT_FAILED_NOTE, { summary: true }); }
+    (warnings || []).forEach(function(w) { snaToolsLog(w.kind, w.name, 'warning', w.note); });
+}

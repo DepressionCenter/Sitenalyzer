@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-27
+Last Modified: 2026-11-05
 Summary: Browser tests for Sitenalyzer. Each test opens the built app from dist/ on a pretend SharePoint
          site (see pretend-sharepoint.js) that blocks inline scripts the way SharePoint Online does.
 Notes: See README file for documentation and full license information.
@@ -276,7 +276,7 @@ async function prepareClipboardCopy(page, clipboardMode, fallbackResult) {
     return { record, button, display: page.locator('#' + displayId), toast: page.locator('#sna-copy-toast'), textareaCount };
 }
 
-const COPY_FAILURE_MESSAGE = "Couldn't copy the ID. Select the displayed ID and copy it manually.";
+const COPY_FAILURE_MESSAGE = "Couldn't copy the ID. Select the ID shown and press Ctrl+C (Cmd+C on a Mac).";
 [
     { name: 'Clipboard API success', mode: 'success', fallback: false, copied: true },
     { name: 'missing Clipboard API uses a successful fallback', mode: 'missing', fallback: true, copied: true },
@@ -1923,6 +1923,118 @@ test('sorts a table from its column headings with the keyboard on a 320 pixel wi
     await expect.poll(shownTypes).toEqual(ascending.slice().reverse());
 });
 
+// Returns the values of one column of the columns table in the details panel, in the order the table shows them.
+function shownColumnValues(detail, field) {
+    return detail.locator('.tabulator-row .tabulator-cell[tabulator-field="' + field + '"]').allInnerTexts();
+}
+
+// Returns the values in the order Tabulator's string sorter puts them, Z to A when descending is true.
+function sortedValues(values, descending) {
+    const sorted = values.slice().sort(function(a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base' }); });
+    return descending ? sorted.reverse() : sorted;
+}
+
+// Sorts the table in the details panel by a column heading from the keyboard: Enter sorts A to Z, Space then Z to A.
+async function sortDescendingByHeading(page, heading) {
+    await heading.focus();
+    await page.keyboard.press('Enter');
+    await expect(heading).toHaveAttribute('aria-sort', 'ascending');
+    await page.keyboard.press(' ');
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+}
+
+test('keeps a table\'s sort order and filter while other views open, without touching other tables', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    let detail = await openListDetail(page, 'Study Visits', 'Columns');
+    const visitTypes = await shownColumnValues(detail, 'dataType');
+
+    detail = await openListDetail(page, 'Documents', 'Columns');
+    await detail.getByRole('searchbox', { name: 'Filter columns' }).fill('Visit');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType').then(function(v) { return v.length; }); }).toBeLessThan(visitTypes.length);
+    const matching = await shownColumnValues(detail, 'dataType');
+    expect(new Set(matching).size).toBeGreaterThan(1);
+    const descending = sortedValues(matching, true);
+    await sortDescendingByHeading(page, detail.getByRole('columnheader', { name: 'Data type' }));
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(descending);
+
+    // The table comes back in the same order, with the same sort indicator and the same filter text.
+    await gotoSection(page, 'Overview');
+    detail = await openListDetail(page, 'Documents', 'Columns');
+    const heading = detail.getByRole('columnheader', { name: 'Data type' });
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect(detail.getByRole('searchbox', { name: 'Filter columns' })).toHaveValue('Visit');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(descending);
+
+    // The heading still sorts from the keyboard, the other way round from the restored order.
+    await heading.focus();
+    await page.keyboard.press('Enter');
+    await expect(heading).toHaveAttribute('aria-sort', 'ascending');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(sortedValues(matching, false));
+
+    // Another list's columns table is still in its usual order.
+    detail = await openListDetail(page, 'Study Visits', 'Columns');
+    await expect(detail.getByRole('columnheader', { name: 'Data type' })).toHaveAttribute('aria-sort', 'none');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(visitTypes);
+
+    // The sort order is kept in memory only.
+    const keys = await page.evaluate(function() { return Object.keys(window.localStorage).concat(Object.keys(window.sessionStorage)); });
+    expect(keys).toEqual(['sitenalyzer:sites-cache']);
+});
+
+test('keeps a sort by a technical column while Show technical details is off', async function({ page }) {
+    const record = await openPretendSite(page);
+    await extractSiteInformation(page);
+    const technicalSwitch = page.getByRole('switch', { name: 'Show technical details' });
+    await technicalSwitch.check();
+    const detail = await openListDetail(page, 'Documents', 'Columns');
+    const heading = detail.getByRole('columnheader', { name: 'Internal name' });
+    const usualTitles = await shownColumnValues(detail, 'title');
+    const descending = sortedValues(await shownColumnValues(detail, 'internalName'), true);
+    await sortDescendingByHeading(page, heading);
+    await expect.poll(function() { return shownColumnValues(detail, 'internalName'); }).toEqual(descending);
+    expect(await shownColumnValues(detail, 'title')).not.toEqual(usualTitles);
+
+    // Without the column, the table is in its usual order, and no heading says it is sorted.
+    await technicalSwitch.uncheck();
+    await expect(technicalSwitch).toBeFocused();
+    await expect(heading).toHaveCount(0);
+    await expect.poll(function() { return shownColumnValues(detail, 'title'); }).toEqual(usualTitles);
+    await expect(detail.getByRole('columnheader', { name: 'Title' })).toHaveAttribute('aria-sort', 'none');
+    expect(record.consoleErrors).toEqual([]);
+
+    // With the column back, the table is sorted by it again.
+    await technicalSwitch.check();
+    await expect(heading).toHaveAttribute('aria-sort', 'descending');
+    await expect.poll(function() { return shownColumnValues(detail, 'internalName'); }).toEqual(descending);
+    expect(record.consoleErrors).toEqual([]);
+});
+
+test('Refresh report and Start over put every table back in its usual order', async function({ page }) {
+    await openPretendSite(page);
+    await extractSiteInformation(page);
+    let detail = await openListDetail(page, 'Documents', 'Columns');
+    const usualTypes = await shownColumnValues(detail, 'dataType');
+    const descending = sortedValues(usualTypes, true);
+    await sortDescendingByHeading(page, detail.getByRole('columnheader', { name: 'Data type' }));
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(descending);
+
+    await page.getByRole('button', { name: 'Refresh report' }).click();
+    await expect(page.locator('#sna-section-title')).toHaveText('Contents');
+    detail = await openListDetail(page, 'Documents', 'Columns');
+    await expect(detail.getByRole('columnheader', { name: 'Data type' })).toHaveAttribute('aria-sort', 'none');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(usualTypes);
+
+    await sortDescendingByHeading(page, detail.getByRole('columnheader', { name: 'Data type' }));
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(descending);
+    await page.getByRole('button', { name: 'Start over' }).click();
+    await expect(page.locator('#sna-report')).toBeHidden();
+    await extractSiteInformation(page);
+    detail = await openListDetail(page, 'Documents', 'Columns');
+    await expect(detail.getByRole('columnheader', { name: 'Data type' })).toHaveAttribute('aria-sort', 'none');
+    await expect.poll(function() { return shownColumnValues(detail, 'dataType'); }).toEqual(usualTypes);
+});
+
 test('keeps every word visible with wider text spacing on a 320 pixel wide screen', async function({ page }) {
     await page.setViewportSize({ width: 320, height: 800 });
     await openPretendSite(page);
@@ -2800,6 +2912,176 @@ test('reads a batch answer with LF line endings, parts in quotes, and a part tha
     expect(record.consoleErrors).toEqual([]);
 });
 
+// Names with characters that have a meaning in a web address. SharePoint returns each path with the name as typed,
+// so a link must encode the name, or the browser would read # as the start of a fragment and % as an escape.
+const SPECIAL_NAMES = [
+    { name: 'Research #1', encoded: 'Research%20%231' },
+    { name: '100% done', encoded: '100%25%20done' },
+    { name: 'Study%23A', encoded: 'Study%2523A' },
+    { name: "Ana's Café", encoded: "Ana's%20Caf%C3%A9" }
+];
+const SPECIAL_FILE_ID = '44444444-0000-4000-8000-000000000021';
+const SPECIAL_FOLDER_ID = '44444444-0000-4000-8000-000000000022';
+
+// Checks that href is on the pretend site, holds the whole path with the expected encoding, and has no fragment.
+function expectEncodedAddress(href, folder, name, encoded) {
+    const address = new URL(href);
+    expect(address.hash).toBe('');
+    expect(address.search).toBe('');
+    expect(address.href).toBe(SITE_URL + '/' + encodeURIComponent(folder) + '/' + encoded);
+    expect(decodeURIComponent(address.pathname)).toBe(SITE_PATH + '/' + folder + '/' + name);
+}
+
+test('links pages, folders, and shared items whose names have #, %, spaces, apostrophes, and accents', async function({ page }) {
+    const pages = SPECIAL_NAMES.map(function(item, index) {
+        return { Id: index + 1, Title: item.name, FileLeafRef: item.name + '.aspx', FileRef: SITE_PATH + '/SitePages/' + item.name + '.aspx',
+            FSObjType: 0, Modified: '2026-09-01T10:00:00Z' };
+    }).concat([
+        { Id: 9, Title: 'Elsewhere', FileLeafRef: 'Elsewhere.aspx', FileRef: '/sites/othersite/SitePages/Elsewhere.aspx', FSObjType: 0, Modified: '2026-09-01T10:00:00Z' }
+    ]);
+    const folders = SPECIAL_NAMES.map(function(item, index) {
+        return { Name: item.name, UniqueId: 'cccccccc-0000-4000-8000-0000000000' + (31 + index), ItemCount: 1,
+            ServerRelativeUrl: SITE_PATH + '/Shared Documents/' + item.name };
+    }).concat([
+        { Name: 'Other site folder', UniqueId: 'cccccccc-0000-4000-8000-000000000039', ItemCount: 1, ServerRelativeUrl: '/sites/othersite/Shared Documents/Other site folder' }
+    ]);
+    await stubPrint(page);
+    const record = await openPretendSite(page, { answerOverrides: OWNERS_ONLY_ANSWERS.concat([
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: function(url) {
+            return url.searchParams.get('$filter') ? undefined : { value: pages };
+        } },
+        // None of these pages has an image, so opening their details adds no failed image lookups to the console.
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\(\\d+\\)$"), body: { BannerImageUrl: null } },
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIBRARY_ID + "'\\)/RootFolder/Folders$"), body: { value: folders } },
+        { pattern: /^\/_api\/web\/sitegroups$/, body: { value: [
+            { Id: 61, Title: 'SharingLinks.' + SPECIAL_FILE_ID + '.OrganizationView.66666666-0000-4000-8000-000000000021' },
+            { Id: 62, Title: 'SharingLinks.' + SPECIAL_FOLDER_ID + '.OrganizationEdit.66666666-0000-4000-8000-000000000022' }
+        ] } },
+        { pattern: /^\/_api\/web\/GetFileById\('([^']+)'\)$/, answer: function(url, match) {
+            return match[1] === SPECIAL_FILE_ID
+                ? { Name: 'Research #1.docx', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Research #1.docx' }
+                : reply(404, { error: 'File not found' });
+        } },
+        { pattern: /^\/_api\/web\/GetFolderById\('([^']+)'\)$/, answer: function(url, match) {
+            return match[1] === SPECIAL_FOLDER_ID ? { Name: 'Study%23A', ServerRelativeUrl: SITE_PATH + '/Shared Documents/Study%23A' } : undefined;
+        } }
+    ]) });
+    await extractSiteInformation(page);
+
+    // Site pages shows each address with the names as typed, and the page's details open it with the whole file name
+    // in the path.
+    const pagesTable = (await openSitePages(page)).locator('#sna-tbl-pages');
+    for (const item of SPECIAL_NAMES) {
+        await expect(pagesTable.getByRole('row', { name: new RegExp(escapeRegExp(item.name + '.aspx')) })).toContainText(SITE_URL + '/SitePages/' + item.name + '.aspx');
+    }
+    for (const item of SPECIAL_NAMES) {
+        const detail = await openPageDetail(page, item.name);
+        const openPage = detail.getByRole('link', { name: 'Open page (opens in a new window)' });
+        expectEncodedAddress(await openPage.getAttribute('href'), 'SitePages', item.name + '.aspx', item.encoded + '.aspx');
+        await expect(detail).toContainText(SITE_URL + '/SitePages/' + item.name + '.aspx');
+        await detail.getByRole('link', { name: 'Back to Site pages' }).click();
+    }
+    const elsewhere = await openPageDetail(page, 'Elsewhere');
+    await expect(elsewhere.getByRole('link', { name: 'Open page (opens in a new window)' })).toHaveCount(0);
+    await expect(elsewhere).toContainText('Not available.');
+
+    // Top-level folders link to the folder, and a folder on another site has no link.
+    const foldersTable = (await openListDetail(page, 'Documents', 'Folders')).locator('.tabulator');
+    for (const item of SPECIAL_NAMES) {
+        const link = foldersTable.getByRole('link', { name: item.name, exact: true });
+        await expect(link).toHaveText(item.name);
+        expectEncodedAddress(await link.getAttribute('href'), 'Shared Documents', item.name, item.encoded);
+    }
+    await expect(foldersTable).toContainText('Other site folder');
+    await expect(foldersTable.getByRole('link', { name: 'Other site folder' })).toHaveCount(0);
+
+    // Shared files and folders keep the # and % of their names in the path.
+    const sharing = await openPermissionPart(page, 'Sharing links (2)');
+    expectEncodedAddress(await sharing.getByRole('link', { name: 'Research #1.docx' }).getAttribute('href'), 'Shared Documents', 'Research #1.docx', 'Research%20%231.docx');
+    expectEncodedAddress(await sharing.getByRole('link', { name: 'Study%23A' }).getAttribute('href'), 'Shared Documents', 'Study%23A', 'Study%2523A');
+    await expect(sharing.getByRole('row', { name: /Study%23A/ })).toContainText('Study%23A (folder)');
+
+    // The print document shows the same addresses as the screen.
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    const printed = printFrameDocument(page);
+    const printedPages = printed.getByRole('table', { name: 'Site pages' });
+    for (const item of SPECIAL_NAMES) {
+        await expect(printedPages).toContainText(SITE_URL + '/SitePages/' + item.name + '.aspx');
+    }
+    expectEncodedAddress(await printed.getByRole('link', { name: 'Research #1.docx' }).getAttribute('href'), 'Shared Documents', 'Research #1.docx', 'Research%20%231.docx');
+    expectEncodedAddress(await printed.getByRole('link', { name: 'Study%23A' }).getAttribute('href'), 'Shared Documents', 'Study%23A', 'Study%2523A');
+    expect(record.consoleErrors).toEqual([]);
+    expect(record.otherOriginRequests).toEqual([]);
+});
+
+test('hides an email address in a site page file name in the page address, on screen and in print', async function({ page }) {
+    await stubPrint(page);
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: function(url) {
+            return url.searchParams.get('$filter') ? undefined : { value: [
+                { Id: 1, Title: 'Contact page', FileLeafRef: 'pat.example@example.org.aspx', FileRef: SITE_PATH + '/SitePages/pat.example@example.org.aspx',
+                    FSObjType: 0, Modified: '2026-09-01T10:00:00Z' }
+            ] };
+        } },
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\(\\d+\\)$"), body: { BannerImageUrl: null } }
+    ] });
+    await extractSiteInformation(page);
+
+    const pagesTable = (await openSitePages(page)).locator('#sna-tbl-pages');
+    await expect(pagesTable).toContainText('[email address hidden]');
+    await expect(pagesTable).not.toContainText('pat.example');
+    const detail = await openPageDetail(page, 'Contact page');
+    await expect(detail).not.toContainText('pat.example');
+    await expect(detail).not.toContainText('%40');
+    // The link still opens the page, with the @ encoded in its path.
+    const href = await detail.getByRole('link', { name: 'Open page (opens in a new window)' }).getAttribute('href');
+    expect(new URL(href).pathname).toBe(SITE_PATH + '/SitePages/pat.example%40example.org.aspx');
+
+    await page.getByRole('button', { name: 'Print full report / PDF' }).click();
+    await expect.poll(function() { return printCalls(page); }).toBe(1);
+    await page.emulateMedia({ media: 'print' });
+    const printedPages = printFrameDocument(page).getByRole('table', { name: 'Site pages' });
+    await expect(printedPages).toContainText('[email address hidden]');
+    await expect(printedPages).not.toContainText('pat.example');
+    await expect(printedPages).not.toContainText('%40');
+});
+
+test('does not find a page or folder by a hidden email address in its name with a table filter box', async function({ page }) {
+    const pages = Array.from({ length: 11 }, function(_, index) {
+        const fileName = index === 0 ? 'pat.example@example.org.aspx' : 'Page ' + String(index).padStart(2, '0') + '.aspx';
+        return { Id: index + 1, Title: index === 0 ? 'Contact page' : 'Page ' + index, FileLeafRef: fileName,
+            FileRef: SITE_PATH + '/SitePages/' + fileName, FSObjType: 0, Modified: '2026-09-01T10:00:00Z' };
+    });
+    const folders = Array.from({ length: 11 }, function(_, index) {
+        const name = index === 0 ? 'pat.example@example.org' : 'Folder ' + String(index).padStart(2, '0');
+        return { Name: name, UniqueId: 'cccccccc-0000-4000-8000-0000000001' + String(index).padStart(2, '0'), ItemCount: 1,
+            ServerRelativeUrl: SITE_PATH + '/Shared Documents/' + name };
+    });
+    await openPretendSite(page, { answerOverrides: [
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: function(url) {
+            return url.searchParams.get('$filter') ? undefined : { value: pages };
+        } },
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIBRARY_ID + "'\\)/RootFolder/Folders$"), body: { value: folders } }
+    ] });
+    await extractSiteInformation(page);
+
+    // The encoded address holds the email as pat.example%40example.org, so it must be compared as people read it.
+    const pagesSection = await openSitePages(page);
+    await pagesSection.getByRole('searchbox', { name: 'Filter pages' }).fill('pat.example');
+    await expect(pagesSection.locator('.sna-table-count')).toHaveText('Showing 0 of 11 pages.');
+
+    const detail = await openListDetail(page, 'Documents', 'Folders');
+    await detail.getByRole('searchbox', { name: 'Filter folders' }).fill('pat.example');
+    await expect(detail.locator('.sna-table-count')).toHaveText('Showing 0 of 11 folders.');
+
+    // With Show hidden values on, the same text finds the folder.
+    await page.getByRole('switch', { name: 'Show hidden values' }).check();
+    await detail.getByRole('searchbox', { name: 'Filter folders' }).fill('pat.example');
+    await expect(detail.locator('.sna-table-count')).toHaveText('Showing 1 of 11 folders.');
+});
+
 // Answers the site groups request in pages, as SharePoint does with $top and $skip. Group IDs start at 1000.
 // failAfter makes every request that skips that many groups or more fail.
 function pagedSiteGroups(titles, failAfter) {
@@ -3005,6 +3287,11 @@ test('puts a saved list description in the data dictionary', async function({ pa
     const { workbook } = await downloadWorkbook(page, testInfo, /Data dictionary/);
     const assets = sheetRows(workbook, 'Assets');
     expect(assets.find(function(row) { return row[3] === 'Study Visits'; })[8]).toBe('Updated synthetic visit schedule.');
+
+    // Search finds the list by its saved description without collecting the report again.
+    await searchReport(page, 'Updated synthetic');
+    await expect(page.locator('#sp-results .sna-search-group > summary')).toHaveText(['Lists and libraries (1)']);
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Study Visits' })).toBeVisible();
 });
 
 test('edits a column description in its table with the editor keys', async function({ page }, testInfo) {
@@ -3067,10 +3354,18 @@ test('keeps a draft when saving fails, and saves it on the next try', async func
     await expect(editor).toHaveValue('Draft that is denied at first.');
     await expect(editor).toBeFocused();
 
-    await detail.getByRole('button', { name: 'Save description of Study Visits' }).click();
+    // The draft is not searchable until it is saved, and it stays in the editor while other views are open.
+    await searchReport(page, 'denied at first');
+    await expect(page.locator('#sp-results')).toContainText('No results for "denied at first"');
+    const reopened = await openListDetail(page, 'Study Visits');
+    await expect(reopened.getByRole('textbox', { name: 'Description for Study Visits' })).toHaveValue('Draft that is denied at first.');
+
+    await reopened.getByRole('button', { name: 'Save description of Study Visits' }).click();
     await expect(page.locator('#sna-copy-toast')).toHaveText('Description saved.');
-    await expect(detail.locator('.sna-facts')).toContainText('Draft that is denied at first.');
+    await expect(reopened.locator('.sna-facts')).toContainText('Draft that is denied at first.');
     expect(record.writeRequests.filter(function(r) { return r.method === 'PATCH'; }).length).toBe(2);
+    await searchReport(page, 'denied at first');
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Study Visits' })).toBeVisible();
 });
 
 test('waits for a running save before Refresh report or Start over', async function({ page }) {
@@ -3514,6 +3809,160 @@ test('Change site with a typed address reads that site', async function({ page }
     await expect(page.getByLabel('Site address', { exact: true })).toHaveValue(SITE_URL);
 });
 
+// Answers the site searches that fill the sites list by the mode the test sets on state: 'ok' passes the request on
+// to the standard answer with its two sites, 'fail' refuses both the sorted request and the unsorted retry,
+// 'other' lists one different site, and 'empty' lists no sites. state.requests counts the site searches.
+// Searches for agents always pass through to the standard answer.
+function siteSearchAnswer(state) {
+    return { pattern: /^\/_api\/search\/query$/, answer: function(url) {
+        if (!(url.searchParams.get('querytext') || '').includes('STS_Site')) { return undefined; }
+        state.requests += 1;
+        if (state.mode === 'fail') { return reply(500, { error: 'Search is unavailable' }); }
+        if (state.mode === 'empty') { return { PrimaryQueryResult: { RelevantResults: { Table: { Rows: [] } } } }; }
+        if (state.mode === 'other') {
+            return { PrimaryQueryResult: { RelevantResults: { Table: { Rows: [
+                { Cells: [{ Key: 'Title', Value: 'Test Pilot Site' }, { Key: 'Path', Value: 'https://contoso.sharepoint.com/sites/testpilot' }] }
+            ] } } } };
+        }
+        return undefined;
+    } };
+}
+
+// Chrome writes a console error for every 500 answer; the tests check Sitenalyzer's own errors only.
+function errorsExceptRefusedRequests(record) {
+    return record.consoleErrors.filter(function(message) { return !/status of 500/.test(message); });
+}
+
+const SITES_KEPT_MESSAGE = "Couldn't refresh the list of sites. Showing the sites from the last successful load. Check your connection and try again.";
+
+test('keeps the sites list and its saved copy when a refresh fails, and says so at both refresh controls', async function({ page }) {
+    const state = { mode: 'ok', requests: 0 };
+    const record = await openPretendSite(page, { answerOverrides: [siteSearchAnswer(state)] });
+    const helper = page.locator('#site-url-helper-message');
+    const address = page.getByLabel('Site address', { exact: true });
+    const refresh = page.locator('#sna-sites-refresh-btn');
+    await expect(helper).not.toContainText('Loading');
+    await expect(helper).toHaveAttribute('role', 'status');
+    function savedSites() {
+        return page.evaluate(function() {
+            const raw = window.localStorage.getItem('sitenalyzer:sites-cache');
+            return raw === null ? null : JSON.parse(raw).sites.map(function(site) { return site.title; });
+        });
+    }
+    expect(await savedSites()).toEqual(['Test Research Site', 'Test Archive Site']);
+
+    // Both search attempts fail: the typed address, the focus, the list, and the saved copy all stay.
+    await address.fill('https://contoso.sharepoint.com/sites/test');
+    state.mode = 'fail';
+    const requestsBefore = state.requests;
+    await refresh.click();
+    await expect(helper).toHaveText(SITES_KEPT_MESSAGE);
+    expect(state.requests - requestsBefore).toBe(2);
+    await expect(refresh).toBeFocused();
+    await expect(address).toHaveValue('https://contoso.sharepoint.com/sites/test');
+    expect(await savedSites()).toEqual(['Test Research Site', 'Test Archive Site']);
+    await address.focus();
+    await expect(page.locator('#site-suggestions li')).toHaveCount(2);
+
+    // A refresh that works puts the usual hint back.
+    state.mode = 'ok';
+    await refresh.click();
+    await expect(helper).toHaveText('Type a site address or choose one from the list. To see every permission, you need to be a site owner.');
+
+    // The same in Choose a site: the Find a site text, the focus, and the open dialog stay.
+    await address.fill(SITE_URL);
+    await extractSiteInformation(page);
+    await page.getByRole('button', { name: 'Change site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    const find = dialog.getByRole('searchbox', { name: 'Find a site' });
+    const status = dialog.locator('#sna-site-find-status');
+    const dialogRefresh = dialog.getByRole('button', { name: 'Refresh sites list' });
+    await find.fill('test');
+    await expect(status).toHaveText('Showing 2 sites.');
+    state.mode = 'fail';
+    await dialogRefresh.click();
+    await expect(status).toHaveText(SITES_KEPT_MESSAGE);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(2);
+    await expect(dialogRefresh).toBeFocused();
+    await expect(find).toHaveValue('test');
+    expect(await savedSites()).toEqual(['Test Research Site', 'Test Archive Site']);
+
+    // A retry that works replaces the sites and the saved copy.
+    state.mode = 'other';
+    await dialogRefresh.click();
+    await expect(status).toHaveText('Showing 1 site.');
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(1);
+    await expect(dialog.locator('.sna-site-choice')).toContainText('Test Pilot Site');
+    expect(await savedSites()).toEqual(['Test Pilot Site']);
+
+    // An answer with no sites is a result, not a failure: the list is empty and the saved copy is empty too.
+    state.mode = 'empty';
+    await dialogRefresh.click();
+    await expect(status).toHaveText('Sitenalyzer has not found your sites yet. Select Refresh sites list, or enter the site address below.');
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(0);
+    expect(await savedSites()).toEqual([]);
+    expect(errorsExceptRefusedRequests(record)).toEqual([]);
+});
+
+test('says when the sites list could not be loaded at all, and still opens a typed address', async function({ page }) {
+    const state = { mode: 'fail', requests: 0 };
+    const record = await openPretendSite(page, { answerOverrides: [siteSearchAnswer(state)] });
+    const helper = page.locator('#site-url-helper-message');
+    await expect(helper).toHaveText("Couldn't load the list of sites. Check your connection and try again, or type the site address.");
+    expect(await page.evaluate(function() { return window.localStorage.getItem('sitenalyzer:sites-cache'); })).toBeNull();
+    await page.getByLabel('Site address', { exact: true }).focus();
+    await expect(page.locator('#site-suggestions')).toBeHidden();
+
+    // A typed address still opens the site.
+    await page.getByLabel('Site address', { exact: true }).fill(SITE_URL);
+    await extractSiteInformation(page);
+
+    await page.getByRole('button', { name: 'Change site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    const status = dialog.locator('#sna-site-find-status');
+    await expect(status).toHaveText('Sitenalyzer has not found your sites yet. Select Refresh sites list, or enter the site address below.');
+    await dialog.getByRole('button', { name: 'Refresh sites list' }).click();
+    await expect(status).toHaveText("Couldn't load the list of sites. Check your connection and try again, or enter the site address below.");
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(0);
+    await dialog.getByLabel('Or enter a site address').fill(SITE_URL);
+    await dialog.getByLabel('Or enter a site address').press('Enter');
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#sna-section-title')).toHaveText('Overview');
+    expect(errorsExceptRefusedRequests(record)).toEqual([]);
+});
+
+test('keeps the sites list through a failed refresh when browser storage is blocked', async function({ page }) {
+    // A browser that blocks storage throws on every use of localStorage.
+    await page.addInitScript(function() {
+        Object.defineProperty(window, 'localStorage', { configurable: true, get: function() { throw new Error('Browser storage is blocked'); } });
+    });
+    const state = { mode: 'ok', requests: 0 };
+    const record = await openPretendSite(page, { answerOverrides: [siteSearchAnswer(state)] });
+    expect(await page.evaluate(function() { try { return typeof window.localStorage; } catch (e) { return 'blocked'; } })).toBe('blocked');
+    const helper = page.locator('#site-url-helper-message');
+    const address = page.getByLabel('Site address', { exact: true });
+    await expect(helper).not.toContainText('Loading');
+    await address.fill('https://contoso.sharepoint.com/sites/test');
+    await expect(page.locator('#site-suggestions li')).toHaveCount(2);
+
+    state.mode = 'fail';
+    await page.locator('#sna-sites-refresh-btn').click();
+    await expect(helper).toHaveText(SITES_KEPT_MESSAGE);
+    await expect(address).toHaveValue('https://contoso.sharepoint.com/sites/test');
+    await address.focus();
+    await expect(page.locator('#site-suggestions li')).toHaveCount(2);
+
+    await address.fill(SITE_URL);
+    await extractSiteInformation(page);
+    await page.getByRole('button', { name: 'Change site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    await dialog.getByRole('button', { name: 'Refresh sites list' }).click();
+    await expect(dialog.locator('#sna-site-find-status')).toHaveText(SITES_KEPT_MESSAGE);
+    await expect(dialog.locator('.sna-site-choice')).toHaveCount(2);
+    expect(errorsExceptRefusedRequests(record)).toEqual([]);
+});
+
 // ### Technical Details ###
 
 test('shows technical details only while the switch is on, and remembers the choice', async function({ page }) {
@@ -3562,11 +4011,12 @@ test('groups search results by kind, with columns first', async function({ page 
     await openPretendSite(page);
     await extractSiteInformation(page);
 
-    // Search also looks at where each item is, so every column of Study Visits matches, plus 2 columns in Documents.
+    // Search also looks at where each item is and at descriptions, so every column of Study Visits matches, plus 2 columns
+    // in Documents by name and its Title column by its description.
     await searchReport(page, 'Visit*');
     const groups = page.locator('#sp-results .sna-search-group > summary');
-    await expect(groups).toHaveText(['Columns (11)', 'Lists and libraries (1)', 'Agents and skills (2)']);
-    await expect(page.locator('#sp-results .sna-lead')).toHaveText('14 results for "Visit*" in Test Research Site.');
+    await expect(groups).toHaveText(['Columns (12)', 'Lists and libraries (1)', 'Agents and skills (2)']);
+    await expect(page.locator('#sp-results .sna-lead')).toHaveText('15 results for "Visit*" in Test Research Site.');
     expect(hashOf(page)).toBe('#sna/search?q=Visit*');
     // Columns whose names match come before columns that match only by where they are.
     await expect(page.locator('#sp-results .sna-search-group').first().locator('.sna-search-item > a').first()).toHaveText('Visit Count');
@@ -3581,6 +4031,101 @@ test('groups search results by kind, with columns first', async function({ page 
     await expect(page.locator('#sp-results')).toContainText('Enter at least 2 letters or numbers');
     await searchReport(page, 'nothing like this');
     await expect(page.locator('#sp-results')).toContainText('Search covers only what Sitenalyzer read from this site');
+});
+
+test('finds a list, a column, and a term by a word that is only in its description', async function({ page }) {
+    // Each keyword is in one description and nowhere else on the pretend site.
+    const describedTerms = [
+        { id: 'ffffffff-0000-4000-8000-000000000001', labels: [{ name: 'Control', isDefault: true }], descriptions: [{ description: 'Comparator arm.' }] },
+        { id: 'ffffffff-0000-4000-8000-000000000002', labels: [{ name: 'Treatment', isDefault: true }], descriptions: [] }
+    ];
+    await openPretendSite(page, {
+        extraLists: [{
+            Id: 'aaaaaaaa-0000-4000-8000-000000000003', EntityTypeName: 'ProjectsList', Title: 'Projects', Description: 'Recruitment schedules.',
+            ItemCount: 1, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 100,
+            HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Lists/Projects/AllItems.aspx'
+        }],
+        answerOverrides: [
+            { pattern: LIST_FIELDS_PATTERN, body: { value: fields.value.map(function(field) {
+                return field.InternalName === 'StudyArm' ? Object.assign({}, field, { Description: 'Randomization stratum of the participant.' }) : field;
+            }) } },
+            { pattern: TERMS_PATTERN, answer: function(url) {
+                const withChildren = /children/.test(url.searchParams.get('$expand') || '');
+                return { value: describedTerms.map(function(t) { return withChildren ? Object.assign({ children: [] }, t) : t; }) };
+            } }
+        ]
+    });
+    await extractSiteInformation(page);
+    const groups = page.locator('#sp-results .sna-search-group > summary');
+    const results = page.locator('#sp-results .sna-search-list');
+
+    await searchReport(page, 'recruitment');
+    await expect(groups).toHaveText(['Lists and libraries (1)']);
+    await expect(results.getByRole('link', { name: 'Projects' })).toBeVisible();
+    await expect(results.locator('.sna-search-summary')).toHaveText('Recruitment schedules.');
+    await searchReport(page, 'stratum');
+    await expect(groups).toHaveText(['Columns (1)']);
+    await expect(results.getByRole('link', { name: 'Study Arm' })).toBeVisible();
+    await expect(results.locator('.sna-search-summary')).toHaveText('Study Visits / Randomization stratum of the participant.');
+    await searchReport(page, 'comparator');
+    await expect(groups).toHaveText(['Terms (1)']);
+    await expect(results.getByRole('link', { name: 'Control' })).toBeVisible();
+
+    // Quoted phrases and * work in descriptions the same way as in names.
+    await searchReport(page, '"recruitment schedules"');
+    await expect(groups).toHaveText(['Lists and libraries (1)']);
+    await searchReport(page, '"schedules recruitment"');
+    await expect(page.locator('#sp-results')).toContainText('No results for');
+    await searchReport(page, 'recruit*sched');
+    await expect(groups).toHaveText(['Lists and libraries (1)']);
+    await searchReport(page, 'random*particip');
+    await expect(groups).toHaveText(['Columns (1)']);
+
+    // Names and internal names are still found in every list that has the column, and a column found by its name keeps
+    // its place before other columns.
+    await searchReport(page, 'StudyArm');
+    await expect(groups).toHaveText(['Columns (3)']);
+    await searchReport(page, 'Study Arm');
+    await expect(groups).toHaveText(['Columns (3)', 'Terms (2)']);
+    await searchReport(page, 'Visit*');
+    await expect(page.locator('#sp-results .sna-search-group').first().locator('.sna-search-item > a').first()).toHaveText('Visit Count');
+});
+
+test('does not find a phone number in a description while Show hidden values is off', async function({ page }) {
+    await openPretendSite(page, {
+        extraLists: [{
+            Id: 'aaaaaaaa-0000-4000-8000-000000000003', EntityTypeName: 'PhoneLogList', Title: 'Phone log', Description: 'Recruitment line (734) 555-0100.',
+            ItemCount: 1, BaseType: 0, Hidden: false, IsApplicationList: false, BaseTemplate: 100,
+            HasUniqueRoleAssignments: false, DefaultViewUrl: SITE_PATH + '/Lists/PhoneLog/AllItems.aspx'
+        }]
+    });
+    await extractSiteInformation(page);
+    const notice = 'Sitenalyzer hides values that look like personal information, so it doesn\'t search for them.';
+    const hiddenSwitch = page.getByRole('switch', { name: 'Show hidden values' });
+
+    // The number, or part of it, opens an empty search that says why.
+    await searchReport(page, '555-0100');
+    await expect(page.locator('#sp-results')).toContainText(notice);
+    expect(hashOf(page)).toBe('#sna/search?q=');
+    // A wildcard that skips the hidden digits runs, but matches the hidden text, not the number.
+    await searchReport(page, 'line*0');
+    await expect(page.locator('#sp-results')).not.toContainText(notice);
+    await expect(page.locator('#sp-results')).not.toContainText('Phone log');
+    await searchReport(page, 'recruitment');
+    await expect(page.locator('#sp-results .sna-search-summary')).toHaveText('Recruitment line [phone number hidden].');
+    expect(await readableText(page)).not.toContain('555-0100');
+
+    // With the switch on, the number is searched and shown. Turning the switch off clears that search again.
+    await hiddenSwitch.check();
+    await searchReport(page, 'line*0');
+    await expect(page.locator('#sp-results .sna-search-list').getByRole('link', { name: 'Phone log' })).toBeVisible();
+    await searchReport(page, '555-0100');
+    await expect(page.locator('#sp-results .sna-search-summary')).toHaveText('Recruitment line (734) 555-0100.');
+    await hiddenSwitch.uncheck();
+    await expect(page.getByRole('searchbox', { name: 'Search this report' })).toHaveValue('');
+    await expect(page.locator('#sp-results')).toContainText(notice);
+    expect(hashOf(page)).toBe('#sna/search?q=');
+    expect(await readableText(page)).not.toContain('555-0100');
 });
 
 test('opens the term set of a term search result', async function({ page }) {

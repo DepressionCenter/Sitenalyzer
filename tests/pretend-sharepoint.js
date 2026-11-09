@@ -3,13 +3,18 @@ This file is part of Sitenalyzer
 pretend-sharepoint.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-23
+Last Modified: 2026-11-08
 Summary: A pretend SharePoint Online site for the browser tests. Playwright answers every request to
          https://contoso.sharepoint.com itself: the page holds the code from dist/SitePages/sitenalyzer.html.txt,
          files under SiteAssets come from dist/SiteAssets, and REST API calls get the synthetic answers below.
          The page is sent with a Content Security Policy that blocks inline scripts, as SharePoint Online does.
+         The destination option adds a second site for the Tools tests (see pretend-destination.js).
          All names, addresses, and IDs here are made up.
 Notes: See README file for documentation and full license information.
+       Adding an answer for a new read of this site: add an entry to API_ANSWERS before any entry whose pattern also
+       matches the address. When the address is one the report already reads with other query options, as the copy plan
+       does for a list's columns, make the answer function return undefined for the report's own query, so the answers
+       the existing tests depend on stay the same.
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -28,6 +33,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 const fs = require('fs');
 const path = require('path');
+const { createDestination, DEST_URL, DEST_PATH, DEST_TITLE } = require('./pretend-destination');
 
 // ### Settings ###
 const TENANT_ORIGIN = 'https://contoso.sharepoint.com';
@@ -235,6 +241,67 @@ const fields = {
     ]
 };
 
+// ### Copy Site Structure Reads ###
+// What the copy plan in Tools reads from this site, which the report itself never asks for. The same four columns as
+// fields, with their full definitions (SchemaXml). Title comes with every list, so the copy never creates it.
+const fieldsWithSchema = {
+    value: [
+        { Id: 'bbbbbbbb-0000-4000-8000-000000000001', InternalName: 'Title', StaticName: 'Title', Title: 'Title', TypeAsString: 'Text',
+          Description: 'Study code for the visit.', Required: true, Hidden: false, ReadOnlyField: false, CanBeDeleted: false, FromBaseType: true,
+          Sealed: false, Group: 'Custom Columns', Indexed: false, EnforceUniqueValues: false, CustomFormatter: '',
+          SchemaXml: '<Field ID="{bbbbbbbb-0000-4000-8000-000000000001}" Type="Text" Name="Title" StaticName="Title" DisplayName="Title" Required="TRUE" MaxLength="255" FromBaseType="TRUE" SourceID="http://schemas.microsoft.com/sharepoint/v3" />' },
+        { Id: 'bbbbbbbb-0000-4000-8000-000000000002', InternalName: 'VisitDate', StaticName: 'VisitDate', Title: 'Visit Date', TypeAsString: 'DateTime',
+          Description: 'Planned date of the visit.', Required: false, Hidden: false, ReadOnlyField: false, CanBeDeleted: true, FromBaseType: false,
+          Sealed: false, Group: 'Custom Columns', Indexed: false, EnforceUniqueValues: false, CustomFormatter: '',
+          SchemaXml: '<Field ID="{bbbbbbbb-0000-4000-8000-000000000002}" Type="DateTime" Name="VisitDate" StaticName="VisitDate" DisplayName="Visit Date" Format="DateOnly" Required="FALSE" SourceID="{' + LIST_ID + '}" ColName="datetime1" RowOrdinal="0" Version="1" />' },
+        { Id: 'bbbbbbbb-0000-4000-8000-000000000003', InternalName: 'StudyArm', StaticName: 'StudyArm', Title: 'Study Arm', TypeAsString: 'Choice',
+          Description: '', Required: false, Hidden: false, ReadOnlyField: false, CanBeDeleted: true, FromBaseType: false,
+          Sealed: false, Group: 'Custom Columns', Indexed: false, EnforceUniqueValues: false, CustomFormatter: '',
+          SchemaXml: '<Field ID="{bbbbbbbb-0000-4000-8000-000000000003}" Type="Choice" Name="StudyArm" StaticName="StudyArm" DisplayName="Study Arm" Format="Dropdown" Required="FALSE" SourceID="{' + LIST_ID + '}" ColName="nvarchar4" RowOrdinal="0"><CHOICES><CHOICE>Control</CHOICE><CHOICE>Treatment</CHOICE></CHOICES></Field>' },
+        { Id: 'bbbbbbbb-0000-4000-8000-000000000004', InternalName: 'VisitCount', StaticName: 'VisitCount', Title: 'Visit Count', TypeAsString: 'Number',
+          Description: 'Number of completed visits.', Required: false, Hidden: false, ReadOnlyField: false, CanBeDeleted: true, FromBaseType: false,
+          Sealed: false, Group: 'Custom Columns', Indexed: false, EnforceUniqueValues: false, CustomFormatter: '',
+          SchemaXml: '<Field ID="{bbbbbbbb-0000-4000-8000-000000000004}" Type="Number" Name="VisitCount" StaticName="VisitCount" DisplayName="Visit Count" Decimals="0" Required="FALSE" SourceID="{' + LIST_ID + '}" ColName="float1" RowOrdinal="0" />' }
+    ]
+};
+
+// Returns the full settings of one list or library, as the copy plan reads them, or undefined for an unknown list.
+function listSettingsAnswer(url, match, extraLists) {
+    const list = lists.value.concat(extraLists || []).filter(function(l) { return l.Id === match[1]; })[0];
+    if (!list) { return reply(404, { 'odata.error': { code: '-1, System.ArgumentException', message: { lang: 'en-US', value: 'List does not exist.' } } }); }
+    const viewUrl = String(list.DefaultViewUrl || '');
+    const rootFolder = viewUrl.substring(0, viewUrl.lastIndexOf('/')).replace(/\/Forms$/, '');
+    return {
+        Id: list.Id, Title: list.Title, Description: list.Description, BaseTemplate: list.BaseTemplate, BaseType: list.BaseType,
+        EntityTypeName: list.EntityTypeName, HasUniqueRoleAssignments: list.HasUniqueRoleAssignments, RootFolder: { ServerRelativeUrl: rootFolder },
+        ContentTypesEnabled: false, EnableVersioning: list.EnableVersioning, EnableMinorVersions: list.EnableMinorVersions,
+        MajorVersionLimit: list.MajorVersionLimit, EnableModeration: false, DraftVersionVisibility: 0, EnableAttachments: list.BaseType === 0,
+        EnableFolderCreation: list.BaseType === 1, Hidden: false, NoCrawl: false, OnQuickLaunch: true, ForceCheckout: false,
+        ValidationFormula: '', ValidationMessage: '', Direction: 'none', ListExperienceOptions: 0
+    };
+}
+
+// One view for every list and library: its default view.
+function viewsAnswer(url) {
+    const listPath = url.pathname.replace(/\/views$/, '');
+    return { value: [{
+        Id: 'cccccccc-1000-4000-8000-000000000001', Title: 'All Items', DefaultView: true, PersonalView: false, Hidden: false,
+        ServerRelativeUrl: decodeURIComponent(listPath) + '/AllItems.aspx', ViewType: 'HTML', ViewType2: null,
+        ViewQuery: '<OrderBy><FieldRef Name="VisitDate" /></OrderBy>', RowLimit: 30, Paged: true, Scope: 0, CustomFormatter: '',
+        ViewFields: { Items: ['LinkTitle', 'VisitDate', 'StudyArm', 'VisitCount'] }
+    }] };
+}
+
+// The Item content type of every list, which comes from SharePoint's own Item content type (0x01).
+const listContentTypes = {
+    value: [{ StringId: '0x0100A1B2C3D4E5F60718293A4B5C6D7E8F90', Name: 'Item', Description: 'Create a new list item.', Group: 'List Content Types',
+        Hidden: false, Sealed: false, ReadOnly: false, ClientFormCustomFormatter: '',
+        FieldLinks: [{ Id: 'bbbbbbbb-0000-4000-8000-000000000001', Name: 'Title', Required: true, Hidden: false }] }]
+};
+
+// The site's content types: only SharePoint's own Item, which the copy never creates.
+const siteContentTypes = { value: [{ StringId: '0x01', Name: 'Item', Description: 'Create a new list item.', Group: 'List Content Types', FieldLinks: [] }] };
+
 const folders = {
     value: [
         { Name: 'Forms', UniqueId: 'cccccccc-0000-4000-8000-000000000001', ItemCount: 0, ServerRelativeUrl: SITE_PATH + '/Shared Documents/Forms' },
@@ -274,6 +341,14 @@ const searchResults = {
         }
     }
 };
+
+// Answers a folder read by path. The folder of the weekly-summary site skill holds its SKILL.md; no other folder exists.
+function skillFolderAnswer(url) {
+    const folderPath = String(url.searchParams.get('@p') || '').replace(/^'|'$/g, '').replace(/''/g, "'");
+    if (folderPath !== SITE_PATH + '/Agent Assets/Skills/weekly-summary') { return { Exists: false, Folders: [], Files: [] }; }
+    return { Exists: true, ServerRelativeUrl: folderPath, Folders: [],
+        Files: [{ Name: 'SKILL.md', ServerRelativeUrl: folderPath + '/SKILL.md', Length: '120', UniqueId: skillItems[0].UniqueId }] };
+}
 
 // Each entry matches the part of the address after the site path. Order matters: first match wins.
 // An entry has a fixed body, or an answer(url, match, request) function for answers that depend on the address,
@@ -316,6 +391,9 @@ const API_ANSWERS = [
         return lists;
     } },
     { pattern: /^\/_api\/site\/rootweb\/lists$/, body: { value: hiddenLists } },
+    // Copy site structure reads these before it copies pages: this site is the top site of its site collection, with no subsites.
+    { pattern: /^\/_api\/site\/rootweb$/, body: { Id: siteInfo.Id } },
+    { pattern: /^\/_api\/web\/webinfos$/, body: { value: [] } },
     { pattern: /^\/_api\/web\/GetList\(@listUrl\)$/, answer: function(url) {
         return url.searchParams.get('@listUrl') === "'" + SITE_PATH + "/Agent Assets'"
             ? { Id: AGENT_ASSETS_ID, Title: 'Agent Assets', BaseTemplate: 101, Hidden: true,
@@ -333,6 +411,9 @@ const API_ANSWERS = [
             ? rawReply(200, 'text/markdown', "---\nname: Weekly summary\ndescription: Summarizes the week's visit notes.\n---\nSynthetic instructions.")
             : reply(404, { error: 'File not found' });
     } },
+    // Reads that only the file steps of Copy site structure make: a site skill's folder, and the site's home page.
+    { pattern: /^\/_api\/web\/GetFolderByServerRelativePath\(decodedurl=@p\)$/, answer: skillFolderAnswer },
+    { pattern: /^\/_api\/web\/rootfolder$/, body: { WelcomePage: 'SitePages/Home.aspx' } },
     { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items$"), answer: sitePagesItems },
     { pattern: new RegExp("^/_api/web/lists\\(guid'" + SITE_PAGES_ID + "'\\)/items\\((\\d+)\\)$"), answer: function(url, match) {
         return PAGE_IMAGES[match[1]] ? { BannerImageUrl: PAGE_IMAGES[match[1]] } : reply(404, { error: 'Item not found' });
@@ -341,6 +422,18 @@ const API_ANSWERS = [
         return EFFECTIVE_PERMISSIONS[match[1]] || { High: '0', Low: '0' };
     } },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/roleassignments$/, body: listRoleAssignments },
+    // Reads that only the copy plan in Tools makes. The columns answer applies only to the plan's own $select, which
+    // names FromBaseType, so the report's reads of the same address get the answer below as before.
+    { pattern: /^\/_api\/web\/lists\(guid'([^']+)'\)$/, answer: function(url, match, request, context) {
+        return listSettingsAnswer(url, match, context.settings.extraLists);
+    } },
+    { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, answer: function(url) {
+        return /FromBaseType/.test(url.searchParams.get('$select') || '') ? fieldsWithSchema : undefined;
+    } },
+    { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/views$/, answer: viewsAnswer },
+    { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/contenttypes$/, body: listContentTypes },
+    { pattern: /^\/_api\/web\/contenttypes$/, body: siteContentTypes },
+    { pattern: /^\/_api\/web\/availablecontenttypes$/, body: siteContentTypes },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, body: fields },
     { pattern: /^\/_api\/web\/lists\(guid'[^']+'\)\/RootFolder\/Folders$/, body: folders },
     { pattern: /^\/_api\/site$/, body: siteCollection },
@@ -435,16 +528,22 @@ function buildPageHtml(extraHeadHtml, omitMountDiv) {
  *        and rawReply(status, contentType, text) for an answer that isn't JSON. An answer function can return a
  *        promise, to hold the request until the test is ready. Overrides also answer the requests inside a $batch.
  * @param {string} [options.addressSuffix] Text added to the page address, such as '?siteUrl=...#sna/taxonomy'.
+ * @param {boolean|object} [options.destination] Adds the pretend destination site at /sites/targetsite for the Tools
+ *        tests: true, or the options described in pretend-destination.js, such as { notSiteAdmin: true }.
  * @returns {Promise<{consoleErrors: string[], unexpectedRequests: string[], siteAssetsRequests: {url: string, status: number}[],
- *          apiRequests: string[], otherOriginRequests: string[], writeRequests: {method: string, url: string, body: string}[]}>}
- *          Lists the test can check after the page has run. writeRequests holds every request that is not a GET.
- *          apiRequests also holds each request inside a $batch, after the batch itself.
+ *          apiRequests: string[], otherOriginRequests: string[], writeRequests: {method: string, url: string, body: string}[],
+ *          destination: object|null}>}
+ *          Lists the test can check after the page has run. writeRequests holds every request that is not a GET, to
+ *          this site or the destination. apiRequests also holds each request inside a $batch, after the batch itself.
+ *          destination is the destination's model (see pretend-destination.js), or null without the destination option.
  */
 async function openPretendSite(page, options) {
     const settings = options || {};
     const missingFiles = settings.missingFiles || [];
     const answers = (settings.answerOverrides || []).concat(API_ANSWERS);
-    const record = { consoleErrors: [], unexpectedRequests: [], siteAssetsRequests: [], apiRequests: [], otherOriginRequests: [], writeRequests: [] };
+    const destination = settings.destination ? createDestination(settings.destination, { reply: reply, rawReply: rawReply }) : null;
+    const record = { consoleErrors: [], unexpectedRequests: [], siteAssetsRequests: [], apiRequests: [], otherOriginRequests: [], writeRequests: [],
+        destination: destination ? destination.model : null };
 
     // Returns the answer to one API request, from the overrides and then the standard answers, or undefined when none matches.
     async function findAnswer(method, url, request) {
@@ -459,7 +558,20 @@ async function openPretendSite(page, options) {
         }
         return undefined;
     }
-    const context = { record: record, findAnswer: findAnswer };
+    const context = { record: record, findAnswer: findAnswer, settings: settings };
+
+    // Sends an answer from the answer tables: JSON with 200 OK, reply(status, body), or rawReply(status, contentType, text).
+    async function fulfillAnswer(route, body) {
+        if (body && body[RAW]) {
+            await route.fulfill({ status: body.status, contentType: body.contentType, body: body.text });
+            return;
+        }
+        let status = 200;
+        if (body && body[REPLY]) { status = body.status; body = body.body; }
+        await route.fulfill(status === 204
+            ? { status: 204, body: '' }
+            : { status: status, contentType: 'application/json', body: JSON.stringify(body) });
+    }
 
     page.on('console', function(message) {
         if (message.type() === 'error') { record.consoleErrors.push(message.text()); }
@@ -520,22 +632,26 @@ async function openPretendSite(page, options) {
             return;
         }
 
+        if (destination && destination.handles(pathname)) {
+            const request = route.request();
+            const method = request.method();
+            record.apiRequests.push(url.href);
+            if (method !== 'GET') { record.writeRequests.push({ method: method, url: url.href, body: request.postData() || '' }); }
+            const body = await destination.answer(method, url, request);
+            if (body !== undefined) {
+                await fulfillAnswer(route, body);
+                return;
+            }
+        }
+
         if (pathname.startsWith(SITE_PATH + '/_api/')) {
             const request = route.request();
             const method = request.method();
             record.apiRequests.push(url.href);
             if (method !== 'GET') { record.writeRequests.push({ method: method, url: url.href, body: request.postData() || '' }); }
-            let body = await findAnswer(method, url, request);
+            const body = await findAnswer(method, url, request);
             if (body !== undefined) {
-                if (body && body[RAW]) {
-                    await route.fulfill({ status: body.status, contentType: body.contentType, body: body.text });
-                    return;
-                }
-                let status = 200;
-                if (body && body[REPLY]) { status = body.status; body = body.body; }
-                await route.fulfill(status === 204
-                    ? { status: 204, body: '' }
-                    : { status: status, contentType: 'application/json', body: JSON.stringify(body) });
+                await fulfillAnswer(route, body);
                 return;
             }
         }
@@ -548,4 +664,5 @@ async function openPretendSite(page, options) {
     return record;
 }
 
-module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields, AGENT_ASSETS_ID, agentItems, skillItems, TAXONOMY_HIDDEN_LIST_ID };
+module.exports = { openPretendSite, reply, rawReply, SITE_URL, SITE_PATH, PAGE_URL, DIST_DIR, LIST_ID, LIBRARY_ID, SITE_PAGES_ID, SHARED_FILE_ID, fields, AGENT_ASSETS_ID, agentItems, skillItems, TAXONOMY_HIDDEN_LIST_ID,
+    fieldsWithSchema, DEST_URL, DEST_PATH, DEST_TITLE };

@@ -5,7 +5,7 @@ description: Apply repository-specific preferences when planning, implementing, 
 
 <!--
 This file is part of Sitenalyzer
-Last Modified: 2026-10-21
+Last Modified: 2026-11-08
 Copyright © 2026 The Regents of the University of Michigan
 Licensed under the GNU Free Documentation License v1.3 or later.
 See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license information.
@@ -157,6 +157,31 @@ messages, help, and documentation. For example, "participant", not "subject" or
 - **Page (of a table):** one set of rows of a table with more than 50 rows, moved
   between with **Previous** and **Next**. The size box is **Rows per page**. Not
   "pagination" or "page size" in anything a person reads.
+- **Tools:** the section of the report screen, at `#sna/tools`, with tools that work with a site's structure. Not
+  "Utilities" or "Actions".
+- **Copy site structure:** the tool in **Tools** that copies a site's lists, libraries, columns, views, content types,
+  and term sets into another site, without list items or library files. Use these words for its name, heading, and
+  link. Not "clone", "migrate", or "duplicate".
+- **Destination:** the site that **Copy site structure** copies into, where the person must be a site collection
+  administrator. The site it copies from is "this site" or the **Source**. Not "target site".
+- **Destination check:** the reading back of the destination after a copy, shown as **Destination check** rows in the
+  results. The button that checks the destination before a copy is **Check destination**. Not "verification" or
+  "validation" in anything a person reads.
+- **Site collection administrator:** a person with full control of every site in a site collection, which
+  **Copy site structure** needs in the destination. Not "site collection admin", "SCA", or "site admin".
+- **SharePoint admin:** the person who manages SharePoint for the whole organization. Not "tenant admin" or "global
+  admin" in anything a person reads.
+- **Navigation:** the switch that copies a site's menus. Name each menu the way the results do: "left menu", "top menu",
+  and "footer menu", and a link in one is a "menu link". Not "quick launch", "nav", or "node".
+- **Site look:** the switch that copies a site's theme, logo, header, and footer, and those settings together. Not
+  "branding" or "theme" for the whole set. The theme is one part of the site look.
+- **Replace:** short for the checkbox **Replace pages and files that already exist in the destination**. Not
+  "overwrite".
+- **Before you copy:** the part of **Copy site structure** that lists what the copy will skip, what will fail, and what
+  may fail, after **Copy to destination** and before anything changes, with **Copy anyway** and **Go back**. The check
+  itself is "the check before copying". Not "preflight" in anything a person reads.
+- **Result (of a copy):** **Copied**, **Partly copied**, **Skipped**, or **Failed**, and **Warning** for a row that
+  **Before you copy** listed. Not "Succeeded", "Partial", or "Error".
 - **Filter box:** the box above a table, or above Contents or People and groups,
   that shows only what contains the typed text. Not "search" for these boxes;
   **Search this report** is the only search.

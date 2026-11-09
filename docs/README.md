@@ -18,6 +18,7 @@ for developers and maintainers.
 ### Guides
 
 - [Installing and using Sitenalyzer](usage.md): add Sitenalyzer to a SharePoint site, use it, and update it.
+- [Copying a site's structure](how-to/copy-a-site.md): copy a site's lists, libraries, columns, views, content types, and term sets into another site with **Copy site structure** in Tools.
 - [Troubleshooting](troubleshooting.md): problems you might see after installing, with fixes.
 - [Data dictionary format](data-dictionary.md): every sheet and column of the data dictionary workbook, for people who read it or write it from other data sources.
 - [Sitenalyzer architecture](architecture.md): its parts, how it starts on a page, and why it is built this way.

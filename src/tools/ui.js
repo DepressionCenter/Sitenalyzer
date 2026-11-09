@@ -1,0 +1,1021 @@
+/*
+This file is part of Sitenalyzer
+ui.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: Draws the Tools section (#sna/tools) and its Copy site structure screen (#sna/tools/copy), and handles its
+         buttons, boxes, and switches: the source, the destination and its check, the lists and libraries to copy with
+         their new names and addresses, the term sets, the site's own content types, the other content, the copy with
+         its progress and Stop copying button, the check before copying with Copy anyway and Go back (drawn by
+         preflight.js), and the results table with Save results (.xlsx). The choices and results are kept in _snaToolsState,
+         so they stay when the view is drawn again, such as after Show hidden values changes.
+Notes: See README file for documentation and full license information.
+       Every action name starts with tools-, and sitenalyzer.js passes clicks, typing, and changes inside #sna-tools here.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Screen Settings ###
+
+// The switches under Other content, in order, with their labels and hints.
+var SNA_TOOLS_SWITCHES = [
+    { option: 'pages', label: 'Site pages', hint: 'Copies the pages in Site Pages, pointed at the copied lists and libraries.' },
+    { option: 'siteAssets', label: 'Site Assets', hint: 'Copies the files in Site Assets, such as images that pages show.' },
+    { option: 'agents', label: 'Agents and site skills', hint: 'Copies agents and the site skills in Agent Assets.' },
+    { option: 'navigation', label: 'Navigation', hint: 'Copies the site\'s menus, and points links to this site at the destination.' },
+    { option: 'siteLook', label: 'Site look', hint: 'Copies the theme, logo, header, and footer, which changes how the whole destination looks.' },
+    { option: 'permissions', label: 'Permissions', hint: 'Copies permission levels, groups and their members, and who has access to the site and to each list or library. Off unless you turn it on.' }
+];
+
+// The hint of each switch that a data dictionary file has nothing for.
+var SNA_TOOLS_WORKBOOK_SWITCH_HINT = 'A data dictionary file doesn\'t include these.';
+
+// The hint of Replace for a data dictionary file, which has no pages or files to replace.
+var SNA_TOOLS_WORKBOOK_REPLACE_HINT = 'A data dictionary file doesn\'t include pages or files.';
+
+// Most list and library views counted at the same time for the Views column, and most lists whose content types are
+// read at the same time for the Content types part.
+var SNA_TOOLS_VIEW_COUNT_PARALLEL = 3;
+
+// How long after a part of the screen is drawn again its status line gets a new message. Screen readers announce a
+// change in a status line that is already on the page, but not text that is already in a line when it appears.
+var SNA_TOOLS_STATUS_DELAY_MS = 150;
+
+// The hints of a content type that can't be left out, and why.
+var SNA_TOOLS_TYPE_USED_HINT = 'A list you chose uses it.';
+var SNA_TOOLS_TYPE_PARENT_HINT = 'A content type you chose is based on it.';
+
+// ### Screen State ###
+
+// Returns the choices of a fresh Copy site structure screen. Permissions is off until the person turns it on.
+function snaToolsNewState() {
+    return {
+        source: 'site',             // 'site' (this site's report) or 'workbook' (a data dictionary file)
+        workbook: null,             // { fileName, plan } once a data dictionary file was read
+        workbookStatus: '', workbookError: false,
+        destinationText: '',        // What is in the Destination site address box
+        destination: null,          // The last successful destination check; it counts only while destinationText matches its typed
+        destinationStatus: '', destinationError: false, checking: false,
+        destinationThisSite: false, // true when the last check found the site whose report is open; its answer depends on the source
+        lists: {},                  // Choices by source list ID: { selected, newTitle, newUrl }
+        termSets: {},               // true or false by source term set ID
+        contentTypes: null,         // The site's own content types: { report, status ('loading', 'ready', or 'failed'),
+                                    // types [{ id (uppercase), name, parent (uppercase ID) }], uses { listId: [content type IDs] } }
+        excludedTypes: {},          // true by uppercase ID for each site content type the person unchecked
+        options: { pages: true, siteAssets: true, agents: true, navigation: true, siteLook: false, permissions: false, replaceExisting: false },
+        viewCounts: {}, viewCountsReport: null,
+        running: false, progressText: '', progressValue: 0,
+        preflight: null,            // While Before you copy shows: { plan, dest, warnings, failedChecks, error } (see preflight.js)
+        results: null,              // The rows of the last copy, from snaToolsLog
+        resultsLead: '', resultsTitle: ''
+    };
+}
+
+var _snaToolsState = snaToolsNewState();
+var _snaToolsCheckCount = 0;    // Changes with each destination check, so the answer to an older check is dropped
+var _snaToolsTableWatcher = null; // Watches the size of the table of lists, so it can scroll sideways after a zoom or resize
+
+// True while the choices can't change: while copying or checking, and while Before you copy waits for an answer.
+function snaToolsLocked() {
+    return _snaToolsState.running || !!_snaToolsState.preflight;
+}
+
+// Stops a running copy and forgets every choice and result. Called by Start over, Change site, and Refresh report.
+function snaToolsReset() {
+    snaToolsCancel();
+    _snaToolsCheckCount++;
+    _snaToolsState = snaToolsNewState();
+    _snaToolsRun = null;
+    snaToolsShowSiteActions();
+}
+
+// True while a copy runs, from Copy to destination until the results show, except while Before you copy waits.
+function snaToolsCopying() {
+    return _snaToolsState.running || snaToolsBusy();
+}
+
+// Turns Refresh report, Start over, and Change site off while a copy runs, and shows the sentence under them that says
+// why. Each of them would stop the copy and clear its results, which are the only record of what it changed.
+function snaToolsShowSiteActions() {
+    var copying = snaToolsCopying();
+    var note = document.getElementById('sna-utility-note');
+    if (note) { note.hidden = !copying; }
+    document.querySelectorAll('.sna-utility-bar [data-action="refresh-report"], .sna-utility-bar [data-action="start-over"], ' +
+        '.sna-utility-bar [data-action="change-site"]').forEach(function(button) {
+        button.disabled = copying;
+        if (copying && note) { button.setAttribute('aria-describedby', note.id); } else { button.removeAttribute('aria-describedby'); }
+    });
+}
+
+// ### Choices ###
+
+// Returns the lists and libraries to choose from: the report's, or the data dictionary file's.
+// Each is { sourceId, title, url, isLibrary, columnCount, viewCount (a number, or undefined until counted) }. A managed
+// metadata column's hidden Note column isn't counted, because the person sees the two as one column.
+function snaToolsRows(report) {
+    var state = _snaToolsState;
+    if (state.source === 'workbook') {
+        var plan = state.workbook && state.workbook.plan;
+        return plan ? plan.lists.map(function(l) {
+            return { sourceId: l.sourceId, title: l.title, url: snaToolsCleanAddress(l.url), isLibrary: l.isLibrary, baseTemplate: l.baseTemplate,
+                columnCount: l.fields.filter(function(f) { return !f.builtIn && !f.isTaxonomyNote; }).length, viewCount: l.views.length };
+        }) : [];
+    }
+    return snaToolsSourceLists(report).map(function(row) {
+        row.viewCount = state.viewCounts[row.sourceId];
+        return row;
+    });
+}
+
+// Returns the term sets to choose from: the report's site term group, or the data dictionary file's term sets.
+function snaToolsTermSetRows(report) {
+    var state = _snaToolsState;
+    if (state.source === 'workbook') {
+        var plan = state.workbook && state.workbook.plan;
+        return (plan && plan.termGroup) ? plan.termGroup.sets.map(function(s) {
+            return { sourceId: s.sourceId, name: s.name, termCount: s.terms.length };
+        }) : [];
+    }
+    return snaToolsSourceTermSets(report);
+}
+
+// Returns the person's choice for one list or library, starting with it chosen and its source name and address.
+function snaToolsListChoice(row) {
+    var lists = _snaToolsState.lists;
+    if (!lists[row.sourceId]) { lists[row.sourceId] = { selected: true, newTitle: row.title, newUrl: row.url }; }
+    return lists[row.sourceId];
+}
+
+// True when a term set is chosen. Every term set starts chosen.
+function snaToolsTermSetChosen(row) {
+    var sets = _snaToolsState.termSets;
+    if (!Object.prototype.hasOwnProperty.call(sets, row.sourceId)) { sets[row.sourceId] = true; }
+    return sets[row.sourceId];
+}
+
+// Returns whether a switch under Other content, or Replace, is on. A data dictionary file has no pages, files, menus,
+// look, or permissions, so for that source each one is off. The person's choices stay for this site's report.
+function snaToolsOption(name) {
+    if (_snaToolsState.source === 'workbook') { return false; }
+    return !!_snaToolsState.options[name];
+}
+
+// Returns the last successful destination check while the address box still holds the address it checked, or null.
+function snaToolsCurrentDestination() {
+    var state = _snaToolsState;
+    var dest = state.destination;
+    return (dest && dest.ok && dest.typed === String(state.destinationText || '').trim()) ? dest : null;
+}
+
+// Returns why each of the site's own content types must be copied, by uppercase ID: 'list' when a chosen list uses it,
+// and 'parent' when a content type that is copied is based on it. The person can leave out the others.
+function snaToolsForcedTypes(report) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    var forced = {};
+    if (state.source !== 'site' || !info || info.status !== 'ready') { return forced; }
+    var byId = {};
+    info.types.forEach(function(t) { byId[t.id] = t; });
+    snaToolsRows(report).forEach(function(row) {
+        if (!snaToolsListChoice(row).selected) { return; }
+        (info.uses[row.sourceId] || []).forEach(function(id) { if (byId[id]) { forced[id] = 'list'; } });
+    });
+    info.types.forEach(function(t) {
+        if (!forced[t.id] && state.excludedTypes[t.id]) { return; }
+        for (var parent = byId[t.parent]; parent; parent = byId[parent.parent]) {
+            if (!forced[parent.id]) { forced[parent.id] = 'parent'; }
+        }
+    });
+    return forced;
+}
+
+// Returns how many of the site's own content types the copy includes, or 0 while they aren't known.
+function snaToolsChosenTypeCount(report) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    if (state.source !== 'site' || !info || info.status !== 'ready') { return 0; }
+    var forced = snaToolsForcedTypes(report);
+    return info.types.filter(function(t) { return forced[t.id] || !state.excludedTypes[t.id]; }).length;
+}
+
+// Returns the choices for the plan: { lists: [{ sourceId, newTitle, newUrl }], termSetIds, excludedContentTypeIds, pages,
+// siteAssets, agents, navigation, siteLook, permissions, replaceExisting }. Names are trimmed.
+function snaToolsChoices(report) {
+    var lists = snaToolsRows(report).filter(function(row) { return snaToolsListChoice(row).selected; }).map(function(row) {
+        var choice = snaToolsListChoice(row);
+        return { sourceId: row.sourceId, newTitle: String(choice.newTitle || '').trim(), newUrl: choice.newUrl };
+    });
+    return {
+        lists: lists,
+        termSetIds: snaToolsTermSetRows(report).filter(snaToolsTermSetChosen).map(function(s) { return s.sourceId; }),
+        // The plan copies a chosen list's content types, and the ones they are based on, even when unchecked here.
+        excludedContentTypeIds: Object.keys(_snaToolsState.excludedTypes).filter(function(id) { return _snaToolsState.excludedTypes[id]; }),
+        pages: snaToolsOption('pages'), siteAssets: snaToolsOption('siteAssets'), agents: snaToolsOption('agents'),
+        navigation: snaToolsOption('navigation'), siteLook: snaToolsOption('siteLook'), permissions: snaToolsOption('permissions'), replaceExisting: snaToolsOption('replaceExisting')
+    };
+}
+
+// Checks every choice. Returns { rows, chosenCount, problems: { sourceId: { name, address, note } }, canCopy, hint }, where
+// hint says what the person must do before Copy to destination works, or what it will do. A note isn't a problem: it says
+// the copy adds to a list or library the destination already has (see snaToolsListChoiceProblems in plan.js).
+function snaToolsValidate(report) {
+    var state = _snaToolsState;
+    var rows = snaToolsRows(report);
+    var dest = snaToolsCurrentDestination();
+    var chosen = rows.filter(function(row) { return snaToolsListChoice(row).selected; });
+    var problems = {};
+    var problemCount = 0;
+    chosen.forEach(function(row, index) {
+        var choice = snaToolsListChoice(row);
+        var others = chosen.filter(function(r, i) { return i !== index; }).map(snaToolsListChoice);
+        var found = snaToolsListChoiceProblems(dest, { newTitle: choice.newTitle, newUrl: choice.newUrl, isLibrary: row.isLibrary,
+            baseTemplate: row.baseTemplate }, others.map(function(o) { return o.newTitle; }), others.map(function(o) { return o.newUrl; }));
+        problems[row.sourceId] = found;
+        if (found.name) { problemCount++; }
+        if (found.address) { problemCount++; }
+    });
+    var termSets = snaToolsTermSetRows(report).filter(snaToolsTermSetChosen);
+    var anyOption = ['pages', 'siteAssets', 'agents', 'navigation', 'siteLook', 'permissions'].some(snaToolsOption);
+    var result = { rows: rows, chosenCount: chosen.length, problems: problems, canCopy: false, hint: '' };
+    if (state.running || snaToolsBusy()) {
+        result.hint = 'Sitenalyzer is copying. Select Stop copying to stop.';
+    } else if (state.preflight) {
+        result.hint = (!state.preflight.error && snaToolsPreflightStops(state.preflight.warnings))
+            ? 'Select Go back under Before you copy.' : 'Select Copy anyway or Go back under Before you copy.';
+    } else if (state.source === 'workbook' && !state.workbook) {
+        result.hint = 'Choose a data dictionary file before you copy.';
+    } else if (!dest) {
+        result.hint = 'Check the destination before you copy.';
+    } else if (chosen.length === 0 && termSets.length === 0 && !anyOption && snaToolsChosenTypeCount(report) === 0) {
+        result.hint = 'Choose at least one list, library, term set, content type, or other content to copy.';
+    } else if (problemCount > 0) {
+        result.hint = problemCount === 1
+            ? 'Fix the problem marked in Lists and libraries before you copy.'
+            : 'Fix the ' + problemCount + ' problems marked in Lists and libraries before you copy.';
+    } else {
+        result.canCopy = true;
+        result.hint = dest.thisSite
+            ? 'Copies what you chose from the file to this site, ' + snaMaskText(dest.title || dest.siteUrl) + '.'
+            : 'Copies what you chose to ' + snaMaskText(dest.title || dest.siteUrl) + '. Nothing changes in this site.';
+    }
+    return result;
+}
+
+// ### Draw the Screen ###
+
+/**
+ * Draws the Tools section: its title, its navigation with one part, Copy site structure, and that part.
+ * @param {object} route The view, such as { section: 'tools', anchor: 'copy' }.
+ * @param {object} report The collected report.
+ * @returns {string} Markup for #sp-results. Every value from SharePoint or the person is escaped.
+ */
+function snaToolsRender(route, report) {
+    var part = route.anchor || SNA_TOOLS_PARTS[0];
+    var nav = snaSubnavHtml('Tools', [{ title: '', items: [
+        { href: snaRouteHash({ section: 'tools', anchor: 'copy' }), text: 'Copy site structure', current: part === 'copy' }
+    ] }]);
+    return snaSectionTitleHtml('Tools', 'Tools that work with this site\'s structure.') +
+        '<div class="sna-split">' + nav + '<div class="sna-split-body" id="sna-tools">' + snaToolsRenderCopy(report) + '</div></div>';
+}
+
+// Returns the markup of one heading of Copy site structure, one level under the heading of the part.
+function snaToolsHeadingHtml(id, text) {
+    return '<h4 id="' + id + '" class="sna-subsection-title sna-tools-heading">' + snaEscapeHtml(text) + '</h4>';
+}
+
+// Returns the markup of Copy site structure, drawn from _snaToolsState. Validation messages and the state of
+// Copy to destination are filled in by snaToolsRefreshForm after the markup is on the page.
+function snaToolsRenderCopy(report) {
+    var state = _snaToolsState;
+    var off = snaToolsLocked() ? ' disabled' : '';
+    var isWorkbook = state.source === 'workbook';
+    var origin = snaOrigin(report.siteUrl) || window.location.origin;
+    var html = snaPartTitleHtml('Copy site structure', 'Copies lists and libraries without their items or files, with their columns, ' +
+        'views, and content types, and term sets, into another site where you\'re a site collection administrator.');
+
+    // Source
+    html += snaToolsHeadingHtml('sna-tools-h-source', 'Source') +
+        '<fieldset class="sna-tools-fieldset"><legend class="sna-visually-hidden">Copy from</legend>' +
+        '<div class="sna-tools-choice"><input type="radio" name="sna-tools-source" id="sna-tools-source-site" value="site"' +
+            (isWorkbook ? '' : ' checked') + off + '><label for="sna-tools-source-site">This site\'s report</label></div>' +
+        '<div class="sna-tools-choice"><input type="radio" name="sna-tools-source" id="sna-tools-source-workbook" value="workbook"' +
+            (isWorkbook ? ' checked' : '') + off + '><label for="sna-tools-source-workbook">A data dictionary file</label></div>' +
+        '</fieldset>' +
+        '<div id="sna-tools-file-area" class="sna-tools-file-area"' + (isWorkbook ? '' : ' hidden') + '>' +
+            '<label for="sna-tools-file" class="sna-field-label">Data dictionary file</label>' +
+            '<p id="sna-tools-file-hint" class="sna-hint">Such as a file saved with Data dictionary (.xlsx).</p>' +
+            '<input type="file" id="sna-tools-file" class="sna-tools-file" accept=".xlsx" aria-describedby="sna-tools-file-hint sna-tools-file-status"' + off + '>' +
+            '<p id="sna-tools-file-status" class="sna-tools-status' + (state.workbookError ? ' sna-error-text' : '') + '" role="status">' +
+                snaEscapeHtml(state.workbookStatus) + '</p>' +
+        '</div>';
+
+    // Destination
+    html += snaToolsHeadingHtml('sna-tools-h-destination', 'Destination') +
+        '<label for="sna-tools-destination" class="sna-field-label">Destination site address</label>' +
+        '<p id="sna-tools-destination-hint" class="sna-hint">Such as ' + snaEscapeHtml(origin) + '/sites/new-study</p>' +
+        '<div class="sna-tools-row">' +
+            '<input type="text" id="sna-tools-destination" class="sna-tools-input sna-tools-destination" value="' + snaEscapeHtml(state.destinationText) + '"' +
+                ' autocomplete="off" spellcheck="false" inputmode="url" aria-describedby="sna-tools-destination-hint sna-tools-destination-status"' + off + '>' +
+            '<button type="button" class="sna-btn sna-btn-outline" data-action="tools-choose-destination"' + off + '>Choose a site</button>' +
+            '<button type="button" class="sna-btn sna-btn-primary" data-action="tools-check-destination"' + off + '>Check destination</button>' +
+        '</div>' +
+        '<p id="sna-tools-destination-status" class="sna-tools-status' + (state.destinationError ? ' sna-error-text' : '') + '" role="status">' +
+            snaEscapeHtml(state.destinationStatus) + '</p>';
+
+    html += snaToolsHeadingHtml('sna-tools-h-lists', 'Lists and libraries') + snaToolsListsHtml(report, off);
+    html += snaToolsTermSetsHtml(report, off);
+    html += snaToolsHeadingHtml('sna-tools-h-contenttypes', 'Content types') +
+        '<div id="sna-tools-contenttypes">' + snaToolsContentTypesHtml(off) + '</div>';
+    html += snaToolsOtherContentHtml(off);
+    html += snaToolsCopyHtml();
+    html += state.preflight ? snaToolsPreflightHtml(state.preflight) : '';
+    html += snaToolsResultsHtml();
+    return html;
+}
+
+// Returns the table of lists and libraries to copy, with a checkbox, a Name box, and an Address box for each.
+function snaToolsListsHtml(report, off) {
+    var state = _snaToolsState;
+    var rows = snaToolsRows(report);
+    if (state.source === 'workbook' && !state.workbook) {
+        return '<p class="sna-note">Choose a data dictionary file to see its lists and libraries.</p>';
+    }
+    if (rows.length === 0) {
+        return '<p class="sna-note">' + (state.source === 'workbook'
+            ? 'This data dictionary file has no lists or libraries that Sitenalyzer can copy.'
+            : 'This site has no lists or libraries that Sitenalyzer can copy. Site Pages, Site Assets, and Agent Assets are copied with the switches under Other content.') + '</p>';
+    }
+    var html = '<p class="sna-hint sna-tools-lists-hint">Sitenalyzer copies each one without its items or files. The address is the last part of its web address, such as Study-Visits.</p>' +
+        '<div class="sna-view-actions sna-tools-select-actions">' +
+            '<button type="button" class="sna-link-btn" data-action="tools-select-all"' + off + '>Select all</button>' +
+            '<button type="button" class="sna-link-btn" data-action="tools-clear-all"' + off + '>Clear all</button>' +
+        '</div>' +
+        '<p id="sna-tools-lists-count" class="sna-table-count" role="status"></p>' +
+        '<div id="sna-tools-lists-wrap" class="sna-tools-table-wrap">' +
+        '<table class="sna-perm-list-table sna-tools-lists"><caption class="sna-visually-hidden">Lists and libraries to copy</caption>' +
+        '<thead><tr><th scope="col">Copy</th><th scope="col">Name</th><th scope="col">Address</th><th scope="col">Type</th>' +
+        '<th scope="col">Columns</th><th scope="col">Views</th></tr></thead><tbody>';
+    rows.forEach(function(row, index) {
+        var choice = snaToolsListChoice(row);
+        var id = 'sna-tools-row-' + index;
+        html += '<tr data-list-id="' + snaEscapeHtml(row.sourceId) + '">' +
+            '<td><label class="sna-tools-check"><input type="checkbox" class="sna-tools-list-check" id="' + id + '-copy"' +
+                (choice.selected ? ' checked' : '') + off + '><span>' + snaEscapeHtml(row.title) + '</span></label></td>' +
+            '<td><input type="text" class="sna-tools-input sna-tools-list-name" id="' + id + '-name" value="' + snaEscapeHtml(choice.newTitle) + '"' +
+                ' aria-label="' + snaEscapeHtml('New name for ' + row.title) + '" aria-describedby="' + id + '-name-msg" autocomplete="off" spellcheck="false"' + off + '>' +
+                '<p id="' + id + '-name-msg" class="sna-tools-field-msg sna-error-text" hidden></p></td>' +
+            '<td><input type="text" class="sna-tools-input sna-tools-list-address" id="' + id + '-address" value="' + snaEscapeHtml(choice.newUrl) + '"' +
+                ' aria-label="' + snaEscapeHtml('New address for ' + row.title) + '" aria-describedby="' + id + '-address-msg" autocomplete="off" spellcheck="false"' + off + '>' +
+                '<p id="' + id + '-address-msg" class="sna-tools-field-msg sna-error-text" hidden></p></td>' +
+            '<td>' + (row.isLibrary ? 'Library' : 'List') + '</td>' +
+            '<td class="sna-tools-number">' + snaEscapeHtml(String(row.columnCount)) + '</td>' +
+            '<td class="sna-tools-number sna-tools-views">' + snaEscapeHtml(row.viewCount === undefined ? '' : String(row.viewCount)) + '</td></tr>';
+    });
+    return html + '</tbody></table></div>';
+}
+
+// Returns the term sets to copy, as checkboxes, or '' when the source has no term group of its own.
+function snaToolsTermSetsHtml(report, off) {
+    var sets = snaToolsTermSetRows(report);
+    if (sets.length === 0) { return ''; }
+    return snaToolsHeadingHtml('sna-tools-h-termsets', 'Term sets') +
+        '<p id="sna-tools-termsets-hint" class="sna-hint">Columns that use a term set you leave out are skipped.</p>' +
+        '<ul class="sna-tools-checklist" aria-labelledby="sna-tools-h-termsets">' + sets.map(function(set) {
+            return '<li><label class="sna-tools-check"><input type="checkbox" class="sna-tools-termset-check" data-set-id="' + snaEscapeHtml(set.sourceId) + '"' +
+                (snaToolsTermSetChosen(set) ? ' checked' : '') + off + '><span>' + snaEscapeHtml(set.name) +
+                ' <span class="sna-muted">(' + snaEscapeHtml(snaCountText(set.termCount, 'term', 'terms')) + ')</span></span></label></li>';
+        }).join('') + '</ul>';
+}
+
+// Returns the inside of the Content types part: a checkbox for each of the site's own content types, all checked at
+// first, or a sentence that says why there are none. Which ones can't be left out is set by snaToolsRefreshForm.
+function snaToolsContentTypesHtml(off) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    if (state.source === 'workbook') { return '<p class="sna-note">A data dictionary file doesn\'t include content types.</p>'; }
+    if (!info || info.status === 'loading') { return '<p class="sna-note">Reading this site\'s content types...</p>'; }
+    if (info.status === 'failed') {
+        return '<p class="sna-note">Sitenalyzer couldn\'t read this site\'s content types here, so the copy includes all of the site\'s own content types.</p>';
+    }
+    if (info.types.length === 0) { return '<p class="sna-note">This site has no content types of its own.</p>'; }
+    return '<p id="sna-tools-types-hint" class="sna-hint">Sitenalyzer copies each content type you check, with its columns.</p>' +
+        '<ul class="sna-tools-checklist" aria-labelledby="sna-tools-h-contenttypes">' + info.types.map(function(t, index) {
+            var id = 'sna-tools-type-' + index;
+            return '<li><label class="sna-tools-check"><input type="checkbox" class="sna-tools-type-check" id="' + id + '" data-type-id="' + snaEscapeHtml(t.id) + '"' +
+                (state.excludedTypes[t.id] ? '' : ' checked') + off + '><span>' + snaEscapeHtml(t.name) + '</span></label>' +
+                '<p id="' + id + '-hint" class="sna-hint sna-tools-type-hint" hidden></p></li>';
+        }).join('') + '</ul>';
+}
+
+// Returns the switches under Other content and the Replace checkbox, each with a one-sentence hint.
+function snaToolsOtherContentHtml(off) {
+    var isWorkbook = _snaToolsState.source === 'workbook';
+    var html = snaToolsHeadingHtml('sna-tools-h-other', 'Other content') + '<ul class="sna-tools-switches">';
+    SNA_TOOLS_SWITCHES.forEach(function(item) {
+        var id = 'sna-tools-option-' + item.option;
+        html += '<li class="sna-tools-switch' + (isWorkbook ? ' sna-tools-disabled' : '') + '"><div class="sna-tools-switch-row">' +
+            '<input type="checkbox" role="switch" id="' + id + '" data-option="' + item.option + '" aria-describedby="' + id + '-hint"' +
+                (snaToolsOption(item.option) ? ' checked' : '') + (isWorkbook ? ' disabled' : off) + '>' +
+            '<label for="' + id + '">' + snaEscapeHtml(item.label) + '</label></div>' +
+            '<p id="' + id + '-hint" class="sna-hint">' + snaEscapeHtml(isWorkbook ? SNA_TOOLS_WORKBOOK_SWITCH_HINT : item.hint) + '</p></li>';
+    });
+    html += '</ul><div class="sna-tools-replace' + (isWorkbook ? ' sna-tools-disabled' : '') + '"><div class="sna-tools-choice">' +
+        '<input type="checkbox" id="sna-tools-option-replaceExisting" data-option="replaceExisting" aria-describedby="sna-tools-option-replaceExisting-hint"' +
+            (snaToolsOption('replaceExisting') ? ' checked' : '') + (isWorkbook ? ' disabled' : off) + '>' +
+        '<label for="sna-tools-option-replaceExisting">Replace pages and files that already exist in the destination</label></div>' +
+        '<p id="sna-tools-option-replaceExisting-hint" class="sna-hint">' + snaEscapeHtml(isWorkbook ? SNA_TOOLS_WORKBOOK_REPLACE_HINT
+            : 'Leave this off to keep the destination\'s own pages and files.') + '</p></div>';
+    return html;
+}
+
+// Returns the Copy part: the Copy to destination button and its hint, and while copying, the progress bar and
+// the Stop copying button. The progress line is always on the page, so screen readers announce each change.
+function snaToolsCopyHtml() {
+    var state = _snaToolsState;
+    return snaToolsHeadingHtml('sna-tools-h-copy', 'Copy') +
+        '<p id="sna-tools-copy-hint" class="sna-hint sna-tools-copy-hint"></p>' +
+        '<div class="sna-tools-row">' +
+            '<button type="button" id="sna-tools-copy-button" class="sna-btn sna-btn-primary" data-action="tools-start-copy" aria-describedby="sna-tools-copy-hint" disabled>Copy to destination</button>' +
+            (state.running ? '<button type="button" id="sna-tools-stop-button" class="sna-btn sna-btn-outline" data-action="tools-stop-copy">Stop copying</button>' : '') +
+        '</div>' +
+        '<div class="sna-tools-progress-area"' + (state.running ? '' : ' hidden') + '>' +
+            '<label for="sna-tools-progress" class="sna-field-label">Copy progress</label>' +
+            '<progress id="sna-tools-progress" max="' + SNA_TOOLS_STEP_COUNT + '" value="' + Number(state.progressValue || 0) + '"></progress>' +
+        '</div>' +
+        '<p id="sna-tools-progress-status" class="sna-tools-status" role="status">' + snaEscapeHtml(state.running ? state.progressText : '') + '</p>';
+}
+
+// Returns the counts sentence of the results, such as "Copied 12 items. Partly copied 2. Skipped 1. Failed 0.", and
+// "Warned about 2 items before the copy." when Before you copy listed any. Summary rows, such as the destination check,
+// are not counted.
+function snaToolsResultsSummary(results) {
+    var counts = { copied: 0, partial: 0, skipped: 0, failed: 0, warning: 0 };
+    results.forEach(function(r) { if (!r.summary && counts[r.result] !== undefined) { counts[r.result]++; } });
+    return 'Copied ' + snaCountText(counts.copied, 'item', 'items') + '. Partly copied ' + counts.partial + '. Skipped ' +
+        counts.skipped + '. Failed ' + counts.failed + '.' +
+        (counts.warning ? ' Warned about ' + snaCountText(counts.warning, 'item', 'items') + ' before the copy.' : '');
+}
+
+// Returns the Results part after a copy: what happened, the counts, the results table, and Save results (.xlsx).
+function snaToolsResultsHtml() {
+    var state = _snaToolsState;
+    if (!state.results) { return ''; }
+    var html = '<h4 id="sna-tools-results-title" class="sna-subsection-title sna-tools-heading" tabindex="-1">Results</h4>' +
+        (state.resultsLead ? '<p class="sna-tools-results-lead">' + snaEscapeHtml(state.resultsLead) + '</p>' : '') +
+        '<p class="sna-tools-results-summary">' + snaEscapeHtml(snaToolsResultsSummary(state.results)) + '</p>';
+    if (state.results.length === 0) { return html; }
+    return html + '<div class="sna-view-actions">' +
+            '<button type="button" class="sna-btn sna-btn-outline" data-action="tools-save-results">' + snaIconHtml('download') + 'Save results (.xlsx)</button>' +
+        '</div>' +
+        snaQueueTableHtml({ id: 'sna-tbl-tools-results', type: 'toolsresults', searchLabel: 'results', label: 'Results of the copy',
+            data: state.results.map(function(r) { return { name: r.name, kind: r.kind, resultText: SNA_TOOLS_RESULTS[r.result], note: r.note }; }) },
+            'sna-tools-results-table');
+}
+
+// ### Update the Screen ###
+
+// Draws the Tools view again when it is on screen, then puts focus on the element with focusId, if there is one.
+function snaToolsRedraw(focusId) {
+    if (!_snaReport || !_snaRoute || _snaRoute.section !== 'tools') { return; }
+    renderApp(_snaRoute, { focus: 'none', full: true });
+    var target = focusId ? document.getElementById(focusId) : null;
+    if (target && !target.disabled) {
+        try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+        target.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// Runs after the Tools view is drawn: fills in validation messages and the copy hint, lets the table of lists scroll
+// sideways when it doesn't fit, and starts counting each list's views.
+function snaToolsAfterRender() {
+    snaToolsRefreshForm();
+    snaToolsFitTable();
+    snaToolsWatchTable();
+    snaToolsLoadViewCounts(_snaReport);
+    snaToolsLoadContentTypes(_snaReport);
+}
+
+// Checks again whether the table of lists fits each time its box changes size, such as when the person zooms in or
+// makes the window narrower. Only the table on the page now is watched.
+function snaToolsWatchTable() {
+    if (_snaToolsTableWatcher) { _snaToolsTableWatcher.disconnect(); _snaToolsTableWatcher = null; }
+    var wrap = document.getElementById('sna-tools-lists-wrap');
+    if (!wrap || typeof ResizeObserver !== 'function') { return; }
+    _snaToolsTableWatcher = new ResizeObserver(function() { snaToolsFitTable(); });
+    _snaToolsTableWatcher.observe(wrap);
+}
+
+// Writes a message in a status line that was just drawn again, in a later task, so screen readers find the line on the
+// page first and then announce the message. The line stays empty until then. isCurrent returns false when the message
+// no longer applies, such as after the person changed something, and the message is then left out.
+function snaToolsAnnounceLater(lineId, text, isCurrent) {
+    var line = document.getElementById(lineId);
+    if (!line) { return; }
+    line.textContent = '';
+    setTimeout(function() {
+        var now = document.getElementById(lineId);
+        if (now && !now.textContent && isCurrent()) { now.textContent = text; }
+    }, SNA_TOOLS_STATUS_DELAY_MS);
+}
+
+// Shows a message under one Name or Address box, or removes it when text is ''. The box is marked invalid while it has
+// one, unless isNote is true: a note says what the copy will do and needs no fix.
+function snaToolsSetFieldMessage(input, text, isNote) {
+    if (!input) { return; }
+    var message = document.getElementById(input.id + '-msg');
+    if (message) {
+        message.textContent = text;
+        message.hidden = !text;
+        message.classList.toggle('sna-error-text', !isNote);
+        message.classList.toggle('sna-hint', !!isNote);
+    }
+    if (text && !isNote) { input.setAttribute('aria-invalid', 'true'); } else { input.removeAttribute('aria-invalid'); }
+}
+
+// Brings the parts of the screen that depend on the choices up to date, without drawing the view again, so focus and
+// typing stay where they are: the messages under the Name and Address boxes, the count of chosen lists, and the
+// Copy to destination button and its hint.
+function snaToolsRefreshForm() {
+    var root = document.getElementById('sna-tools');
+    if (!root || !_snaReport) { return; }
+    var check = snaToolsValidate(_snaReport);
+    root.querySelectorAll('tr[data-list-id]').forEach(function(tr) {
+        var problem = check.problems[tr.getAttribute('data-list-id')] || { name: '', address: '', note: '' };
+        snaToolsSetFieldMessage(tr.querySelector('.sna-tools-list-name'), problem.name);
+        snaToolsSetFieldMessage(tr.querySelector('.sna-tools-list-address'), problem.address || problem.note, !problem.address && !!problem.note);
+    });
+    var count = document.getElementById('sna-tools-lists-count');
+    if (count) {
+        var total = check.rows.length;
+        count.textContent = 'Chose ' + check.chosenCount + ' of ' + (total === 1 ? '1 list or library.' : total + ' lists and libraries.');
+    }
+    var forced = snaToolsForcedTypes(_snaReport);
+    root.querySelectorAll('.sna-tools-type-check').forEach(function(box) {
+        var id = box.getAttribute('data-type-id');
+        var why = forced[id];
+        var text = why === 'list' ? SNA_TOOLS_TYPE_USED_HINT : (why === 'parent' ? SNA_TOOLS_TYPE_PARENT_HINT : '');
+        box.checked = !!why || !_snaToolsState.excludedTypes[id];
+        box.disabled = !!why || snaToolsLocked();
+        var hint = document.getElementById(box.id + '-hint');
+        if (hint) { hint.textContent = text; hint.hidden = !text; }
+        if (text) { box.setAttribute('aria-describedby', box.id + '-hint'); } else { box.removeAttribute('aria-describedby'); }
+    });
+    var button = document.getElementById('sna-tools-copy-button');
+    if (button) { button.disabled = !check.canCopy; }
+    var hint = document.getElementById('sna-tools-copy-hint');
+    if (hint) { hint.textContent = check.hint; }
+}
+
+// Lets the table of lists scroll sideways when its boxes don't fit, such as on a phone. While it scrolls, its box is a
+// labeled region that keyboard users can reach and scroll with the arrow keys.
+function snaToolsFitTable() {
+    var wrap = document.getElementById('sna-tools-lists-wrap');
+    if (!wrap) { return; }
+    if (wrap.scrollWidth > wrap.clientWidth + 1) {
+        wrap.setAttribute('role', 'region');
+        wrap.setAttribute('tabindex', '0');
+        wrap.setAttribute('aria-label', 'Lists and libraries to copy (scroll sideways to see more)');
+    } else {
+        wrap.removeAttribute('role');
+        wrap.removeAttribute('tabindex');
+        wrap.removeAttribute('aria-label');
+    }
+}
+
+// Counts the public views of each list and library in the report, once for each report, for the Views column.
+// A list whose views can't be read shows Not read.
+function snaToolsLoadViewCounts(report) {
+    var state = _snaToolsState;
+    if (!report || state.source !== 'site' || state.viewCountsReport === report) { return; }
+    state.viewCountsReport = report;
+    var rows = snaToolsSourceLists(report);
+    snaMapWithLimit(rows, SNA_TOOLS_VIEW_COUNT_PARALLEL, async function(row) {
+        var count;
+        try {
+            var json = await snaToolsRead(report.siteUrl, "/_api/web/lists(guid'" + row.sourceId + "')/views?$select=Id,PersonalView,Hidden");
+            count = ((json && json.value) || []).filter(function(v) { return !v.PersonalView && !v.Hidden; }).length;
+        } catch (err) {
+            count = 'Not read';
+        }
+        if (_snaToolsState !== state || _snaReport !== report) { return; }
+        state.viewCounts[row.sourceId] = count;
+        var root = document.getElementById('sna-tools');
+        if (!root || state.source !== 'site') { return; }
+        Array.prototype.filter.call(root.querySelectorAll('tr[data-list-id]'), function(tr) {
+            return tr.getAttribute('data-list-id') === row.sourceId;
+        }).forEach(function(tr) {
+            var cell = tr.querySelector('.sna-tools-views');
+            if (cell) { cell.textContent = String(count); }
+        });
+    });
+}
+
+// Reads the site's own content types, once for each report, and, when it has any, which of them each list or library
+// uses, for the Content types part. Content types from SharePoint and from the content type hub aren't offered.
+async function snaToolsLoadContentTypes(report) {
+    var state = _snaToolsState;
+    if (!report || state.source !== 'site' || (state.contentTypes && state.contentTypes.report === report)) { return; }
+    var info = { report: report, status: 'loading', types: [], uses: {} };
+    state.contentTypes = info;
+    snaToolsShowContentTypes();
+    try {
+        var read = await snaToolsReadAll(report.siteUrl, '/_api/web/contenttypes?$select=' + SNA_TOOLS_CONTENT_TYPE_CHOICE_SELECT, SNA_TOOLS_READ_MAX);
+        info.types = snaToolsChoosableContentTypes(read.items.map(function(ct) { return snaToolsPlanContentType(ct, false); })).map(function(t) {
+            return { id: t.stringId.toUpperCase(), name: t.name, parent: String(t.parentStringId).toUpperCase() };
+        });
+        if (info.types.length > 0) {
+            await snaMapWithLimit(snaToolsSourceLists(report), SNA_TOOLS_VIEW_COUNT_PARALLEL, async function(row) {
+                try {
+                    var types = await snaToolsReadAll(report.siteUrl, "/_api/web/lists(guid'" + row.sourceId + "')/contenttypes?$select=StringId", SNA_TOOLS_READ_MAX);
+                    info.uses[row.sourceId] = types.items.map(function(ct) { return snaToolsListTypeParent(ct.StringId); }).filter(function(id) { return !!id; });
+                } catch (err) {
+                    // The copy itself still copies the content types this list uses.
+                    info.uses[row.sourceId] = [];
+                }
+            });
+        }
+        info.status = 'ready';
+    } catch (err) {
+        info.status = 'failed';
+    }
+    if (_snaToolsState !== state || state.contentTypes !== info || _snaReport !== report) { return; }
+    snaToolsShowContentTypes();
+    snaToolsRefreshForm();
+}
+
+// Draws the inside of the Content types part again, without drawing the rest of the view.
+function snaToolsShowContentTypes() {
+    var part = document.getElementById('sna-tools-contenttypes');
+    // The names are hidden like every other value in the view, such as a name that looks like a phone number.
+    if (part) { part.innerHTML = snaMaskHtml(snaToolsContentTypesHtml(snaToolsLocked() ? ' disabled' : '')); }
+}
+
+// Shows the result of a destination check, or '' to clear it, under the destination box.
+function snaToolsSetDestinationStatus(text, isError) {
+    var state = _snaToolsState;
+    state.destinationStatus = text || '';
+    state.destinationError = !!isError;
+    var line = document.getElementById('sna-tools-destination-status');
+    if (!line) { return; }
+    line.textContent = state.destinationStatus;
+    line.classList.toggle('sna-error-text', state.destinationError);
+}
+
+// ### Events ###
+
+/**
+ * Handles a click on a Tools button. Called by snaHandleAppClick in sitenalyzer.js for every data-action.
+ * @param {string} action The data-action value, such as 'tools-check-destination'.
+ * @param {Element} target The element with the data-action.
+ * @param {Event} e The click.
+ * @returns {boolean} True when the action belongs to Tools, so no other handler runs.
+ */
+function snaToolsHandleAction(action, target, e) {
+    if (String(action || '').indexOf('tools-') !== 0) { return false; }
+    if (action === 'tools-check-destination') { snaToolsCheckDestinationNow(); }
+    else if (action === 'tools-choose-destination') { snaOpenSiteDialog(target, 'tools-destination'); }
+    else if (action === 'tools-select-all') { snaToolsSelectAll(true); }
+    else if (action === 'tools-clear-all') { snaToolsSelectAll(false); }
+    else if (action === 'tools-start-copy') { snaToolsStartCopy(); }
+    else if (action === 'tools-copy-anyway') { snaToolsCopyAnyway(); }
+    else if (action === 'tools-go-back') { snaToolsGoBack(); }
+    else if (action === 'tools-stop-copy') { snaToolsStopCopy(); }
+    else if (action === 'tools-save-results') { snaToolsSaveResults(); }
+    return true;
+}
+
+// Handles typing in the destination box and the Name and Address boxes.
+function snaToolsHandleInput(e) {
+    var el = e.target;
+    var state = _snaToolsState;
+    if (snaToolsLocked()) { return; }
+    if (el.id === 'sna-tools-destination') {
+        var wasChecked = !!snaToolsCurrentDestination();
+        state.destinationText = el.value;
+        if (state.checking) {
+            // The check that is running is for the address that was in the box, so its answer is dropped.
+            snaToolsStopDestinationCheck();
+            snaToolsSetDestinationStatus('', false);
+        } else if (wasChecked && !snaToolsCurrentDestination()) {
+            snaToolsSetDestinationStatus('', false);
+        }
+        snaToolsRefreshForm();
+        return;
+    }
+    var row = el.closest('tr[data-list-id]');
+    var choice = row ? state.lists[row.getAttribute('data-list-id')] : null;
+    if (!choice) { return; }
+    if (el.classList.contains('sna-tools-list-name')) { choice.newTitle = el.value; }
+    else if (el.classList.contains('sna-tools-list-address')) { choice.newUrl = el.value; }
+    snaToolsRefreshForm();
+}
+
+// Handles the source buttons, checkboxes, switches, and the data dictionary file box.
+function snaToolsHandleChange(e) {
+    var el = e.target;
+    var state = _snaToolsState;
+    if (snaToolsLocked()) { return; }
+    if (el.name === 'sna-tools-source') {
+        state.source = el.value === 'workbook' ? 'workbook' : 'site';
+        state.lists = {};
+        state.termSets = {};
+        // This site is a destination only for a data dictionary file, so a check that found this site, or one still
+        // running, no longer counts for the new source, and its answer is replaced.
+        var status = '';
+        if (state.checking || state.destinationThisSite) {
+            snaToolsStopDestinationCheck();
+            state.destinationThisSite = false;
+            state.destination = null;
+            status = String(state.destinationText || '').trim() ? 'You changed the source, so select Check destination again.' : '';
+            snaToolsSetDestinationStatus(status, false);
+        }
+        snaToolsRedraw(el.id);
+        if (status) {
+            snaToolsAnnounceLater('sna-tools-destination-status', status, function() { return _snaToolsState === state && state.destinationStatus === status; });
+        }
+        return;
+    }
+    if (el.id === 'sna-tools-file') { snaToolsReadChosenFile(el); return; }
+    if (el.classList.contains('sna-tools-list-check')) {
+        var row = el.closest('tr[data-list-id]');
+        var choice = row ? state.lists[row.getAttribute('data-list-id')] : null;
+        if (choice) { choice.selected = el.checked; }
+    } else if (el.classList.contains('sna-tools-termset-check')) {
+        state.termSets[el.getAttribute('data-set-id')] = el.checked;
+    } else if (el.classList.contains('sna-tools-type-check')) {
+        state.excludedTypes[el.getAttribute('data-type-id')] = !el.checked;
+    } else if (el.hasAttribute('data-option')) {
+        var option = el.getAttribute('data-option');
+        if (Object.prototype.hasOwnProperty.call(state.options, option)) { state.options[option] = el.checked; }
+    }
+    snaToolsRefreshForm();
+}
+
+// Enter in the destination box checks the destination, the same as Check destination.
+function snaToolsHandleKeydown(e) {
+    if (e.key !== 'Enter' || !e.target || e.target.id !== 'sna-tools-destination') { return; }
+    e.preventDefault();
+    snaToolsCheckDestinationNow();
+}
+
+// Chooses every list and library, or none, and keeps focus on the button.
+function snaToolsSelectAll(selected) {
+    if (snaToolsLocked() || !_snaReport) { return; }
+    snaToolsRows(_snaReport).forEach(function(row) { snaToolsListChoice(row).selected = selected; });
+    var root = document.getElementById('sna-tools');
+    if (root) { root.querySelectorAll('.sna-tools-list-check').forEach(function(box) { box.checked = selected; }); }
+    snaToolsRefreshForm();
+}
+
+// Puts a site chosen in Choose a site into the destination box, closes the dialog, and returns focus to the box.
+// Called by snaChooseSite in sitenalyzer.js when the dialog was opened by Choose a site in Tools.
+function snaToolsUseDestination(address) {
+    var state = _snaToolsState;
+    var text = String(address || '').trim();
+    // A check that is still running is for the address that was in the box, so its answer is dropped.
+    if (state.checking) { snaToolsStopDestinationCheck(); }
+    state.destinationText = text;
+    state.destination = null;
+    state.destinationThisSite = false;
+    snaToolsSetDestinationStatus(text ? 'Select Check destination to check this site.' : '', false);
+    var input = document.getElementById('sna-tools-destination');
+    if (input) {
+        input.value = text;
+        _snaSiteDialogOpener = input;
+    }
+    snaCloseSiteDialog();
+    snaToolsRefreshForm();
+}
+
+// Drops the answer of the destination check that is running, so Check destination can check another address.
+function snaToolsStopDestinationCheck() {
+    _snaToolsCheckCount++;
+    _snaToolsState.checking = false;
+}
+
+// Checks the address in the destination box and shows the result under it. Focus stays on the button.
+async function snaToolsCheckDestinationNow() {
+    var state = _snaToolsState;
+    var report = _snaReport;
+    if (!report || state.checking || snaToolsLocked()) { return; }
+    var input = document.getElementById('sna-tools-destination');
+    if (input) { state.destinationText = input.value; }
+    var typed = String(state.destinationText || '').trim();
+    var checkId = ++_snaToolsCheckCount;
+    state.checking = true;
+    state.destination = null;
+    snaToolsSetDestinationStatus('Checking the destination...', false);
+    snaToolsRefreshForm();
+    var result;
+    try {
+        result = await snaToolsCheckDestination(typed, report.siteUrl, snaToolsReportWebId(report), state.source === 'workbook');
+    } catch (err) {
+        result = { ok: false, message: 'Sitenalyzer couldn\'t check the destination. ' + snaToolsFriendlyError(err) };
+    }
+    if (checkId !== _snaToolsCheckCount || _snaToolsState !== state) { return; }
+    state.checking = false;
+    result.typed = typed;
+    state.destination = result.ok ? result : null;
+    state.destinationThisSite = !!result.thisSite;
+    snaToolsSetDestinationStatus(result.message, !result.ok);
+    snaToolsRefreshForm();
+}
+
+// Reads the data dictionary file the person chose, then shows its lists, libraries, and term sets.
+async function snaToolsReadChosenFile(fileInput) {
+    var state = _snaToolsState;
+    var file = fileInput.files && fileInput.files[0];
+    state.workbook = null;
+    state.lists = {};
+    state.termSets = {};
+    if (!file) {
+        state.workbookStatus = '';
+        state.workbookError = false;
+        snaToolsRedraw('sna-tools-file');
+        return;
+    }
+    state.workbookStatus = 'Reading ' + file.name + '...';
+    state.workbookError = false;
+    var status = document.getElementById('sna-tools-file-status');
+    if (status) { status.textContent = state.workbookStatus; status.classList.remove('sna-error-text'); }
+    try {
+        var plan = await snaToolsReadWorkbook(file);
+        if (_snaToolsState !== state) { return; }
+        state.workbook = { fileName: file.name, plan: plan };
+        var sets = plan.termGroup ? plan.termGroup.sets.length : 0;
+        state.workbookStatus = 'Read ' + file.name + ': ' + snaCountText(plan.lists.length, 'list or library', 'lists and libraries') +
+            ' and ' + snaCountText(sets, 'term set', 'term sets') + '.';
+    } catch (err) {
+        if (_snaToolsState !== state) { return; }
+        state.workbookStatus = snaToolsFriendlyError(err);
+        state.workbookError = true;
+    }
+    var message = state.workbookStatus;
+    snaToolsRedraw('sna-tools-file');
+    snaToolsAnnounceLater('sna-tools-file-status', message, function() { return _snaToolsState === state && state.workbookStatus === message; });
+}
+
+// ### Copy ###
+
+// Copy to destination: reads what the copy needs from this site, then runs the check before copying (preflight.js) and
+// shows Before you copy, with focus on its heading. Nothing changes in the destination until the person selects Copy
+// anyway. Focus moves to Stop copying while the reads and the check run.
+async function snaToolsStartCopy() {
+    var state = _snaToolsState;
+    var report = _snaReport;
+    if (!report || snaToolsLocked() || snaToolsBusy()) { return; }
+    var check = snaToolsValidate(report);
+    if (!check.canCopy) { snaToolsRefreshForm(); return; }
+    var dest = snaToolsCurrentDestination();
+    var choices = snaToolsChoices(report);
+    var run = snaToolsBeginRun(dest);
+    state.running = true;
+    state.results = null;
+    state.progressValue = 0;
+    state.progressText = 'Reading what the copy needs from this site.';
+    snaToolsShowSiteActions();
+    snaToolsRedraw('sna-tools-stop-button');
+    snaToolsAnnounce(true);
+
+    var preflight = null;
+    var lead = '';
+    try {
+        var plan = state.source === 'workbook'
+            ? snaToolsPlanWithChoices(state.workbook.plan, choices)
+            : await snaToolsBuildPlanFromSite(report, choices, function(text) { snaToolsProgress(text); });
+        snaToolsCheckCancelled();
+        snaToolsProgress('Checking the destination before the copy.');
+        preflight = { plan: plan, dest: dest, warnings: [], failedChecks: [], error: '' };
+        try {
+            var found = await snaToolsPreflight(plan, dest);
+            preflight.warnings = found.warnings;
+            preflight.failedChecks = found.failedChecks;
+            // The lists the check read again replace the ones Check destination read, so after Go back, Lists and
+            // libraries marks a name or address the destination started using since.
+            if (found.destLists) { dest.lists = found.destLists; }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            preflight.error = 'Sitenalyzer couldn\'t finish checking the destination before the copy, so it can\'t say what the copy will skip.';
+        }
+    } catch (err) {
+        // Only the reads of this site get here: the check before copying catches its own problems.
+        preflight = null;
+        lead = snaToolsIsCancelled(err)
+            ? 'You stopped the copy before it changed anything.'
+            : 'Sitenalyzer stopped the copy before it changed anything. ' + snaToolsSourceReadError(err);
+    }
+    snaToolsEndRun(run);
+    if (_snaToolsState !== state) { return; }
+    state.running = false;
+    state.progressText = '';
+    snaToolsShowSiteActions();
+    if (preflight) {
+        state.preflight = preflight;
+        snaToolsRedraw('sna-tools-h-preflight');
+        return;
+    }
+    state.results = run.results.slice();
+    state.resultsLead = lead;
+    state.resultsTitle = dest.title || '';
+    snaToolsRedraw('sna-tools-results-title');
+}
+
+// Go back: closes Before you copy without copying anything, and returns focus to Copy to destination. When a name or
+// address must change first, Copy to destination is turned off, so focus goes to the first box marked with a problem.
+function snaToolsGoBack() {
+    var state = _snaToolsState;
+    if (!state.preflight || state.running) { return; }
+    var text = 'You didn\'t copy anything.';
+    state.preflight = null;
+    state.progressText = text;
+    snaToolsRedraw('sna-tools-copy-button');
+    var button = document.getElementById('sna-tools-copy-button');
+    var marked = document.querySelector('#sna-tools [aria-invalid="true"]');
+    if (button && button.disabled && marked) { marked.focus(); }
+    snaToolsAnnounceLater('sna-tools-progress-status', text, function() {
+        return _snaToolsState === state && !state.running && !state.preflight && state.progressText === text;
+    });
+}
+
+// Copy anyway: copies what the person chose, checks the destination, and shows the results, with the warnings from
+// Before you copy at the top of the results table. Focus moves to Stop copying while it runs and to the Results heading after.
+async function snaToolsCopyAnyway() {
+    var state = _snaToolsState;
+    var preflight = state.preflight;
+    if (!preflight || state.running || snaToolsBusy()) { return; }
+    // Before you copy shows no Copy anyway button when a warning stops the copy, and the copy never starts then.
+    if (!preflight.error && snaToolsPreflightStops(preflight.warnings)) { return; }
+    var dest = preflight.dest;
+    var run = snaToolsBeginRun(dest);
+    state.preflight = null;
+    state.running = true;
+    state.progressValue = 0;
+    state.progressText = 'Starting the copy.';
+    snaToolsShowSiteActions();
+    snaToolsRedraw('sna-tools-stop-button');
+    snaToolsAnnounce(true);
+    snaToolsLogPreflightWarnings(preflight.warnings, preflight.error);
+
+    var lead = '';
+    try {
+        await snaToolsRunCopy(preflight.plan, dest);
+        lead = 'Finished copying to ' + snaMaskText((run.destination && run.destination.title) || dest.title) +
+            '. Sitenalyzer checked the destination afterwards. Each row says what happened.';
+    } catch (err) {
+        lead = snaToolsIsCancelled(err)
+            ? 'You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped.' + snaToolsStoppedItemsText(run.results)
+            : 'Sitenalyzer stopped the copy because of a problem. ' + snaToolsFriendlyError(err);
+    }
+    snaToolsEndRun(run);
+    if (_snaToolsState !== state) { return; }
+    state.running = false;
+    snaToolsShowSiteActions();
+    state.results = run.results.slice();
+    state.resultsLead = lead;
+    state.resultsTitle = (run.destination && run.destination.title) || dest.title || '';
+    state.progressText = '';
+    snaToolsRedraw('sna-tools-results-title');
+}
+
+// Returns the sentence about the items a stop left partly made (see snaToolsLogStopped), such as " The item it was
+// making when you stopped is marked Partly copied. Its note says what to do next.", or '' when there are none.
+function snaToolsStoppedItemsText(results) {
+    var count = results.filter(function(r) { return r.detail && r.detail.stopped; }).length;
+    if (count === 0) { return ''; }
+    return count === 1
+        ? ' The item it was making when you stopped is marked Partly copied. Its note says what to do next.'
+        : ' The ' + count + ' items it was making when you stopped are marked Partly copied. Their notes say what to do next.';
+}
+
+// Stop copying: the copy stops at its next request or step, and the results so far are shown.
+function snaToolsStopCopy() {
+    if (!_snaToolsState.running) { return; }
+    snaToolsCancel();
+    snaToolsProgress('Stopping the copy.');
+    snaToolsAnnounce(true);
+}
+
+// Save results (.xlsx): saves the results table as a one-sheet workbook named for the destination and today's date,
+// such as StudyTwo_Copy_Results_2026-11-05.xlsx. Values that look like personal information are hidden in the rows and
+// in the destination's name in the file name, as in the other workbooks, unless Show hidden values is on.
+function snaToolsSaveResults() {
+    var state = _snaToolsState;
+    if (!state.results || !XLSX) { return; }
+    var rows = state.results.map(function(r) { return [snaMaskText(r.name), r.kind, SNA_TOOLS_RESULTS[r.result], snaMaskText(r.note)]; });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildSheet(['Item', 'Kind', 'Result', 'Notes'], rows), 'Copy_Results');
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(state.resultsTitle)) + '_Copy_Results_' + snaDateStamp(new Date()) + '.xlsx');
+}

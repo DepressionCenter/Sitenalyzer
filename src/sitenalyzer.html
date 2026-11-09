@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.html
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-10-21
+Last Modified: 2026-11-09
 Summary: Markup for the Sitenalyzer app: the start screen, and the frame of the report screen (site header,
          section navigation, search, report actions, and footer), and the Choose a site dialog. The build puts this markup inside sitenalyzer.js,
          which places it in the page's <div id="sitenalyzer-app"></div> at startup. It holds no site data;
@@ -38,7 +38,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 					<button type="button" id="sna-sites-refresh-btn" class="hide-on-print" title="Refresh sites list" aria-label="Refresh sites list">&#8635;</button>
 				</div>
 				<ul id="site-suggestions"></ul>
-				<div class="site-url-helper" id="site-url-helper-message">Type a site address or choose one from the list. To see every permission, you need to be a site owner.</div>
+				<div class="site-url-helper" id="site-url-helper-message" role="status">Type a site address or choose one from the list. To see every permission, you need to be a site owner.</div>
 				<button type="button" id="sp-btn-gather" class="sna-btn sna-btn-primary">Extract site information</button>
 			</div>
 			<div id="sna-entry-message" class="sna-entry-message" role="alert" hidden></div>
@@ -53,6 +53,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 					<button type="button" class="sna-btn sna-btn-outline sna-btn-small" data-action="change-site"><span data-icon="swap"></span>Change site</button>
 					<a id="sna-site-settings-link" class="sna-btn sna-btn-outline sna-btn-small" href="#" target="_blank" rel="noopener noreferrer" data-interception="off"><span data-icon="settings"></span>Site settings<span class="sna-visually-hidden"> (opens in a new window)</span></a>
 				</div>
+				<p id="sna-utility-note" class="sna-utility-note" hidden>Refresh report, Start over, and Change site are turned off while Sitenalyzer copies. To use them now, select Stop copying in Tools.</p>
 			</div>
 			<div id="sna-site-header" class="sna-site-header"></div>
 			<div class="sna-nav-row hide-on-print">
@@ -63,6 +64,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 						<li><a href="#sna/permissions" data-section="permissions"><span data-icon="shield"></span>Permissions</a></li>
 						<li><a href="#sna/taxonomy" data-section="taxonomy"><span data-icon="tag"></span>Taxonomy</a></li>
 						<li><a href="#sna/review" data-section="review"><span data-icon="check"></span>Site review</a></li>
+						<li><a href="#sna/tools" data-section="tools"><span data-icon="tools"></span>Tools</a></li>
 					</ul>
 				</nav>
 				<div class="sna-switches">
@@ -102,7 +104,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 				<h2 id="sna-site-dialog-title" class="sna-dialog-title">Choose a site</h2>
 				<button type="button" class="sna-btn sna-btn-outline sna-btn-small" data-action="close-site-dialog">Close</button>
 			</div>
-			<p>Open the report of another site. Sitenalyzer reads it with your own access.</p>
+			<p id="sna-site-dialog-intro">Open the report of another site. Sitenalyzer reads it with your own access.</p>
 			<label for="sna-site-find" class="sna-field-label">Find a site</label>
 			<input type="search" id="sna-site-find" class="sna-table-search" autocomplete="off" spellcheck="false" aria-describedby="sna-site-find-status">
 			<p class="sna-dialog-refresh"><button type="button" class="sna-link-btn" data-action="refresh-sites">Refresh sites list</button></p>
@@ -112,7 +114,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 				<label for="sna-site-address" class="sna-field-label">Or enter a site address</label>
 				<div class="sna-url-row">
 					<input type="text" id="sna-site-address" autocomplete="off" spellcheck="false" placeholder="https://your-tenant.sharepoint.com/sites/your-site" aria-describedby="sna-site-address-message">
-					<button type="submit" class="sna-btn sna-btn-primary">Open site report</button>
+					<button type="submit" id="sna-site-address-submit" class="sna-btn sna-btn-primary">Open site report</button>
 				</div>
 				<p id="sna-site-address-message" class="sna-error-text" role="alert" hidden></p>
 			</form>

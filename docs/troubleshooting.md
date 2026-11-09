@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/troubleshooting.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-23
+Last Modified: 2026-11-09
 Summary: Problems people can run into when installing or using Sitenalyzer, with causes and fixes.
 Notes: See README file for documentation and full license information.
 
@@ -20,7 +20,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 [Back to README](../README.md)
 
-This page lists problems you might see after installing Sitenalyzer, what causes them, and how to fix them. It is for site owners and site administrators. Most problems come from a file that is missing from the Site Assets library or a page saved in the wrong place.
+This page lists problems you might see after installing Sitenalyzer, what causes them, and how to fix them. It is for site owners and site administrators. Most problems come from a file that is missing from the Site Assets library or a page saved in the wrong place. Problems with **Copy site structure** in **Tools** are listed together under [Copy site structure](#copy-site-structure).
 
 ### Sitenalyzer says it could not load a file
 
@@ -64,6 +64,18 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 **Cause:** Sitenalyzer waited 10 seconds for the web part's `<div>` and didn't find it. The web part code is missing the `<div>` line, or the `id` was changed.
 
 **Fix:** Replace the web part code with the full contents of `dist/SitePages/sitenalyzer.html.txt`, then refresh the page.
+
+### The sites list says it couldn't be refreshed or loaded
+
+**Problem:** Under the **Site address** box, or in **Choose a site**, a message such as "Couldn't refresh the list of sites. Showing the sites from the last successful load. Check your connection and try again." or "Couldn't load the list of sites. Check your connection and try again, or type the site address."
+
+**Cause:** SharePoint search did not answer when Sitenalyzer asked for the sites you can open. Sitenalyzer tries twice, then keeps the sites from the last successful load, in the list and in your browser's saved copy, so nothing you could choose before is lost. When the list has never loaded, there are no sites to keep.
+
+**Fix:**
+
+1. Check that you are still signed in and connected, then select **Refresh sites list** again.
+2. If the list still doesn't load, type the site's full address, such as `https://contoso.sharepoint.com/sites/example`, and select **Extract site information** or **Open site report**.
+3. If the message appears on every visit, ask your site administrator whether SharePoint search is turned on for your account.
 
 ### Permission sections say "could not read"
 
@@ -145,6 +157,97 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 **Fix:** In the print window, set **Destination** to **Save as PDF** and wait a few seconds. If the preview still fails, print from another browser, such as Firefox. If your organization installs a printing extension in your browser, ask your IT help desk about the problem, because you may not be able to turn the extension off yourself.
 
+### Copy site structure
+
+These problems appear under **Destination**, under **Before you copy**, or in the results table of **Copy site structure**. Each row of the results has a note that says what happened and what to do. See [Copying a site's structure](how-to/copy-a-site.md).
+
+#### Check destination says you can't copy to the site
+
+**Problem:** Under **Destination site address**, a message such as "You can't copy to New Study. You need to be a site collection administrator there. Ask a site collection administrator to add you, then check again." During a copy, rows can also say "SharePoint didn't let you make this change."
+
+**Cause:** You aren't a site collection administrator of the destination. Being a site owner isn't enough. Sitenalyzer checks this before you can copy, and again when the copy starts.
+
+**Fix:** Ask a site collection administrator of the destination, or your SharePoint admin, to add you as a site collection administrator there. Then select **Check destination** again. If the message appeared during a copy, copy again into the same destination. Sitenalyzer adds what is missing and leaves what is already there.
+
+#### Check destination says you can't copy to this site
+
+**Problem:** Under **Destination site address**, the message "You can't copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again."
+
+**Cause:** You chose **This site's report** as the source, and the address opens the site whose report is open. Sitenalyzer copies this site's report only into another site, so the copy never changes this site. It also refuses another address that opens this same site.
+
+**Fix:** Enter the address of the site you want to copy into, such as `https://contoso.sharepoint.com/sites/new-study`, then select **Check destination**. To copy into this site from another site, open the other site's report with **Change site**, then copy from there. To copy into this site from a data dictionary file, choose **A data dictionary file**, then select **Check destination** again.
+
+#### Term sets fail because SharePoint refused the term store changes
+
+**Problem:** Term set rows say **Failed**, with a note such as "SharePoint didn't let Sitenalyzer create term sets in the destination." or "Sitenalyzer couldn't create the site's own term group in the destination."
+
+**Cause:** Some organizations don't let SharePoint pages change the term store. Sitenalyzer tries two ways to make each change, and when SharePoint refuses both, it stops changing the term store. The term group message means the destination has no term group of its own, and SharePoint didn't let Sitenalyzer make one. **Before you copy** says ahead of time when it can tell that this will happen, and says that term sets may fail when only the copy can find out.
+
+**Fix:**
+
+1. For the term group message, add a managed metadata column to any list in the destination and choose **Customize your term set**. That makes the destination's own term group. Then copy again.
+2. For the term sets message, create the term sets by hand in the destination's term store, or ask your term store administrator to. Then copy again. A term set with the same name is used as it is, and the copy adds the terms it's missing.
+
+The columns that use these term sets are skipped until the term sets are there. See the next problem.
+
+When the destination has more than one term group of its own, the note says "The destination has more than one term group of its own, so Sitenalyzer couldn't tell which one to use." Ask your term store administrator to check the destination's term groups, then copy again.
+
+#### Columns are skipped because their term set wasn't copied
+
+**Problem:** Column rows say **Skipped**, with a note such as "Sitenalyzer skipped the column Study Arm in Study Visits, because it uses the term set Study Arms, which wasn't copied. You left this term set out. Copy the term set, then copy again."
+
+**Cause:** A managed metadata column takes its values from a term set. You cleared that term set under **Term sets**, or the term set failed to copy. When the term set is shared by every site, the note says instead that the destination's term store doesn't have it.
+
+**Fix:** Check the term set under **Term sets**, and copy again into the same destination with the same addresses. The copy adds the term set and the columns that are missing. For a term set shared by every site, ask your term store administrator to make it available to the destination, then copy again.
+
+#### Content types from the content type hub are skipped
+
+**Problem:** Content type rows say **Skipped**, with a note such as "Sitenalyzer didn't copy this content type, because it comes from the content type hub and the destination doesn't have it yet." A content type based on one of these is skipped too.
+
+**Cause:** Your organization publishes these content types to sites from the content type hub. Sitenalyzer never makes them itself, so the hub can still publish them to the destination.
+
+**Fix:** Publish the content type to the destination from the content type gallery, or ask your SharePoint admin to. When the destination has it, copy again into the same destination.
+
+#### Site look settings are skipped because custom scripts are turned off
+
+**Problem:** Site look setting rows say **Skipped**, with a note such as "The destination doesn't allow custom scripts, so SharePoint didn't let Sitenalyzer change this." A similar note says "Only a SharePoint admin can change this in the destination."
+
+**Cause:** SharePoint refused the change. It refuses some changes to how a site looks when the site doesn't allow custom scripts, and some only a SharePoint admin can make.
+
+**Fix:** Make the change by hand in the place the note names, such as **Settings** > **Change the look** > **Theme** in the destination. You can also ask your SharePoint admin to make the change, or to allow custom scripts on the destination, and then copy again with **Site look** on. Allowing custom scripts is a security decision for your SharePoint admin.
+
+#### Before you copy offers only Go back
+
+**Problem:** **Before you copy** says "Sitenalyzer found 1 problem that stops the copy to New Study before it changes anything." It has a **Go back** button but no **Copy anyway** button. The row says what is wrong, such as "The destination already has a list or library with this name. Choose another name. The copy can't start until you do. Select Go back to change it, then copy again."
+
+**Cause:** The destination started using one of the names or addresses you chose under **Lists and libraries** after you selected **Check destination**.
+
+**Fix:** Select **Go back**. Focus moves to the box marked under **Lists and libraries**. Change the name or address, then select **Copy to destination** again.
+
+#### Before you copy says pages will fail because custom scripts are turned off
+
+**Problem:** Page rows under **Before you copy** say "The destination doesn't allow custom scripts, and SharePoint doesn't take a classic page, or a page in a folder, on such a site, so this page will fail to copy." A **Site look** row can say that SharePoint may refuse some site look settings.
+
+**Cause:** Sitenalyzer copies classic pages, and pages saved in a folder, as files. SharePoint doesn't take those files on a site that doesn't allow custom scripts.
+
+**Fix:** Ask your SharePoint admin to allow custom scripts in the destination, then copy again. SharePoint turns custom scripts off again within 24 hours, so copy soon after. Allowing custom scripts is a security decision for your SharePoint admin. You can also select **Copy anyway** and make those pages by hand in the destination.
+
+#### Before you copy says Sitenalyzer couldn't check part of the copy
+
+**Problem:** **Before you copy** has a Note row that says "Sitenalyzer couldn't check this before the copy, so the copy may run into a problem here that this table doesn't show." The sentence above the table also says "Sitenalyzer couldn't finish every check, so the copy may run into problems that this table doesn't show." Or, **Before you copy** says "Sitenalyzer couldn't finish checking the destination before the copy, so it can't say what the copy will skip."
+
+**Cause:** SharePoint didn't answer one of the reads that the check makes, or Sitenalyzer ran into an unexpected problem. The end of the note says which, such as "SharePoint was too busy to answer."
+
+**Fix:** Select **Go back**, wait a few minutes, then select **Copy to destination** again. You can also select **Copy anyway**. The results then say what happened to each item.
+
+#### Pages are partly copied and still use the original site
+
+**Problem:** Page rows say **Partly copied**, with a note such as "Copied. Some parts of this page may still show the original site's content. Open the page and check it." A note can also say that some links still open the original site.
+
+**Cause:** Sitenalyzer changes each link and web part that uses this site so it uses the copy in the destination. It can't do that for something the copy didn't include, such as a list you didn't choose or a subsite of this site, so those keep using the original site. A page saved in a folder is copied as a file first, and if SharePoint then refuses the changed page, its links still open the original site. After every page is copied, Sitenalyzer saves a page again when it names a page copied after it, such as in a Quick links web part. If SharePoint refuses that save, the note says Sitenalyzer couldn't update its links to pages it copied after this one. A copied agent also still uses the original site's knowledge sources.
+
+**Fix:** Open the page in the destination and check each web part and link. To fix the page with a copy, choose the lists and libraries it uses in **Lists and libraries**, check **Replace pages and files that already exist in the destination**, and copy again into the same destination.
+
 ### Conclusion
 
 Most problems are fixed by checking the files in Site Assets and the code in the web part. If the problem continues, open an issue in this repository and include the messages from the browser console, with any site names and personal details removed.
@@ -153,6 +256,8 @@ Most problems are fixed by checking the files in Site Assets and the code in the
 
 - [Installing and using Sitenalyzer](usage.md)
 - [Sitenalyzer architecture](architecture.md)
+- [Copying a site's structure](how-to/copy-a-site.md)
+- [Manage site collection administrators (Microsoft Learn)](https://learn.microsoft.com/sharepoint/manage-site-collection-administrators)
 - [Support for Content Security Policy (CSP) in SharePoint Online](https://learn.microsoft.com/en-us/sharepoint/dev/spfx/content-securty-policy-trusted-script-sources)
 
 [Back to README](../README.md)

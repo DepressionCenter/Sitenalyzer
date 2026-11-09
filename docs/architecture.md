@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/architecture.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-10-23
+Last Modified: 2026-11-09
 Summary: How Sitenalyzer's files fit together, how it starts on a SharePoint page, and why it is built this way.
 Notes: See README file for documentation and full license information.
 
@@ -33,7 +33,7 @@ So the web part holds only an empty `<div>` and one `<script src>` line. Everyth
 | Part | File in SharePoint | Source in this repository |
 | --- | --- | --- |
 | Page code | Pasted into the Modern Script Editor web part | `src/sitenalyzer.html.txt` |
-| App and startup code | `SiteAssets/scripts/sitenalyzer.js` | `src/sitenalyzer.js` plus `src/sitenalyzer.html` |
+| App and startup code | `SiteAssets/scripts/sitenalyzer.js` | `src/sitenalyzer.js` plus `src/sitenalyzer.html` and the files in `src/tools/` |
 | App styles | `SiteAssets/styles/sitenalyzer.css` | `src/sitenalyzer.css` |
 | SheetJS 0.20.3 | `SiteAssets/scripts/xlsx.full.min.js` | `src/lib/xlsx.full.min.js` |
 | Tabulator 6.6.1 | `SiteAssets/scripts/tabulator.min.js` and `SiteAssets/styles/tabulator_simple.min.css` | `src/lib/` |
@@ -65,7 +65,7 @@ The diagram shows these steps:
 
 ### Requests to SharePoint
 
-Every request is a read made with the signed-in person's own permissions. The only writes are the description edits that site owners make on purpose. The `$batch` requests for shared item names are sent as POST requests, but they hold only reads and change nothing on the site.
+Every request is made with the signed-in person's own permissions, and the report itself only reads. The only writes are the description edits that site owners make on purpose, and the changes that **Copy site structure** in Tools makes in a destination site after the person selects **Copy anyway** under **Before you copy** (see [Tools](#tools)). Tools never changes the site it copies from: in a copy from this site's report, **Check destination** refuses this site, by its ID when both IDs are known and by its address otherwise. A copy from a data dictionary file can go into this site, because the file is the source. The `$batch` requests for shared item names are sent as POST requests, but they hold only reads and change nothing on the site.
 
 | Request | Reason |
 | --- | --- |
@@ -91,6 +91,12 @@ Every request is a read made with the signed-in person's own permissions. The on
 | `/_api/web/lists(guid'…')/fields` and `/_api/web/fields`, each filtered to managed metadata columns, with `SchemaXml` | Which columns use each term set. A list sends this request only when it has a managed metadata column. |
 | `/_api/web/lists?$filter=Hidden eq true` and `/_api/site/rootweb/lists?$filter=Title eq 'TaxonomyHiddenList'` | Names of hidden lists that lookup columns read from, and the details the data dictionary needs for them. Managed metadata columns read from TaxonomyHiddenList, which on a subsite is in the top-level site. A failed read leaves the list ID in **Lookup list** and leaves the list out of **Assets**. |
 | `…/termStore/sets/<ID>` | Names of term sets that managed metadata columns use but that aren't in the site collection's term groups, such as term sets every site can use. Up to `SNA_TERM_SET_NAME_LOOKUPS` (50) are read. |
+| `/_api/web/lists(guid'…')/views?$select=Id,PersonalView,Hidden` | Only when Tools opens: the number of public views of each list and library, for the **Views** column of Copy site structure. |
+| `/_api/web/contenttypes?$select=StringId,Name,Group,Sealed,ReadOnly`, and each list's `contenttypes?$select=StringId` | Only when Tools opens: the site's own content types for the **Content types** part, and which of them each list uses. Each list's content types are read only when the site has content types of its own. |
+| `/_api/web/lists(guid'…')` with its settings, and its `fields` (with `SchemaXml`), `views` (with `ViewFields`), and `contenttypes` (with `FieldLinks`); `/_api/web/fields`; `/_api/web/contenttypes`; `/_api/web/availablecontenttypes` (with `FieldLinks`); `…/termStore/groups/<ID>/sets` and `…/sets/<ID>/terms` | Only after **Copy to destination**: everything the copy needs that the report doesn't hold, for the lists, libraries, and term sets the person chose. The content types the site can use (`availablecontenttypes`) are read only when a copied content type is based on one that isn't among the site's own, such as Document on a subsite. The copy uses them to learn which columns it gets from that one. See [Tools](#tools). |
+| `/_api/web/navigation/QuickLaunch` and `/_api/web/navigation/TopNavigationBar` with each link's `GetNodeById(<ID>)/Children`, `/_api/navigation/MenuState`, `/_api/web` and `/_api/site` with the look and hub settings, `/_api/web/HubSiteData(true)`, and `/_api/SP.Web.GetContextWebThemeData` | Only after **Copy to destination**, and only when **Navigation** or **Site look** is on: this site's menus, footer, theme, logo, header, and hub. Several of these addresses aren't documented by Microsoft and come from the PnP libraries, so a refusal is reported for that one item. |
+| On the destination: `/_api/web`, `/_api/site`, `/_api/web/currentuser?$select=Id,IsSiteAdmin`, `/_api/web/lists`, `/_api/web/fields`, `/_api/web/contenttypes` | **Check destination**, and again when the copy starts: whether the person is a site collection administrator there, and which names and addresses are already used. |
+| On the destination: `/_api/web/lists`, `/_api/web/contenttypes` (only when the copy includes content types from the content type hub), the term store (`/_api/v2.1/sites/<ID>/termStore`, its `groups`, and `sets/<ID>`), one CSOM request that only loads the term store, `/_api/web/effectivebasepermissions`, the Site Pages folders that copied pages go in, and, with **Permissions** on and a subsite as the destination, `/_api/site`, `/_api/web/parentweb`, and the owners, members, and visitors groups of the destination, its parent site, and the top site of its site collection. On this site: its lists, the folders and files of Site Assets, and the items of Site Pages. | Only after **Copy to destination**, for the check before copying in `preflight.js`. Each read runs only when the choices need it, such as the term store only when term sets are chosen. The CSOM request goes through `snaToolsPreflightCsomRead`, which refuses any request that could change something. |
 
 Group member lookups and person checks run at most 6 at a time (`SNA_MAX_PARALLEL_REQUESTS`), so large sites aren't slowed down by SharePoint's request limits.
 
@@ -195,6 +201,7 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 | `#sna/permissions`, and `#sna/permissions/site`, `/people`, `/person`, `/own`, `/sharing`, or `/apps` | Permissions, with one part shown; `#sna/permissions` shows `site` |
 | `#sna/taxonomy` and `#sna/review` | Taxonomy and Site review |
 | `#sna/taxonomy/<term set ID>` | Taxonomy, with one term set shown |
+| `#sna/tools` and `#sna/tools/copy` | Tools, with Copy site structure shown; `#sna/tools` shows `copy` |
 | `#sna/search?q=<text>` | Search results |
 
 - Sections, tabs, and parts are checked against fixed lists, list and term set IDs must look like a GUID, and a page key must be a number. An address that starts with `#sna/` but doesn't match opens the Overview.
@@ -204,6 +211,49 @@ Each view has an address after `#sna/` in the page address. Sitenalyzer reads an
 - `SNA_ROUTE_MODE` at the top of `src/sitenalyzer.js` is `'hash'`. This was checked on a SharePoint page with the Modern Script Editor web part and `?csp=enforce`. If a page rewrites the address right after Sitenalyzer sets it, Sitenalyzer writes a warning in the console and keeps views in memory for the rest of the visit. Back and Forward then don't change views on that page.
 - After every view change, focus moves to the view's heading, the heading of the part or term set in the address, the selected tab or part link, or the item that was open, so keyboard and screen reader users keep their place.
 - When the section changes, the page scrolls to the section links (`.sna-nav-row`), so the site's name and details above them show only when the report first opens or is refreshed. Each view is at least as tall as the window, so a short view, such as Taxonomy with one term group, can scroll that far too. SharePoint shows its page bar, with **Edit**, again when the page scrolls up, and the bar then covers the top of the page. So after scrolling, `snaUncoverNavRow` checks what is at the top of the section links. When a fixed or sticky element of the host page covers them, Sitenalyzer scrolls up by the height it covers, once right away and again after `SNA_HOST_BAR_DELAY_MS`, because the bar can appear a moment later. **Back to top** scrolls to the same place and puts focus on the open section's link, or on the first section link from Search results. It sits on the left, because SharePoint can place a Copilot button over the bottom right of the page.
+
+### Tools
+
+Tools is a section of the report screen, at `#sna/tools`. It has one part, **Copy site structure**, which copies the structure of this site into another site on the same host where the person is a site collection administrator. It copies lists and libraries without their items or files, with their columns, views, content types, and form settings, and it copies the site's own content types and the term sets of the site collection's own term group. Switches add site pages, Site Assets, agents and site skills, navigation, the site look, and permissions. **Site look** and **Permissions** are off at first. The copy can also start from a data dictionary file instead of this site. [Copying a site's structure](how-to/copy-a-site.md) describes the screen, and [Design decisions](design-decisions.md#tools) explains the main choices.
+
+#### Files in src/tools
+
+The Tools code is kept in its own files in `src/tools/`, one file for each part of the work. The build puts them inside `sitenalyzer.js`, so site owners still upload one app file and Tools adds no names to the page.
+
+| File | What it does |
+| --- | --- |
+| `core.js` | Shared helpers: the write helper, reads that check their addresses, CSOM requests, XML and ID helpers, the link rewrite (`snaToolsRewriteSourceLinks`) that points the source site's links and IDs in copied text at the destination, the results log, the progress line, and stopping a copy. |
+| `plan.js` | Builds the copy plan from the report, reading from the site what the report doesn't hold: each chosen list's settings, columns, views, and content types, the site's own content types and the site columns they use, and the terms of the chosen term sets. It also adds notes for **Before you copy**, such as that **Navigation** replaces the links in the destination's menus. |
+| `workbook.js` | Builds the same plan from a data dictionary file. |
+| `taxonomy.js` | Copies term sets and terms. |
+| `lists.js` | Copies lists and libraries, site columns, content types, columns, views, and form settings. |
+| `files.js` | Copies Site Assets, agents and site skills, and site pages. It makes each modern page again through SharePoint's site pages API, with the source site's links and IDs pointed at the destination by the link rewrite in `core.js`. Links into a subsite of the source stay as they are. |
+| `site.js` | Copies the site's menus (the left menu, the top menu of a classic site, and the footer menu) when **Navigation** is on, and its theme, logo, header, and footer settings when **Site look** is on. Links into the source site go through the same link rewrite as pages. Hub menus are reported, not copied. |
+| `permissions.js` | Copies permission levels, groups, and permissions, only when the **Permissions** switch is on. |
+| `verify.js` | Reads the destination after the copy and corrects the results: an item it can't find becomes **Failed**, and one with another name or address becomes **Partly copied**. |
+| `preflight.js` | Runs the check before copying: reads the destination, and for some checks this site, and lists what the copy will skip, what will fail, and what may fail. Draws the **Before you copy** part of the screen. Sends no changes. |
+| `runner.js` | Checks the destination and runs the copy's steps in order. |
+| `ui.js` | Draws the section and handles its buttons, boxes, and switches. |
+
+The build replaces the line `// The build places the files from src/tools/ here, in the order listed in build.sh and build.ps1.` near the end of `src/sitenalyzer.js` with the files in the order of that table, with one empty line between files. Each file starts with its own license comment. Because the files share the scope of the function around `sitenalyzer.js`, they use its helpers, such as `snaEscapeHtml` and `snaQueueTableHtml`. Every name a file in `src/tools/` defines at its top level starts with `snaTools`, `SNA_TOOLS_`, or `_snaTools`, so it can't clash with the rest of the file.
+
+`sitenalyzer.js` connects to Tools in a few places: the `tools` entry in `SNA_SECTIONS` and `SNA_TOOLS_PARTS` for the addresses, `snaToolsAfterRender` after `renderApp` draws Tools, `snaToolsHandleAction` at the start of `snaHandleAppClick` (every Tools action starts with `tools-`), the input, change, and keydown listeners for elements inside `#sna-tools`, `snaToolsReset` in `snaClearReport`, `snaToolsCopying` in the `beforeunload` listener, which makes the browser ask before the page closes while a copy runs, and the `tools-destination` mode of **Choose a site**, which puts the chosen address in the destination box instead of opening a report. With nothing typed, **Use this site** keeps the dialog open and says what to enter. The print document leaves Tools out, and search doesn't include it.
+
+#### Writes and request digests
+
+Every change Tools makes goes through one helper, `snaToolsWrite(siteUrl, apiPath, options)` in `core.js`. It refuses any address that isn't on the REST API (`/_api/`) or the CSOM address (`/_vti_bin/client.svc/ProcessQuery`) of a site on this host. It sends MERGE and DELETE as POST with `X-HTTP-Method` and `IF-MATCH: *`. It waits and sends a request again when SharePoint answers 429 or 503, for as long as `Retry-After` asks and at least 2 seconds, up to 5 times. Its errors keep SharePoint's status, error code, and message, and `snaToolsFriendlyError` turns them into a note that says what happened and what to do next, quoting at most 200 characters of SharePoint's own message.
+
+SharePoint accepts a request digest only on the site that issued it. So `getRequestDigest(siteUrl)` keeps one digest for each site, in `_snaRequestDigests`, keyed by the site's address in lowercase without a slash at the end. A digest is kept until 60 seconds before the end of its lifetime, `FormDigestTimeoutSeconds` from `/_api/contextinfo` (1800 seconds when SharePoint doesn't say). When SharePoint refuses a digest with 403 and "security validation", `snaToolsWrite` forgets that site's digest with `snaClearRequestDigest`, gets a new one, and sends the request once more. `snaClearReport` forgets every digest.
+
+#### A copy from start to end
+
+1. **Check destination** reads the destination (see [Requests to SharePoint](#requests-to-sharepoint)). An address on another host is refused before any request is sent. The person must be a site collection administrator there (`IsSiteAdmin`).
+2. **Copy to destination** builds the plan, reading only the lists and term sets the person chose. Then `snaToolsPreflight` in `preflight.js` runs the check before copying. Each check is added with `snaToolsAddPreflightCheck` and only reads. **Before you copy** shows what the check found, with **Copy anyway** and **Go back**. A warning that stops the copy, such as a list name the destination started using, leaves only **Go back**. Nothing changes before the person selects **Copy anyway**.
+3. The copy checks the destination again, then runs its steps: term sets, site columns, lists and libraries, content types, columns, views, form settings, Site Assets, site look, agents and site skills, site pages, navigation, and permissions. The steps for switches that are off don't run. Columns are made in five passes: plain columns, lookup columns, managed metadata columns, calculated columns in the order their formulas use each other, and dependent lookup columns, which show another column of a lookup. Each step logs one result for each item with `snaToolsLog` and keeps going when an item fails. A step that fails as a whole gets one **Failed** row, and the next step runs.
+4. `verify.js` reads the destination back. An item logged as copied that isn't there becomes **Failed**, and one that is there with another name or address becomes **Partly copied**. It adds one **Destination check** row for each kind of item it checked. `verify.js` checks lists, columns, views, content types, term sets, and files; `site.js` and `permissions.js` add their own checks with `snaToolsAddVerifyCheck`. A copy that was stopped skips this step.
+5. The results table (type `toolsresults` in `snaTableColumnSettings`) shows every item, and **Save results (.xlsx)** saves it with `snaDownloadWorkbook`. The warnings from **Before you copy** are at the top of the table with the result **Warning**, and the counts leave them out.
+
+A copy is tied to a number, `_snaToolsToken`. **Stop copying**, **Start over**, **Change site**, and **Refresh report** change the number, and the copy stops before its next request, including a request whose digest was still on its way. While a copy runs, `snaToolsShowSiteActions` turns off **Refresh report**, **Start over**, and **Change site** and shows the sentence under them that says why, so only **Stop copying** stops a copy, and leaving the page asks first. A request that was already sent can still finish. After **Stop copying**, `snaToolsLog` still adds rows until `snaToolsEndRun`, so a change that SharePoint finished after the stop has its row. `snaToolsWrite` counts each change that has no row yet. Where a stop is passed on, `snaToolsLogStopped` adds a **Partly copied** row for the item that was being made when that count is above 0: the list, page, or menu in `lists.js`, `files.js`, and `site.js`, or else the step in `snaToolsRunStep`. The choices and results are kept in `_snaToolsState`, so they stay when the view is drawn again, and Tools saves nothing in browser storage.
 
 ### App markup
 
@@ -245,7 +295,7 @@ CI checks the source for these patterns, and the browser tests run the app on a 
 
 ### Conclusion
 
-You now know which files make up Sitenalyzer, how they reach SharePoint, how the app starts, what it asks SharePoint, how it counts permissions, and how the report screen draws its views. To change the app, edit `src/` and run a build script.
+You now know which files make up Sitenalyzer, how they reach SharePoint, how the app starts, what it asks SharePoint, how it counts permissions, how the report screen draws its views, and how Tools copies a site's structure. To change the app, edit `src/` and run a build script.
 
 ### Additional resources
 

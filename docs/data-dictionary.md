@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/data-dictionary.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-23
-Last Modified: 2026-10-23
+Last Modified: 2026-11-08
 Summary: The data dictionary workbook format, version 1.1: every sheet and column, the rules for reading and changing the format, and how Sitenalyzer fills it from SharePoint.
 Notes: See README file for documentation and full license information.
 
@@ -20,7 +20,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 [Back to README](../README.md)
 
-This page describes the data dictionary workbook that **Data dictionary (.xlsx)** saves: each sheet, what one row stands for, and what every column means. The format isn't tied to SharePoint, so other tools can write it for other data sources, such as a database or a REDCap project. Each column table also says what Sitenalyzer writes there from SharePoint. The page is for data stewards, analysts, and developers who read, check, or produce these workbooks. It describes format version 1.1.
+This page describes the data dictionary workbook that **Data dictionary (.xlsx)** saves: each sheet, what one row stands for, and what every column means. The format isn't tied to SharePoint, so other tools can write it for other data sources, such as a database or a REDCap project. Each column table also says what Sitenalyzer writes there from SharePoint. The page is for data stewards, analysts, and developers who read, check, or produce these workbooks. It describes format version 1.1. **Copy site structure** in **Tools** can also read a workbook back and make its lists and libraries in another site. See [Data dictionary files as a copy source](#data-dictionary-files-as-a-copy-source).
 
 ### Rules for every sheet
 
@@ -260,13 +260,54 @@ A managed metadata column also has these values:
 
 A site column that isn't in any list or library has no **Fields** row, so it adds no value set.
 
+### Data dictionary files as a copy source
+
+**Copy site structure** in **Tools** can use a data dictionary file as its source instead of the site whose report is open. Choose **A data dictionary file** under **Source**, then choose the file. Sitenalyzer reads it in your browser and sends nothing from it anywhere except to the destination. The file can come from **Data dictionary (.xlsx)** or from another tool that writes this format. The destination can be any site where you're a site collection administrator, including the site whose report is open, such as a new, empty site whose lists you build from the file. See [Copying a site's structure](how-to/copy-a-site.md).
+
+#### Content it makes from a file
+
+- **Lists and libraries** from **Assets**. A row of type `SharePoint List` becomes a list, and a row of type `SharePoint Document Library` becomes a library. A row from another tool, such as a table, becomes a list when it has rows in **Fields**. Each list is made as a custom list and each library as a document library. Rows for Site Pages, Site Assets, Agent Assets, TaxonomyHiddenList, and the User Information List are left out.
+- **Columns** from **Fields**, in `field_order`, with their type, `description`, `required`, `indexed`, `unique`, `length`, `default_value`, and `calculation_formula`. Columns SharePoint adds by itself, such as `Created` and `Modified`, aren't made again.
+- **Choices** from **Value_Sets**, for each choice column, with the fill-in setting from `allows_other_values`.
+- **Term sets** from **Value_Set_Definitions** and **Value_Sets**: each value set whose `asset_id` is a term store, and each value set that a managed metadata column uses. Terms come in `display_order`, under the parents in `parent_value_code`, with their synonyms and descriptions. A term whose `active` is `N` can no longer be used in the destination. A value set whose `values_listed` is `None` isn't made.
+- **Lookup columns** from **Relationships**. See [Lookups from a file](#lookups-from-a-file).
+
+#### Content a file can't copy
+
+A data dictionary file has no views, content types, list settings, or permissions. So each list and library gets only the destination's default view, and **Content types** says the file doesn't include them. The file also has no site pages, Site Assets, agents and site skills, navigation, or site look, so those switches and **Permissions** are off and grayed out. **Replace pages and files that already exist in the destination** is off and grayed out too, because the file has no pages or files to replace.
+
+#### Lookups from a file
+
+A lookup column needs a **Relationships** row of type `Lookup`. Sitenalyzer finds it by matching the row's `from_asset_id` and `from_field_id` to the column's `asset_id` and `field_id` on **Fields**. The row's `to_asset_id` names the list the column reads from, and that list must be a list or library in the file.
+
+The file doesn't say which column of the other list a lookup shows, so the lookup shows that list's Title column. Change it in the destination if it should show another column.
+
+Sitenalyzer skips a lookup column, and says why, when:
+
+- Its `field_id` is blank, so no **Relationships** row can match it.
+- It has no **Relationships** row.
+- Its list isn't in the file, or is one Sitenalyzer doesn't copy, such as Site Pages.
+- You didn't choose its list in **Lists and libraries**.
+
+**Before you copy** names each column of the lists you chose that the copy will skip because of the file, such as a column with no type Sitenalyzer can make. A calculated column whose formula uses a skipped column is skipped too, and is named there with the column it uses. **Before you copy** also lists notes about the file, such as "A data dictionary file has no views, so each list and library gets only the destination's default view."
+
+#### Files Sitenalyzer refuses
+
+- A file that isn't an `.xlsx` workbook, or is larger than 25 MB.
+- A file whose `format_version` on **Export_Info** is 2.0 or higher, or isn't a version number. A file with a blank version is read.
+- A file with no lists or libraries that Sitenalyzer can copy.
+- A file with hidden-value markers, such as `[phone number hidden]`, because the copy would give a list, column, choice, or term the marker as its name. A marker in a name or choice column, such as `display_name` or `value_label`, always stops the read. A marker in another column where Sitenalyzer hides values, such as `description`, stops it only when the `hidden_values` row says values were hidden.
+
+A file saved with **Show hidden values** off is refused only when it holds such a marker. When nothing in the site looked like personal information, the file has no markers and can be used. To use a file that was refused, save the data dictionary again with **Show hidden values** on, then choose the new file.
+
 ### Conclusion
 
-You can now read a Sitenalyzer data dictionary, check how complete each value set is, and write the same format from another data source. To save a data dictionary, see [Installing and using Sitenalyzer](usage.md). To see how Sitenalyzer reads the site, see [Sitenalyzer architecture](architecture.md).
+You can now read a Sitenalyzer data dictionary, check how complete each value set is, write the same format from another data source, and use it to copy a site's structure. To save a data dictionary, see [Installing and using Sitenalyzer](usage.md). To see how Sitenalyzer reads the site, see [Sitenalyzer architecture](architecture.md).
 
 ### Additional resources
 
 - [Installing and using Sitenalyzer](usage.md)
+- [Copying a site's structure](how-to/copy-a-site.md)
 - [Hidden values](usage.md#hidden-values)
 - [Sitenalyzer architecture](architecture.md)
 - [Introduction to managed metadata (Microsoft Learn)](https://learn.microsoft.com/sharepoint/managed-metadata)
