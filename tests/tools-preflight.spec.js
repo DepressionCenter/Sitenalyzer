@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-preflight.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-08
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Browser tests for the check before copying in Copy site structure (src/tools/preflight.js) and its Before you
          copy part of the screen: a copy with nothing to warn about, the term store warnings and the columns they name,
          each of the other checks, a list name or address that stops the copy and leaves only Go back, Copy anyway with
@@ -164,7 +164,7 @@ async function choose(page, on, termSet) {
 // [item, kind, what will happen].
 async function beforeYouCopy(page) {
     await page.getByRole('button', { name: 'Copy to destination' }).click();
-    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused({ timeout: 30000 });
+    await expect(page.getByRole('heading', { level: 4, name: 'Before you copy' })).toBeFocused({ timeout: 30000 });
     const summary = await page.locator('.sna-tools-preflight-summary').textContent();
     const rows = await page.locator('.sna-tools-preflight-table tbody tr').evaluateAll(function(trs) {
         return trs.map(function(tr) { return Array.prototype.map.call(tr.cells, function(td) { return td.textContent; }); });
@@ -282,6 +282,18 @@ test('warns that term sets will fail when the term store refuses CSOM and there 
     await expect(page.locator('#sna-tbl-tools-results .tabulator-row').first().locator('.tabulator-cell[tabulator-field="resultText"]')).toHaveText('Warning');
     await expect(resultRow(page, 'Study Arms', 'Failed')).toHaveCount(1);
     await expect(page.locator('.sna-tools-results-summary')).toHaveText(/ Warned about 3 items before the copy\.$/);
+});
+
+test('counts a term store it couldn\'t read as a check that couldn\'t finish', async function({ page }) {
+    await openTools(page, { source: { visitColumns: managedMetadata('01', 'ArmTerm', 'Arm Term', SITE_TERM_SET) },
+        destination: { handlers: [{ pattern: /\/termStore$/, answer: function(ctx) { return ctx.spError(500, 'Something went wrong.'); } }] } });
+    await choose(page, [], true);
+    const before = await beforeYouCopy(page);
+    expect(before.rows).toEqual([['Term store', 'Term set', 'Sitenalyzer couldn\'t read the destination\'s term store, so it can\'t tell yet whether it ' +
+        'can copy Study Arms. If it can\'t, it won\'t copy it. That would skip the column that uses it: Arm Term in Study Visits. SharePoint couldn\'t ' +
+        'answer. You can copy anyway, or go back and try again in a few minutes.']]);
+    expect(before.summary).toBe('Sitenalyzer found 1 thing to know before you copy to Study Two: 1 item may fail. Sitenalyzer couldn\'t finish every ' +
+        'check, so the copy may run into problems that this table doesn\'t show. Select Copy anyway to copy everything else, or Go back to change what you chose.');
 });
 
 test('warns, with the one column it names, that making the term group may be refused when SharePoint answers CSOM', async function({ page }) {
@@ -465,6 +477,43 @@ test('warns about a content type from the content type hub that the destination 
     await choose(page, [], false);
     expect((await beforeYouCopy(page)).rows).toEqual([['Policy Document', 'Content type', 'It comes from the content type hub, and the destination doesn\'t ' +
         'have it yet, so Sitenalyzer will skip it and anything based on it. Publish it to the destination from the content type gallery, then copy again.']]);
+});
+
+test('reads the destination\'s content types again, so it doesn\'t warn about one the hub published after the destination was checked', async function({ page }) {
+    const siteTypes = [
+        { StringId: '0x01', Name: 'Item', Description: '', Group: 'List Content Types', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] },
+        { StringId: POLICY_ID, Name: 'Policy Document', Description: '', Group: 'Policy Content Types', ReadOnly: true, FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] }
+    ];
+    const visitListTypes = [{ StringId: POLICY_ID + '00EEEE0000000040008000000000000003', Name: 'Policy Document', Description: '', Group: 'Policy Content Types',
+        FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] }];
+    let reads = 0;
+    // The destination gets Policy Document from the hub after Check destination read its content types.
+    await openTools(page, { source: { siteTypes: siteTypes, visitListTypes: visitListTypes }, destination: { handlers: [{ pattern: /^\/_api\/web\/contenttypes$/,
+        answer: function(ctx) {
+            reads++;
+            if (reads === 2) { ctx.model.contentTypes.push({ StringId: POLICY_ID, Name: 'Policy Document', Group: 'Policy Content Types', Description: '' }); }
+            return undefined;
+        } }] } });
+    await choose(page, [], false);
+    expect((await beforeYouCopy(page)).rows).toEqual([]);
+    expect(reads).toBe(2);
+});
+
+test('adds a row to the results when the whole check failed and the person copied anyway', async function({ page }) {
+    await openPretendSite(page);
+    const rows = await runPreflight(page, [
+        '_snaToolsToken = 1;',
+        '_snaToolsActiveToken = 1;',
+        '_snaToolsRun = { token: 1, destination: null, results: [] };',
+        'snaToolsLogPreflightWarnings([], "Sitenalyzer couldn\'t finish checking the destination before the copy.");',
+        'snaToolsLogPreflightWarnings([snaToolsPreflightWarning({ severity: "skip", kind: "Column", name: "Arm in Study Visits", note: "Note." })], "");',
+        'return _snaToolsRun.results.map(function(r) { return [r.kind, r.name, r.result, r.note, r.summary]; });'
+    ].join('\n'), {});
+    expect(rows).toEqual([
+        ['Note', 'Check before copying', 'warning', 'Sitenalyzer couldn\'t finish checking the destination before the copy, so it couldn\'t say what the ' +
+            'copy would skip, and you chose to copy anyway. The other rows say what the copy did. Look for any item marked Skipped or Failed.', true],
+        ['Column', 'Arm in Study Visits', 'warning', 'Note.', false]
+    ]);
 });
 
 test('warns about site skills when the destination has no Agent Assets library', async function({ page }) {

@@ -186,7 +186,7 @@ When the destination already has a list or library that the copy uses, such as D
 
 When the copy starts, Sitenalyzer checks the destination once more before it changes anything. Then it copies in this order: term sets, site columns, lists and libraries, content types, columns, views, form settings, Site Assets, site look, agents and site skills, site pages, navigation, and permissions. Each part comes after the parts it needs. For example, a managed metadata column needs its term set.
 
-When one item fails, the copy goes on with the next one. Large sites can take several minutes. Keep the page open until the results appear.
+When one item fails, the copy goes on with the next one. Large sites can take several minutes. Keep the page open until the results appear. If you try to leave or reload the page while Sitenalyzer copies, your browser asks first, because leaving stops the copy and loses its results.
 
 ### Before you copy
 
@@ -218,9 +218,9 @@ The sentence above the table counts the rows by what will happen to each item:
 - **Lists and libraries**: Sitenalyzer reads the destination's lists and libraries again, in case one of your names or addresses was taken after you selected **Check destination**. It also names each list or library the destination already has that the copy will rename.
 - **SharePoint's own site columns**: each of SharePoint's own site columns that the copy will rename in the destination's top-level site, which changes the name in every site of the destination's site collection. When this site and the destination use different languages, the row says the copy won't rename it.
 - **Term sets**: when you chose term sets, whether Sitenalyzer can read the destination's term store, whether the destination has one term group of its own, none, or more than one, and whether SharePoint lets Sitenalyzer reach the term store to make a term group or change term sets. The row names the columns that use the chosen term sets.
-- **Columns**: managed metadata columns that aren't connected to a term set, columns that use a term set you didn't choose, and columns that use a term set shared by every site that the destination's term store doesn't have. It also finds lookup columns that read from a list you didn't choose that the destination doesn't have, or from a list on another site. With a data dictionary file, it names the columns the file describes that the copy can't make.
+- **Columns**: managed metadata columns that aren't connected to a term set, columns that use a term set you didn't choose, and columns that use a term set shared by every site that the destination's term store doesn't have. It also finds lookup columns that read from a list you didn't choose that the destination doesn't have, or from a list on another site. With a data dictionary file, it names the columns the file describes that the copy can't make, and every lookup column that reads from a list you didn't choose, whatever lists the destination has.
 - **Calculated columns**: a calculated column whose formula uses a column the copy skips is skipped too.
-- **Content types**: content types from the content type hub that the destination doesn't have yet.
+- **Content types**: content types from the content type hub that the destination doesn't have yet. Sitenalyzer reads the destination's content types again, in case the hub published one after you selected **Check destination**.
 - **Site skills**: with **Agents and site skills** on, when the destination has no Agent Assets library, each site skill may fail. Sitenalyzer tries to turn on site skills there, and only the copy can find out whether that works.
 - **Site Assets**: with **Site Assets** on, files larger than 250 MB, which the copy skips.
 - **Custom scripts**: when the destination doesn't allow custom scripts, classic pages and pages in a folder will fail if **Site pages** is on, and SharePoint may refuse some site look settings if **Site look** is on. A page the destination already has isn't listed when **Replace pages and files that already exist in the destination** is off, because the copy leaves that page as it is.
@@ -243,9 +243,9 @@ Some problems stop the whole copy before it changes anything. For example, the d
 
 When a part of the check can't finish, such as when SharePoint doesn't answer, that part gets a row of the kind Note that says "Sitenalyzer couldn't check this before the copy, so the copy may run into a problem here that this table doesn't show." The note ends with what went wrong. The sentence above the table also says "Sitenalyzer couldn't finish every check, so the copy may run into problems that this table doesn't show." You can still select **Copy anyway**, or select **Go back** and try again in a few minutes.
 
-When Sitenalyzer can't read the destination's term store, it lists that in the Term store row instead, as may fail. The row starts with "Sitenalyzer couldn't read the destination's term store, so it can't tell yet whether it can copy" and names the term sets.
+When Sitenalyzer can't read the destination's term store, it lists that in the Term store row instead, as may fail. The row starts with "Sitenalyzer couldn't read the destination's term store, so it can't tell yet whether it can copy" and names the term sets. The sentence above the table also says that Sitenalyzer couldn't finish every check.
 
-When the whole check fails, **Before you copy** says "Sitenalyzer couldn't finish checking the destination before the copy, so it can't say what the copy will skip. You can copy anyway, or go back."
+When the whole check fails, **Before you copy** says "Sitenalyzer couldn't finish checking the destination before the copy, so it can't say what the copy will skip. You can copy anyway, or go back." If you select **Copy anyway**, the results start with a **Check before copying** row with the result **Warning** that says so. The count under **Results** doesn't count it.
 
 #### Warnings in the results
 
@@ -259,7 +259,7 @@ A stop can leave the item Sitenalyzer was making only partly made, such as a lis
 
 After a stop, Sitenalyzer doesn't check the destination. To finish the copy, select **Copy to destination** again. See [Copy again into the same destination](#copy-again-into-the-same-destination).
 
-**Start over**, **Change site**, and **Refresh report** also stop a copy, and they clear your choices and results in **Tools**.
+While Sitenalyzer copies, **Refresh report**, **Start over**, and **Change site** are turned off, and the sentence under them says "Refresh report, Start over, and Change site are turned off while Sitenalyzer copies. To use them now, select Stop copying in Tools." When no copy is running, they clear your choices and results in **Tools**.
 
 ### Read the results
 

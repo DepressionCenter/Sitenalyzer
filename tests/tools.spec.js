@@ -132,6 +132,57 @@ async function tabTo(page, target, max) {
     await expect(target).toBeFocused();
 }
 
+// Returns the options of a pretend destination whose next read of its site details waits, and the hold that controls it.
+// Set hold.on to true before a check: the read then waits until hold.release() is called, and hold.started resolves
+// when it starts waiting. hold.reset() gets the hold ready for another check.
+function heldDestination() {
+    const hold = { on: false };
+    hold.reset = function() {
+        hold.started = new Promise(function(resolve) { hold.markStarted = resolve; });
+        hold.released = new Promise(function(resolve) { hold.release = resolve; });
+    };
+    hold.reset();
+    const options = { handlers: [{ pattern: /^\/_api\/web$/, answer: async function() {
+        if (!hold.on) { return undefined; }
+        hold.on = false;
+        hold.markStarted();
+        await hold.released;
+        return undefined;
+    } }] };
+    return { hold: hold, options: options };
+}
+
+// Returns how many requests were sent to this address of the destination, such as '/_api/web/contenttypes', which
+// is the last read of a destination check.
+function destinationReadCount(record, apiPath) {
+    return record.apiRequests.filter(function(a) { return new URL(a).pathname === DEST_PATH + apiPath; }).length;
+}
+
+// Waits long enough for the page to finish handling an answer it has already received.
+function settle(page) {
+    return page.evaluate(function() { return new Promise(function(resolve) { setTimeout(resolve, 300); }); });
+}
+
+// Starts recording the text of the status line with this ID each time it is drawn again, as it is when it appears on
+// the page. firstTextsOfLine returns what was recorded. Screen readers announce only text written after that.
+async function watchNewLine(page, id) {
+    await page.evaluate(function(lineId) {
+        let seen = document.getElementById(lineId);
+        window.__snaFirstTexts = [];
+        if (window.__snaLineWatcher) { window.__snaLineWatcher.disconnect(); }
+        window.__snaLineWatcher = new MutationObserver(function() {
+            const line = document.getElementById(lineId);
+            if (line && line !== seen) { seen = line; window.__snaFirstTexts.push(line.textContent); }
+        });
+        window.__snaLineWatcher.observe(document.body, { childList: true, subtree: true });
+    }, id);
+}
+
+// Returns the text each new copy of the watched status line had when it appeared (see watchNewLine).
+function firstTextsOfLine(page) {
+    return page.evaluate(function() { return window.__snaFirstTexts; });
+}
+
 // Returns a readable list of axe problems, so a failing test shows what to fix.
 function describeViolations(violations) {
     return violations.map(function(violation) {
@@ -173,7 +224,9 @@ test('opens Tools from the section navigation, with Copy site structure as its o
     await expect(subnav.getByRole('link')).toHaveText(['Copy site structure']);
     await expect(subnav.getByRole('link', { name: 'Copy site structure' })).toHaveAttribute('aria-current', 'page');
     await expect(page.locator('#sna-part-title')).toHaveText('Copy site structure');
-    await expect(page.locator('#sna-tools h3.sna-tools-heading')).toHaveText(['Source', 'Destination', 'Lists and libraries', 'Term sets', 'Content types', 'Other content', 'Copy']);
+    // The parts of Copy site structure are one level under its heading.
+    await expect(page.locator('#sna-tools h3')).toHaveText(['Copy site structure']);
+    await expect(page.locator('#sna-tools h4.sna-tools-heading')).toHaveText(['Source', 'Destination', 'Lists and libraries', 'Term sets', 'Content types', 'Other content', 'Copy']);
     await expect(page.locator('#sna-tools-contenttypes')).toHaveText('This site has no content types of its own.');
 
     await subnav.getByRole('link', { name: 'Copy site structure' }).click();
@@ -317,6 +370,102 @@ test('fills the destination from Choose a site without opening that site\'s repo
     await expect(dialog.getByRole('button', { name: 'Open site report' })).toBeVisible();
 });
 
+test('keeps the checked destination when Use this site is selected with nothing typed, and says what to enter', async function({ page }) {
+    await openTools(page, { destination: true });
+    const box = page.getByRole('textbox', { name: 'Destination site address' });
+    await checkDestination(page, DEST_URL);
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText(SUCCESS_STATUS);
+    await page.getByRole('button', { name: 'Choose a site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    const address = dialog.getByRole('textbox', { name: 'Or enter a site address' });
+    const message = 'Enter the address of the site to copy to, such as https://contoso.sharepoint.com/sites/new-study.';
+    await dialog.getByRole('button', { name: 'Use this site' }).click();
+    await expect(dialog).toBeVisible();
+    await expect(address).toBeFocused();
+    await expect(address).toHaveAccessibleDescription(message);
+    // Enter in the empty box, or only spaces, does the same.
+    await address.fill('   ');
+    await address.press('Enter');
+    await expect(dialog).toBeVisible();
+    await expect(page.locator('#sna-site-address-message')).toHaveText(message);
+    await expectNoAxeViolations(page);
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(box).toHaveValue(DEST_URL);
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText(SUCCESS_STATUS);
+    await expect(page.locator('#sna-tools-copy-hint')).not.toHaveText('Check the destination before you copy.');
+});
+
+test('drops the answer of a destination check for an address that is no longer in the box', async function({ page }) {
+    const held = heldDestination();
+    const record = await openTools(page, { destination: held.options });
+    const box = page.getByRole('textbox', { name: 'Destination site address' });
+    const check = page.getByRole('button', { name: 'Check destination' });
+    const status = page.locator('#sna-tools-destination-status');
+    const invalid = 'Enter the full address of a SharePoint site, such as https://contoso.sharepoint.com/sites/new-study.';
+
+    // Typing another address while the check runs drops its answer, and Check destination checks the new address.
+    held.hold.on = true;
+    await box.fill(DEST_URL);
+    await check.click();
+    await held.hold.started;
+    await expect(status).toHaveText('Checking the destination...');
+    await box.fill('new study site');
+    await expect(status).toHaveText('');
+    await check.click();
+    await expect(status).toHaveText(invalid);
+    held.hold.release();
+    await expect.poll(function() { return destinationReadCount(record, '/_api/web/contenttypes'); }).toBe(1);
+    await settle(page);
+    await expect(status).toHaveText(invalid);
+    await expect(page.locator('#sna-tools-copy-hint')).toHaveText('Check the destination before you copy.');
+
+    // The same for an address chosen in Choose a site.
+    held.hold.reset();
+    held.hold.on = true;
+    await box.fill(DEST_URL);
+    await check.click();
+    await held.hold.started;
+    await page.getByRole('button', { name: 'Choose a site' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Choose a site' });
+    await dialog.getByRole('textbox', { name: 'Or enter a site address' }).fill('new study site');
+    await dialog.getByRole('button', { name: 'Use this site' }).click();
+    await expect(status).toHaveText('Select Check destination to check this site.');
+    await check.click();
+    await expect(status).toHaveText(invalid);
+    held.hold.release();
+    await expect.poll(function() { return destinationReadCount(record, '/_api/web/contenttypes'); }).toBe(2);
+    await settle(page);
+    await expect(status).toHaveText(invalid);
+    await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeDisabled();
+});
+
+test('keeps empty status lines on the page, so screen readers announce the messages written in them later', async function({ page }) {
+    const held = heldDestination();
+    await openTools(page, { destination: held.options });
+    for (const id of ['sna-tools-destination-status', 'sna-tools-progress-status']) {
+        const line = page.locator('#' + id);
+        await expect(line).toHaveText('');
+        await expect(line).toHaveAttribute('role', 'status');
+        expect(await line.evaluate(function(el) { return getComputedStyle(el).display; })).toBe('block');
+    }
+
+    // Changing the source while a check runs draws the view again. The new status line is empty when it appears, and
+    // the message is written in it afterwards.
+    held.hold.on = true;
+    await page.getByRole('textbox', { name: 'Destination site address' }).fill(DEST_URL);
+    await page.getByRole('button', { name: 'Check destination' }).click();
+    await held.hold.started;
+    await watchNewLine(page, 'sna-tools-destination-status');
+    await page.getByRole('radio', { name: 'A data dictionary file' }).check();
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText('You changed the source, so select Check destination again.');
+    expect(await firstTextsOfLine(page)).toEqual(['']);
+    held.hold.release();
+    await settle(page);
+    await expect(page.locator('#sna-tools-destination-status')).toHaveText('You changed the source, so select Check destination again.');
+});
+
 // ### Choices ###
 
 test('lists the lists and libraries with checkboxes, Name and Address boxes, and messages for problems', async function({ page }) {
@@ -450,6 +599,20 @@ test('offers the site\'s own content types, all checked, and keeps the ones a ch
     await expect(consent).not.toBeChecked();
 });
 
+test('hides a content type name that looks like a phone number the first time Tools shows it', async function({ page }) {
+    await openTools(page, { answerOverrides: [{ pattern: /^\/_api\/web\/contenttypes$/, body: { value: [
+        { StringId: '0x01', Name: 'Item', Group: 'List Content Types' },
+        { StringId: '0x0100CCCC0000000040008000000000000003', Name: 'Consent call 734-555-0100', Group: 'Study Content Types' }
+    ] } }] });
+    const labels = page.locator('#sna-tools-contenttypes label');
+    await expect(labels).toHaveText(['Consent call [phone number hidden]']);
+    await expect(page.locator('#sna-tools-contenttypes')).not.toContainText('734-555-0100');
+    const showHidden = page.getByRole('switch', { name: 'Show hidden values' });
+    await expect(showHidden).toBeVisible();
+    await showHidden.click();
+    await expect(labels).toHaveText(['Consent call 734-555-0100']);
+});
+
 test('turns on Site pages, Site Assets, and Agents and site skills, and leaves Permissions off', async function({ page }) {
     await openTools(page);
     await expect(page.getByRole('switch', { name: 'Site pages' })).toBeChecked();
@@ -468,7 +631,7 @@ test('turns off and disables the switches for a data dictionary file, which does
     await page.getByRole('radio', { name: 'A data dictionary file' }).check();
     await expect(page.getByRole('radio', { name: 'A data dictionary file' })).toBeFocused();
     await expect(page.getByLabel('Data dictionary file', { exact: true })).toBeVisible();
-    for (const name of ['Site pages', 'Site Assets', 'Agents and site skills', 'Permissions']) {
+    for (const name of ['Site pages', 'Site Assets', 'Agents and site skills', 'Navigation', 'Site look', 'Permissions']) {
         const control = page.getByRole('switch', { name: name });
         await expect(control).toBeDisabled();
         await expect(control).not.toBeChecked();
@@ -485,6 +648,9 @@ test('turns off and disables the switches for a data dictionary file, which does
     await page.getByRole('radio', { name: 'This site\'s report' }).check();
     await expect(replace).toBeEnabled();
     await expect(page.getByRole('switch', { name: 'Site pages' })).toBeChecked();
+    await expect(page.getByRole('switch', { name: 'Navigation' })).toBeChecked();
+    await expect(page.getByRole('switch', { name: 'Site look' })).not.toBeChecked();
+    await expect(page.getByRole('switch', { name: 'Site look' })).toBeEnabled();
     await expect(page.getByRole('switch', { name: 'Permissions' })).not.toBeChecked();
 });
 
@@ -516,6 +682,7 @@ test('copies one list into the pretend destination and shows a result for each i
     expect(record.consoleErrors).toEqual([]);
 
     // The results: the term set, the list, its columns, and its view were copied and checked.
+    await expect(page.getByRole('heading', { level: 4, name: 'Results', exact: true })).toBeVisible();
     await expect(page.locator('.sna-tools-results-lead')).toHaveText('Finished copying to Study Two. Sitenalyzer checked the destination afterwards. Each row says what happened.');
     const list = resultRow(page, 'Study Visits');
     await expect(resultCell(list, 'kind')).toHaveText('List');
@@ -710,14 +877,73 @@ test('Stop copying while the request digest is on its way sends nothing after it
     await expect(resultRow(page, 'Study Visits')).toHaveCount(0);
 });
 
+test('turns off Refresh report, Start over, and Change site while a copy runs, says why, and asks before the page closes', async function({ page }) {
+    let releaseCreate;
+    let createStarted;
+    const started = new Promise(function(resolve) { createStarted = resolve; });
+    const release = new Promise(function(resolve) { releaseCreate = resolve; });
+    await openTools(page, { destination: { handlers: [{ method: 'POST', pattern: /^\/_api\/web\/lists$/, answer: async function() {
+        createStarted();
+        await release;
+        return undefined;
+    } }] } });
+    // True when leaving or reloading the page makes the browser ask first.
+    function leavingAsks() {
+        return page.evaluate(function() {
+            const e = new Event('beforeunload', { cancelable: true });
+            window.dispatchEvent(e);
+            return e.defaultPrevented;
+        });
+    }
+    const actions = ['Refresh report', 'Start over', 'Change site'].map(function(name) { return page.getByRole('button', { name: name, exact: true }); });
+    const note = page.locator('#sna-utility-note');
+    const sentence = 'Refresh report, Start over, and Change site are turned off while Sitenalyzer copies. To use them now, select Stop copying in Tools.';
+    await expect(note).toBeHidden();
+    expect(await leavingAsks()).toBe(false);
+
+    await checkDestination(page, DEST_URL);
+    await chooseOnly(page, 'Study Visits');
+    await page.getByRole('button', { name: 'Copy to destination' }).click();
+    // Before you copy changes nothing, so it doesn't turn them off.
+    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused({ timeout: 15000 });
+    for (const action of actions) { await expect(action).toBeEnabled(); }
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
+    await started;
+    await expect(note).toBeVisible();
+    await expect(note).toHaveText(sentence);
+    for (const action of actions) {
+        await expect(action).toBeDisabled();
+        await expect(action).toHaveAccessibleDescription(sentence);
+    }
+    expect(await leavingAsks()).toBe(true);
+    await expectNoAxeViolations(page);
+    // They stay off in the other sections of the report.
+    await page.locator('.sna-nav').getByRole('link', { name: 'Overview', exact: true }).click();
+    await expect(actions[1]).toBeDisabled();
+    await page.locator('.sna-nav').getByRole('link', { name: 'Tools', exact: true }).click();
+
+    await page.getByRole('button', { name: 'Stop copying' }).click();
+    releaseCreate();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
+    for (const action of actions) {
+        await expect(action).toBeEnabled();
+        await expect(action).toHaveAccessibleDescription('');
+    }
+    await expect(note).toBeHidden();
+    expect(await leavingAsks()).toBe(false);
+});
+
 test('copies nothing when the person selects Go back under Before you copy', async function({ page }) {
     const record = await openTools(page, { destination: true });
     await checkDestination(page, DEST_URL);
     await chooseOnly(page, 'Study Visits');
     await page.getByRole('button', { name: 'Copy to destination' }).click();
-    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused();
+    await expect(page.getByRole('heading', { level: 4, name: 'Before you copy' })).toBeFocused();
+    await watchNewLine(page, 'sna-tools-progress-status');
     await page.getByRole('button', { name: 'Go back' }).click();
     await expect(page.locator('#sna-tools-progress-status')).toHaveText('You didn\'t copy anything.');
+    // The line was empty when it was drawn again, so screen readers announce the message written in it afterwards.
+    expect(await firstTextsOfLine(page)).toEqual(['']);
     await expect(page.getByRole('button', { name: 'Copy to destination' })).toBeFocused();
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toHaveCount(0);
     // The check before copying sent only reads: the CSOM request that loads the term store has no change in its actions.
@@ -805,6 +1031,29 @@ test('works with the keyboard alone, from the destination to the results', async
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
     await expect(resultCell(resultRow(page, 'Study Visits'), 'resultText')).toHaveText('Copied');
     await tabTo(page, page.getByRole('button', { name: 'Save results (.xlsx)' }));
+});
+
+test('lets keyboard users scroll the table of lists sideways after the window gets narrower, and stops when it gets wider', async function({ page }) {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await openTools(page);
+    const wrap = page.locator('#sna-tools-lists-wrap');
+    await expect(page.getByRole('table', { name: 'Lists and libraries to copy' })).toBeVisible();
+    await expect(wrap).not.toHaveAttribute('tabindex', '0');
+    await expect(wrap).not.toHaveAttribute('role', 'region');
+
+    // Narrowing the window, as zooming in does, makes the table scroll sideways inside its box.
+    await page.setViewportSize({ width: 320, height: 900 });
+    const region = page.getByRole('region', { name: 'Lists and libraries to copy (scroll sideways to see more)' });
+    await expect(region).toBeVisible();
+    await expect(wrap).toHaveAttribute('tabindex', '0');
+    await region.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(function() { return wrap.evaluate(function(el) { return el.scrollLeft; }); }).toBeGreaterThan(0);
+    await expectNoAxeViolations(page);
+
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await expect(wrap).not.toHaveAttribute('tabindex', '0');
+    await expect(wrap).not.toHaveAttribute('role', 'region');
 });
 
 for (const width of [1280, 320]) {

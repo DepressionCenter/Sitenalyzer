@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-workbook.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Browser tests for a data dictionary file as the source of Copy site structure (src/tools/workbook.js). They save
          the data dictionary from the pretend site and choose that file in Tools, which shows that Sitenalyzer reads back
          what it writes. They also build files in the test, such as one from another tool with only display_type values,
@@ -762,6 +762,36 @@ test('names before the copy the columns of the chosen lists that the file can\'t
     expect(record.writeRequests.filter(function(r) { return /location_label/i.test(r.body); })).toEqual([]);
 });
 
+test('names before the copy a lookup column whose list the person didn\'t choose, without saying what the destination has', async function({ page }) {
+    await openTools(page, { destination: true });
+    const buffer = buildFile({
+        Export_Info: [['tool', 'Example Catalog'], ['format_version', '1.1']],
+        Assets: sheetFrom([
+            { asset_id: 'TBL_V', asset_name: 'visits', asset_display_name: 'Study Visits', asset_type: 'Table' },
+            { asset_id: 'TBL_P', asset_name: 'participants', asset_display_name: 'Study Participants', asset_type: 'Table' }
+        ]),
+        Fields: sheetFrom([
+            { field_id: 'F1', asset_id: 'TBL_V', internal_name: 'participant', display_name: 'Participant', display_type: 'Lookup', field_order: '1' },
+            { field_id: 'F2', asset_id: 'TBL_P', internal_name: 'enrolled_on', display_name: 'Enrolled On', display_type: 'DateTime', field_order: '1' }
+        ]),
+        Relationships: sheetFrom([{ relationship_id: 'R1', relationship_type: 'Lookup', from_asset_id: 'TBL_V', from_field_id: 'F1', to_asset_id: 'TBL_P' }])
+    });
+    await chooseFile(page, 'study-catalog.xlsx', buffer);
+    await checkDestination(page, DEST_URL);
+    await page.getByRole('table', { name: 'Lists and libraries to copy' }).getByRole('checkbox', { name: 'Study Participants', exact: true }).uncheck();
+    await page.getByRole('button', { name: 'Copy to destination' }).click();
+    const before = await beforeYouCopy(page);
+    // The copy skips it whatever lists the destination has, so the row names the list and doesn't say what the destination has.
+    expect(before.rows.filter(function(r) { return r[1] === 'Column'; })).toEqual([
+        ['Participant in Study Visits', 'Column', 'It reads from Study Participants, a list you didn\'t choose, so Sitenalyzer will skip this column. ' +
+            'Choose that list too if you need the column.']
+    ]);
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 15000 });
+    await expect(resultRow(page, 'Participant in Study Visits').filter({ has: page.locator('[tabulator-field="resultText"]', { hasText: /^Skipped$/ }) }))
+        .toHaveCount(1);
+});
+
 test('says it could not read the file when building the plan fails in a way Sitenalyzer did not expect', async function({ page }) {
     await openPretendSite(page);
     await expect(page.locator('#sna-entry h1')).toBeVisible();
@@ -847,7 +877,7 @@ test('keeps the switches and Replace off and disabled for a file it read, and st
     await openTools(page, { destination: true });
     await chooseFile(page, 'small.xlsx', smallFile());
     await expect(page.locator('#sna-tools-file-status')).toHaveText('Read small.xlsx: 1 list or library and 0 term sets.');
-    for (const name of ['Site pages', 'Site Assets', 'Agents and site skills', 'Permissions']) {
+    for (const name of ['Site pages', 'Site Assets', 'Agents and site skills', 'Navigation', 'Site look', 'Permissions']) {
         const control = page.getByRole('switch', { name: name });
         await expect(control).toBeDisabled();
         await expect(control).not.toBeChecked();

@@ -24,10 +24,12 @@ Notes: See README file for documentation and full license information.
          name      The item as people know it, such as 'Arm in Study Visits'.
          note      Plain English that says what will happen and what the person can do.
        context is shared by the checks of one run: { destLists (the destination's lists and libraries read again, or
-       null), skipColumn(listId, internalName, title) (marks a column the copy will skip, and returns false when it was
-       already marked), skippedColumns { listId: { internalName: title } } }. Checks run in the order they were added, so
-       a check that depends on skipped columns, such as the one for calculated columns, is added after the checks that
-       mark them.
+       null), destContentTypes (the destination's content types read again, or null), skipColumn(listId, internalName,
+       title) (marks a column the copy will skip, and returns false when it was already marked), skippedColumns
+       { listId: { internalName: title } }, couldNotFinish() (counts the check that is running as one that couldn't
+       finish, for a check that lists its own warning about a failed read instead of throwing) }. Checks run in the
+       order they were added, so a check that depends on skipped columns, such as the one for calculated columns, is
+       added after the checks that mark them.
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -62,6 +64,11 @@ var SNA_TOOLS_PREFLIGHT_COLUMNS_NAMED = 10;
 // The sentence for a term store change that only the copy itself can test.
 var SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT = 'Some organizations don\'t let people change term sets from a browser. Sitenalyzer can only find out when it tries.';
 
+// The result row that says the whole check before copying failed and the person copied anyway.
+var SNA_TOOLS_PREFLIGHT_FAILED_NAME = 'Check before copying';
+var SNA_TOOLS_PREFLIGHT_FAILED_NOTE = 'Sitenalyzer couldn\'t finish checking the destination before the copy, so it couldn\'t say what the copy ' +
+    'would skip, and you chose to copy anyway. The other rows say what the copy did. Look for any item marked Skipped or Failed.';
+
 // ### Check State ###
 
 var _snaToolsPreflightChecks = [];  // [{ name, fn }], in the order added
@@ -93,16 +100,17 @@ function snaToolsAddPreflightCheck(name, fn) {
 async function snaToolsPreflight(plan, dest) {
     var context = snaToolsPreflightContext();
     var warnings = [];
-    var failedChecks = [];
+    var failedChecks = context.failedChecks;
     for (var i = 0; i < _snaToolsPreflightChecks.length; i++) {
         var check = _snaToolsPreflightChecks[i];
         snaToolsCheckCancelled();
+        context.checkName = check.name;
         var found;
         try {
             found = await check.fn(plan, dest, context);
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
-            failedChecks.push(check.name);
+            context.couldNotFinish();
             found = [{ severity: 'maybe', kind: SNA_TOOLS_KINDS.note, name: check.name,
                 note: 'Sitenalyzer couldn\'t check this before the copy, so the copy may run into a problem here that this table doesn\'t show. ' +
                     snaToolsPreflightReadError(err) }];
@@ -116,9 +124,13 @@ async function snaToolsPreflight(plan, dest) {
     return { warnings: sorted, failedChecks: failedChecks, destLists: context.destLists };
 }
 
-// Returns the shared state of one run of the checks (see the notes at the top of this file).
+// Returns the shared state of one run of the checks (see the notes at the top of this file). checkName and failedChecks
+// are for snaToolsPreflight.
 function snaToolsPreflightContext() {
-    var context = { destLists: null, skippedColumns: {} };
+    var context = { destLists: null, destContentTypes: null, skippedColumns: {}, checkName: '', failedChecks: [] };
+    context.couldNotFinish = function() {
+        if (context.failedChecks.indexOf(context.checkName) === -1) { context.failedChecks.push(context.checkName); }
+    };
     context.skipColumn = function(listId, internalName, title) {
         var list = context.skippedColumns[listId] = context.skippedColumns[listId] || {};
         if (Object.prototype.hasOwnProperty.call(list, internalName)) { return false; }
@@ -300,6 +312,7 @@ snaToolsAddPreflightCheck('Term sets', async function(plan, dest, context) {
         groups = await snaToolsTaxonomyOwnGroups(t, '');
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
+        context.couldNotFinish();
         return row('maybe', 'Sitenalyzer couldn\'t read the destination\'s term store, so it can\'t tell yet whether it can copy ' + names +
             '. If it can\'t, it won\'t copy ' + (many ? 'them' : 'it') + '.' + couldSkip + ' ' + snaToolsPreflightReadError(err));
     }
@@ -332,6 +345,7 @@ snaToolsAddPreflightCheck('Term sets', async function(plan, dest, context) {
                 'make one, so it won\'t copy ' + names + '.' + columns + ' In the destination, add a Managed Metadata column to any list and choose ' +
                 'Customize your term set, then copy again.');
         }
+        context.couldNotFinish();
         return row('maybe', (hasGroup ? 'Sitenalyzer will add ' + names + ' to the destination\'s own term group, but it couldn\'t check whether it can ' +
             'change term sets there.' : 'The destination has no term group of its own, and Sitenalyzer couldn\'t check whether it can make one.') +
             ' If it can\'t, it won\'t copy ' + names + '.' + couldSkip + ' ' + snaToolsPreflightReadError(err));
@@ -347,7 +361,8 @@ snaToolsAddPreflightCheck('Term sets', async function(plan, dest, context) {
 
 // Columns that a data dictionary file already says the copy can't make, managed metadata columns with no term set,
 // columns that need a site term set the person didn't choose, and lookup columns that read from a list the copy doesn't
-// include and the destination doesn't have at the same address, or from a list on another site.
+// include and the destination doesn't have at the same address, or from a list on another site. For a data dictionary
+// file, every lookup column that reads from a list the copy doesn't include is skipped.
 snaToolsAddPreflightCheck('Columns', function(plan, dest, context) {
     var warnings = [];
     var siteSets = {};
@@ -383,10 +398,15 @@ snaToolsAddPreflightCheck('Columns', function(plan, dest, context) {
                 note = 'It reads from a list on another site, so Sitenalyzer will skip this column. Make it by hand in the destination if you need it.';
             } else {
                 var source = snaToolsPreflightSourceList(plan, field.lookupListId);
-                var match = source ? snaToolsExistingDestinationList(destination, source.url, source.baseTemplate) : null;
-                if (!match || !match.usable) {
-                    note = 'It reads from ' + (source ? snaMaskText(source.title) + ', a list' : 'a list') + ' you didn\'t choose that the destination ' +
-                        'doesn\'t have, so Sitenalyzer will skip this column. Choose that list too if you need the column.';
+                if (!source) {
+                    // Without the list's address, the copy can't look for that list in the destination, so it skips the
+                    // column whatever the destination has. A data dictionary file never gives the copy that address.
+                    var title = snaToolsPreflightFileListTitle(plan, field.lookupListId);
+                    note = 'It reads from ' + (title ? snaMaskText(title) + ', a list' : 'a list') + ' you didn\'t choose, so Sitenalyzer will ' +
+                        'skip this column. Choose that list too if you need the column.';
+                } else if (!snaToolsExistingDestinationList(destination, source.url, source.baseTemplate).usable) {
+                    note = 'It reads from ' + snaMaskText(source.title) + ', a list you didn\'t choose that the destination doesn\'t have, so ' +
+                        'Sitenalyzer will skip this column. Choose that list too if you need the column.';
                 }
             }
         }
@@ -404,6 +424,14 @@ function snaToolsPreflightSourceList(plan, listId) {
     var other = _snaReport.lists.filter(function(l) { return snaCleanListId(l.id) === listId; })[0];
     if (!other) { return null; }
     return { title: other.title || '', url: snaToolsCleanAddress(snaToolsListAddress(other)), baseTemplate: other.baseTemplate };
+}
+
+// Returns the name of a list in the data dictionary file the person chose, by ID, or '' when it isn't known. The plan
+// holds only the lists the person chose, so the name comes from the whole file.
+function snaToolsPreflightFileListTitle(plan, listId) {
+    if (plan.source.kind !== 'workbook' || typeof _snaToolsState === 'undefined' || !_snaToolsState || !_snaToolsState.workbook) { return ''; }
+    var list = _snaToolsState.workbook.plan.lists.filter(function(l) { return l.sourceId === listId; })[0];
+    return list ? String(list.title || '') : '';
 }
 
 // ### Term Sets of the Whole Organization ###
@@ -431,6 +459,7 @@ snaToolsAddPreflightCheck('Term sets of the organization', async function(plan, 
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
             problem = snaToolsPreflightReadError(err);
+            context.couldNotFinish();
         }
         bySet[setIds[i]].forEach(function(c) {
             if (problem) {
@@ -471,10 +500,15 @@ snaToolsAddPreflightCheck('Calculated columns', function(plan, dest, context) {
 
 // ### Content Types from the Content Type Hub ###
 
-// The copy never makes a content type that comes from the content type hub, so one the destination doesn't have yet is skipped.
-snaToolsAddPreflightCheck('Content types from the content type hub', function(plan, dest) {
-    return (plan.hubContentTypes || []).filter(function(hub) {
-        return !(dest.contentTypes || []).some(function(d) { return String(d.stringId).toUpperCase() === String(hub.stringId).toUpperCase(); });
+// The copy never makes a content type that comes from the content type hub, so one the destination doesn't have yet is
+// skipped. The destination's content types are read again, in case the hub published one after Check destination.
+snaToolsAddPreflightCheck('Content types from the content type hub', async function(plan, dest, context) {
+    var hubTypes = plan.hubContentTypes || [];
+    if (hubTypes.length === 0) { return []; }
+    var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/contenttypes?$select=StringId,Name', SNA_TOOLS_READ_MAX);
+    context.destContentTypes = read.items.map(function(ct) { return { stringId: ct.StringId || '', name: ct.Name || '' }; });
+    return hubTypes.filter(function(hub) {
+        return !context.destContentTypes.some(function(d) { return String(d.stringId).toUpperCase() === String(hub.stringId).toUpperCase(); });
     }).map(function(hub) {
         return { severity: 'skip', kind: SNA_TOOLS_KINDS.contentType, name: snaMaskText(hub.name), note: 'It comes from the content type hub, and ' +
             'the destination doesn\'t have it yet, so Sitenalyzer will skip it and anything based on it. Publish it to the destination from the ' +
@@ -715,7 +749,7 @@ function snaToolsPreflightHtml(preflight) {
             next;
     }
     var html = '<div class="sna-tools-preflight" id="sna-tools-preflight">' +
-        '<h3 id="sna-tools-h-preflight" class="sna-subsection-title sna-tools-heading" tabindex="-1">Before you copy</h3>' +
+        '<h4 id="sna-tools-h-preflight" class="sna-subsection-title sna-tools-heading" tabindex="-1">Before you copy</h4>' +
         '<p class="sna-tools-preflight-lead">' + snaEscapeHtml(lead) + '</p>' +
         '<p id="sna-tools-preflight-summary" class="sna-tools-preflight-summary">' + snaEscapeHtml(summary) + '</p>';
     if (preflight.warnings.length > 0) {
@@ -752,7 +786,9 @@ function snaToolsCopyContentsText(plan) {
 }
 
 // Adds the warnings to the results of the copy that is running, with the result Warning, so they are in the same
-// table as what the copy did. They aren't counted as copied, skipped, or failed.
-function snaToolsLogPreflightWarnings(warnings) {
+// table as what the copy did. They aren't counted as copied, skipped, or failed. error is the sentence Before you copy
+// showed when the whole check failed, or ''; then one Warning row says so, and it isn't counted either.
+function snaToolsLogPreflightWarnings(warnings, error) {
+    if (error) { snaToolsLog(SNA_TOOLS_KINDS.note, SNA_TOOLS_PREFLIGHT_FAILED_NAME, 'warning', SNA_TOOLS_PREFLIGHT_FAILED_NOTE, { summary: true }); }
     (warnings || []).forEach(function(w) { snaToolsLog(w.kind, w.name, 'warning', w.note); });
 }

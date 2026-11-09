@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-11-05
+Last Modified: 2026-11-09
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
          Its Tools section copies a site's structure into another site; that code is in src/tools/, and the build
@@ -7549,9 +7549,20 @@ function snaRefreshSiteChoices() {
 }
 
 // Uses the site chosen in Choose a site, from its list of sites or its address box: opens its report, or in the
-// 'tools-destination' mode, puts its address in the Tools destination box.
+// 'tools-destination' mode, puts its address in the Tools destination box. With nothing typed in that mode, the dialog
+// stays open and says what to enter, so the address already in the destination box stays.
 function snaChooseSite(address) {
-    if (_snaSiteDialogMode === 'tools-destination') { snaToolsUseDestination(address); return; }
+    if (_snaSiteDialogMode === 'tools-destination') {
+        if (!String(address || '').trim()) {
+            var origin = snaOrigin(getBaseUrl()) || window.location.origin;
+            snaShowSiteAddressMessage('Enter the address of the site to copy to, such as ' + origin + '/sites/new-study.');
+            var box = document.getElementById('sna-site-address');
+            if (box) { box.focus(); }
+            return;
+        }
+        snaToolsUseDestination(address);
+        return;
+    }
     snaOpenSite(address);
 }
 
@@ -7633,9 +7644,10 @@ function startApplication() {
             window.addEventListener('beforeprint', snaHandleBeforePrint);
             window.addEventListener('afterprint', snaRemovePrintDocument);
             document.addEventListener('keydown', snaHandlePrintShortcut, true);
-            // Leaving or reloading the page with an unsaved description makes the browser ask first.
+            // Leaving or reloading the page with an unsaved description, or while a copy in Tools runs, makes the
+            // browser ask first. Leaving stops the copy and loses its results.
             window.addEventListener('beforeunload', function(e) {
-                if (snaUnsavedDraftCount() > 0) { e.preventDefault(); e.returnValue = ''; }
+                if (snaUnsavedDraftCount() > 0 || snaToolsCopying()) { e.preventDefault(); e.returnValue = ''; }
             });
         }
     }

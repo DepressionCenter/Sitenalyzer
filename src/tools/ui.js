@@ -50,6 +50,10 @@ var SNA_TOOLS_WORKBOOK_REPLACE_HINT = 'A data dictionary file doesn\'t include p
 // read at the same time for the Content types part.
 var SNA_TOOLS_VIEW_COUNT_PARALLEL = 3;
 
+// How long after a part of the screen is drawn again its status line gets a new message. Screen readers announce a
+// change in a status line that is already on the page, but not text that is already in a line when it appears.
+var SNA_TOOLS_STATUS_DELAY_MS = 150;
+
 // The hints of a content type that can't be left out, and why.
 var SNA_TOOLS_TYPE_USED_HINT = 'A list you chose uses it.';
 var SNA_TOOLS_TYPE_PARENT_HINT = 'A content type you chose is based on it.';
@@ -82,6 +86,7 @@ function snaToolsNewState() {
 
 var _snaToolsState = snaToolsNewState();
 var _snaToolsCheckCount = 0;    // Changes with each destination check, so the answer to an older check is dropped
+var _snaToolsTableWatcher = null; // Watches the size of the table of lists, so it can scroll sideways after a zoom or resize
 
 // True while the choices can't change: while copying or checking, and while Before you copy waits for an answer.
 function snaToolsLocked() {
@@ -94,6 +99,25 @@ function snaToolsReset() {
     _snaToolsCheckCount++;
     _snaToolsState = snaToolsNewState();
     _snaToolsRun = null;
+    snaToolsShowSiteActions();
+}
+
+// True while a copy runs, from Copy to destination until the results show, except while Before you copy waits.
+function snaToolsCopying() {
+    return _snaToolsState.running || snaToolsBusy();
+}
+
+// Turns Refresh report, Start over, and Change site off while a copy runs, and shows the sentence under them that says
+// why. Each of them would stop the copy and clear its results, which are the only record of what it changed.
+function snaToolsShowSiteActions() {
+    var copying = snaToolsCopying();
+    var note = document.getElementById('sna-utility-note');
+    if (note) { note.hidden = !copying; }
+    document.querySelectorAll('.sna-utility-bar [data-action="refresh-report"], .sna-utility-bar [data-action="start-over"], ' +
+        '.sna-utility-bar [data-action="change-site"]').forEach(function(button) {
+        button.disabled = copying;
+        if (copying && note) { button.setAttribute('aria-describedby', note.id); } else { button.removeAttribute('aria-describedby'); }
+    });
 }
 
 // ### Choices ###
@@ -267,9 +291,9 @@ function snaToolsRender(route, report) {
         '<div class="sna-split">' + nav + '<div class="sna-split-body" id="sna-tools">' + snaToolsRenderCopy(report) + '</div></div>';
 }
 
-// Returns the markup of one heading of Copy site structure.
+// Returns the markup of one heading of Copy site structure, one level under the heading of the part.
 function snaToolsHeadingHtml(id, text) {
-    return '<h3 id="' + id + '" class="sna-subsection-title sna-tools-heading">' + snaEscapeHtml(text) + '</h3>';
+    return '<h4 id="' + id + '" class="sna-subsection-title sna-tools-heading">' + snaEscapeHtml(text) + '</h4>';
 }
 
 // Returns the markup of Copy site structure, drawn from _snaToolsState. Validation messages and the state of
@@ -449,7 +473,7 @@ function snaToolsResultsSummary(results) {
 function snaToolsResultsHtml() {
     var state = _snaToolsState;
     if (!state.results) { return ''; }
-    var html = '<h3 id="sna-tools-results-title" class="sna-subsection-title sna-tools-heading" tabindex="-1">Results</h3>' +
+    var html = '<h4 id="sna-tools-results-title" class="sna-subsection-title sna-tools-heading" tabindex="-1">Results</h4>' +
         (state.resultsLead ? '<p class="sna-tools-results-lead">' + snaEscapeHtml(state.resultsLead) + '</p>' : '') +
         '<p class="sna-tools-results-summary">' + snaEscapeHtml(snaToolsResultsSummary(state.results)) + '</p>';
     if (state.results.length === 0) { return html; }
@@ -479,8 +503,32 @@ function snaToolsRedraw(focusId) {
 function snaToolsAfterRender() {
     snaToolsRefreshForm();
     snaToolsFitTable();
+    snaToolsWatchTable();
     snaToolsLoadViewCounts(_snaReport);
     snaToolsLoadContentTypes(_snaReport);
+}
+
+// Checks again whether the table of lists fits each time its box changes size, such as when the person zooms in or
+// makes the window narrower. Only the table on the page now is watched.
+function snaToolsWatchTable() {
+    if (_snaToolsTableWatcher) { _snaToolsTableWatcher.disconnect(); _snaToolsTableWatcher = null; }
+    var wrap = document.getElementById('sna-tools-lists-wrap');
+    if (!wrap || typeof ResizeObserver !== 'function') { return; }
+    _snaToolsTableWatcher = new ResizeObserver(function() { snaToolsFitTable(); });
+    _snaToolsTableWatcher.observe(wrap);
+}
+
+// Writes a message in a status line that was just drawn again, in a later task, so screen readers find the line on the
+// page first and then announce the message. The line stays empty until then. isCurrent returns false when the message
+// no longer applies, such as after the person changed something, and the message is then left out.
+function snaToolsAnnounceLater(lineId, text, isCurrent) {
+    var line = document.getElementById(lineId);
+    if (!line) { return; }
+    line.textContent = '';
+    setTimeout(function() {
+        var now = document.getElementById(lineId);
+        if (now && !now.textContent && isCurrent()) { now.textContent = text; }
+    }, SNA_TOOLS_STATUS_DELAY_MS);
 }
 
 // Shows a message under one Name or Address box, or removes it when text is ''. The box is marked invalid while it has
@@ -611,7 +659,8 @@ async function snaToolsLoadContentTypes(report) {
 // Draws the inside of the Content types part again, without drawing the rest of the view.
 function snaToolsShowContentTypes() {
     var part = document.getElementById('sna-tools-contenttypes');
-    if (part) { part.innerHTML = snaToolsContentTypesHtml(snaToolsLocked() ? ' disabled' : ''); }
+    // The names are hidden like every other value in the view, such as a name that looks like a phone number.
+    if (part) { part.innerHTML = snaMaskHtml(snaToolsContentTypesHtml(snaToolsLocked() ? ' disabled' : '')); }
 }
 
 // Shows the result of a destination check, or '' to clear it, under the destination box.
@@ -656,7 +705,13 @@ function snaToolsHandleInput(e) {
     if (el.id === 'sna-tools-destination') {
         var wasChecked = !!snaToolsCurrentDestination();
         state.destinationText = el.value;
-        if (wasChecked && !snaToolsCurrentDestination()) { snaToolsSetDestinationStatus('', false); }
+        if (state.checking) {
+            // The check that is running is for the address that was in the box, so its answer is dropped.
+            snaToolsStopDestinationCheck();
+            snaToolsSetDestinationStatus('', false);
+        } else if (wasChecked && !snaToolsCurrentDestination()) {
+            snaToolsSetDestinationStatus('', false);
+        }
         snaToolsRefreshForm();
         return;
     }
@@ -679,14 +734,18 @@ function snaToolsHandleChange(e) {
         state.termSets = {};
         // This site is a destination only for a data dictionary file, so a check that found this site, or one still
         // running, no longer counts for the new source, and its answer is replaced.
+        var status = '';
         if (state.checking || state.destinationThisSite) {
-            _snaToolsCheckCount++;
-            state.checking = false;
+            snaToolsStopDestinationCheck();
             state.destinationThisSite = false;
             state.destination = null;
-            snaToolsSetDestinationStatus(String(state.destinationText || '').trim() ? 'You changed the source, so select Check destination again.' : '', false);
+            status = String(state.destinationText || '').trim() ? 'You changed the source, so select Check destination again.' : '';
+            snaToolsSetDestinationStatus(status, false);
         }
         snaToolsRedraw(el.id);
+        if (status) {
+            snaToolsAnnounceLater('sna-tools-destination-status', status, function() { return _snaToolsState === state && state.destinationStatus === status; });
+        }
         return;
     }
     if (el.id === 'sna-tools-file') { snaToolsReadChosenFile(el); return; }
@@ -726,6 +785,8 @@ function snaToolsSelectAll(selected) {
 function snaToolsUseDestination(address) {
     var state = _snaToolsState;
     var text = String(address || '').trim();
+    // A check that is still running is for the address that was in the box, so its answer is dropped.
+    if (state.checking) { snaToolsStopDestinationCheck(); }
     state.destinationText = text;
     state.destination = null;
     state.destinationThisSite = false;
@@ -737,6 +798,12 @@ function snaToolsUseDestination(address) {
     }
     snaCloseSiteDialog();
     snaToolsRefreshForm();
+}
+
+// Drops the answer of the destination check that is running, so Check destination can check another address.
+function snaToolsStopDestinationCheck() {
+    _snaToolsCheckCount++;
+    _snaToolsState.checking = false;
 }
 
 // Checks the address in the destination box and shows the result under it. Focus stays on the button.
@@ -796,7 +863,9 @@ async function snaToolsReadChosenFile(fileInput) {
         state.workbookStatus = snaToolsFriendlyError(err);
         state.workbookError = true;
     }
+    var message = state.workbookStatus;
     snaToolsRedraw('sna-tools-file');
+    snaToolsAnnounceLater('sna-tools-file-status', message, function() { return _snaToolsState === state && state.workbookStatus === message; });
 }
 
 // ### Copy ###
@@ -817,6 +886,7 @@ async function snaToolsStartCopy() {
     state.results = null;
     state.progressValue = 0;
     state.progressText = 'Reading what the copy needs from this site.';
+    snaToolsShowSiteActions();
     snaToolsRedraw('sna-tools-stop-button');
     snaToolsAnnounce(true);
 
@@ -851,6 +921,7 @@ async function snaToolsStartCopy() {
     if (_snaToolsState !== state) { return; }
     state.running = false;
     state.progressText = '';
+    snaToolsShowSiteActions();
     if (preflight) {
         state.preflight = preflight;
         snaToolsRedraw('sna-tools-h-preflight');
@@ -867,13 +938,16 @@ async function snaToolsStartCopy() {
 function snaToolsGoBack() {
     var state = _snaToolsState;
     if (!state.preflight || state.running) { return; }
+    var text = 'You didn\'t copy anything.';
     state.preflight = null;
-    state.progressText = 'You didn\'t copy anything.';
+    state.progressText = text;
     snaToolsRedraw('sna-tools-copy-button');
     var button = document.getElementById('sna-tools-copy-button');
     var marked = document.querySelector('#sna-tools [aria-invalid="true"]');
     if (button && button.disabled && marked) { marked.focus(); }
-    snaToolsAnnounce(true);
+    snaToolsAnnounceLater('sna-tools-progress-status', text, function() {
+        return _snaToolsState === state && !state.running && !state.preflight && state.progressText === text;
+    });
 }
 
 // Copy anyway: copies what the person chose, checks the destination, and shows the results, with the warnings from
@@ -890,9 +964,10 @@ async function snaToolsCopyAnyway() {
     state.running = true;
     state.progressValue = 0;
     state.progressText = 'Starting the copy.';
+    snaToolsShowSiteActions();
     snaToolsRedraw('sna-tools-stop-button');
     snaToolsAnnounce(true);
-    snaToolsLogPreflightWarnings(preflight.warnings);
+    snaToolsLogPreflightWarnings(preflight.warnings, preflight.error);
 
     var lead = '';
     try {
@@ -907,6 +982,7 @@ async function snaToolsCopyAnyway() {
     snaToolsEndRun(run);
     if (_snaToolsState !== state) { return; }
     state.running = false;
+    snaToolsShowSiteActions();
     state.results = run.results.slice();
     state.resultsLead = lead;
     state.resultsTitle = (run.destination && run.destination.title) || dest.title || '';

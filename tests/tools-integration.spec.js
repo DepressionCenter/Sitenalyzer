@@ -592,7 +592,8 @@ test('copies a site from a data dictionary file saved from it, with the term set
     await page.getByRole('button', { name: 'Clear all' }).click();
     await page.getByRole('checkbox', { name: 'Study Visits', exact: true }).check();
     await page.getByRole('button', { name: 'Copy to destination' }).click();
-    const lookupWarning = ['Study Arm in Study Visits', 'Column', 'It reads from a list you didn\'t choose that the destination doesn\'t have, so ' +
+    // The copy skips it whatever lists the destination has, so the row names the list and doesn't say what the destination has.
+    const lookupWarning = ['Study Arm in Study Visits', 'Column', 'It reads from Study Arms, a list you didn\'t choose, so ' +
         'Sitenalyzer will skip this column. Choose that list too if you need the column.'];
     expect((await beforeYouCopy(page)).rows).toContainEqual(lookupWarning);
     await page.getByRole('button', { name: 'Go back' }).click();

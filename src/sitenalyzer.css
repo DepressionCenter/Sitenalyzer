@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 sitenalyzer.css
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Styles for the Sitenalyzer app. The build copies this file to dist/SiteAssets/styles/,
          and sitenalyzer.js adds it to the page from the site's Site Assets library.
          Every rule starts with the app's own elements, so the rest of the SharePoint page is unchanged.
@@ -244,6 +244,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 /* #a7bfd6 borders keep a 7.8:1 contrast ratio against dark blue. */
 #sp-info-app .sna-utility-bar .sna-btn-outline { background: transparent; color: #ffffff; border-color: #a7bfd6; }
 #sp-info-app .sna-utility-bar .sna-btn-outline:hover { background: #244968; }
+/* While a copy runs in Tools, Refresh report, Start over, and Change site are off: light blue (7.9:1) with no underline,
+   and Change site gets a dashed border. The sentence under them, white on dark blue, says why. */
+#sp-info-app .sna-utility-bar .sna-link-btn:disabled { color: #a7bfd6; text-decoration: none; cursor: not-allowed; }
+#sp-info-app .sna-utility-bar .sna-btn-outline:disabled,
+#sp-info-app .sna-utility-bar .sna-btn-outline:disabled:hover { background: transparent; color: #a7bfd6; border-color: #a7bfd6; border-style: dashed; }
+.sna-utility-note { flex: 1 1 100%; margin: 0; font-size: 14px; }
 #sp-info-app .sna-btn-small { min-height: 36px; padding: 6px 12px; font-size: 14px; }
 #sp-info-app .sna-utility-bar :focus-visible,
 #sp-info-app .sna-nav-row :focus-visible { outline-color: var(--um-maize); }
@@ -981,8 +987,9 @@ details.permissions-section {
 #sp-info-app .sna-tools-input[aria-invalid="true"] { border: 2px solid var(--sna-error); }
 #sp-info-app .sna-tools-input:disabled { background: #f3f2f1; color: #595959; }
 #sp-info-app .sna-tools-destination { flex: 1 1 18rem; min-width: 0; width: 100%; }
+/* A status line stays on the page while it's empty, so screen readers find it before its first message and announce it. */
 .sna-tools-status { margin: 6px 0 0 0; font-size: 14px; }
-.sna-tools-status:empty { display: none; }
+.sna-tools-status:empty { margin: 0; }
 .sna-tools-lists-hint { margin: 0 0 4px 0; }
 .sna-tools-select-actions { margin: 4px 0 0 0; }
 /* The table of lists scrolls sideways inside its box when its boxes don't fit, such as on a phone. */
@@ -1068,6 +1075,8 @@ details.permissions-section {
     #sp-info-app .sna-table-pages .tabulator-page-size { border-color: ButtonText; }
     #sp-info-app .sna-table-pages .tabulator-page.active { background: Highlight; color: HighlightText; border-color: Highlight; }
     #sp-info-app .sna-table-pages .tabulator-page:disabled { color: GrayText; border-color: GrayText; }
+    #sp-info-app .sna-utility-bar .sna-link-btn:disabled,
+    #sp-info-app .sna-utility-bar .sna-btn-outline:disabled { color: GrayText; border-color: GrayText; }
     .sna-symbol .sna-symbol-site, .sna-symbol .sna-symbol-list { fill: CanvasText; }
     .sna-symbol .sna-symbol-branch { stroke: CanvasText; }
     .sna-mark-site { color: inherit; }
