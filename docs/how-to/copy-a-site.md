@@ -5,7 +5,7 @@ Author(s): Gabriel Mongefranco.
 Created: 2026-11-08
 Last Modified: 2026-11-08
 Summary: Step-by-step guide to Copy site structure in Tools: choosing a source and a destination, what each choice
-         copies, what is never copied, and reading the results.
+         copies, what is never copied, the Before you copy check, and reading the results.
 Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -38,7 +38,7 @@ Anyone who can open the report can see **Tools**, but only a site collection adm
 2. Select **Tools** in the section links.
 3. Select **Copy site structure**.
 
-The address of this screen ends in `#sna/tools/copy`. The screen has these parts, from top to bottom: **Source**, **Destination**, **Lists and libraries**, **Term sets**, **Content types**, **Other content**, **Copy**, and, after a copy, **Results**.
+The address of this screen ends in `#sna/tools/copy`. The screen has these parts, from top to bottom: **Source**, **Destination**, **Lists and libraries**, **Term sets**, **Content types**, **Other content**, and **Copy**. After you select **Copy to destination**, **Before you copy** appears under **Copy**, and after a copy, **Results** appears.
 
 ### Choose the source
 
@@ -61,9 +61,9 @@ When you change the source, your choices of lists, libraries, and term sets star
 Sitenalyzer reads the destination and changes nothing. It checks that the address is on the same SharePoint as this site and that you're a site collection administrator there. It also reads which names and addresses the destination already uses. The answer appears under the box:
 
 - "You can copy to New Study. You're a site collection administrator there." You can go on.
-- "You can't copy to New Study. You need to be a site collection administrator there." Ask a site collection administrator of that site to add you, then check again.
-- "You can copy only to a site on contoso.sharepoint.com, the same SharePoint as this site." Use an address on the same SharePoint.
-- "You can't copy to this site. Copy site structure copies only to another site." You chose **This site's report** and entered the address of this site, the one whose report is open. Enter the address of another site.
+- "You can't copy to New Study. You need to be a site collection administrator there. Ask a site collection administrator to add you, then check again."
+- "You can copy only to a site on contoso.sharepoint.com, the same SharePoint as this site. Enter an address that starts with https://contoso.sharepoint.com, such as https://contoso.sharepoint.com/sites/new-study."
+- "You can't copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again." You chose **This site's report** and entered the address of this site, the one whose report is open.
 
 If you paste a longer address, such as `https://contoso.sharepoint.com/sites/new-study/SitePages/Home.aspx`, Sitenalyzer uses only the site's part of it. If you change the address after a check, select **Check destination** again. Do the same if the destination is this site and you change the source.
 
@@ -118,7 +118,7 @@ A content type is a named set of columns and settings for items or files, such a
 - "A list you chose uses it."
 - "A content type you chose is based on it."
 
-The list leaves out SharePoint's own content types, such as Item and Document, and the content types your organization publishes to every site from the content type hub. A list that uses a content type from the hub gets it only when the destination already has it. If the destination doesn't, the results say to publish it to the destination from the content type gallery.
+The list leaves out SharePoint's own content types, such as Item and Document, and the content types your organization publishes to every site from the content type hub. A list that uses a content type from the hub gets it only when the destination already has it. If the destination doesn't, **Before you copy** and the results say to publish it to the destination from the content type gallery.
 
 ### Choose other content
 
@@ -142,7 +142,7 @@ Under the switches is a checkbox, **Replace pages and files that already exist i
 
 #### Permissions
 
-**Permissions** is off at first, because copying access can give people access to the destination that they shouldn't have. Turn it on only when the destination should have the same people and groups as this site.
+**Permissions** is off at first. Turn it on when the destination should have the same people and groups as this site.
 
 With **Permissions** on, the copy:
 
@@ -166,12 +166,74 @@ When the destination already has a list or library that the copy uses, such as D
 
 1. Look at the hint under **Copy**. It says what you must do before you can copy, such as "Check the destination before you copy." When everything is ready, it says "Copies what you chose to New Study. Nothing changes in this site."
 2. Select **Copy to destination**.
-3. Sitenalyzer reads what the copy needs from this site. Then it asks you to confirm before it copies. If you don't confirm, nothing changes and the screen says "You didn't copy anything." If the destination started using one of your list names or addresses after you checked it, the copy can't start. Select **Go back**, and change the name or address marked under **Lists and libraries**.
-4. Wait while it copies. **Copy progress** shows how far it is, and the line under it says what it's doing, such as "Copying lists and libraries."
+3. Sitenalyzer reads what the copy needs from this site, then checks the destination before the copy. Nothing changes yet. When it's done, **Before you copy** shows what it found. See [Before you copy](#before-you-copy).
+4. Select **Copy anyway** to copy, or **Go back** to change what you chose.
+5. Wait while it copies. **Copy progress** shows how far it is, and the line under it says what it's doing, such as "Copying lists and libraries."
 
-Sitenalyzer checks the destination again before it changes anything. Then it copies in this order: term sets, site columns, lists and libraries, content types, columns, views, form settings, Site Assets, site look, agents and site skills, site pages, navigation, and permissions. Each part comes after the parts it needs. For example, a managed metadata column needs its term set.
+When the copy starts, Sitenalyzer checks the destination once more before it changes anything. Then it copies in this order: term sets, site columns, lists and libraries, content types, columns, views, form settings, Site Assets, site look, agents and site skills, site pages, navigation, and permissions. Each part comes after the parts it needs. For example, a managed metadata column needs its term set.
 
 When one item fails, the copy goes on with the next one. Large sites can take several minutes. Keep the page open until the results appear.
+
+### Before you copy
+
+After you select **Copy to destination**, Sitenalyzer reads what the copy needs from this site. Then it checks the destination, and for some parts this site, for anything that will change the copy. This check only reads, so it changes nothing in either site. While it runs, the line under **Copy progress** says "Checking the destination before the copy." While Sitenalyzer reads and checks, you can select **Stop copying**. Then the results say "You stopped the copy before it changed anything."
+
+When the check is done, **Before you copy** appears under **Copy**, and focus moves to its heading. It starts with what you chose, such as "You chose to copy 2 lists, 1 term set, site pages, and Site Assets to New Study." The next sentence says what Sitenalyzer found, such as "Sitenalyzer found 3 things to know before you copy to New Study: 1 item will fail and 2 items will be skipped."
+
+While **Before you copy** is open, you can't change your choices. The hint under **Copy** says "Select Copy anyway or Go back under Before you copy." When a problem stops the copy, it says "Select Go back under Before you copy."
+
+#### Findings table
+
+A table under the sentence has one row for each thing Sitenalyzer found. Rows that will fail come first, then rows that will be skipped, rows that may fail, and notes.
+
+| Column | Description |
+| --- | --- |
+| **Item** | The item, such as Study Arm in Study Visits for a column. Term set rows say Term store, and notes from reading the source say This copy. A part that Sitenalyzer couldn't check shows the name of that part, such as Custom scripts. |
+| **Kind** | The kind of item, such as Column, Page, Site skill, or Note. |
+| **What will happen** | What the copy will do with the item, and what you can do about it. |
+
+The sentence above the table counts the rows by what will happen to each item:
+
+- "will fail": the copy will try and fail. For example, the destination doesn't allow custom scripts, so SharePoint won't take a classic page there.
+- "will be skipped": the copy will leave the item out. For example, a column uses a term set you didn't choose.
+- "may fail": only the copy itself can find out. For example, some organizations don't let people change term sets from a browser. A part that Sitenalyzer couldn't check is also listed as may fail.
+- "notes": something to know, such as "Navigation replaces the links in the destination's menus with this site's links."
+
+#### Parts the check looks at
+
+- **Lists and libraries**: Sitenalyzer reads the destination's lists and libraries again, in case one of your names or addresses was taken after you selected **Check destination**.
+- **Term sets**: when you chose term sets, whether Sitenalyzer can read the destination's term store, whether the destination has one term group of its own, none, or more than one, and whether SharePoint lets Sitenalyzer reach the term store to make a term group or change term sets. The row names the columns that use the chosen term sets.
+- **Columns**: managed metadata columns that aren't connected to a term set, columns that use a term set you didn't choose, and columns that use a term set shared by every site that the destination's term store doesn't have. It also finds lookup columns that read from a list you didn't choose that the destination doesn't have, or from a list on another site. With a data dictionary file, it names the columns the file describes that the copy can't make.
+- **Calculated columns**: a calculated column whose formula uses a column the copy skips is skipped too.
+- **Content types**: content types from the content type hub that the destination doesn't have yet.
+- **Site skills**: with **Agents and site skills** on, when the destination has no Agent Assets library, each site skill may fail. Sitenalyzer tries to turn on site skills there, and only the copy can find out whether that works.
+- **Site Assets**: with **Site Assets** on, files larger than 250 MB, which the copy skips.
+- **Custom scripts**: when the destination doesn't allow custom scripts, classic pages and pages in a folder will fail if **Site pages** is on, and SharePoint may refuse some site look settings if **Site look** is on. A page the destination already has isn't listed when **Replace pages and files that already exist in the destination** is off, because the copy leaves that page as it is.
+- **Channel sites**: when the destination is a Microsoft Teams channel site and **Permissions** or **Site look** is on, the copy leaves that site's permissions or look unchanged.
+- **Notes**: things Sitenalyzer noticed while it read this site or the data dictionary file, such as that it couldn't read every term of a term set.
+
+#### Copy anyway or Go back
+
+- **Copy anyway** starts the copy of what you chose. The rows in the table say what will happen to those items.
+- **Go back** closes **Before you copy** without copying anything. The screen says "You didn't copy anything," and focus returns to **Copy to destination**.
+
+When Sitenalyzer finds nothing, it still asks: "Sitenalyzer checked New Study and found nothing that will stop or change the copy. Select Copy anyway to copy, or Go back to change what you chose."
+
+#### A problem that stops the copy
+
+Some problems stop the whole copy before it changes anything. For example, the destination started using one of your list names or addresses after you checked it. Then the sentence says "Sitenalyzer found 1 problem that stops the copy to New Study before it changes anything." **Before you copy** offers only **Go back**. Select it, and focus moves to the box marked under **Lists and libraries**. Change the name or address, then select **Copy to destination** again.
+
+#### Checks that couldn't finish
+
+When a part of the check can't finish, such as when SharePoint doesn't answer, that part gets a row of the kind Note that says "Sitenalyzer couldn't check this before the copy, so the copy may run into a problem here that this table doesn't show." The note ends with what went wrong. The sentence above the table also says "Sitenalyzer couldn't finish every check, so the copy may run into problems that this table doesn't show." You can still select **Copy anyway**, or select **Go back** and try again in a few minutes.
+
+When Sitenalyzer can't read the destination's term store, it lists that in the Term store row instead, as may fail. The row starts with "Sitenalyzer couldn't read the destination's term store, so it can't tell yet whether it can copy" and names the term sets.
+
+When the whole check fails, **Before you copy** says "Sitenalyzer couldn't finish checking the destination before the copy, so it can't say what the copy will skip. You can copy anyway, or go back."
+
+#### Warnings in the results
+
+After **Copy anyway**, the rows from **Before you copy** appear at the top of the results table with the result **Warning**. The count under **Results** doesn't count them as copied, skipped, or failed. It adds a sentence instead, such as "Warned about 2 items before the copy." The rows after them say what the copy did.
 
 ### Stop copying
 
@@ -190,8 +252,8 @@ The results table has one row for each item.
 | Column | Description |
 | --- | --- |
 | **Item** | The item, such as Study Visits, or Visit Date in Study Visits for a column. Menu links show their place in the menu, such as Left menu: Studies > Visits. |
-| **Kind** | The kind of item, such as List, Library, Column, View, Content type, Term set, Term, Site Assets file, Page, Agent, Site skill, Menu link, Site look setting, Permission level, Group, Group member, or Permission. |
-| **Result** | **Copied**, **Partly copied**, **Skipped**, or **Failed**. |
+| **Kind** | The kind of item, such as List, Library, Column, View, Content type, Term set, Term, Site Assets file, Page, Agent, Site skill, Menu link, Site look setting, Permission level, Group, Group member, Permission, or Note. |
+| **Result** | **Copied**, **Partly copied**, **Skipped**, **Failed**, or **Warning**. |
 | **Notes** | What happened and what to do next. |
 
 The results mean:
@@ -200,6 +262,7 @@ The results mean:
 - **Partly copied**: the item is in the destination, but something is different. The note says what to change by hand.
 - **Skipped**: Sitenalyzer didn't copy the item on purpose, such as a view the destination already has, or a column whose term set you left out. The note says why.
 - **Failed**: Sitenalyzer tried and couldn't copy the item. The note says what to do.
+- **Warning**: **Before you copy** listed the item. See [Warnings in the results](#warnings-in-the-results).
 
 The table sorts and filters like the other tables in the report. To keep the results, select **Save results (.xlsx)**. It saves a workbook named for the destination and the date, such as `NewStudy_Copy_Results_2026-11-08.xlsx`. Values that look like personal information are hidden in it unless **Show hidden values** is on, as in the other workbooks.
 
@@ -209,7 +272,7 @@ The results stay in **Tools** while you look at other sections. Sitenalyzer does
 
 When the copy finishes, Sitenalyzer reads the destination again and looks for each item it copied. It changes a result when what it finds is different:
 
-- An item it can't find becomes **Failed**, with the note "Sitenalyzer couldn't find this in the destination after the copy."
+- An item it can't find becomes **Failed**, with the note "Sitenalyzer couldn't find this in the destination after the copy. Check the destination, then copy again or make it by hand."
 - An item it finds with another name or address becomes **Partly copied**, with a note that names the difference.
 
 It then adds a **Destination check** row for each kind of item, such as "Found 3 of 3 lists in the destination." If it couldn't read the destination to check an item, the note says so. Look for that item in the destination yourself.
@@ -227,7 +290,7 @@ You can copy into the same destination again, such as to finish a copy you stopp
 
 ### Conclusion
 
-You can now copy a site's lists, libraries, columns, views, content types, and term sets into another site, choose what else to copy, and check the results. If something in the results needs attention, see [Troubleshooting](../troubleshooting.md#copy-site-structure). To learn how the copy works inside, see [Tools in the architecture page](../architecture.md#tools).
+You can now copy a site's lists, libraries, columns, views, content types, and term sets into another site, choose what else to copy, review **Before you copy**, and check the results. If something in the results needs attention, see [Troubleshooting](../troubleshooting.md#copy-site-structure). To learn how the copy works inside, see [Tools in the architecture page](../architecture.md#tools).
 
 ### Additional resources
 

@@ -177,8 +177,11 @@ messages, help, and documentation. For example, "participant", not "subject" or
   "branding" or "theme" for the whole set. The theme is one part of the site look.
 - **Replace:** short for the checkbox **Replace pages and files that already exist in the destination**. Not
   "overwrite".
-- **Result (of a copy):** **Copied**, **Partly copied**, **Skipped**, or **Failed**. Not "Succeeded", "Partial",
-  "Warning", or "Error".
+- **Before you copy:** the part of **Copy site structure** that lists what the copy will skip, what will fail, and what
+  may fail, after **Copy to destination** and before anything changes, with **Copy anyway** and **Go back**. The check
+  itself is "the check before copying". Not "preflight" in anything a person reads.
+- **Result (of a copy):** **Copied**, **Partly copied**, **Skipped**, or **Failed**, and **Warning** for a row that
+  **Before you copy** listed. Not "Succeeded", "Partial", or "Error".
 - **Filter box:** the box above a table, or above Contents or People and groups,
   that shows only what contains the typed text. Not "search" for these boxes;
   **Search this report** is the only search.

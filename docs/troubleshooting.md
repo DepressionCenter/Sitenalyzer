@@ -159,7 +159,7 @@ This page lists problems you might see after installing Sitenalyzer, what causes
 
 ### Copy site structure
 
-These problems appear under **Destination** or in the results table of **Copy site structure**. Each row of the results has a note that says what happened and what to do. See [Copying a site's structure](how-to/copy-a-site.md).
+These problems appear under **Destination**, under **Before you copy**, or in the results table of **Copy site structure**. Each row of the results has a note that says what happened and what to do. See [Copying a site's structure](how-to/copy-a-site.md).
 
 #### Check destination says you can't copy to the site
 
@@ -181,7 +181,7 @@ These problems appear under **Destination** or in the results table of **Copy si
 
 **Problem:** Term set rows say **Failed**, with a note such as "SharePoint didn't let Sitenalyzer create term sets in the destination." or "Sitenalyzer couldn't create the site's own term group in the destination."
 
-**Cause:** Some organizations don't let SharePoint pages change the term store. Sitenalyzer tries two ways to make each change, and when SharePoint refuses both, it stops changing the term store. The term group message means the destination has no term group of its own, and SharePoint didn't let Sitenalyzer make one.
+**Cause:** Some organizations don't let SharePoint pages change the term store. Sitenalyzer tries two ways to make each change, and when SharePoint refuses both, it stops changing the term store. The term group message means the destination has no term group of its own, and SharePoint didn't let Sitenalyzer make one. **Before you copy** says ahead of time when it can tell that this will happen, and says that term sets may fail when only the copy can find out.
 
 **Fix:**
 
@@ -189,6 +189,8 @@ These problems appear under **Destination** or in the results table of **Copy si
 2. For the term sets message, create the term sets by hand in the destination's term store, or ask your term store administrator to. Then copy again. A term set with the same name is used as it is, and the copy adds the terms it's missing.
 
 The columns that use these term sets are skipped until the term sets are there. See the next problem.
+
+When the destination has more than one term group of its own, the note says "The destination has more than one term group of its own, so Sitenalyzer couldn't tell which one to use." Ask your term store administrator to check the destination's term groups, then copy again.
 
 #### Columns are skipped because their term set wasn't copied
 
@@ -213,6 +215,30 @@ The columns that use these term sets are skipped until the term sets are there. 
 **Cause:** SharePoint refused the change. It refuses some changes to how a site looks when the site doesn't allow custom scripts, and some only a SharePoint admin can make.
 
 **Fix:** Make the change by hand in the place the note names, such as **Settings** > **Change the look** > **Theme** in the destination. You can also ask your SharePoint admin to make the change, or to allow custom scripts on the destination, and then copy again with **Site look** on. Allowing custom scripts is a security decision for your SharePoint admin.
+
+#### Before you copy offers only Go back
+
+**Problem:** **Before you copy** says "Sitenalyzer found 1 problem that stops the copy to New Study before it changes anything." It has a **Go back** button but no **Copy anyway** button. The row says what is wrong, such as "The destination already has a list or library with this name. Choose another name. The copy can't start until you do. Select Go back to change it, then copy again."
+
+**Cause:** The destination started using one of the names or addresses you chose under **Lists and libraries** after you selected **Check destination**.
+
+**Fix:** Select **Go back**. Focus moves to the box marked under **Lists and libraries**. Change the name or address, then select **Copy to destination** again.
+
+#### Before you copy says pages will fail because custom scripts are turned off
+
+**Problem:** Page rows under **Before you copy** say "The destination doesn't allow custom scripts, and SharePoint doesn't take a classic page, or a page in a folder, on such a site, so this page will fail to copy." A **Site look** row can say that SharePoint may refuse some site look settings.
+
+**Cause:** Sitenalyzer copies classic pages, and pages saved in a folder, as files. SharePoint doesn't take those files on a site that doesn't allow custom scripts.
+
+**Fix:** Ask your SharePoint admin to allow custom scripts in the destination, then copy again. SharePoint turns custom scripts off again within 24 hours, so copy soon after. Allowing custom scripts is a security decision for your SharePoint admin. You can also select **Copy anyway** and make those pages by hand in the destination.
+
+#### Before you copy says Sitenalyzer couldn't check part of the copy
+
+**Problem:** **Before you copy** has a Note row that says "Sitenalyzer couldn't check this before the copy, so the copy may run into a problem here that this table doesn't show." The sentence above the table also says "Sitenalyzer couldn't finish every check, so the copy may run into problems that this table doesn't show." Or, **Before you copy** says "Sitenalyzer couldn't finish checking the destination before the copy, so it can't say what the copy will skip."
+
+**Cause:** SharePoint didn't answer one of the reads that the check makes, or Sitenalyzer ran into an unexpected problem. The end of the note says which, such as "SharePoint was too busy to answer."
+
+**Fix:** Select **Go back**, wait a few minutes, then select **Copy to destination** again. You can also select **Copy anyway**. The results then say what happened to each item.
 
 #### Pages are partly copied and still use the original site
 
