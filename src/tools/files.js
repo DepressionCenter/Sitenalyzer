@@ -87,7 +87,7 @@ var SNA_TOOLS_PAGE_SELECT_SHORT = 'Id,UniqueId,Title,FileLeafRef,ClientSideAppli
     'CanvasContent1,LayoutWebpartsContent,BannerImageUrl';
 
 // Notes the results show.
-var SNA_TOOLS_AGENT_COPIED_NOTE = 'Copied. It still uses the original site\'s knowledge sources.';
+var SNA_TOOLS_AGENT_COPIED_NOTE = 'Copied. It still uses the knowledge sources in this site. To use the destination\'s lists and libraries instead, edit the agent in the destination and change its sources.';
 var SNA_TOOLS_NO_AGENT_ASSETS_NOTE = 'The destination has no Agent Assets library. Turn on site skills in the destination, then copy again.';
 var SNA_TOOLS_PAGE_PARTIAL_NOTE = 'Copied. Some parts of this page may still show the original site\'s content. Open the page and check it.';
 var SNA_TOOLS_PAGE_STOPPED_NOTE = 'You stopped the copy while Sitenalyzer was saving this page in the destination, so the page there may be blank, ' +

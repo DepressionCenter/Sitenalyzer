@@ -56,7 +56,7 @@ const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
 const MODERN_APP_ID = 'b6917cb1-93a0-4b97-a84d-7cf49975d4ec';
 const DATA_MANAGERS_ID = 21;
 const ROW_FORMAT = JSON.stringify({ additionalRowClass: "=if([$VisitCount] > 2, 'sna-busy', '')" });
-const AGENT_NOTE = 'Copied. It still uses the original site\'s knowledge sources.';
+const AGENT_NOTE = 'Copied. It still uses the knowledge sources in this site. To use the destination\'s lists and libraries instead, edit the agent in the destination and change its sources.';
 const NOT_FOUND_NOTE = 'Sitenalyzer couldn\'t find this in the destination after the copy. Check the destination, then copy again or make it by hand.';
 
 // Returns one source column with the properties the report and the copy plan read, and a SchemaXml with the parts that

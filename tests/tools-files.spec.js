@@ -40,7 +40,7 @@ const WELCOME_IMAGE_ID = 'abababab-0000-4000-8000-000000000001';
 const MODERN_APP_ID = 'b6917cb1-93a0-4b97-a84d-7cf49975d4ec';
 const ODD_NAME = 'Q#1 100% plan.png';
 const TOO_LARGE_NOTE = 'This file is larger than 250 MB, so Sitenalyzer didn\'t copy it. Copy it to the destination by hand, such as with Copy to in Site Assets.';
-const AGENT_NOTE = 'Copied. It still uses the original site\'s knowledge sources.';
+const AGENT_NOTE = 'Copied. It still uses the knowledge sources in this site. To use the destination\'s lists and libraries instead, edit the agent in the destination and change its sources.';
 const PARTIAL_PAGE_NOTE = 'Copied. Some parts of this page may still show the original site\'s content. Open the page and check it.';
 const PAGE_NOT_UPLOADED_NOTE = 'SharePoint didn\'t let Sitenalyzer copy this page to the destination, and uploading it as a file would leave it ' +
     'blank, so Sitenalyzer didn\'t copy it. Copy it by hand, such as with Copy to in Site Pages.';
