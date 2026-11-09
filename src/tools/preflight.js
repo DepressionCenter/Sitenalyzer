@@ -248,7 +248,15 @@ snaToolsAddPreflightCheck('Lists and libraries', async function(plan, dest, cont
         var found = snaToolsListChoiceProblems(fresh, list, newTitles.filter(function(t, i) { return i !== index; }),
             newUrls.filter(function(u, i) { return i !== index; }));
         var problem = found.address || found.name;
-        if (!problem) { return; }
+        if (!problem) {
+            // A list or library the destination already has is renamed when the Name box holds another name.
+            var reused = snaToolsExistingDestinationList(fresh, list.newUrl, list.baseTemplate);
+            if (reused.usable && list.newTitle && list.newTitle !== reused.list.title) {
+                warnings.push({ severity: 'info', kind: list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list,
+                    name: snaMaskText(list.newTitle), note: snaMaskText(snaToolsExistingListNote(reused.list.title, list.newTitle, true)) });
+            }
+            return;
+        }
         warnings.push({ severity: 'fail', stops: true, kind: list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list,
             name: snaMaskText(list.newTitle || list.title), note: problem + ' The copy can\'t start until you do. Select Go back to change it, then copy again.' });
     });
@@ -472,6 +480,27 @@ snaToolsAddPreflightCheck('Content types from the content type hub', function(pl
             'the destination doesn\'t have it yet, so Sitenalyzer will skip it and anything based on it. Publish it to the destination from the ' +
             'content type gallery, then copy again.' };
     });
+});
+
+// ### SharePoint's Own Site Columns ###
+
+// SharePoint's own site columns that someone renamed in this site, such as Enterprise Keywords shown as Tags, get the same
+// name in the destination's top-level site, which changes it in every site of that site collection. A column is renamed
+// only when both sites use the same language (see snaToolsListsBuiltInRename in lists.js).
+snaToolsAddPreflightCheck('SharePoint\'s own site columns', async function(plan, dest) {
+    var columns = (plan.builtInSiteColumns || []).filter(function(f) { return f.rename && f.title; });
+    var warnings = [];
+    var sameLanguage;
+    for (var i = 0; i < columns.length; i++) {
+        snaToolsCheckCancelled();
+        var there = await snaToolsListsReadBuiltInSiteColumn(dest, columns[i]);
+        if (!there || !there.Title || there.Title === columns[i].title) { continue; }
+        if (sameLanguage === undefined) { sameLanguage = await snaToolsListsSameLanguage(plan, dest); }
+        var decision = snaToolsListsBuiltInRename(columns[i], there.Title, sameLanguage, true);
+        warnings.push({ severity: decision.rename ? 'info' : 'skip', kind: SNA_TOOLS_KINDS.column,
+            name: snaMaskText(snaToolsListsSiteColumnName(columns[i])), note: snaMaskText(decision.note) });
+    }
+    return warnings;
 });
 
 // ### Agent Assets ###

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 plan.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Builds the copy plan for Copy site structure from this site's report. The report doesn't hold everything a
          copy needs, so for each list or library the person chose, this reads its full settings, every column with its
          definition (SchemaXml), its views and their columns, and its content types and their columns. It also reads
@@ -19,7 +19,7 @@ Notes: See README file for documentation and full license information.
          hubContentTypes: [{ stringId, name }] (content types from the content type hub that the copy needs),
          builtInSiteColumns: [{ id, internalName, title, hidden, rename }] (SharePoint's own site columns that the chosen lists or
          content types use, with the name they have in the source site, such as TaxKeyword shown as Tags; rename is true
-         when someone added the column, so the destination's column gets that name),
+         when someone added the column, so the destination's column gets that name when both sites use the same language),
          termGroup: { name, sets: [PlanTermSet] } | null,
          siteContent: { pages: [report page], agents: [report agent], skills: [report site skill] },
          pages, siteAssets, agents, navigation, siteLook, permissions, replaceExisting (booleans from the person's choices),
@@ -169,6 +169,22 @@ function snaToolsCleanAddress(address) {
 // The note under the Address box of a list or library that the copy adds to, instead of making a new one.
 var SNA_TOOLS_EXISTING_LIST_NOTE = 'The destination already has this. Sitenalyzer adds the columns and views it\'s missing.';
 
+/**
+ * Returns the note about a list or library the destination already has that the copy adds to: SNA_TOOLS_EXISTING_LIST_NOTE
+ * when it keeps its name, or, when the Name box holds another name, a note that says the copy renames it, such as "The
+ * destination already has this, named Documents. Sitenalyzer renames it Study Files and adds the columns and views it's
+ * missing."
+ * @param {string} currentTitle The name it has in the destination.
+ * @param {string} newTitle The name in the Name box.
+ * @param {boolean} later True for Before you copy, which says what the copy will do.
+ * @returns {string} The note.
+ */
+function snaToolsExistingListNote(currentTitle, newTitle, later) {
+    if (!newTitle || newTitle === currentTitle) { return SNA_TOOLS_EXISTING_LIST_NOTE; }
+    return 'The destination already has this, named ' + currentTitle + '. Sitenalyzer ' + (later ? 'will rename it ' + newTitle +
+        ' and add the columns and views it\'s missing.' : 'renames it ' + newTitle + ' and adds the columns and views it\'s missing.');
+}
+
 // The problem under the Address box when the destination has a list or library at that address made from another template.
 var SNA_TOOLS_OTHER_TEMPLATE_PROBLEM = 'The destination already has a list or library at this address. Choose another address.';
 
@@ -223,14 +239,15 @@ function snaToolsExistingDestinationList(destination, newUrl, baseTemplate) {
  * @param {string[]} otherTitles The new names of the other chosen lists and libraries.
  * @param {string[]} otherUrls The new addresses of the other chosen lists and libraries.
  * @returns {{name: string, address: string, note: string}} name and address are problems to fix, or ''. note is
- *          SNA_TOOLS_EXISTING_LIST_NOTE when the copy adds to a list the destination already has, or ''.
+ *          the note from snaToolsExistingListNote when the copy adds to a list the destination already has, or ''.
  */
 function snaToolsListChoiceProblems(destination, choice, otherTitles, otherUrls) {
     var existing = snaToolsExistingDestinationList(destination, choice.newUrl, choice.baseTemplate);
     var address = (existing.list && !existing.usable) ? SNA_TOOLS_OTHER_TEMPLATE_PROBLEM : '';
     address = address || snaToolsAddressProblem(choice.newUrl, choice.isLibrary, existing.checkDestination, otherUrls);
     var name = snaToolsNameProblem(choice.newTitle, existing.checkDestination, otherTitles);
-    return { name: name, address: address, note: (existing.usable && !address) ? SNA_TOOLS_EXISTING_LIST_NOTE : '' };
+    var note = (existing.usable && !address) ? snaMaskText(snaToolsExistingListNote(existing.list.title, choice.newTitle, false)) : '';
+    return { name: name, address: address, note: note };
 }
 
 /**

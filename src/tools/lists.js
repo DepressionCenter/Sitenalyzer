@@ -544,7 +544,7 @@ function snaToolsListsTermSetName(plan, termSetId) {
  * lists they read from exist (see snaToolsCopyListColumns). Plain and managed metadata columns go first, then calculated
  * columns. A site column the destination already has, with the same ID or internal name, is left as it is. Then gives
  * SharePoint's own site columns that were renamed in the source, such as Enterprise Keywords shown as Tags, the same name
- * in the destination.
+ * in the destination, when both sites use the same language (see snaToolsListsRenameBuiltInSiteColumn).
  * @param {object} plan The copy plan.
  * @param {object} dest The checked destination.
  * @param {object} maps Source to destination IDs; fills maps.fieldIds.
@@ -567,41 +567,105 @@ async function snaToolsCopySiteColumns(plan, dest, maps) {
         if (there) { maps.fieldIds[f.id] = there.id; }
     });
     var builtIn = (plan.builtInSiteColumns || []).filter(function(f) { return f.rename; });
+    var languages = { same: undefined };
     for (var b = 0; b < builtIn.length; b++) {
-        await snaToolsListsRenameBuiltInSiteColumn(dest, builtIn[b]);
+        await snaToolsListsRenameBuiltInSiteColumn(plan, dest, builtIn[b], languages);
     }
 }
 
-// Gives one of SharePoint's own site columns in the destination the name it has in the source site, such as Tags for
-// Enterprise Keywords (TaxKeyword), when the names differ. These columns belong to the destination's top-level site.
-// A column the destination doesn't have gets no row here; the list or content type that needs it says so.
-async function snaToolsListsRenameBuiltInSiteColumn(dest, column) {
-    snaToolsCheckCancelled();
-    var path = '/_api/site/rootweb/fields/getbyid(@f)';
+// Returns true when this site and the destination's top-level site use the same language, false when they don't, and
+// null when Sitenalyzer couldn't read one of them. SharePoint names its own site columns, such as Start Date, in each
+// site's language, so a different name in another language doesn't mean that someone renamed the column.
+async function snaToolsListsSameLanguage(plan, dest) {
+    if (!plan.source || !plan.source.siteUrl) { return null; }
+    try {
+        var source = await snaToolsRead(plan.source.siteUrl, '/_api/web?$select=Language');
+        var there = await snaToolsRead(dest.siteUrl, '/_api/site/rootweb?$select=Language');
+        var sourceLanguage = Number(source && source.Language);
+        var destLanguage = Number(there && there.Language);
+        if (!sourceLanguage || !destLanguage) { return null; }
+        return sourceLanguage === destLanguage;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return null;
+    }
+}
+
+// Reads one of SharePoint's own site columns from the destination's top-level site, where these columns belong, and
+// returns { Id, Title, InternalName }, or null when the destination doesn't have it. Throws when SharePoint refuses.
+async function snaToolsListsReadBuiltInSiteColumn(dest, column) {
     var alias = '@f=' + encodeURIComponent(snaToolsQuote(snaToolsCleanGuid(column.id)));
+    try {
+        return await snaToolsRead(dest.siteUrl, '/_api/site/rootweb/fields/getbyid(@f)?$select=Id,Title,InternalName&' + alias);
+    } catch (err) {
+        if (!snaToolsIsCancelled(err) && err.status === 404) { return null; }
+        throw err;
+    }
+}
+
+/**
+ * Returns what the copy does with one of SharePoint's own site columns whose name in this site isn't its name in the
+ * destination, such as Enterprise Keywords shown as Tags: { rename: true } when both sites use the same language, so
+ * someone renamed it, and otherwise { rename: false, note } with the reason. Used by the copy and by Before you copy.
+ * @param {object} column The column from plan.builtInSiteColumns.
+ * @param {string} oldTitle Its name in the destination.
+ * @param {boolean|null} sameLanguage See snaToolsListsSameLanguage.
+ * @param {boolean} later True for Before you copy, which says what the copy will do.
+ * @returns {{rename: boolean, note: string}} note is plain English for the results or for Before you copy.
+ */
+function snaToolsListsBuiltInRename(column, oldTitle, sameLanguage, later) {
+    var source = later ? 'this site' : 'the site you copied from';
+    var where = 'rename ' + oldTitle + ' in the site settings of the destination\'s top-level site, under Site columns. The new name shows in ' +
+        'every site of the destination\'s site collection.';
+    if (sameLanguage === true) {
+        return { rename: true, note: (later ? 'Sitenalyzer will rename' : 'Renamed') + ' the destination\'s site column ' + oldTitle + ' to ' +
+            column.title + ', the name it has in ' + source + '. The new name shows in every site of the destination\'s site ' +
+            'collection, because the column belongs to its top-level site. To undo it, rename the column back to ' + oldTitle +
+            ' in the site settings of that top-level site, under Site columns.' };
+    }
+    var why = sameLanguage === false
+        ? source + ' and the destination use different languages, and SharePoint names its own columns in each site\'s language.'
+        : 'Sitenalyzer couldn\'t check that ' + source + ' and the destination use the same language.';
+    return { rename: false, note: 'Sitenalyzer ' + (later ? 'won\'t rename' : 'didn\'t rename') + ' the destination\'s site column ' + oldTitle +
+        ' to ' + column.title + ', because ' + why + ' If you want the name ' + column.title + ', ' + where };
+}
+
+// Gives one of SharePoint's own site columns in the destination the name it has in the source site, such as Tags for
+// Enterprise Keywords (TaxKeyword), when someone renamed it in the source site. These columns belong to the destination's
+// top-level site, so the new name shows in every site of its site collection. When the two sites use different languages,
+// the names differ only because of the language, so the column keeps its name and its row says why. languages holds
+// what snaToolsListsSameLanguage returned, read once for the whole copy. A column the destination doesn't have gets no
+// row here; the list or content type that needs it says so.
+async function snaToolsListsRenameBuiltInSiteColumn(plan, dest, column, languages) {
+    snaToolsCheckCancelled();
     var name = snaToolsListsSiteColumnName(column);
     var there;
     try {
-        there = await snaToolsRead(dest.siteUrl, path + '?$select=Id,Title,InternalName&' + alias);
+        there = await snaToolsListsReadBuiltInSiteColumn(dest, column);
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
-        if (err.status === 404) { return; }
         snaToolsLog(SNA_TOOLS_KINDS.column, name, 'failed', 'Sitenalyzer couldn\'t read this site column in the destination to check its name. ' +
             'Check that it\'s named ' + column.title + ' in the destination\'s site columns.');
         return;
     }
     var oldTitle = (there && there.Title) || '';
     if (!there || !column.title || oldTitle === column.title) { return; }
+    if (languages.same === undefined) { languages.same = await snaToolsListsSameLanguage(plan, dest); }
+    var decision = snaToolsListsBuiltInRename(column, oldTitle, languages.same, false);
+    if (!decision.rename) {
+        snaToolsLog(SNA_TOOLS_KINDS.column, name, 'skipped', decision.note);
+        return;
+    }
+    var path = '/_api/site/rootweb/fields/getbyid(@f)?@f=' + encodeURIComponent(snaToolsQuote(snaToolsCleanGuid(column.id)));
     try {
-        await snaToolsWrite(dest.siteUrl, path + '?' + alias, { method: 'MERGE', body: { Title: column.title } });
+        await snaToolsWrite(dest.siteUrl, path, { method: 'MERGE', body: { Title: column.title } });
     } catch (err) {
         if (snaToolsIsCancelled(err)) { throw err; }
         snaToolsLog(SNA_TOOLS_KINDS.column, name, 'failed', 'Sitenalyzer couldn\'t rename the destination\'s site column ' + oldTitle + ' to ' +
-            column.title + '. Rename it in the destination\'s site settings, under Site columns.');
+            column.title + '. Rename it in the site settings of the destination\'s top-level site, under Site columns.');
         return;
     }
-    snaToolsLog(SNA_TOOLS_KINDS.column, name, 'copied', 'Renamed the destination\'s site column ' + oldTitle + ' to ' + column.title +
-        ', the name it has in the site you copied from.');
+    snaToolsLog(SNA_TOOLS_KINDS.column, name, 'copied', decision.note);
 }
 
 // Copies one site column and logs its result.
@@ -1032,7 +1096,8 @@ async function snaToolsListsAddPendingSiteLinks(dest, maps, run) {
     }
 }
 
-// Adds one list's content types to the destination list, removes the ones the source list doesn't have, and sets their order.
+// Adds one list's content types to the destination list. In a list this copy made, also removes the ones the source list
+// doesn't have and sets their order on the New menu.
 async function snaToolsListsCopyListContentTypes(plan, dest, maps, list, state) {
     var K = SNA_TOOLS_KINDS;
     var listApi = snaToolsListsApi(state.destId);
@@ -1054,14 +1119,11 @@ async function snaToolsListsCopyListContentTypes(plan, dest, maps, list, state) 
     }
     var enabled = !!list.contentTypesEnabled;
     var custom = list.contentTypes.filter(function(ct) { return !ct.isBuiltIn; });
-    if (state.existing && enabled && custom.some(function(ct) { return !byName(ct.name); })) {
-        // A list the destination already had may not use content types yet, and SharePoint adds them only when it does.
-        try {
-            await snaToolsWrite(dest.siteUrl, listApi, { method: 'MERGE', body: { ContentTypesEnabled: true } });
-        } catch (err) {
-            if (snaToolsIsCancelled(err)) { throw err; }
-        }
+    var missingCount = custom.filter(function(ct) { return !byName(ct.name); }).length;
+    if (state.existing && enabled && missingCount > 0) {
+        await snaToolsListsTurnOnContentTypes(dest, list, state, missingCount);
     }
+    var addedTypes = [];
     for (var i = 0; i < list.contentTypes.length; i++) {
         var ct = list.contentTypes[i];
         var key = ct.stringId.toUpperCase();
@@ -1100,13 +1162,47 @@ async function snaToolsListsCopyListContentTypes(plan, dest, maps, list, state) 
             state.contentTypes[key] = made;
             state.contentTypeEntries[key] = snaToolsLog(K.contentType, name, 'copied', 'Added the content type to the ' + snaToolsListsWord(list) + '.',
                 { verify: { type: 'contentType', listId: state.destId, name: made.name } });
+            addedTypes.push({ made: made, entry: state.contentTypeEntries[key] });
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
             snaToolsLog(K.contentType, name, 'failed', snaToolsFriendlyError(err));
         }
     }
-    if (!state.existing && enabled) { await snaToolsListsRemoveExtraTypes(dest, list, state, destTypes); }
-    if (enabled) { await snaToolsListsSetTypeOrder(dest, list, state); }
+    if (!state.existing && enabled) {
+        await snaToolsListsRemoveExtraTypes(dest, list, state, destTypes);
+        await snaToolsListsSetTypeOrder(dest, list, state);
+    } else if (enabled) {
+        // A list the destination already had keeps its own New menu, so content types only it has stay on that menu.
+        await snaToolsListsAddToTypeOrder(dest, list, state, addedTypes);
+    }
+}
+
+// Turns on content types in a list the destination already had, which SharePoint needs before the list can get the
+// source list's content types, and says so in the list's row. A list that uses content types already is left as it is.
+// missingCount is the number of the source list's own content types that the destination list doesn't have.
+async function snaToolsListsTurnOnContentTypes(dest, list, state, missingCount) {
+    var listApi = snaToolsListsApi(state.destId);
+    var wasOn = null;
+    try {
+        var read = await snaToolsRead(dest.siteUrl, listApi + '?$select=ContentTypesEnabled');
+        wasOn = !!(read && read.ContentTypesEnabled === true);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    if (wasOn) { return; }
+    try {
+        await snaToolsWrite(dest.siteUrl, listApi, { method: 'MERGE', body: { ContentTypesEnabled: true } });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        // Adding each content type then fails, and its own row says so.
+        return;
+    }
+    if (!state.entry) { return; }
+    var word = snaToolsListsWord(list);
+    var types = missingCount === 1 ? 'content type' : missingCount + ' content types';
+    state.entry.note = (state.entry.note ? state.entry.note + ' ' : '') + 'Sitenalyzer also turned on Allow management of content types ' +
+        'for the ' + word + (wasOn === null ? ', if it wasn\'t on already,' : ',') + ' so it could add the ' + types + ' it was missing. ' +
+        'You can turn it off again in the ' + word + '\'s advanced settings.';
 }
 
 // Returns the destination list's content type that comes from the same SharePoint content type as a source list's
@@ -1163,6 +1259,36 @@ async function snaToolsListsSetTypeOrder(dest, list, state) {
     }
 }
 
+// Adds the content types this copy added to a list the destination already had to the end of that list's New menu, when
+// the list has a New menu order of its own. A list without one shows every content type it has on its New menu, so it
+// needs no change. The content types the list had before keep their places.
+async function snaToolsListsAddToTypeOrder(dest, list, state, added) {
+    if (added.length === 0) { return; }
+    var folderApi = snaToolsListsApi(state.destId) + '/RootFolder';
+    var word = snaToolsListsWord(list);
+    try {
+        var folder = await snaToolsRead(dest.siteUrl, folderApi + '?$select=UniqueContentTypeOrder');
+        var current = (folder && folder.UniqueContentTypeOrder) || [];
+        current = Array.isArray(current) ? current : (current.results || []);
+        if (current.length === 0) { return; }
+        var ids = current.map(function(o) { return String((o && o.StringValue) || o || ''); }).filter(function(id) { return !!id; });
+        var have = {};
+        ids.forEach(function(id) { have[id.toUpperCase()] = true; });
+        var more = added.filter(function(a) { return a.made.stringId && !have[a.made.stringId.toUpperCase()]; });
+        if (more.length === 0) { return; }
+        var order = ids.concat(more.map(function(a) { return a.made.stringId; }));
+        await snaToolsWrite(dest.siteUrl, folderApi, {
+            method: 'MERGE', body: { UniqueContentTypeOrder: order.map(function(id) { return { StringValue: id }; }) }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        added.forEach(function(a) {
+            snaToolsListsAddProblem(a.entry, 'Sitenalyzer couldn\'t add it to the ' + word + '\'s New menu. In the ' + word + ' settings in the destination, ' +
+                'select Change new button order and default content type, and check Visible for it.');
+        });
+    }
+}
+
 // ### List Columns ###
 
 /**
@@ -1180,11 +1306,6 @@ async function snaToolsListsSetTypeOrder(dest, list, state) {
 async function snaToolsCopyListColumns(plan, dest, maps) {
     var run = snaToolsListsRun(maps);
     var lists = plan.lists.filter(function(l) { return !!run.lists[l.sourceId]; });
-    var scopes = [];
-    for (var i = 0; i < lists.length; i++) {
-        snaToolsCheckCancelled();
-        scopes.push(await snaToolsListsListScope(dest, lists[i], run.lists[lists[i].sourceId]));
-    }
     // A data dictionary file's columns that the copy can't make count as skipped, so a calculated column that uses one
     // is skipped too. Each already has its own Skipped row (see snaToolsLogWorkbookSkipped in workbook.js).
     (plan.skippedItems || []).forEach(function(item) {
@@ -1199,6 +1320,14 @@ async function snaToolsCopyListColumns(plan, dest, maps) {
     });
     for (var s = 0; s < siteLookups.length; s++) { await snaToolsListsCopySiteColumn(plan, dest, maps, siteLookups[s]); }
     await snaToolsListsAddPendingSiteLinks(dest, maps, run);
+
+    // Each list's columns are read only now, because adding a lookup site column to a site content type also adds it to
+    // every list that uses that content type, and the passes below must not try to make it again.
+    var scopes = [];
+    for (var i = 0; i < lists.length; i++) {
+        snaToolsCheckCancelled();
+        scopes.push(await snaToolsListsListScope(dest, lists[i], run.lists[lists[i].sourceId]));
+    }
 
     // SharePoint's own site columns that someone added to a source list come first, from the destination's site columns.
     for (var b = 0; b < scopes.length; b++) {

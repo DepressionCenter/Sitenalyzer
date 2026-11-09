@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-destination-lists.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-05
+Last Modified: 2026-11-09
 Summary: Answers of the pretend destination site for the lists, columns, views, and content types that Copy site
          structure makes (src/tools/lists.js). Each answer changes the in-memory model in pretend-destination.js the
          way SharePoint would, so the checks in verify.js read back what the copy made. pretend-destination.js loads
@@ -13,6 +13,8 @@ Notes: See README file for documentation and full license information.
        Options a test can pass in { destination: { ... } } for these answers:
          noTaxonomyHiddenList   The destination's top-level site has no TaxonomyHiddenList.
        Model properties a test can set in setup(model):
+         model.rootWebLanguage         The language of the destination's top-level site, such as 3082 for Spanish. 1033
+                                       (English) when not set.
          model.tenantTermSets          IDs of tenant-level term sets the destination's term store has.
          model.missingTermSets         IDs of term sets the destination's term store doesn't have (answered with 404).
        Model properties these answers add:
@@ -20,7 +22,8 @@ Notes: See README file for documentation and full license information.
                                        content types or change the columns they have, and the ones that add a site column
                                        to a list. pretend-destination-taxonomy.js answers the one that connects a managed
                                        metadata column to its term set, and keeps it in model.csomRequests.
-         model.siteColumns, model.contentTypes, and each list's fields, views, contentTypes, and contentTypeOrder.
+         model.siteColumns, model.contentTypes, and each list's fields, views, contentTypes, and contentTypeOrder (the
+                                       New menu order the list has of its own, or undefined when it has none).
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -118,6 +121,26 @@ function readCsom(text) {
     return { paths: paths, actions: items(part('Actions'), 'ObjectPath|SetProperty|Method') };
 }
 
+// Gives the content types based on a site content type the columns it has, and adds those columns to each list that has
+// such a content type, as SharePoint does when a site content type is updated with Update(true).
+function pushDown(model, siteType) {
+    const prefix = siteType.StringId.toUpperCase() + '00';
+    model.lists.forEach(function(list) {
+        list.contentTypes.forEach(function(type) {
+            const id = type.StringId.toUpperCase();
+            if (id.indexOf(prefix) !== 0 || id.length !== prefix.length + 32) { return; }
+            const links = type.FieldLinks = type.FieldLinks || [];
+            (siteType.FieldLinks || []).forEach(function(link) {
+                if (!links.some(function(l) { return cleanId(l.Id) === cleanId(link.Id); })) { links.push(Object.assign({}, link)); }
+                const column = findField(model.siteColumns, link.Id);
+                if (column && !list.fields.some(function(f) { return f.InternalName.toLowerCase() === column.InternalName.toLowerCase(); })) {
+                    list.fields.push(Object.assign({}, column));
+                }
+            });
+        });
+    });
+}
+
 // Answers the CSOM requests that add columns to content types (FieldLinks.Add), change the columns they have
 // (FieldLinks.GetById), and add a site column to a list (Fields.Add). Returns undefined for other CSOM requests, so other
 // answers can handle them: pretend-destination-taxonomy.js answers the request that connects a managed metadata column
@@ -193,6 +216,8 @@ function answerCsom(ctx) {
             const value = param.type === 'Guid' ? cleanId(param.value) : param.value;
             if (['SspId', 'TermSetId', 'AnchorId', 'Open', 'IsPathRendered', 'CreateValuesInEditForm'].indexOf(action.Name) === -1) { return fail('Unknown property.'); }
             setCustomization(target.field, action.Name, value);
+        } else if (action.kind === 'Method' && action.Name === 'Update' && target.type === 'contentType' && action.params[0] && action.params[0].value === 'true') {
+            pushDown(model, target.contentType);
         }
     }
     return [{ SchemaVersion: '15.0.0.0', LibraryVersion: '16.0.0.0', ErrorInfo: null, TraceCorrelationId: '00000000-0000-4000-8000-0000000000cc' }];
@@ -251,7 +276,7 @@ addDestinationHandlers([
     } },
 
     // What managed metadata columns need: the top-level site, its TaxonomyHiddenList, and tenant-level term sets.
-    { pattern: /^\/_api\/site\/rootweb$/, answer: function() { return { Id: DEST_WEB_ID }; } },
+    { pattern: /^\/_api\/site\/rootweb$/, answer: function(ctx) { return { Id: DEST_WEB_ID, Language: ctx.model.rootWebLanguage || 1033 }; } },
     { pattern: /^\/_api\/site\/rootweb\/lists$/, answer: function(ctx) {
         const wanted = /Title eq 'TaxonomyHiddenList'/.test(ctx.url.searchParams.get('$filter') || '');
         if (!wanted) { return undefined; }
@@ -347,6 +372,12 @@ addDestinationHandlers([
         if (ctx.xHttpMethod !== 'MERGE') { return undefined; }
         Object.keys(ctx.body || {}).forEach(function(name) { type[name] = ctx.body[name]; });
         return ctx.reply(204, null);
+    } },
+    { pattern: new RegExp(LIST + '/RootFolder$'), answer: function(ctx) {
+        const list = ctx.findList(ctx.match[1]);
+        if (!list) { return ctx.spError(404, 'List does not exist.'); }
+        return { ServerRelativeUrl: list.RootFolder.ServerRelativeUrl,
+            UniqueContentTypeOrder: list.contentTypeOrder ? list.contentTypeOrder.map(function(id) { return { StringValue: id }; }) : null };
     } },
     { method: 'POST', pattern: new RegExp(LIST + '/RootFolder$'), answer: function(ctx) {
         const list = ctx.findList(ctx.match[1]);

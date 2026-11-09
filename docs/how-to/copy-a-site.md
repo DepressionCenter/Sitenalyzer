@@ -86,7 +86,9 @@ The **Address** box starts with the source's address, without its spaces and oth
 
 A message appears under a box when the name or address can't be used, such as when the destination already has a list or library with that name, or another row has the same address. Fix each one before you copy.
 
-Sometimes the destination already has a list or library at the same address, made from the same kind of list. One example is the Documents library every site has. Then the message under **Address** says "The destination already has this. Sitenalyzer adds the columns and views it's missing." The copy uses that list or library, adds what it's missing, and leaves its other columns, views, and settings as they are. If you changed the name, the copy renames it. If the list or library at that address is a different kind, choose another address.
+Sometimes the destination already has a list or library at the same address, made from the same kind of list. One example is the Documents library every site has. Then the message under **Address** says "The destination already has this. Sitenalyzer adds the columns and views it's missing." The copy uses that list or library, adds what it's missing, and leaves its other columns, views, and settings as they are. If you choose a different name in **Name**, the copy renames it, and the message says so, such as "The destination already has this, named Documents. Sitenalyzer renames it Study Files and adds the columns and views it's missing." **Before you copy** lists the rename too. If the list or library at that address is a different kind, choose another address.
+
+When the list or library in this site uses content types, the copy also adds the content types the destination's one is missing. If **Allow management of content types** is off in its advanced settings, the copy turns it on, and the results say so. The content types it already had stay on its **New** menu, and the ones the copy adds go after them.
 
 The table leaves out Site Pages, Site Assets, and Agent Assets, which the switches under **Other content** copy. It also leaves out hidden lists and the lists SharePoint keeps for the site itself.
 
@@ -96,8 +98,17 @@ For each list or library you choose, the copy includes:
 - Its columns, including choices, default values, formulas, and column formatting.
 - Its public views. The copy skips personal views, which only the person who made them can see, and hidden views.
 - Its content types, in the same order on the **New** menu, and its form settings.
+- The names of SharePoint's own site columns that someone renamed in this site, such as Enterprise Keywords renamed Tags. See [SharePoint's own site columns](#sharepoints-own-site-columns).
 
 A lookup column is a column that takes its values from another list. The copy makes it only when it can also make that list, or when the destination already has that list at the same address. Otherwise it skips the column and says why. With a data dictionary file, it makes the column only when you chose that list too. It also skips a lookup column that reads from a list on another site.
+
+#### SharePoint's own site columns
+
+SharePoint comes with site columns of its own, such as Start Date and Enterprise Keywords. Someone may have renamed one in this site, such as Enterprise Keywords renamed Tags. Then the copy gives that column the same name in the destination.
+
+These columns belong to the destination's top-level site. So the new name shows in every site of the destination's site collection, not only in the destination. **Before you copy** says so, and the results say how to undo it. To undo it, rename the column back in the site settings of the top-level site, under **Site columns**.
+
+SharePoint names its own columns in each site's language. When this site and the destination use different languages, the names differ only because of the language. So the copy leaves the name as it is, and the results say why.
 
 ### Choose term sets
 
@@ -204,7 +215,8 @@ The sentence above the table counts the rows by what will happen to each item:
 
 #### Parts the check looks at
 
-- **Lists and libraries**: Sitenalyzer reads the destination's lists and libraries again, in case one of your names or addresses was taken after you selected **Check destination**.
+- **Lists and libraries**: Sitenalyzer reads the destination's lists and libraries again, in case one of your names or addresses was taken after you selected **Check destination**. It also names each list or library the destination already has that the copy will rename.
+- **SharePoint's own site columns**: each of SharePoint's own site columns that the copy will rename in the destination's top-level site, which changes the name in every site of the destination's site collection. When this site and the destination use different languages, the row says the copy won't rename it.
 - **Term sets**: when you chose term sets, whether Sitenalyzer can read the destination's term store, whether the destination has one term group of its own, none, or more than one, and whether SharePoint lets Sitenalyzer reach the term store to make a term group or change term sets. The row names the columns that use the chosen term sets.
 - **Columns**: managed metadata columns that aren't connected to a term set, columns that use a term set you didn't choose, and columns that use a term set shared by every site that the destination's term store doesn't have. It also finds lookup columns that read from a list you didn't choose that the destination doesn't have, or from a list on another site. With a data dictionary file, it names the columns the file describes that the copy can't make.
 - **Calculated columns**: a calculated column whose formula uses a column the copy skips is skipped too.

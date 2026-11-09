@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-lists.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Browser tests for the part of Copy site structure that copies lists and libraries (src/tools/lists.js): each
          kind of column, lookups and the columns they show, managed metadata columns, calculated columns, column and
          view formatting, views, site columns, SharePoint's own site columns, the site's own content types and the
@@ -310,7 +310,12 @@ async function openTools(page, options) {
     const settings = options || {};
     const record = await openPretendSite(page, {
         extraLists: [STUDY_ARMS_LIST],
-        answerOverrides: (settings.answerOverrides || []).concat(sourceAnswers(settings.source)),
+        answerOverrides: (settings.answerOverrides || []).concat(sourceAnswers(settings.source), [
+            // This site's language, which the copy compares with the destination's before it renames SharePoint's own site columns.
+            { pattern: /^\/_api\/web$/, answer: function(url) {
+                return /Language/.test(url.searchParams.get('$select') || '') ? { Language: settings.sourceLanguage || 1033 } : undefined;
+            } }
+        ]),
         destination: Object.assign({ setup: function(model) {
             model.tenantTermSets = [TENANT_SET_CLINICS, TENANT_SET_TOPICS];
             model.missingTermSets = [TENANT_SET_RETIRED];
@@ -339,6 +344,22 @@ async function chooseLists(page, choices) {
         if (choice.newName) { await page.getByRole('textbox', { name: 'New name for ' + choice.name }).fill(choice.newName); }
         if (choice.newAddress) { await page.getByRole('textbox', { name: 'New address for ' + choice.name }).fill(choice.newAddress); }
     }
+}
+
+// Selects Copy to destination and returns the rows of Before you copy, each as [item, kind, what will happen], without
+// copying yet. Select Copy anyway after it to copy.
+async function beforeYouCopyRows(page) {
+    await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await expect(page.getByRole('heading', { name: 'Before you copy' })).toBeFocused({ timeout: 20000 });
+    return page.locator('.sna-tools-preflight-table tbody tr').evaluateAll(function(trs) {
+        return trs.map(function(tr) { return Array.prototype.map.call(tr.cells, function(td) { return td.textContent; }); });
+    });
+}
+
+// Selects Copy anyway under Before you copy and waits for the results.
+async function copyAnyway(page) {
+    await page.getByRole('button', { name: 'Copy anyway' }).click();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused({ timeout: 20000 });
 }
 
 // Selects Copy to destination and waits for the results.
@@ -683,8 +704,13 @@ test('copies into the Documents library the destination already has: adds missin
     const documents = record.destination.lists.filter(function(l) { return l.Title === 'Documents'; })[0];
     const before = { views: documents.views.length, id: documents.Id };
     await chooseLists(page, [{ name: 'Documents', newName: 'Study Files' }]);
-    await expect(page.getByRole('textbox', { name: 'New address for Documents' })).toHaveAccessibleDescription('The destination already has this. Sitenalyzer adds the columns and views it\'s missing.');
-    await copyNow(page);
+    // Before anything changes, the note under the box and Before you copy both say that the destination's library gets the new name.
+    await expect(page.getByRole('textbox', { name: 'New address for Documents' })).toHaveAccessibleDescription('The destination already has this, named Documents. ' +
+        'Sitenalyzer renames it Study Files and adds the columns and views it\'s missing.');
+    const rows = await beforeYouCopyRows(page);
+    expect(rows.filter(function(r) { return r[0] === 'Study Files'; })).toEqual([['Study Files', 'Library', 'The destination already has this, named Documents. ' +
+        'Sitenalyzer will rename it Study Files and add the columns and views it\'s missing.']]);
+    await copyAnyway(page);
 
     // No new library: the destination's Documents is renamed to the chosen name and gets what it was missing.
     const changes = destinationChanges(record);
@@ -717,6 +743,75 @@ test('keeps the formatting of built-in columns in a library the destination alre
     expect(destinationChanges(record).filter(function(c) { return c.path.indexOf("/fields(guid'28cf69c5-fa48-462a-b5cd-27b6f9d2bd5f')") > -1; })).toEqual([]);
     await expect(resultRow(page, 'Modified in Documents')).toHaveCount(0);
     await expectResult(page, 'Document Status in Documents', 'Column', 'Copied', 'Created the column.');
+});
+
+// Content type IDs for the tests of a library the destination already has: Visit Form, a site content type based on
+// Document, and the content types of this site's Documents library.
+const VISIT_FORM_ID = '0x010100ABCD0000000040008000000000000011';
+const SOURCE_LIBRARY_TYPES = [
+    { StringId: '0x010100DDDD0000000040008000000000000099', Name: 'Document', Description: '', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] },
+    { StringId: VISIT_FORM_ID + '00DDDD0000000040008000000000000098', Name: 'Visit Form', Description: '', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] }
+];
+const VISIT_FORM_SITE_TYPES = [
+    { StringId: '0x01', Name: 'Item', Description: '', Group: 'List Content Types', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] },
+    { StringId: '0x0101', Name: 'Document', Description: '', Group: 'Document Content Types', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] },
+    { StringId: VISIT_FORM_ID, Name: 'Visit Form', Description: 'A visit form.', Group: 'Study Content Types', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] }
+];
+
+// Returns source answers for this site's Documents library with content types turned on and SOURCE_LIBRARY_TYPES.
+function libraryWithTypes() {
+    return [
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIBRARY_ID + "'\\)$"), answer: function() {
+            return { Id: LIBRARY_ID, Title: 'Documents', Description: '', BaseTemplate: 101, BaseType: 1, EntityTypeName: 'Shared_x0020_Documents',
+                HasUniqueRoleAssignments: false, RootFolder: { ServerRelativeUrl: SITE_PATH + '/Shared Documents' }, ContentTypesEnabled: true,
+                EnableVersioning: true, EnableMinorVersions: false, MajorVersionLimit: 500, EnableModeration: false, DraftVersionVisibility: 0,
+                EnableFolderCreation: true, Hidden: false, NoCrawl: false, OnQuickLaunch: true, ForceCheckout: false, ValidationFormula: '',
+                ValidationMessage: '', Direction: 'none', ListExperienceOptions: 0 };
+        } },
+        { pattern: new RegExp("^/_api/web/lists\\(guid'" + LIBRARY_ID + "'\\)/contenttypes$"), body: { value: SOURCE_LIBRARY_TYPES } }
+    ];
+}
+
+test('adds only its own content types to the New menu of a library the destination already has, and says it turned on content types', async function({ page }) {
+    let documentTypeId = '';
+    const protocolId = '0x010100FEFE0000000040008000000000000001';
+    const record = await openTools(page, { answerOverrides: libraryWithTypes(), source: { siteTypes: VISIT_FORM_SITE_TYPES }, setup: function(model) {
+        // The destination's Documents also uses Protocol and has a New menu order of its own, but content types are turned off.
+        const documents = model.lists.filter(function(l) { return l.Title === 'Documents'; })[0];
+        documents.contentTypes.push({ StringId: protocolId, Name: 'Protocol', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] });
+        documentTypeId = documents.contentTypes[0].StringId;
+        documents.contentTypeOrder = [documentTypeId, protocolId];
+    } });
+    await chooseLists(page, [{ name: 'Documents' }]);
+    await copyNow(page);
+    const documents = record.destination.lists.filter(function(l) { return l.Title === 'Documents'; })[0];
+    expect(documents.contentTypes.map(function(t) { return t.Name; })).toEqual(['Document', 'Protocol', 'Visit Form']);
+    const visitForm = documents.contentTypes.filter(function(t) { return t.Name === 'Visit Form'; })[0];
+    // Protocol stays on the New menu in its place, and Visit Form comes after it.
+    expect(documents.contentTypeOrder).toEqual([documentTypeId, protocolId, visitForm.StringId]);
+    expect(documents.settings.ContentTypesEnabled).toBe(true);
+    await expectResult(page, 'Documents', 'Library', 'Copied', 'The destination already had this library, so Sitenalyzer used it, added the columns and ' +
+        'views it was missing, and left its other columns, views, and settings as they were. Sitenalyzer also turned on Allow management of content ' +
+        'types for the library, so it could add the content type it was missing. You can turn it off again in the library\'s advanced settings.');
+    await expectResult(page, 'Visit Form in Documents', 'Content type', 'Copied', 'Added the content type to the library.');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('leaves the New menu of a library the destination already has alone when it has no order of its own', async function({ page }) {
+    const record = await openTools(page, { answerOverrides: libraryWithTypes(), source: { siteTypes: VISIT_FORM_SITE_TYPES }, setup: function(model) {
+        model.lists.filter(function(l) { return l.Title === 'Documents'; })[0].settings.ContentTypesEnabled = true;
+    } });
+    await chooseLists(page, [{ name: 'Documents' }]);
+    await copyNow(page);
+    const documents = record.destination.lists.filter(function(l) { return l.Title === 'Documents'; })[0];
+    expect(documents.contentTypes.map(function(t) { return t.Name; })).toEqual(['Document', 'Visit Form']);
+    expect(documents.contentTypeOrder).toBeUndefined();
+    expect(destinationChanges(record).filter(function(c) {
+        return /\/RootFolder$/.test(c.path) || c.path === "/_api/web/lists(guid'" + documents.Id + "')";
+    })).toEqual([]);
+    await expectResult(page, 'Documents', 'Library', 'Copied', 'The destination already had this library, so Sitenalyzer used it, added the columns and ' +
+        'views it was missing, and left its other columns, views, and settings as they were.');
+    expect(record.unexpectedRequests).toEqual([]);
 });
 
 // ### More Views ###
@@ -894,7 +989,8 @@ test('copies the site\'s own content types that no list uses, with their columns
     // SharePoint's own Start Date site column gets the name it has in the source site; Enterprise Keywords keeps its name.
     expect(model.siteColumns.filter(function(f) { return f.InternalName === 'StartDate'; })[0].Title).toBe('Study Start');
     await expectResult(page, 'Study Start (site column)', 'Column', 'Copied', 'Renamed the destination\'s site column Start Date to Study Start, the name it has in the ' +
-        'site you copied from.');
+        'site you copied from. The new name shows in every site of the destination\'s site collection, because the column belongs to its top-level site. ' +
+        'To undo it, rename the column back to Start Date in the site settings of that top-level site, under Site columns.');
     expect(model.siteColumns.filter(function(f) { return f.InternalName === 'TaxKeyword'; })[0].Title).toBe('Enterprise Keywords');
     await expect(resultRow(page, 'Enterprise Keywords (site column)')).toHaveCount(0);
     expect(model.siteColumns.filter(function(f) { return f.InternalName === 'Title'; })[0].Title).toBe('Title');
@@ -945,6 +1041,103 @@ test('keeps SharePoint\'s own content types a new list has, matched by ID, and r
         'SharePoint, and Sitenalyzer doesn\'t add those. Add it in the list settings, under Content types, if you need it.');
     await expect(resultRow(page, 'Elemento in Study Visits')).toHaveCount(0);
     await expect(resultRow(page, 'Item in Study Visits')).toHaveCount(0);
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+// Returns the openTools options for Start Date, one of SharePoint's own site columns, which someone added to Study Visits
+// and renamed Study Start in this site. The destination names it Start Date, and its top-level site uses destinationLanguage,
+// such as 3082 for Spanish, or English when it's left out.
+function renamedStartDate(destinationLanguage) {
+    const startDate = builtInColumn(START_DATE_ID, 'StartDate', 'Study Start', 'DateTime');
+    return {
+        source: { siteFields: [Object.assign({}, startDate, { Scope: SITE_PATH })],
+            visitColumns: [titleColumn('bbbbbbbb-2000-4000-8000-000000000001', 'Visit Code', true), startDate],
+            visitViews: [view('cccccccc-3000-4000-8000-000000000401', 'All Visits', { DefaultView: true, ViewFields: { Items: ['LinkTitle', 'StartDate'] } })] },
+        setup: function(model) {
+            model.siteColumns.push(destinationSiteColumn(START_DATE_ID, 'StartDate', 'Start Date', 'DateTime'));
+            if (destinationLanguage) { model.rootWebLanguage = destinationLanguage; }
+        }
+    };
+}
+
+test('says before the copy that it renames one of SharePoint\'s own site columns for the whole destination site collection', async function({ page }) {
+    const record = await openTools(page, renamedStartDate());
+    await chooseLists(page, [{ name: 'Study Visits' }]);
+    const rows = await beforeYouCopyRows(page);
+    expect(rows.filter(function(r) { return r[0] === 'Study Start (site column)'; })).toEqual([['Study Start (site column)', 'Column', 'Sitenalyzer will rename ' +
+        'the destination\'s site column Start Date to Study Start, the name it has in this site. The new name shows in every site of the destination\'s ' +
+        'site collection, because the column belongs to its top-level site. To undo it, rename the column back to Start Date in the site settings of that ' +
+        'top-level site, under Site columns.']]);
+    await copyAnyway(page);
+    expect(record.destination.siteColumns.filter(function(f) { return f.InternalName === 'StartDate'; })[0].Title).toBe('Study Start');
+    await expectResult(page, 'Study Start (site column)', 'Column', 'Copied');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('doesn\'t rename one of SharePoint\'s own site columns when the destination uses another language, and says so', async function({ page }) {
+    const record = await openTools(page, renamedStartDate(3082));
+    await chooseLists(page, [{ name: 'Study Visits' }]);
+    const said = 'the destination\'s site column Start Date to Study Start, because %s and the destination use different languages, and SharePoint names ' +
+        'its own columns in each site\'s language. If you want the name Study Start, rename Start Date in the site settings of the destination\'s top-level ' +
+        'site, under Site columns. The new name shows in every site of the destination\'s site collection.';
+    const rows = await beforeYouCopyRows(page);
+    expect(rows.filter(function(r) { return r[0] === 'Study Start (site column)'; })).toEqual([['Study Start (site column)', 'Column',
+        'Sitenalyzer won\'t rename ' + said.replace('%s', 'this site')]]);
+    await copyAnyway(page);
+    expect(record.destination.siteColumns.filter(function(f) { return f.InternalName === 'StartDate'; })[0].Title).toBe('Start Date');
+    expect(destinationChanges(record).filter(function(c) { return /\/rootweb\/fields/.test(c.path); })).toEqual([]);
+    await expectResult(page, 'Study Start (site column)', 'Column', 'Skipped', 'Sitenalyzer didn\'t rename ' + said.replace('%s', 'the site you copied from'));
+    // The list still gets the column, under the name the destination gives it.
+    await expectResult(page, 'Study Start in Study Visits', 'Column', 'Copied', 'Added this column to the list from SharePoint\'s own site columns.');
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+// A lookup site column in a site content type: Study Pick reads from Study Arms, and Visit Kind, a content type of the
+// site, shows it. Study Visits uses Visit Kind, so SharePoint adds Study Pick to the list when the copy adds the column to
+// Visit Kind. Study Pick:Arm Code shows another column of it, and the list's view sorts by it.
+const VISIT_KIND_ID = '0x0100ABAB0000000040008000000000000031';
+const STUDY_PICK_ID = 'cccccccc-2000-4000-8000-000000000031';
+
+test('keeps a lookup site column that SharePoint added to a list with its content type, with the columns and views that use it', async function({ page }) {
+    const lookupSettings = { LookupList: '{' + ARMS_ID + '}', LookupWebId: SOURCE_WEB_ID, LookupField: 'Title', Group: 'Study Columns' };
+    const studyPick = column(STUDY_PICK_ID, 'StudyPick', 'Study Pick', 'Lookup', 'List="{' + ARMS_ID + '}" WebId="' + SOURCE_WEB_ID + '" ShowField="Title"', '',
+        lookupSettings);
+    const armCode = column('cccccccc-2000-4000-8000-000000000032', 'StudyPick_x003a_Arm_x0020_Code', 'Study Pick:Arm Code', 'Lookup', 'List="{' + ARMS_ID +
+        '}" WebId="' + SOURCE_WEB_ID + '" ShowField="ArmCode" FieldRef="' + STUDY_PICK_ID + '" ReadOnly="TRUE"', '', { LookupList: '{' + ARMS_ID + '}',
+        LookupWebId: SOURCE_WEB_ID, LookupField: 'ArmCode', IsDependentLookup: true, PrimaryFieldId: STUDY_PICK_ID, ReadOnlyField: true });
+    const links = [{ Id: TITLE_ID, Name: 'Title' }, { Id: STUDY_PICK_ID, Name: 'StudyPick' }];
+    const record = await openTools(page, { source: {
+        contentTypes: true,
+        siteFields: [Object.assign({}, studyPick, { Scope: SITE_PATH })],
+        siteTypes: [
+            { StringId: '0x01', Name: 'Item', Description: '', Group: 'List Content Types', FieldLinks: [{ Id: TITLE_ID, Name: 'Title' }] },
+            { StringId: VISIT_KIND_ID, Name: 'Visit Kind', Description: '', Group: 'Study Content Types', FieldLinks: links }
+        ],
+        visitListTypes: [{ StringId: VISIT_KIND_ID + '00ABAB0000000040008000000000000032', Name: 'Visit Kind', Description: '', FieldLinks: links }],
+        visitColumns: [titleColumn('bbbbbbbb-2000-4000-8000-000000000001', 'Visit Code', true), studyPick, armCode],
+        visitViews: [view('cccccccc-3000-4000-8000-000000000501', 'All Visits', { DefaultView: true, ViewQuery: '<OrderBy><FieldRef Name="StudyPick" /></OrderBy>',
+            ViewFields: { Items: ['LinkTitle', 'StudyPick', 'StudyPick_x003a_Arm_x0020_Code'] } })]
+    } });
+    await chooseLists(page, [{ name: 'Study Visits' }, { name: 'Study Arms' }]);
+    await page.getByRole('checkbox', { name: 'Study Arms (2 terms)' }).uncheck();
+    await copyNow(page);
+    const visits = destList(record, '/Lists/StudyVisits');
+    const arms = destList(record, '/Lists/StudyArms');
+
+    // The site column reads from the destination's Study Arms, and SharePoint added it to Study Visits with Visit Kind.
+    expect(record.destination.siteColumns.filter(function(f) { return f.InternalName === 'StudyPick'; })[0].SchemaXml).toContain('List="{' + arms.Id + '}"');
+    await expectResult(page, 'Study Pick (site column)', 'Column', 'Copied');
+    expect(createdColumns(record, visits.Id)).not.toContain('StudyPick');
+    expect(destField(visits, 'StudyPick').Id).toBe(STUDY_PICK_ID);
+    await expectResult(page, 'Study Pick in Study Visits', 'Column', 'Copied', 'SharePoint added this column with a content type that uses it.');
+
+    // The column that shows another column of it, and the view, keep it.
+    expect(destField(visits, 'StudyPick_x003a_ArmCode').PrimaryFieldId).toBe(STUDY_PICK_ID);
+    await expectResult(page, 'Study Pick:Arm Code in Study Visits', 'Column', 'Copied');
+    const main = visits.views.filter(function(v) { return v.Title === 'All Visits'; })[0];
+    expect(main.ViewFields.Items).toEqual(['LinkTitle', 'StudyPick', 'StudyPick_x003a_ArmCode']);
+    expect(main.ViewQuery).toBe('<OrderBy><FieldRef Name="StudyPick"/></OrderBy>');
+    await expectResult(page, 'All Visits in Study Visits', 'View', 'Copied', 'Updated the list\'s default view to match.');
     expect(record.unexpectedRequests).toEqual([]);
 });
 
