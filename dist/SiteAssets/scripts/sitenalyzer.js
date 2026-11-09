@@ -3,9 +3,11 @@ This file is part of Sitenalyzer
 sitenalyzer.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-04-20
-Last Modified: 2026-11-05
+Last Modified: 2026-11-09
 Summary: Sitenalyzer displays internal information, such as IDs and permissions, for a SharePoint site,
          shows who can open what, and saves a data dictionary and a permissions workbook as Excel files.
+         Its Tools section copies a site's structure into another site; that code is in src/tools/, and the build
+         places it inside this file (see the line that names src/tools/ near the end).
          A Modern Script Editor web part loads this file from the site's Site Assets library. At startup
          it adds the styles, loads the libraries from Site Assets, places the app markup in
          <div id="sitenalyzer-app"></div>, and starts the app.
@@ -49,7 +51,11 @@ var SNA_STYLE_FILES = ['tabulator_simple.min.css', 'sitenalyzer.css'];
 // use stores the working library in the matching variable below.
 var SNA_LIBRARY_FILES = [
     { file: 'xlsx.full.min.js', globalName: 'XLSX',
-      isUsable: function(lib) { return !!(lib && lib.utils && typeof lib.utils.aoa_to_sheet === 'function' && typeof lib.write === 'function'); },
+      // Tools reads data dictionary files back, so the library must read workbooks as well as write them.
+      isUsable: function(lib) {
+          return !!(lib && lib.utils && typeof lib.utils.aoa_to_sheet === 'function' && typeof lib.write === 'function' &&
+              typeof lib.read === 'function' && typeof lib.utils.sheet_to_json === 'function');
+      },
       use: function(lib) { XLSX = lib; } },
     { file: 'tabulator.min.js', globalName: 'Tabulator',
       isUsable: function(lib) { return typeof lib === 'function'; },
@@ -90,6 +96,7 @@ var SNA_APP_HTML = [
     "\t\t\t\t\t<button type=\"button\" class=\"sna-btn sna-btn-outline sna-btn-small\" data-action=\"change-site\"><span data-icon=\"swap\"></span>Change site</button>",
     "\t\t\t\t\t<a id=\"sna-site-settings-link\" class=\"sna-btn sna-btn-outline sna-btn-small\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" data-interception=\"off\"><span data-icon=\"settings\"></span>Site settings<span class=\"sna-visually-hidden\"> (opens in a new window)</span></a>",
     "\t\t\t\t</div>",
+    "\t\t\t\t<p id=\"sna-utility-note\" class=\"sna-utility-note\" hidden>Refresh report, Start over, and Change site are turned off while Sitenalyzer copies. To use them now, select Stop copying in Tools.</p>",
     "\t\t\t</div>",
     "\t\t\t<div id=\"sna-site-header\" class=\"sna-site-header\"></div>",
     "\t\t\t<div class=\"sna-nav-row hide-on-print\">",
@@ -100,6 +107,7 @@ var SNA_APP_HTML = [
     "\t\t\t\t\t\t<li><a href=\"#sna/permissions\" data-section=\"permissions\"><span data-icon=\"shield\"></span>Permissions</a></li>",
     "\t\t\t\t\t\t<li><a href=\"#sna/taxonomy\" data-section=\"taxonomy\"><span data-icon=\"tag\"></span>Taxonomy</a></li>",
     "\t\t\t\t\t\t<li><a href=\"#sna/review\" data-section=\"review\"><span data-icon=\"check\"></span>Site review</a></li>",
+    "\t\t\t\t\t\t<li><a href=\"#sna/tools\" data-section=\"tools\"><span data-icon=\"tools\"></span>Tools</a></li>",
     "\t\t\t\t\t</ul>",
     "\t\t\t\t</nav>",
     "\t\t\t\t<div class=\"sna-switches\">",
@@ -139,7 +147,7 @@ var SNA_APP_HTML = [
     "\t\t\t\t<h2 id=\"sna-site-dialog-title\" class=\"sna-dialog-title\">Choose a site</h2>",
     "\t\t\t\t<button type=\"button\" class=\"sna-btn sna-btn-outline sna-btn-small\" data-action=\"close-site-dialog\">Close</button>",
     "\t\t\t</div>",
-    "\t\t\t<p>Open the report of another site. Sitenalyzer reads it with your own access.</p>",
+    "\t\t\t<p id=\"sna-site-dialog-intro\">Open the report of another site. Sitenalyzer reads it with your own access.</p>",
     "\t\t\t<label for=\"sna-site-find\" class=\"sna-field-label\">Find a site</label>",
     "\t\t\t<input type=\"search\" id=\"sna-site-find\" class=\"sna-table-search\" autocomplete=\"off\" spellcheck=\"false\" aria-describedby=\"sna-site-find-status\">",
     "\t\t\t<p class=\"sna-dialog-refresh\"><button type=\"button\" class=\"sna-link-btn\" data-action=\"refresh-sites\">Refresh sites list</button></p>",
@@ -149,7 +157,7 @@ var SNA_APP_HTML = [
     "\t\t\t\t<label for=\"sna-site-address\" class=\"sna-field-label\">Or enter a site address</label>",
     "\t\t\t\t<div class=\"sna-url-row\">",
     "\t\t\t\t\t<input type=\"text\" id=\"sna-site-address\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"https://your-tenant.sharepoint.com/sites/your-site\" aria-describedby=\"sna-site-address-message\">",
-    "\t\t\t\t\t<button type=\"submit\" class=\"sna-btn sna-btn-primary\">Open site report</button>",
+    "\t\t\t\t\t<button type=\"submit\" id=\"sna-site-address-submit\" class=\"sna-btn sna-btn-primary\">Open site report</button>",
     "\t\t\t\t</div>",
     "\t\t\t\t<p id=\"sna-site-address-message\" class=\"sna-error-text\" role=\"alert\" hidden></p>",
     "\t\t\t</form>",
@@ -175,7 +183,7 @@ var SNA_APP_HTML = [
 // Version of the style sheets and libraries this file was built with. The build replaces the next line with a short
 // checksum of sitenalyzer.css and the library files, so keep it exactly as written. It is added to their addresses
 // as ?v=, so a browser never pairs this file with an older copy of a style sheet that it saved earlier.
-var SNA_ASSET_VERSION = '0b30dfefb74e';
+var SNA_ASSET_VERSION = 'c25c95b3c0dc';
 
 // Folder that holds this file, such as https://contoso.sharepoint.com/sites/example/SiteAssets/scripts/.
 // Found now because document.currentScript is only set while the file first runs.
@@ -375,6 +383,7 @@ var _snaUserCheckResult = null;   // The finished person check { input, status, 
 var _snaDrafts = {};              // Descriptions being edited, by edit key; see renderAdminDescWrap
 var _snaEditFocus = {};           // The newest redraw of each description, by edit key; see snaRedrawDescription
 var _snaSiteDialogOpener = null;  // The button that opened Choose a site, which gets focus back when the dialog closes
+var _snaSiteDialogMode = 'report'; // 'report' opens the chosen site's report; 'tools-destination' fills the Tools destination box
 var _snaReloadSites = null;       // Reads the accessible sites again and resolves to { loaded, kept }; set by startApplication
 var _snaUseAddressRoute = true;   // True until the first report from a ?siteUrl= link opens; other reports start on Overview or the kept view
 
@@ -384,8 +393,7 @@ var _snaSiteCollectionId    = '';
 var _snaTermStoreId         = '';
 var _snaIsAdmin             = false;
 var _snaTargetUrl           = '';
-var _snaRequestDigest       = null;
-var _snaRequestDigestExpiry = 0;
+var _snaRequestDigests      = {};    // Request digests by site, { digest, expiry }, keyed by snaDigestKey; see getRequestDigest
 var _snaSiteInfo            = null;  // Site metadata from _api/web; used by XLSX export
 var _snaAllListsMeta        = [];    // Raw allLists.value objects; used by XLSX export
 var _snaHiddenListsMeta     = {};    // Hidden lists that lookup columns can read from, such as TaxonomyHiddenList, by lowercase list ID; used by XLSX export
@@ -709,6 +717,15 @@ function snaTableColumnSettings(type, tbl) {
     return [
       { title: 'Part of the report', field: 'area', sorter: 'string', widthGrow: 2, minWidth: 150 },
       { title: 'Status', field: 'status', sorter: 'string', width: 130 },
+      { title: 'Notes', field: 'note', sorter: 'string', widthGrow: 4, minWidth: 180, formatter: 'textarea' }
+    ];
+  }
+  // The results of Copy site structure in Tools: one row for each item it copied, skipped, or couldn't copy.
+  if (type === 'toolsresults') {
+    return [
+      { title: 'Item', field: 'name', sorter: 'string', widthGrow: 2, minWidth: 150 },
+      { title: 'Kind', field: 'kind', sorter: 'string', width: 130 },
+      { title: 'Result', field: 'resultText', sorter: 'string', width: 130 },
       { title: 'Notes', field: 'note', sorter: 'string', widthGrow: 4, minWidth: 180, formatter: 'textarea' }
     ];
   }
@@ -3439,6 +3456,8 @@ function snaHandleAppClick(e) {
     var target = e.target.closest('[data-action]');
     if (!target) { return; }
     var action = target.getAttribute('data-action');
+    // Every action of the Tools section starts with tools- and is handled in src/tools/ui.js.
+    if (snaToolsHandleAction(action, target, e)) { return; }
     if (action === 'collapse-all') { collapseAll(); }
     else if (action === 'expand-all') { expandAll(); }
     else if (action === 'export-xlsx') { exportToXLSX(); }
@@ -3447,7 +3466,7 @@ function snaHandleAppClick(e) {
     else if (action === 'print-report') { snaPrintReport(); }
     else if (action === 'change-site') { snaOpenSiteDialog(target); }
     else if (action === 'close-site-dialog') { snaCloseSiteDialog(); }
-    else if (action === 'choose-site') { snaOpenSite(target.getAttribute('data-url')); }
+    else if (action === 'choose-site') { snaChooseSite(target.getAttribute('data-url')); }
     else if (action === 'refresh-sites') { snaRefreshSiteChoices(); }
     else if (action === 'toggle-choices') { snaToggleChoices(target); }
     else if (action === 'start-over') { if (snaConfirmDiscardDrafts('Start over')) { startOver(false); } }
@@ -3596,8 +3615,7 @@ function snaClearReport() {
     _snaAllListsMeta     = [];
     _snaHiddenListsMeta  = {};
     _snaCurrentUser      = null;
-    _snaRequestDigest    = null;
-    _snaRequestDigestExpiry = 0;
+    _snaRequestDigests   = {};
     _snaReport           = null;
     _snaRoute            = null;
     _snaPendingNav       = null;
@@ -3609,6 +3627,8 @@ function snaClearReport() {
     _snaDrafts           = {};
     _snaEditFocus        = {};
     _snaHiddenSeen       = {};
+    // Stops a copy that is running in Tools and forgets the choices made there.
+    snaToolsReset();
 }
 
 // Clears the report and returns to the start screen. Change site keeps the last address in the Site address box so it can be
@@ -4547,20 +4567,40 @@ async function checkAdminPermissions(targetUrl) {
     }
 }
 
-// Returns a cached X-RequestDigest token, fetching a fresh one from /_api/contextinfo if expired.
+// Returns the key of a site in _snaRequestDigests: its address in lowercase, without a slash at the end.
+function snaDigestKey(siteUrl) {
+    return xlsxStripSlash(String(siteUrl || '')).toLowerCase();
+}
+
+/**
+ * Returns the X-RequestDigest value for writes to one site, from the cache or from the site's /_api/contextinfo.
+ * SharePoint accepts a digest only on the site that issued it, so each site has its own. A digest is kept until
+ * 60 seconds before the end of its lifetime (FormDigestTimeoutSeconds, 1800 seconds when SharePoint doesn't say).
+ * @param {string} targetUrl Site address, such as https://contoso.sharepoint.com/sites/research.
+ * @returns {Promise<string>} The digest. Changes nothing on the site.
+ * @throws {Error} When SharePoint doesn't give a digest, such as for a site the person can't open.
+ */
 async function getRequestDigest(targetUrl) {
+    var key = snaDigestKey(targetUrl);
     var now = Date.now();
-    if (_snaRequestDigest && now < _snaRequestDigestExpiry) { return _snaRequestDigest; }
-    var res  = await fetch(targetUrl + '/_api/contextinfo', {
+    var cached = _snaRequestDigests[key];
+    if (cached && now < cached.expiry) { return cached.digest; }
+    var res  = await fetch(xlsxStripSlash(targetUrl) + '/_api/contextinfo', {
         method: 'POST',
         headers: { 'Accept': 'application/json;odata=nometadata', 'Content-Length': '0' },
         credentials: 'include'
     });
     if (!res.ok) { throw new Error('HTTP ' + res.status + ' — ' + targetUrl + '/_api/contextinfo'); }
     var data = await res.json();
-    _snaRequestDigest      = data.FormDigestValue;
-    _snaRequestDigestExpiry = now + 25 * 60 * 1000;
-    return _snaRequestDigest;
+    var lifetime = Number(data.FormDigestTimeoutSeconds) > 0 ? Number(data.FormDigestTimeoutSeconds) : 1800;
+    _snaRequestDigests[key] = { digest: data.FormDigestValue, expiry: now + Math.max(0, lifetime - 60) * 1000 };
+    return data.FormDigestValue;
+}
+
+// Forgets the digest of one site, so the next write asks SharePoint for a new one. Used after SharePoint refuses
+// a digest, such as one that expired early.
+function snaClearRequestDigest(siteUrl) {
+    delete _snaRequestDigests[snaDigestKey(siteUrl)];
 }
 
 // Returns a term from the term store API as { termName, termId, termDescription, synonyms }. termName is the term's
@@ -5994,14 +6034,17 @@ function snaClearTypedHiddenValues() {
 // #sna/permissions/<part> opens one part; #sna/permissions opens the first.
 var SNA_DETAIL_TABS = ['overview', 'folders', 'columns', 'permissions'];
 var SNA_PERMISSION_PARTS = ['site', 'people', 'person', 'own', 'sharing', 'apps'];
+// The parts of Tools, in the order of the Tools navigation. #sna/tools/<part> opens one part; #sna/tools opens the first.
+var SNA_TOOLS_PARTS = ['copy'];
 
-// The views of the report screen. inNav views have a link in the section navigation.
+// The views of the report screen. inNav views have a link in the section navigation. Tools is drawn by src/tools/ui.js.
 var SNA_SECTIONS = {
     overview:    { title: 'Overview',    inNav: true,  render: snaRenderOverview },
     contents:    { title: 'Contents',    inNav: true,  render: snaRenderContents },
     permissions: { title: 'Permissions', inNav: true,  render: snaRenderPermissions },
     taxonomy:    { title: 'Taxonomy',    inNav: true,  render: snaRenderTaxonomy },
     review:      { title: 'Site review', inNav: true,  render: snaRenderReview },
+    tools:       { title: 'Tools',       inNav: true,  render: snaToolsRender },
     search:      { title: 'Search results', inNav: false, render: snaRenderSearch }
 };
 
@@ -6032,7 +6075,7 @@ function snaReadQueryValue(query, name) {
 // Reads a report address such as #sna/contents/<list ID>/columns, #sna/contents/pages/<page key>, or #sna/search?q=visit.
 // Returns null for addresses that are not Sitenalyzer's, such as #top, so the host page keeps those.
 // Addresses that start with #sna/ but don't match a view open the Overview. Only known sections, tabs, and parts
-// of Permissions are accepted, and list and term set IDs must look like a GUID.
+// of Permissions and Tools are accepted, and list and term set IDs must look like a GUID.
 function snaParseRoute(hash) {
     var text = String(hash || '');
     if (text.indexOf(SNA_ROUTE_PREFIX) !== 0) { return null; }
@@ -6074,6 +6117,12 @@ function snaParseRoute(hash) {
             if (SNA_PERMISSION_PARTS.indexOf(parts[1]) === -1) { return fallback; }
             route.anchor = parts[1];
         }
+    } else if (section === 'tools') {
+        if (parts.length > 2) { return fallback; }
+        if (parts[1]) {
+            if (SNA_TOOLS_PARTS.indexOf(parts[1]) === -1) { return fallback; }
+            route.anchor = parts[1];
+        }
     } else if (section === 'taxonomy') {
         // #sna/taxonomy/<term set ID> opens that term set.
         if (parts.length > 2) { return fallback; }
@@ -6099,7 +6148,7 @@ function snaRouteHash(route) {
         if (r.id === 'pages' && r.page) { hash += '/' + r.page; }
         if (r.id !== 'pages' && r.id !== 'agents' && r.tab && r.tab !== 'overview') { hash += '/' + r.tab; }
     }
-    if ((section === 'permissions' || section === 'taxonomy') && r.anchor) { hash += '/' + r.anchor; }
+    if ((section === 'permissions' || section === 'taxonomy' || section === 'tools') && r.anchor) { hash += '/' + r.anchor; }
     if (section === 'search') { hash += '?q=' + encodeURIComponent(r.q || ''); }
     return hash;
 }
@@ -6194,6 +6243,7 @@ function renderApp(route, options) {
     initSnaTabulators();
     if (route.section === 'contents') { snaApplyInventoryFilter(); }
     if (route.section === 'permissions') { snaSortPeopleBlocks(); snaApplyPeopleFilter(); }
+    if (route.section === 'tools') { snaToolsAfterRender(); }
     if (route.section === 'contents' && route.id === 'pages' && route.page) {
         var page = snaFindPage(_snaReport, route.page);
         if (page) { snaLoadPageImage(page); }
@@ -6346,7 +6396,8 @@ var SNA_ICONS = {
     settings: '<path d="M4 6h9"/><path d="M17 6h3"/><path d="M4 12h3"/><path d="M11 12h9"/><path d="M4 18h11"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
     search:   '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
     copy:     '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
-    pencil:   '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>'
+    pencil:   '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
+    tools:    '<path d="M14.5 3.5a5 5 0 0 0-4.6 6.9L3.8 16.5a2.4 2.4 0 0 0 3.4 3.4l6.1-6.1a5 5 0 0 0 6.9-4.6l-3 3-3.3-.8-.8-3.3z"/>'
 };
 
 // Returns the markup for one icon from SNA_ICONS, or '' for a name it doesn't have.
@@ -7270,7 +7321,8 @@ function snaPrintListHtml(list) {
 
 // Returns the print document: every part of the report as headings, text, and plain tables. It is built from the report
 // data rather than from the screen, so closed sections, filters, and table scrolling leave nothing out. Descriptions are
-// the saved ones, never a draft, and technical details are always included.
+// the saved ones, never a draft, and technical details are always included. Tools is left out, because it holds
+// choices for a copy rather than facts about the site.
 function snaBuildPrintDocument(report) {
     var site = report.site;
     var perms = report.permissions;
@@ -7494,14 +7546,28 @@ function snaHandlePrintShortcut(e) {
 
 // ### Choose a Site Dialog ###
 
-// Opens Choose a site, which finds one of the sites the person can open or takes a site address.
+// Words in Choose a site for each of its modes: the sentence under the title and the button beside the address box.
+var SNA_SITE_DIALOG_TEXT = {
+    'report': { intro: 'Open the report of another site. Sitenalyzer reads it with your own access.', submit: 'Open site report' },
+    'tools-destination': { intro: 'Choose the site to copy to. You need to be a site collection administrator there.', submit: 'Use this site' }
+};
+
+// Opens Choose a site, which finds one of the sites the person can open or takes a site address. mode is 'report'
+// (the default), which opens the chosen site's report, or 'tools-destination', which puts the chosen site's address
+// in the destination box of Copy site structure and keeps this report open.
 // Browsers without dialog support return to the start screen instead, as Start over does, keeping the address.
-function snaOpenSiteDialog(opener) {
+function snaOpenSiteDialog(opener, mode) {
     var dialog = document.getElementById('sna-site-dialog');
+    var dialogMode = mode === 'tools-destination' ? mode : 'report';
     if (!dialog || typeof dialog.showModal !== 'function') {
-        if (snaConfirmDiscardDrafts('Changing the site')) { startOver(true); }
+        if (dialogMode === 'report' && snaConfirmDiscardDrafts('Changing the site')) { startOver(true); }
         return;
     }
+    _snaSiteDialogMode = dialogMode;
+    var intro = document.getElementById('sna-site-dialog-intro');
+    if (intro) { intro.textContent = SNA_SITE_DIALOG_TEXT[dialogMode].intro; }
+    var submit = document.getElementById('sna-site-address-submit');
+    if (submit) { submit.textContent = SNA_SITE_DIALOG_TEXT[dialogMode].submit; }
     _snaSiteDialogOpener = opener || null;
     var find = document.getElementById('sna-site-find');
     var address = document.getElementById('sna-site-address');
@@ -7523,6 +7589,7 @@ function snaCloseSiteDialog() {
 function snaHandleSiteDialogClose() {
     var opener = _snaSiteDialogOpener;
     _snaSiteDialogOpener = null;
+    _snaSiteDialogMode = 'report';
     if (opener && document.contains(opener) && opener.offsetParent !== null) { opener.focus(); }
 }
 
@@ -7591,6 +7658,24 @@ function snaRefreshSiteChoices() {
         });
 }
 
+// Uses the site chosen in Choose a site, from its list of sites or its address box: opens its report, or in the
+// 'tools-destination' mode, puts its address in the Tools destination box. With nothing typed in that mode, the dialog
+// stays open and says what to enter, so the address already in the destination box stays.
+function snaChooseSite(address) {
+    if (_snaSiteDialogMode === 'tools-destination') {
+        if (!String(address || '').trim()) {
+            var origin = snaOrigin(getBaseUrl()) || window.location.origin;
+            snaShowSiteAddressMessage('Enter the address of the site to copy to, such as ' + origin + '/sites/new-study.');
+            var box = document.getElementById('sna-site-address');
+            if (box) { box.focus(); }
+            return;
+        }
+        snaToolsUseDestination(address);
+        return;
+    }
+    snaOpenSite(address);
+}
+
 // Opens the report of another site after checking its address and asking about unsaved descriptions.
 // Only https addresses on this SharePoint tenant are accepted, such as https://contoso.sharepoint.com/sites/research.
 function snaOpenSite(address) {
@@ -7629,10 +7714,13 @@ function startApplication() {
                 e.preventDefault();
                 snaCheckUserAccess();
             }
+            // Enter in the Tools destination box checks the destination, the same as the Check destination button.
+            if (e.target && e.target.closest && e.target.closest('#sna-tools')) { snaToolsHandleKeydown(e); }
         });
         // The editor keys are handled before the event reaches any table around the editor.
         app.addEventListener('keydown', snaHandleEditorKeydown, true);
         app.addEventListener('input', function(e) {
+            if (e.target && e.target.closest && e.target.closest('#sna-tools')) { snaToolsHandleInput(e); return; }
             if (e.target && e.target.id === 'sna-inventory-filter') {
                 _snaContentsFilter = e.target.value;
                 snaApplyInventoryFilter();
@@ -7646,6 +7734,7 @@ function startApplication() {
             }
         });
         app.addEventListener('change', function(e) {
+            if (e.target && e.target.closest && e.target.closest('#sna-tools')) { snaToolsHandleChange(e); return; }
             if (e.target && e.target.id === 'sna-people-sort' && SNA_PEOPLE_SORTS[e.target.value]) {
                 _snaPeopleSort = e.target.value;
                 snaSortPeopleBlocks();
@@ -7665,9 +7754,10 @@ function startApplication() {
             window.addEventListener('beforeprint', snaHandleBeforePrint);
             window.addEventListener('afterprint', snaRemovePrintDocument);
             document.addEventListener('keydown', snaHandlePrintShortcut, true);
-            // Leaving or reloading the page with an unsaved description makes the browser ask first.
+            // Leaving or reloading the page with an unsaved description, or while a copy in Tools runs, makes the
+            // browser ask first. Leaving stops the copy and loses its results.
             window.addEventListener('beforeunload', function(e) {
-                if (snaUnsavedDraftCount() > 0) { e.preventDefault(); e.returnValue = ''; }
+                if (snaUnsavedDraftCount() > 0 || snaToolsCopying()) { e.preventDefault(); e.returnValue = ''; }
             });
         }
     }
@@ -7685,7 +7775,7 @@ function startApplication() {
         siteAddressForm.addEventListener('submit', function(e) {
             e.preventDefault();
             var box = document.getElementById('sna-site-address');
-            snaOpenSite(box ? box.value : '');
+            snaChooseSite(box ? box.value : '');
         });
     }
 
@@ -7987,6 +8077,13277 @@ function startApplication() {
             }
         });
     }
+}
+
+// ### Tools ###
+
+// The Tools section, such as Copy site structure. Its code is kept in src/tools/, one file for each part of the work,
+// and the build puts those files in place of the next line, so keep it exactly as written. They share this function's
+// scope, so they use the helpers above and add no names to the page.
+/*
+This file is part of Sitenalyzer
+core.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: Shared helpers for the Tools section: the one helper that writes to a site, reads that check their
+         addresses first, CSOM requests, XML and ID helpers, the link rewrite that points links and IDs of the source
+         at the destination (snaToolsRewriteSourceLinks), the results log, the progress line, and stopping a copy.
+         The build places this file inside sitenalyzer.js (see build.sh), so it uses that file's helpers, such as
+         getRequestDigest and xlsxStripSlash, and adds no names to the page. Every name defined here starts with
+         snaTools, SNA_TOOLS_, or _snaTools.
+Notes: See README file for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Tools Settings ###
+
+// Kinds of item in the results of Copy site structure. Each is the one name the results table and workbook use.
+var SNA_TOOLS_KINDS = {
+    list: 'List', library: 'Library', column: 'Column', view: 'View', contentType: 'Content type',
+    termSet: 'Term set', term: 'Term', siteAssetsFile: 'Site Assets file', page: 'Page', agent: 'Agent',
+    siteSkill: 'Site skill', permissionLevel: 'Permission level', group: 'Group', groupMember: 'Group member',
+    permission: 'Permission', menuLink: 'Menu link', siteLookSetting: 'Site look setting', note: 'Note'
+};
+
+// Each kind in a sentence, for one item and for several, such as "Found 2 of 3 columns in the destination."
+var SNA_TOOLS_KIND_WORDS = {
+    'List': ['list', 'lists'], 'Library': ['library', 'libraries'], 'Column': ['column', 'columns'],
+    'View': ['view', 'views'], 'Content type': ['content type', 'content types'], 'Term set': ['term set', 'term sets'],
+    'Term': ['term', 'terms'], 'Site Assets file': ['Site Assets file', 'Site Assets files'], 'Page': ['page', 'pages'],
+    'Agent': ['agent', 'agents'], 'Site skill': ['site skill', 'site skills'],
+    'Permission level': ['permission level', 'permission levels'], 'Group': ['group', 'groups'],
+    'Group member': ['group member', 'group members'], 'Permission': ['permission', 'permissions'],
+    'Menu link': ['menu link', 'menu links'], 'Site look setting': ['site look setting', 'site look settings'],
+    'Note': ['note', 'notes']
+};
+
+// Results an item can have, with the words the results table and workbook show for each. A warning is something the
+// check before copying found (see preflight.js); it isn't counted as copied, skipped, or failed.
+var SNA_TOOLS_RESULTS = { copied: 'Copied', partial: 'Partly copied', skipped: 'Skipped', failed: 'Failed', warning: 'Warning' };
+
+
+// Throttled requests (HTTP 429 and 503) are sent again up to SNA_TOOLS_THROTTLE_RETRIES times, after the wait SharePoint
+// asks for in Retry-After, but never less than SNA_TOOLS_RETRY_MIN_SECONDS, or SNA_TOOLS_RETRY_DEFAULT_SECONDS when it
+// doesn't say. Waits are split into steps of SNA_TOOLS_WAIT_STEP_MS, so Stop copying works during a wait.
+var SNA_TOOLS_THROTTLE_RETRIES = 5;
+var SNA_TOOLS_RETRY_MIN_SECONDS = 2;
+var SNA_TOOLS_RETRY_DEFAULT_SECONDS = 10;
+var SNA_TOOLS_WAIT_STEP_MS = 250;
+
+// The progress line is read aloud by screen readers, so it changes at most once in this many milliseconds.
+var SNA_TOOLS_ANNOUNCE_INTERVAL_MS = 1000;
+
+// Longest text of SharePoint's own error message that a note quotes.
+var SNA_TOOLS_SERVER_MESSAGE_MAX = 200;
+
+// A word with | or @ in it, which is how sign-in names, such as i:0#.f|membership|user@example.org, and email
+// addresses look. Notes say "the account" instead.
+var SNA_TOOLS_ACCOUNT_WORD = /\S*[|@]\S*/g;
+
+// The note for the part of the copy that was running when the person selected Stop copying, when SharePoint had
+// already made a change for it that no row describes.
+var SNA_TOOLS_STOPPED_NOTE = 'You stopped the copy after SharePoint made a change for this part, so the last item Sitenalyzer worked on ' +
+    'may be only partly made. Copy again into the same destination to finish it.';
+
+// ### Tools State ###
+
+var _snaToolsToken = 0;        // Changes when a copy is stopped or Tools is reset; a copy with an older token stops
+var _snaToolsActiveToken = 0;  // The token of the copy that is running, or 0 when none is
+var _snaToolsRun = null;       // The copy running or last run: { token, destination, results: [snaToolsLog entries], unloggedChanges }
+var _snaToolsVerifyChecks = {}; // Destination checks by type, added with snaToolsAddVerifyCheck; see verify.js
+var _snaToolsAnnouncedAt = 0;  // When the progress line last changed, in milliseconds
+var _snaToolsAnnounceTimer = null;
+
+// ### Errors ###
+
+/**
+ * Builds the error the Tools helpers throw when SharePoint refuses a request.
+ * @param {number} status HTTP status, such as 400, or 0 when SharePoint didn't answer.
+ * @param {string} code SharePoint's error code, such as -2130575342, or ''.
+ * @param {string} message SharePoint's own error message, or ''. Never shown as it is; see snaToolsFriendlyError.
+ * @returns {Error} An Error with .status, .code, .serverMessage, and .snaToolsError set.
+ */
+function snaToolsError(status, code, message) {
+    var error = new Error('SharePoint answered with HTTP ' + (Number(status) || 0) + (code ? ' and error code ' + code : '') + '.');
+    error.status = Number(status) || 0;
+    error.code = String(code || '');
+    error.serverMessage = String(message || '');
+    error.snaToolsError = true;
+    return error;
+}
+
+// Builds an error whose message is already written for people, such as a problem with a file they chose.
+function snaToolsUserError(message) {
+    var error = new Error(message);
+    error.snaUserMessage = message;
+    return error;
+}
+
+// Builds the error for a failed answer from SharePoint's error body: {"odata.error": ...} from the REST API, or
+// {"error": ...} from the verbose REST API and the term store API.
+function snaToolsErrorFromAnswer(status, text) {
+    var code = '';
+    var message = '';
+    try {
+        var json = JSON.parse(text);
+        var err = json && (json['odata.error'] || json.error);
+        if (err) {
+            code = String(err.code || '').split(',')[0].trim();
+            message = typeof err.message === 'string' ? err.message : ((err.message && err.message.value) || '');
+        }
+    } catch (e) {
+        // The answer isn't JSON, such as an HTML error page, so only the status is kept.
+    }
+    return snaToolsError(status, code, message);
+}
+
+// True when err means the copy was stopped, by Stop copying, Start over, Change site, or Refresh report.
+function snaToolsIsCancelled(err) {
+    return !!(err && err.snaCancelled);
+}
+
+// Returns text with every sign-in name and email address replaced by "the account". SharePoint's own messages often
+// name an account, such as the one a file is checked out to, and notes never name accounts.
+function snaToolsHideAccounts(text) {
+    return String(text || '').replace(SNA_TOOLS_ACCOUNT_WORD, 'the account');
+}
+
+// Returns SharePoint's own message as a short quote for the end of a note, such as ' SharePoint said: "The formula
+// refers to a column that does not exist".', or '' when it gave none. Every note that quotes SharePoint uses this, so
+// sign-in names and email addresses are left out, and other values that look like personal information are hidden
+// unless Show hidden values is on.
+function snaToolsServerSaid(message) {
+    var text = snaMaskText(snaToolsHideAccounts(message)).replace(/\s+/g, ' ').trim().replace(/\.$/, '');
+    if (!text) { return ''; }
+    if (text.length > SNA_TOOLS_SERVER_MESSAGE_MAX) { text = text.substring(0, SNA_TOOLS_SERVER_MESSAGE_MAX - 3) + '...'; }
+    return ' SharePoint said: "' + text + '".';
+}
+
+/**
+ * Returns a note for the results that says what went wrong and what to do next, for any error a Tools helper throws.
+ * @param {Error} err The error, such as one from snaToolsError or snaToolsUserError.
+ * @returns {string} Plain English for people. Never the raw answer from SharePoint.
+ */
+function snaToolsFriendlyError(err) {
+    if (!err) { return 'Sitenalyzer couldn\'t finish this item. Copy again, or make it by hand in the destination.'; }
+    if (err.snaUserMessage) { return err.snaUserMessage; }
+    if (snaToolsIsCancelled(err)) { return 'The copy stopped before this item. Copy again to finish it.'; }
+    if (!err.snaToolsError) {
+        return 'Sitenalyzer couldn\'t finish this item because of an unexpected problem. Copy again, or make it by hand in the destination.';
+    }
+    var said = snaToolsServerSaid(err.serverMessage);
+    var status = err.status;
+    if (status === 0) { return 'Sitenalyzer couldn\'t reach SharePoint. Check your connection, then copy again.'; }
+    if (status === 401 || status === 403) {
+        return 'SharePoint didn\'t let you make this change.' + said + ' Check that you\'re still a site collection administrator of the destination, then copy again.';
+    }
+    if (status === 429 || status === 503) {
+        return 'SharePoint was too busy to make this change, even after Sitenalyzer waited and tried again. Wait a few minutes, then copy again.';
+    }
+    if (/already exists|duplicate/i.test(err.serverMessage)) {
+        return 'The destination already has an item with this name.' + said + ' Rename one of them, then copy again.';
+    }
+    if (status === 404) {
+        return 'SharePoint couldn\'t find something this item needs.' + said + ' Check the destination, then copy again.';
+    }
+    if (status >= 500) {
+        return 'SharePoint couldn\'t make this change.' + said + ' Try again later, or make it by hand in the destination.';
+    }
+    return 'SharePoint didn\'t accept this change.' + said + ' Check this item in the site you copy from, then copy again, or make it by hand in the destination.';
+}
+
+/**
+ * Returns a sentence that says why Sitenalyzer couldn't read what the copy needs from this site, the site it copies
+ * from, and what to do next. Used when reading this site fails before the copy changes anything.
+ * @param {Error} err The error, such as one from snaToolsError or snaToolsUserError.
+ * @returns {string} Plain English for people. Never the raw answer from SharePoint.
+ */
+function snaToolsSourceReadError(err) {
+    if (err && err.snaUserMessage) { return err.snaUserMessage; }
+    if (!err || !err.snaToolsError) {
+        return 'Sitenalyzer ran into an unexpected problem while it read this site. Select Refresh report, then copy again.';
+    }
+    var said = snaToolsServerSaid(err.serverMessage);
+    var status = err.status;
+    if (status === 0) { return 'Sitenalyzer couldn\'t reach SharePoint to read this site. Check your connection, then copy again.'; }
+    if (status === 401 || status === 403) {
+        return 'SharePoint didn\'t let you read part of this site that the copy needs.' + said + ' Check that you can still open this site, then ' +
+            'select Refresh report and copy again.';
+    }
+    if (status === 429 || status === 503) {
+        return 'SharePoint was too busy to answer, even after Sitenalyzer waited and tried again. Wait a few minutes, then copy again.';
+    }
+    if (status === 404) {
+        return 'SharePoint couldn\'t find part of this site that the copy needs.' + said + ' Select Refresh report, then copy again.';
+    }
+    return 'SharePoint couldn\'t answer when Sitenalyzer read this site.' + said + ' Try again in a few minutes.';
+}
+
+// ### Requests ###
+
+// Throws unless url is on the REST API of the site at siteUrl, or is its CSOM address, and the site is on this tenant.
+// Callers encode every value they put in an address, so an address with a space or line break is refused too.
+function snaToolsCheckAddress(siteUrl, url) {
+    var site = xlsxStripSlash(siteUrl);
+    var onTenant = !!snaSafeTenantUrl(site, getBaseUrl()) && /^https:\/\//i.test(site);
+    var allowed = String(url).indexOf(site + '/_api/') === 0 || url === site + '/_vti_bin/client.svc/ProcessQuery';
+    if (!onTenant || !allowed || /\s/.test(url)) {
+        var error = snaToolsError(0, 'address', '');
+        error.snaUserMessage = 'Sitenalyzer didn\'t send a request, because its address isn\'t on a site of this SharePoint. Copy again, and if this happens again, report it to the people who look after Sitenalyzer.';
+        throw error;
+    }
+}
+
+// Waits seconds, a little at a time, and throws snaCancelledError when the copy is stopped during the wait.
+async function snaToolsWaitSeconds(seconds) {
+    var end = Date.now() + seconds * 1000;
+    while (Date.now() < end) {
+        snaToolsCheckCancelled();
+        await new Promise(function(resolve) { setTimeout(resolve, Math.min(SNA_TOOLS_WAIT_STEP_MS, Math.max(0, end - Date.now()))); });
+    }
+    snaToolsCheckCancelled();
+}
+
+// Returns how many seconds to wait before sending a throttled request again, from the answer's Retry-After header.
+function snaToolsRetrySeconds(res) {
+    var asked = parseInt(res.headers.get('Retry-After'), 10);
+    return Math.max(SNA_TOOLS_RETRY_MIN_SECONDS, asked > 0 ? asked : SNA_TOOLS_RETRY_DEFAULT_SECONDS);
+}
+
+// Sends one request with the signed-in person's cookies and returns the successful answer. Retries throttled requests,
+// and when init.digest is true, adds the site's request digest and asks for a new one once if SharePoint refuses it.
+// init: { method, headers, body, digest }. Throws snaToolsError for a failed answer and snaCancelledError when stopped.
+async function snaToolsFetch(siteUrl, url, init) {
+    var throttleLeft = SNA_TOOLS_THROTTLE_RETRIES;
+    var digestRetried = false;
+    while (true) {
+        snaToolsCheckCancelled();
+        var headers = Object.assign({}, init.headers || {});
+        if (init.digest) {
+            headers['X-RequestDigest'] = await getRequestDigest(siteUrl);
+            // The copy may have been stopped while the digest was on its way, and then this request isn't sent.
+            snaToolsCheckCancelled();
+        }
+        var res;
+        try {
+            res = await fetch(url, { method: init.method || 'GET', headers: headers, credentials: 'include', body: init.body });
+        } catch (e) {
+            throw snaToolsError(0, 'network', '');
+        }
+        if ((res.status === 429 || res.status === 503) && throttleLeft > 0) {
+            throttleLeft--;
+            await snaToolsWaitSeconds(snaToolsRetrySeconds(res));
+            continue;
+        }
+        if (!res.ok) {
+            var text = '';
+            try { text = await res.text(); } catch (e) { text = ''; }
+            // SharePoint answers 403 "The security validation for this page is invalid" when a digest expired early.
+            if (res.status === 403 && init.digest && !digestRetried && /security validation/i.test(text)) {
+                digestRetried = true;
+                snaClearRequestDigest(siteUrl);
+                continue;
+            }
+            throw snaToolsErrorFromAnswer(res.status, text);
+        }
+        return res;
+    }
+}
+
+/**
+ * The one helper that changes anything on a site. Sends a POST, PATCH, MERGE, or DELETE to the site's REST API or CSOM
+ * address with the site's own request digest, and retries throttled requests.
+ * @param {string} siteUrl Site address, such as https://contoso.sharepoint.com/sites/new-study, with no slash at the end.
+ * @param {string} apiPath Address after the site, starting with /_api/ or /_vti_bin/client.svc/ProcessQuery. Values in it
+ *        must already be encoded, such as with encodeURIComponent.
+ * @param {object} [options] { method: 'POST'|'PATCH'|'DELETE'|'MERGE' (POST when left out), body (an object, sent as JSON;
+ *        or a string, Blob, or ArrayBuffer, sent as it is), verbose (true sends JSON with odata=verbose, for bodies with
+ *        __metadata), headers (more headers, which win over these), expectJson (false returns the answer as text) }.
+ *        MERGE and DELETE are sent as POST with X-HTTP-Method, and MERGE, DELETE, and PATCH with IF-MATCH: *.
+ * @returns {Promise<object|string|null>} The answer's JSON, its text when it isn't JSON, or null for an empty answer.
+ * @throws {Error} snaToolsError for a refused request; snaCancelledError when the copy is stopped. Side effects: changes the site.
+ */
+async function snaToolsWrite(siteUrl, apiPath, options) {
+    var opts = options || {};
+    var site = xlsxStripSlash(siteUrl);
+    var url = site + apiPath;
+    snaToolsCheckAddress(site, url);
+    var method = String(opts.method || 'POST').toUpperCase();
+    if (['POST', 'PATCH', 'DELETE', 'MERGE'].indexOf(method) === -1) {
+        throw snaToolsUserError('Sitenalyzer didn\'t send a change, because it doesn\'t send ' + method + ' requests.');
+    }
+    var headers = { 'Accept': 'application/json;odata=nometadata' };
+    var body = opts.body;
+    var isRaw = typeof body === 'string' || (typeof Blob !== 'undefined' && body instanceof Blob) ||
+        body instanceof ArrayBuffer || ArrayBuffer.isView(body);
+    if (body !== undefined && body !== null && !isRaw) {
+        headers['Content-Type'] = opts.verbose ? 'application/json;odata=verbose' : 'application/json;odata=nometadata';
+        body = JSON.stringify(body);
+    }
+    var fetchMethod = method;
+    if (method === 'MERGE' || method === 'DELETE') {
+        fetchMethod = 'POST';
+        headers['X-HTTP-Method'] = method;
+    }
+    if (method !== 'POST') { headers['IF-MATCH'] = '*'; }
+    Object.keys(opts.headers || {}).forEach(function(name) { headers[name] = opts.headers[name]; });
+
+    var res = await snaToolsFetch(site, url, { method: fetchMethod, headers: headers, body: body === null ? undefined : body, digest: true });
+    snaToolsCountChange();
+    if (res.status === 204) { return null; }
+    var text = await res.text();
+    if (!text) { return null; }
+    if (opts.expectJson === false) { return text; }
+    try { return JSON.parse(text); } catch (e) { return text; }
+}
+
+/**
+ * Reads JSON from a site's REST API with the signed-in person's access, retrying throttled requests.
+ * @param {string} siteUrl Site address, with no slash at the end.
+ * @param {string} apiPath Address after the site, starting with /_api/, with its values encoded.
+ * @returns {Promise<object>} The answer's JSON (odata=nometadata). Changes nothing.
+ * @throws {Error} snaToolsError for a failed read; snaCancelledError when the copy is stopped.
+ */
+async function snaToolsRead(siteUrl, apiPath) {
+    var site = xlsxStripSlash(siteUrl);
+    var url = site + apiPath;
+    snaToolsCheckAddress(site, url);
+    var res = await snaToolsFetch(site, url, { method: 'GET', headers: { 'Accept': 'application/json;odata=nometadata' } });
+    var text = await res.text();
+    if (!text) { return null; }
+    try { return JSON.parse(text); } catch (e) { throw snaToolsError(res.status, 'json', ''); }
+}
+
+/**
+ * Reads a whole collection, such as a list's columns, following SharePoint's next-batch links while they stay on the
+ * same site's REST API, up to max items.
+ * @param {string} siteUrl Site address, with no slash at the end.
+ * @param {string} apiPath Address of the first batch, starting with /_api/.
+ * @param {number} max Most items to read.
+ * @returns {Promise<{items: object[], truncated: boolean, stoppedAtOtherSite: boolean}>} truncated means max was reached.
+ * @throws {Error} snaToolsError for a failed read; snaCancelledError when the copy is stopped.
+ */
+async function snaToolsReadAll(siteUrl, apiPath, max) {
+    var site = xlsxStripSlash(siteUrl);
+    var result = { items: [], truncated: false, stoppedAtOtherSite: false };
+    var path = apiPath;
+    while (path) {
+        var json = await snaToolsRead(site, path);
+        result.items = result.items.concat((json && json.value) ? json.value : []);
+        var nextLink = json ? (json['@odata.nextLink'] || json['odata.nextLink'] || '') : '';
+        path = '';
+        if (!nextLink) { break; }
+        if (result.items.length >= max) { result.truncated = true; break; }
+        if (!snaIsSameSiteApiUrl(nextLink, site)) { result.stoppedAtOtherSite = true; break; }
+        path = new URL(nextLink, site + '/').href.substring(site.length);
+    }
+    if (result.items.length > max) { result.items = result.items.slice(0, max); result.truncated = true; }
+    return result;
+}
+
+/**
+ * Downloads one file of a site, such as an image in Site Assets.
+ * @param {string} siteUrl Site address, with no slash at the end.
+ * @param {string} serverRelativePath The file's path, such as /sites/research/SiteAssets/logo.png, not encoded.
+ * @returns {Promise<Blob>} The file. Changes nothing.
+ * @throws {Error} snaToolsError for a failed read, such as 404 when there is no file there; snaCancelledError when stopped.
+ */
+async function snaToolsReadBlob(siteUrl, serverRelativePath) {
+    var site = xlsxStripSlash(siteUrl);
+    var url = site + '/_api/web/GetFileByServerRelativePath(decodedurl=@p)/$value?@p=' + encodeURIComponent(snaToolsQuote(serverRelativePath));
+    snaToolsCheckAddress(site, url);
+    var res = await snaToolsFetch(site, url, { method: 'GET', headers: { 'Accept': '*/*' } });
+    return res.blob();
+}
+
+/**
+ * Sends a CSOM request (ProcessQuery), for the few changes the REST API can't make, such as a content type's columns.
+ * @param {string} siteUrl Site address, with no slash at the end.
+ * @param {string} requestXml The whole <Request> element, such as from snaToolsCsomXml.
+ * @returns {Promise<object[]>} SharePoint's answer, a JSON array whose first item describes the request.
+ * @throws {Error} snaToolsError(500, ErrorCode, ErrorMessage) when SharePoint reports an error in the answer.
+ *         Side effects: changes the site.
+ */
+async function snaToolsCsom(siteUrl, requestXml) {
+    var answer = await snaToolsWrite(siteUrl, '/_vti_bin/client.svc/ProcessQuery', {
+        method: 'POST',
+        body: requestXml,
+        headers: { 'Content-Type': 'text/xml', 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    if (!Array.isArray(answer)) { throw snaToolsError(500, 'csom', ''); }
+    var first = answer[0];
+    if (first && first.ErrorInfo) {
+        throw snaToolsError(500, first.ErrorInfo.ErrorCode, first.ErrorInfo.ErrorMessage);
+    }
+    return answer;
+}
+
+// Returns a CSOM <Request> element with these actions and object paths. Every value inside them must already be escaped
+// with snaToolsXmlText.
+function snaToolsCsomXml(actionsXml, objectPathsXml) {
+    return '<Request xmlns="http://schemas.microsoft.com/sharepoint/clientquery/2009" SchemaVersion="15.0.0.0" ' +
+        'LibraryVersion="16.0.0.0" ApplicationName="Sitenalyzer"><Actions>' + actionsXml + '</Actions><ObjectPaths>' +
+        objectPathsXml + '</ObjectPaths></Request>';
+}
+
+// Returns text with the characters that have meaning in XML replaced, for values inside a CSOM request.
+function snaToolsXmlText(value) {
+    var entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+    return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function(c) { return entities[c]; });
+}
+
+// ### Values ###
+
+// Returns value as a string in an OData address, such as 'Study''s Visits', with each quote doubled.
+function snaToolsQuote(value) {
+    return "'" + String(value === null || value === undefined ? '' : value).replace(/'/g, "''") + "'";
+}
+
+// Returns a new random GUID in lowercase, from the browser's secure random number generator.
+function snaToolsNewGuid() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') { return window.crypto.randomUUID(); }
+    var hex = snaRandomHex(16).split('');
+    hex[12] = '4';
+    hex[16] = '89ab'.charAt(parseInt(hex[16], 16) % 4);
+    var text = hex.join('');
+    return text.substring(0, 8) + '-' + text.substring(8, 12) + '-' + text.substring(12, 16) + '-' + text.substring(16, 20) + '-' + text.substring(20);
+}
+
+// Returns a GUID in lowercase without braces, such as from '{AAAA...}', or '' when value isn't a GUID.
+function snaToolsCleanGuid(value) {
+    var text = String(value || '').trim().replace(/^\{/, '').replace(/\}$/, '').toLowerCase();
+    return SNA_GUID_PATTERN.test(text) ? text : '';
+}
+
+// Returns a site path decoded, in lowercase, without a slash at the end, for comparisons.
+function snaToolsPathKey(path) {
+    var text = String(path || '');
+    try { text = decodeURIComponent(text); } catch (e) { /* Compared as it is. */ }
+    return xlsxStripSlash(text).toLowerCase();
+}
+
+// True when a and b are the same site path, such as /sites/a/Lists/Visits and /Sites/A/lists/visits/.
+function snaToolsSamePath(a, b) {
+    return snaToolsPathKey(a) === snaToolsPathKey(b);
+}
+
+// Returns { origin, serverRelativeUrl } of a site address, such as { 'https://contoso.sharepoint.com', '/sites/research' }.
+// serverRelativeUrl is decoded, and '/' for a site at the root of the host.
+function snaToolsSiteParts(siteUrl) {
+    var url = new URL(xlsxStripSlash(siteUrl) + '/');
+    var path = url.pathname;
+    try { path = decodeURIComponent(path); } catch (e) { /* Kept as it is. */ }
+    return { origin: url.origin, serverRelativeUrl: xlsxStripSlash(path) || '/' };
+}
+
+// Returns a site path with more path after it, such as ('/sites/a', 'Lists/Visits') -> '/sites/a/Lists/Visits'.
+// A site at the root of the host has the path '/'.
+function snaToolsJoinPath(sitePath, rest) {
+    var base = xlsxStripSlash(sitePath || '');
+    return (base === '/' ? '' : base) + '/' + String(rest || '').replace(/^\/+/, '');
+}
+
+// Reads one XML element, such as a column's SchemaXml (<Field>) or a view's <View>. Returns the element, or null when
+// the text isn't well-formed XML. Change the element through the DOM and save it with snaToolsSerializeXml.
+function snaToolsParseXml(text) {
+    var doc;
+    try { doc = new DOMParser().parseFromString(String(text || ''), 'application/xml'); } catch (e) { return null; }
+    if (!doc || !doc.documentElement || doc.getElementsByTagName('parsererror').length > 0) { return null; }
+    return doc.documentElement;
+}
+
+// Returns an XML element as text, the reverse of snaToolsParseXml.
+function snaToolsSerializeXml(element) {
+    return new XMLSerializer().serializeToString(element);
+}
+
+// ### Links Into the Source Site ###
+
+// A character that may come right before a site path. A letter, a digit, or one of . _ ~ % : @ / \ - there means the
+// path is part of a longer address, such as /teams/x/sites/source or https://example.org/sites/source.
+var SNA_TOOLS_LINK_LEFT = '[^A-Za-z0-9._~%:@/\\\\-]';
+
+// A character that may come right after a site path in plain text or JSON: a slash, a query, a fragment, a quote, a space,
+// an entity such as &amp;, an escape, a closing bracket, or the * of a search query such as path:<site>*. A hyphen, a
+// dot, a letter, or %20 is never one, so /sites/source doesn't match the start of /sites/source-archive.
+var SNA_TOOLS_LINK_END = '[/?#"\'\\s<>)\\]},;|\\\\&*`]';
+
+// A GUID in any form page content stores it: with or without hyphens (also written %2D, %252D, or \u002d), and with or
+// without braces (also written %7B, %257B, &#123;, or \u007b). Before it comes the start of the text, an encoded
+// character such as %3D or \u0022, an HTML entity, or any character that isn't a hex digit.
+var SNA_TOOLS_LINK_GUID_SOURCE = '(^|%(?:25)?[0-9a-f]{2}|\\\\u[0-9a-f]{4}|&#x?[0-9a-f]+;|[^0-9a-f])' +
+    '(\\{|%7B|%257B|&#123;|\\\\u007b)?([0-9a-f]{8})(-|%2D|%252D|\\\\u002d)?([0-9a-f]{4})(-|%2D|%252D|\\\\u002d)?' +
+    '([0-9a-f]{4})(-|%2D|%252D|\\\\u002d)?([0-9a-f]{4})(-|%2D|%252D|\\\\u002d)?([0-9a-f]{12})' +
+    '(\\}|%7D|%257D|&#125;|\\\\u007d)?(?![0-9a-f])';
+
+// A slash in any form, for the check that looks for this site's path left in the text after the rewrite.
+var SNA_TOOLS_LINK_ANY_SLASH = '(?:/|\\\\\\\\/|\\\\/|\\\\u002f|%2f|%252f|&#47;|&#x2f;)';
+
+// First parts of a path at the root of a host that belong to the whole tenant, not to the site at the root of the host.
+var SNA_TOOLS_LINK_TENANT_PARTS = ['sites', 'teams', 'personal', 'portals', '_layouts', '_api', '_vti_bin', '_forms'];
+
+// Returns the GUID a match of SNA_TOOLS_LINK_GUID_SOURCE found, in lowercase with hyphens, from the match's groups.
+function snaToolsLinkGuidOf(parts) {
+    return (parts[3] + '-' + parts[5] + '-' + parts[7] + '-' + parts[9] + '-' + parts[11]).toLowerCase();
+}
+
+// True for a GUID that is a file or folder name in a path, such as /SiteAssets/<guid>.png. Copied files keep their names.
+// left is the text right before the GUID (group 1 of SNA_TOOLS_LINK_GUID_SOURCE), and end is where the GUID ends in whole.
+function snaToolsLinkIsFileName(left, whole, end) {
+    var next = whole.substring(end, end + 8);
+    if (/^\.[a-z0-9]{2,5}(?![a-z0-9])/i.test(next)) { return true; }
+    return /^(?:\/|%2f|%252f|\\u002f)$/i.test(left) && /^(?:\/|\\\/|%2f|%252f|\\u002f)/i.test(next);
+}
+
+// Returns the hex digits of text in lowercase, with each GUID's 32 digits side by side whatever is between its parts,
+// such as %252D, and with each GUID that is a file name left out. An ID still in the text in any form is then found by
+// its 32 digits.
+function snaToolsLinkHexDigits(text) {
+    return String(text).replace(new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi'), function() {
+        var parts = arguments;
+        if (snaToolsLinkIsFileName(parts[1], parts[14], parts[13] + parts[0].length)) { return parts[1]; }
+        return parts[1] + ' ' + snaToolsLinkGuidOf(parts) + ' ';
+    }).replace(/[^0-9a-f]/gi, '').toLowerCase();
+}
+
+// Returns text with the characters that have meaning in a regular expression escaped.
+function snaToolsRegExpText(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+}
+
+// Returns a regular expression part that matches one character of a path, written in any of the ways in written.
+function snaToolsLinkCharPattern(c, written) {
+    if (/[A-Za-z0-9_.~-]/.test(c)) { return snaToolsRegExpText(c); }
+    var unique = written.filter(function(w, i) { return written.indexOf(w) === i; });
+    return '(?:' + unique.map(snaToolsRegExpText).join('|') + ')';
+}
+
+// Returns the forms a path takes in stored text, one regular expression family each: plain (/sites/source, also inside
+// HTML, where : can be &#58;), JSON with escaped slashes (\/sites\/source), JSON escaped twice, as in a JSON string
+// inside a JSON string (\\/sites\\/source), JSON with escaped Unicode slashes
+// (\u002fsites\u002fsource), URL-encoded (%2Fsites%2Fsource), and URL-encoded twice (%252Fsites%252Fsource).
+// Each form has the separator it writes (sep), patterns for its separator, colon, and the boundaries before (left) and
+// after (end) a site path, how it writes one path part (part), and how it matches one character of a path (char).
+function snaToolsLinkForms() {
+    var left = '(^|' + SNA_TOOLS_LINK_LEFT + ')';
+    var plainEnd = '(?=$|' + SNA_TOOLS_LINK_END + ')';
+    var encodedEnd = '[&"\'\\s<>)\\]},;|\\\\*`]';
+    function plainChar(c) { return c === ' ' ? '(?: |%20)' : snaToolsLinkCharPattern(c, [c, encodeURIComponent(c)]); }
+    function plainPart(part, raw) { return raw ? part : encodeURI(part); }
+    return [
+        { sep: '/', sepRe: '/', colonRe: '(?::|&#58;|&#x3a;)', left: left, end: plainEnd, part: plainPart, char: plainChar },
+        { sep: '\\/', sepRe: '\\\\/', colonRe: ':', left: left, end: plainEnd, part: plainPart, char: plainChar },
+        { sep: '\\\\/', sepRe: '\\\\\\\\/', colonRe: ':', left: left, end: plainEnd, part: plainPart, char: plainChar },
+        { sep: '\\u002f', sepRe: '\\\\u002f', colonRe: '(?::|\\\\u003a)', left: left,
+            end: '(?=$|\\\\u002f|\\\\u003f|\\\\u0023|\\\\u0026|' + SNA_TOOLS_LINK_END + ')',
+            part: plainPart, char: plainChar },
+        { sep: '%2F', sepRe: '%2f', colonRe: '%3a', left: '(^|' + SNA_TOOLS_LINK_LEFT + '|%(?:3d|26|3f|22|27|2c|3b))',
+            end: '(?=$|%2f|%3f|%23|%26|%22|%27|' + encodedEnd + ')',
+            part: function(part) { return encodeURIComponent(part); },
+            char: function(c) { return c === ' ' ? '(?:%20|\\+)' : snaToolsLinkCharPattern(c, [encodeURIComponent(c)]); } },
+        { sep: '%252F', sepRe: '%252f', colonRe: '%253a', left: '(^|' + SNA_TOOLS_LINK_LEFT + '|%(?:25)?(?:3d|26|3f|22|27|2c|3b))',
+            end: '(?=$|%252f|%253f|%2523|%2526|%26|%2f|' + encodedEnd + ')',
+            part: function(part) { return encodeURIComponent(encodeURIComponent(part)); },
+            char: function(c) { return c === ' ' ? '%2520' : snaToolsLinkCharPattern(c, [encodeURIComponent(encodeURIComponent(c))]); } }
+    ];
+}
+
+// Returns a regular expression part that matches a path, such as /Lists/StudyVisits, written in form.
+function snaToolsLinkPathPattern(form, path) {
+    return String(path).split('/').filter(Boolean).map(function(part) {
+        return form.sepRe + Array.from(part).map(form.char).join('');
+    }).join('');
+}
+
+// Returns a path written in form. raw keeps spaces as they are in the plain and JSON forms.
+function snaToolsLinkPathText(form, path, raw) {
+    return String(path).split('/').filter(Boolean).map(function(part) { return form.sep + form.part(part, raw); }).join('');
+}
+
+// Returns a server-relative path, such as /sites/a/Lists/Visits, as a path inside the site at root, such as /Lists/Visits.
+// Returns '' when path is the site itself, and null when path isn't inside the site. root '' is a site at the root of
+// the host. Ignores capitals and a slash at the end.
+function snaToolsLinkInside(path, root) {
+    var text = xlsxStripSlash(String(path || ''));
+    var base = xlsxStripSlash(String(root || ''));
+    if (!text) { return null; }
+    if (!base) { return text.charAt(0) === '/' ? text : '/' + text; }
+    if (text.toLowerCase() === base.toLowerCase()) { return ''; }
+    return text.toLowerCase().indexOf(base.toLowerCase() + '/') === 0 ? text.substring(base.length) : null;
+}
+
+// Returns a found piece of a link with escaped slashes, entities, and URL encoding taken out, for the unmapped list.
+function snaToolsLinkPlain(text) {
+    var plain = String(text).replace(/\\u002f/gi, '/').replace(/\\\//g, '/').replace(/&#58;|&#x3a;/gi, ':').replace(/&#47;|&#x2f;/gi, '/');
+    for (var i = 0; i < 2; i++) {
+        try { plain = decodeURIComponent(plain); } catch (e) { break; }
+    }
+    return plain;
+}
+
+// Returns a map of source GUIDs to destination GUIDs, both lowercase, from every ID map the copy keeps and from extra.
+function snaToolsLinkIdMap(maps, source, destination, extra, mapSiteId) {
+    var ids = {};
+    function add(from, to) {
+        var a = snaToolsCleanGuid(from);
+        var b = snaToolsCleanGuid(to);
+        if (a && b) { ids[a] = b; }
+    }
+    [maps.lists, maps.views, maps.fieldIds, maps.termSets, maps.terms, maps.fileIds, extra].forEach(function(m) {
+        if (!m || typeof m !== 'object') { return; }
+        Object.keys(m).forEach(function(from) { if (typeof m[from] === 'string') { add(from, m[from]); } });
+    });
+    add(source.webId, destination.webId);
+    if (mapSiteId !== false) { add(source.siteId, destination.siteId); }
+    return ids;
+}
+
+/**
+ * Points every link and ID of the site a copy reads from (the source) at the destination, in any text a copy writes,
+ * such as a page's CanvasContent1 or a navigation link's address. Works on the stored text as it is, without decoding
+ * it, and keeps each link's form, letter case of the host, and encoding.
+ *
+ * Paths it changes, in every form: absolute (https://, http://, //, with :443, or the /:w:/r/ redirect form),
+ * server-relative (/sites/source/...), the site alone with or without a slash at the end, URL-encoded in a query value
+ * (%2Fsites%2Fsource), URL-encoded twice (%252F), JSON-escaped (\/ and \u002f), JSON-escaped twice (\\/, as in a JSON
+ * string inside a JSON string), and HTML-escaped (&quot;, &amp;, &#58;). The path must end at a boundary, so
+ * /sites/source-archive, /sites/sources, /sites/source%20old, and /sites/source.old are left alone, and it must start
+ * at one, so https://example.org/sites/source and /teams/x/sites/source are left alone. A list or library the copy made
+ * under a new address (maps.listUrls) gets its new address too, longest address first. Nothing else after the site
+ * path changes.
+ *
+ * IDs it changes, in every form (with or without hyphens, braces, %7B and %7D, &#123; and &#125;, or %2D): lists, views,
+ * columns, term sets, terms, files (maps.lists, maps.views, maps.fieldIds, maps.termSets, maps.terms, maps.fileIds), the
+ * site (web) ID, and the site collection ID. A GUID that is a file or folder name in a path, such as
+ * /SiteAssets/<guid>.png, is left alone, because copied files keep their names. Other GUIDs, such as web part type IDs,
+ * are left alone.
+ *
+ * Left alone and listed in unmapped: links into a subsite of the source (options.subsites), older sharing links under
+ * the site (/_layouts/15/guestaccess.aspx), short sharing links (/:b:/s/<site name>/...), and IDs in
+ * options.knownIds that no map has. Changed and listed in unmapped: links into a list or library the copy didn't make
+ * (options.uncopied), and a file ID in the same web part as a changed list or site ID when no map has that file
+ * (a uniqueId or sourcedoc value), such as a document in a library the copy made empty. Also listed: this site's path
+ * left in any other form after the rewrite, such as /sites%2Fsource, and for a source at the root of the host, any link
+ * to the host's root that wasn't changed.
+ *
+ * Running it again on its own result changes nothing.
+ *
+ * @param {string} text The stored text, such as CanvasContent1 or a navigation link's Url. Anything else returns ''.
+ * @param {object} maps The copy's maps (see snaToolsNewMaps in runner.js). Reads maps.destination { siteUrl,
+ *        serverRelativeUrl, webId, siteId }, maps.listUrls { sourceRoot: destRoot } with server-relative addresses,
+ *        and the ID maps listed above. Changes nothing in it.
+ * @param {object} options
+ *        source         { siteUrl, serverRelativeUrl, webId, siteId } of the source, such as plan.source. Required.
+ *        listUrls       More { sourceRoot: destRoot } pairs, such as libraries both sites have (Site Pages, Documents).
+ *        ids            More { sourceId: destId } pairs, such as those libraries' IDs.
+ *        knownIds       Source IDs to list in unmapped when no map has them: { id: true } or [ids].
+ *        uncopied       Server-relative addresses of the source's lists and libraries the copy didn't make.
+ *        subsites       Server-relative addresses of the source's subsites, which the copy doesn't include.
+ *        rootSegments   For a source at the root of the host only: first path parts that belong to it, such as
+ *                       'SitePages' or 'default.aspx'. Each list address above counts too. Never include '_layouts'.
+ *        wholeLink      True when text is one link, such as a navigation link's Url. Then a source at the root of the
+ *                       host also changes a link to its home page ('/', or the host alone).
+ *        mapSiteId      False leaves the site collection ID alone, for a source that is a subsite: its site
+ *                       collection ID also belongs to the other sites in that collection. True when left out.
+ * @returns {{text: string, unmapped: string[], changed: boolean}} The new text; the source IDs (lowercase) and
+ *          server-relative paths that still point to the source or to content the copy didn't include, each once; and
+ *          whether the text changed.
+ * @throws {Error} When options.source.siteUrl or maps.destination.siteUrl is missing. Changes nothing outside the text.
+ */
+function snaToolsRewriteSourceLinks(text, maps, options) {
+    var input = typeof text === 'string' ? text : '';
+    var result = { text: input, unmapped: [], changed: false };
+    if (!input) { return result; }
+
+    // ### Read the Sites ###
+    var opts = options || {};
+    var source = opts.source || {};
+    var copyMaps = maps || {};
+    var destination = copyMaps.destination || {};
+    if (!source.siteUrl || !destination.siteUrl) {
+        throw new Error('snaToolsRewriteSourceLinks needs the address of the source and of the destination.');
+    }
+    var sourceSite = snaToolsSiteParts(source.siteUrl);
+    var destSite = snaToolsSiteParts(destination.siteUrl);
+    var host = new URL(sourceSite.origin).host.toLowerCase();
+    var destHost = new URL(destSite.origin).host;
+    // A site at the root of the host has the path '' here.
+    var sourcePath = xlsxStripSlash(source.serverRelativeUrl || sourceSite.serverRelativeUrl);
+    var destPath = xlsxStripSlash(destination.serverRelativeUrl || destSite.serverRelativeUrl);
+    var hostPattern = snaToolsRegExpText(host);
+    var unmapped = {};
+    function report(value) { if (value) { unmapped[value] = true; } }
+
+    // ### Gather Addresses ###
+    // Lists and libraries: site-relative source and destination addresses, such as /Lists/StudyVisits and /Lists/Visits.
+    var lists = [];
+    [copyMaps.listUrls, opts.listUrls].forEach(function(pairs) {
+        Object.keys(pairs || {}).forEach(function(from) {
+            var src = snaToolsLinkInside(from, sourcePath);
+            var to = snaToolsLinkInside(pairs[from], destPath);
+            if (!src || !to || lists.some(function(l) { return l.src.toLowerCase() === src.toLowerCase(); })) { return; }
+            lists.push({ src: src, dest: to });
+        });
+    });
+    // Longest first, so /Lists/StudyVisits is tried before /Lists/Study.
+    lists.sort(function(a, b) { return b.src.length - a.src.length; });
+    var uncopied = (opts.uncopied || []).map(function(p) {
+        return { path: xlsxStripSlash(String(p || '')), rel: snaToolsLinkInside(p, sourcePath) };
+    }).filter(function(u) { return u.rel; });
+    var subsites = (opts.subsites || []).map(function(p) { return snaToolsLinkInside(p, sourcePath); }).filter(Boolean);
+    // A destination inside the source, such as /sites/source/new, is a subsite of the source, so links to it stay.
+    var destInside = sourcePath ? snaToolsLinkInside(destPath, sourcePath) : null;
+    if (destInside) { subsites.push(destInside); }
+    // A source at the root of the host matches only paths whose first part is known to belong to it.
+    var rootParts = [];
+    if (!sourcePath) {
+        (opts.rootSegments || []).forEach(function(segment) {
+            var rel = '/' + String(segment || '').replace(/^\/+|\/+$/g, '');
+            if (rel !== '/' && SNA_TOOLS_LINK_TENANT_PARTS.indexOf(rel.substring(1).split('/')[0].toLowerCase()) === -1) { rootParts.push(rel); }
+        });
+        uncopied.forEach(function(u) { rootParts.push(u.rel); });
+    }
+
+    // ### Build the Patterns ###
+    var forms = snaToolsLinkForms().map(function(form) {
+        var scheme = '(?:https?' + form.colonRe + form.sepRe + form.sepRe + '|' + form.sepRe + form.sepRe + ')?';
+        var redirect = form.sepRe + form.colonRe + '[a-z]{1,2}' + form.colonRe + form.sepRe + 'r';
+        // Before an absolute address, a colon is a boundary too, as in a search query such as path:https://...
+        var hostLeft = form.sep === '/' || form.sep === '\\/' || form.sep === '\\\\/' ? form.left.replace(/\)$/, '|:)') : form.left;
+        var subsiteAlts = subsites.map(function(s) { return snaToolsLinkPathPattern(form, s) + form.end; });
+        var listAlts = lists.map(function(l) { return snaToolsLinkPathPattern(form, l.src) + form.end; });
+        var body;
+        if (sourcePath) {
+            body = '(' + snaToolsLinkPathPattern(form, sourcePath) + ')(' + subsiteAlts.concat(listAlts).join('|') + ')?' + form.end;
+        } else {
+            var alts = subsiteAlts.concat(listAlts, rootParts.map(function(p) { return snaToolsLinkPathPattern(form, p) + form.end; }));
+            if (alts.length === 0) { return null; }
+            body = '()(' + alts.join('|') + ')';
+        }
+        return {
+            form: form,
+            pattern: new RegExp('(?:' + hostLeft + '(' + scheme + hostPattern + '(?::443)?(?:' + redirect + ')?)|' +
+                form.left + '(' + redirect + ')?)' + body, 'gi'),
+            subsites: subsites.map(function(s) { return { rel: s, re: new RegExp('^' + snaToolsLinkPathPattern(form, s), 'i') }; }),
+            lists: lists.map(function(l) { return { pair: l, re: new RegExp('^' + snaToolsLinkPathPattern(form, l.src) + '$', 'i') }; }),
+            uncopied: uncopied.map(function(u) { return { path: u.path, re: new RegExp('^' + snaToolsLinkPathPattern(form, u.rel) + form.end, 'i') }; }),
+            sharing: new RegExp('^' + form.sepRe + '_layouts(?:' + form.sepRe + '1[56])?' + form.sepRe + 'guestaccess\\.aspx', 'i')
+        };
+    }).filter(Boolean);
+
+    // ### Change Paths ###
+    // Links left alone are marked while the paths change, so the check for leftovers below can skip them.
+    var canMark = !/[\uE000\uE001]/.test(input);
+    var out = input;
+    forms.forEach(function(compiled) {
+        var form = compiled.form;
+        out = out.replace(compiled.pattern, function(found, leftA, hostPart, leftB, redirectPart, sitePart, tail, offset, whole) {
+            var left = leftA !== undefined ? leftA : (leftB || '');
+            var prefix = hostPart !== undefined ? hostPart : (redirectPart || '');
+            var middle = tail || '';
+            var after = whole.substring(offset + found.length, offset + found.length + 300);
+            function keep() { return canMark ? left + '\uE000' + found.substring(left.length) + '\uE001' : found; }
+            var subsite = middle ? compiled.subsites.filter(function(s) { return s.re.test(middle); })[0] : null;
+            if (subsite) {
+                if (subsite.rel !== destInside) { report(sourcePath + subsite.rel); }
+                return keep();
+            }
+            // A sharing link holds a token for an item in the source, so it can't point at the destination.
+            if (compiled.sharing.test(middle + after)) {
+                report(sourcePath + '/_layouts/15/guestaccess.aspx');
+                return keep();
+            }
+            var destTail = middle;
+            var list = middle ? compiled.lists.filter(function(l) { return l.re.test(middle); })[0] : null;
+            if (list) {
+                destTail = snaToolsLinkPathText(form, list.pair.dest, /\s/.test(middle));
+            } else {
+                compiled.uncopied.forEach(function(u) { if (u.re.test(middle + after)) { report(u.path); } });
+            }
+            var destText = destPath ? snaToolsLinkPathText(form, destPath, false) : '';
+            // A server-relative link to the site itself keeps a slash when the destination is at the root of the host.
+            if (!destText && hostPart === undefined && (destTail + after).toLowerCase().indexOf(form.sep.toLowerCase()) !== 0) { destText = form.sep; }
+            if (hostPart !== undefined && destHost.toLowerCase() !== host) { prefix = prefix.replace(new RegExp(hostPattern, 'i'), destHost); }
+            return left + prefix + destText + destTail;
+        });
+    });
+    var pathScan = out.replace(/\uE000[^\uE001]*\uE001/g, ' ');
+    if (canMark) { out = out.replace(/[\uE000\uE001]/g, ''); }
+
+    // A source at the root of the host: a link to its home page in an href or src value, or a whole link, such as '/'.
+    if (!sourcePath && destPath) {
+        var quote = '(?:"|\'|\\\\"|&quot;)';
+        var hostLink = '(?:https?(?::|&#58;)//|//)' + hostPattern + '(?::443)?';
+        out = out.replace(new RegExp('((?:href|src|data-cke-saved-href)\\s*=\\s*' + quote + ')(' + hostLink + ')?(/)?(?=' + quote + ')', 'gi'),
+            function(found, attribute, hostPart, slash) {
+                return hostPart || slash ? attribute + (hostPart || '') + destPath + (slash ? '/' : '') : found;
+            });
+        var home = opts.wholeLink ? new RegExp('^(' + hostLink + ')?(/)?$', 'i').exec(out.trim()) : null;
+        if (home && (home[1] || home[2])) { out = (home[1] || '') + destPath + (home[2] ? '/' : ''); }
+    }
+
+    // ### Change IDs ###
+    var ids = snaToolsLinkIdMap(copyMaps, source, destination, opts.ids, opts.mapSiteId);
+    var known = {};
+    (Array.isArray(opts.knownIds) ? opts.knownIds : Object.keys(opts.knownIds || {})).forEach(function(id) {
+        var key = snaToolsCleanGuid(id);
+        if (key) { known[key] = true; }
+    });
+    var guidOf = snaToolsLinkGuidOf;
+    var isFileName = snaToolsLinkIsFileName;
+
+    // A file ID next to a list or site ID that changes, when no map has the file, such as a document in Documents.
+    var fileKey = /(?:"|\\"|&quot;|')(?:uniqueid|sourcedoc)(?:"|\\"|&quot;|')\s*(?::|&#58;)\s*(?:"|\\"|&quot;|')(?:\{|%7b|&#123;)?([0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12})/gi;
+    var keyFound;
+    while ((keyFound = fileKey.exec(out)) !== null) {
+        var hex = keyFound[1].replace(/-/g, '');
+        var fileId = snaToolsCleanGuid(hex.substring(0, 8) + '-' + hex.substring(8, 12) + '-' + hex.substring(12, 16) + '-' +
+            hex.substring(16, 20) + '-' + hex.substring(20));
+        if (!fileId || ids[fileId]) { continue; }
+        var start = Math.max(out.lastIndexOf('{', keyFound.index), out.lastIndexOf('&#123;', keyFound.index), 0);
+        var ends = [out.indexOf('}', keyFound.index), out.indexOf('&#125;', keyFound.index)].filter(function(i) { return i > -1; });
+        var part = out.substring(start, ends.length ? Math.min.apply(null, ends) : out.length);
+        var partGuids = new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi');
+        var other;
+        while ((other = partGuids.exec(part)) !== null) {
+            var otherId = guidOf(other);
+            if (otherId !== fileId && ids[otherId] && ids[otherId] !== otherId) { report(fileId); break; }
+        }
+    }
+
+    out = out.replace(new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi'), function() {
+        var parts = arguments;
+        var key = guidOf(parts);
+        var to = ids[key];
+        if (!to || to === key) {
+            if (!to && known[key]) { report(key); }
+            return parts[0];
+        }
+        if (isFileName(parts[1], parts[14], parts[13] + parts[0].length)) { return parts[0]; }
+        var digits = parts[3] + parts[5] + parts[7] + parts[9] + parts[11];
+        var upper = /[A-F]/.test(digits) && !/[a-f]/.test(digits);
+        var groups = to.split('-').map(function(g) { return upper ? g.toUpperCase() : g; });
+        return parts[1] + (parts[2] || '') + groups[0] + (parts[4] || '') + groups[1] + (parts[6] || '') + groups[2] +
+            (parts[8] || '') + groups[3] + (parts[10] || '') + groups[4] + (parts[12] || '');
+    });
+
+    // ### Look for Leftovers ###
+    // This site's path in a form the rewrite doesn't change, such as /sites%2Fsource or &#x2F;sites&#x2F;source.
+    if (sourcePath) {
+        if (destInside) {
+            var destAnyForm = destPath.split('/').filter(Boolean).map(snaToolsRegExpText).join(SNA_TOOLS_LINK_ANY_SLASH);
+            pathScan = pathScan.replace(new RegExp(SNA_TOOLS_LINK_ANY_SLASH + destAnyForm, 'gi'), ' ');
+        }
+        var anyForm = sourcePath.split('/').filter(Boolean).map(function(p) {
+            return Array.from(p).map(function(c) {
+                return snaToolsLinkCharPattern(c, [c, encodeURIComponent(c), encodeURIComponent(encodeURIComponent(c))]);
+            }).join('');
+        }).join(SNA_TOOLS_LINK_ANY_SLASH);
+        var looseLeft = '(?:^|[^A-Za-z0-9._~-]|%[0-9a-f]{2}|(?:/|%2f|%252f)' + hostPattern + '(?::443)?)';
+        if (new RegExp(looseLeft + SNA_TOOLS_LINK_ANY_SLASH + anyForm + '(?![A-Za-z0-9_.~-]|%20|%2520|\\+)', 'i').test(pathScan)) { report(sourcePath); }
+    }
+
+    // A short sharing link, such as https://contoso.sharepoint.com/:b:/s/source/<token>, which can't point at the destination.
+    var pathParts = sourcePath.split('/').filter(Boolean);
+    var siteName = pathParts.length > 1 && /^(?:sites|teams)$/i.test(pathParts[0]) ? pathParts[1] : pathParts[pathParts.length - 1];
+    if (siteName) {
+        var colon = '(?::|%3a|%253a|&#58;|\\\\u003a)';
+        var sharing = new RegExp(hostPattern + '(?::443)?' + SNA_TOOLS_LINK_ANY_SLASH + colon + '([a-z]{1,2})' + colon + SNA_TOOLS_LINK_ANY_SLASH +
+            '([a-qs-z])' + SNA_TOOLS_LINK_ANY_SLASH + snaToolsRegExpText(siteName) + SNA_TOOLS_LINK_ANY_SLASH, 'gi');
+        var shared;
+        while ((shared = sharing.exec(out)) !== null) { report('/:' + shared[1].toLowerCase() + ':/' + shared[2].toLowerCase() + '/' + siteName); }
+    }
+
+    // A source at the root of the host: any link to the host's root that wasn't changed, such as /default.aspx.
+    if (!sourcePath) {
+        var segment = '([^/?#"\'\\s<>&\\\\]+)';
+        var rootLinks = new RegExp('(?:(?:https?(?::|&#58;)|^|[^A-Za-z0-9.-])//' + hostPattern + '(?::443)?/' + segment + ')|' +
+            '(?:(?:href|src)\\s*=\\s*(?:"|\'|\\\\"|&quot;)/' + segment + ')', 'gi');
+        var rootLink;
+        while ((rootLink = rootLinks.exec(out)) !== null) {
+            var first = rootLink[1] || rootLink[2] || '';
+            if (first && SNA_TOOLS_LINK_TENANT_PARTS.indexOf(first.toLowerCase()) === -1) { report('/' + snaToolsLinkPlain(first)); }
+        }
+    }
+
+    // A source ID in any other form, found by its 32 hex digits once everything else is taken out of the text.
+    var watched = {};
+    Object.keys(ids).forEach(function(k) { if (ids[k] !== k) { watched[k.replace(/-/g, '')] = k; } });
+    Object.keys(known).forEach(function(k) { watched[k.replace(/-/g, '')] = k; });
+    if (Object.keys(watched).length > 0) {
+        var hexOnly = snaToolsLinkHexDigits(out);
+        for (var i = 0; i + 32 <= hexOnly.length; i++) {
+            var seen = watched[hexOnly.substr(i, 32)];
+            if (seen) { report(seen); }
+        }
+    }
+
+    result.text = out;
+    result.changed = out !== input;
+    result.unmapped = Object.keys(unmapped);
+    return result;
+}
+
+// ### Results Log ###
+
+/**
+ * Adds one row to the results of the copy that is running. Rows are still added after Stop copying, until
+ * snaToolsEndRun, so a change that SharePoint finished after the stop still has its row. Does nothing when no copy is
+ * running, or after Start over, Change site, or Refresh report.
+ * @param {string} kind One of SNA_TOOLS_KINDS, such as 'List'.
+ * @param {string} name The item, as people know it, such as 'Study Visits'.
+ * @param {string} result 'copied', 'partial', 'skipped', 'failed', or 'warning' (from the check before copying).
+ * @param {string} note Plain English that says what happened and, when the person can act, what to do next.
+ *        Never a sign-in name, an email address, or file contents.
+ * @param {object} [detail] Kept only in memory. detail.verify tells verify.js what to look for in the destination,
+ *        such as { type: 'list', listId, title } (see verify.js for every type); detail.summary marks a summary row;
+ *        detail.stopped marks the row of an item that a stop left partly made (see snaToolsLogStopped).
+ * @returns {object|null} The new row { kind, name, result, note, detail, verify, summary }, or null when not added.
+ */
+function snaToolsLog(kind, name, result, note, detail) {
+    if (!snaToolsRunIsOpen()) { return null; }
+    var entry = {
+        kind: kind,
+        name: String(name === null || name === undefined ? '' : name),
+        result: SNA_TOOLS_RESULTS[result] ? result : 'failed',
+        note: String(note || ''),
+        detail: detail || null,
+        verify: (detail && detail.verify) || null,
+        summary: !!(detail && detail.summary)
+    };
+    _snaToolsRun.results.push(entry);
+    _snaToolsRun.unloggedChanges = 0;
+    return entry;
+}
+
+// True while the copy in _snaToolsRun is running or finishing after a stop, so it can still add rows.
+function snaToolsRunIsOpen() {
+    return !!_snaToolsRun && _snaToolsActiveToken !== 0 && _snaToolsRun.token === _snaToolsActiveToken;
+}
+
+// Counts a change SharePoint made for the copy that is running. snaToolsLog sets the count back to 0, so a count above
+// 0 means a change that no row describes yet.
+function snaToolsCountChange() {
+    if (snaToolsRunIsOpen()) { _snaToolsRun.unloggedChanges = (_snaToolsRun.unloggedChanges || 0) + 1; }
+}
+
+/**
+ * Adds a Partly copied row for the item that was being made when the copy was stopped, but only when SharePoint made a
+ * change for it that no row describes yet, such as a new list that the copy hadn't renamed. Call it where a stop is
+ * passed on, before throwing it again.
+ * @param {string} kind One of SNA_TOOLS_KINDS, such as 'List'.
+ * @param {string} name The item, as people know it, such as 'Study Visits'.
+ * @param {string} note What may be missing and what to do next, such as SNA_TOOLS_STOPPED_NOTE.
+ * @returns {object|null} The new row, or null when every change already has a row.
+ */
+function snaToolsLogStopped(kind, name, note) {
+    if (!snaToolsRunIsOpen() || !(_snaToolsRun.unloggedChanges > 0)) { return null; }
+    return snaToolsLog(kind, name, 'partial', note, { stopped: true });
+}
+
+// ### Progress and Stopping ###
+
+/**
+ * Shows what the copy is doing on the progress line and moves the progress bar.
+ * @param {string} text Plain English, such as 'Copying lists and libraries.'.
+ * @param {number} [value] How many of the copy's steps are done, from 0 to SNA_TOOLS_STEP_COUNT.
+ */
+function snaToolsProgress(text, value) {
+    if (typeof _snaToolsState === 'undefined' || !_snaToolsState) { return; }
+    _snaToolsState.progressText = String(text || '');
+    if (typeof value === 'number') { _snaToolsState.progressValue = value; }
+    var bar = document.getElementById('sna-tools-progress');
+    if (bar && typeof value === 'number') { bar.value = value; }
+    snaToolsAnnounce(false);
+}
+
+// Writes the progress text in the progress line, at most once each SNA_TOOLS_ANNOUNCE_INTERVAL_MS, so screen readers
+// can finish reading one message before the next. now is true for a message that must show at once, such as the last.
+function snaToolsAnnounce(now) {
+    function write() {
+        _snaToolsAnnouncedAt = Date.now();
+        var line = document.getElementById('sna-tools-progress-status');
+        if (line && _snaToolsState) { line.textContent = _snaToolsState.progressText; }
+    }
+    var waited = Date.now() - _snaToolsAnnouncedAt;
+    if (now || waited >= SNA_TOOLS_ANNOUNCE_INTERVAL_MS) {
+        if (_snaToolsAnnounceTimer) { clearTimeout(_snaToolsAnnounceTimer); _snaToolsAnnounceTimer = null; }
+        write();
+        return;
+    }
+    if (_snaToolsAnnounceTimer) { return; }
+    _snaToolsAnnounceTimer = setTimeout(function() { _snaToolsAnnounceTimer = null; write(); }, SNA_TOOLS_ANNOUNCE_INTERVAL_MS - waited);
+}
+
+// Throws snaCancelledError when the copy that is running was stopped, by Stop copying, Start over, Change site, or
+// Refresh report. Call it between steps; snaToolsWrite and snaToolsRead call it before every request.
+function snaToolsCheckCancelled() {
+    if (_snaToolsActiveToken && _snaToolsActiveToken !== _snaToolsToken) { throw snaCancelledError(); }
+}
+
+// True while a copy is running, or is still finishing the request it was sending when it was stopped.
+function snaToolsBusy() {
+    return _snaToolsActiveToken !== 0;
+}
+
+// Stops the copy that is running, if any. It stops at its next request or step. A request already on its way still
+// finishes, and the copy still logs what it did.
+function snaToolsCancel() {
+    _snaToolsToken++;
+}
+
+// Adds a destination check for one type of detail.verify, such as 'group'. checker(dest, entries, cache) reads the
+// destination and sets entry.verify.found (true or false) and, for an item that is there but not as asked,
+// entry.verify.problem (a note). When a check sets a problem, the note becomes that problem followed by
+// entry.verify.keepNote, if the copy set one. cache is an object shared by every check of one copy. See verify.js.
+function snaToolsAddVerifyCheck(type, checker) {
+    _snaToolsVerifyChecks[type] = checker;
+}
+
+/*
+This file is part of Sitenalyzer
+plan.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: Builds the copy plan for Copy site structure from this site's report. The report doesn't hold everything a
+         copy needs, so for each list or library the person chose, this reads its full settings, every column with its
+         definition (SchemaXml), its views and their columns, and its content types and their columns. It also reads
+         the site's own content types and the site columns they and those lists use, and every detail of the chosen term
+         sets' terms. When Navigation or Site look is on, it also reads the site's menus and look (see site.js).
+         Reads only; changes nothing.
+         A data dictionary file becomes the same plan in workbook.js, so the copy doesn't depend on where it came from.
+Notes: See README file for documentation and full license information.
+
+       Plan shape (the copy steps in runner.js read only this):
+       { source: { kind: 'site'|'workbook', siteUrl, siteId, webId, serverRelativeUrl, title, termStoreId, fileName },
+         lists: [PlanList], siteColumns: [PlanField], siteContentTypes: [PlanContentType],
+         hubContentTypes: [{ stringId, name }] (content types from the content type hub that the copy needs),
+         builtInSiteColumns: [{ id, internalName, title, hidden, rename }] (SharePoint's own site columns that the chosen lists or
+         content types use, with the name they have in the source site, such as TaxKeyword shown as Tags; rename is true
+         when someone added the column, so the destination's column gets that name when both sites use the same language),
+         termGroup: { name, sets: [PlanTermSet] } | null,
+         siteContent: { pages: [report page], agents: [report agent], skills: [report site skill] },
+         pages, siteAssets, agents, navigation, siteLook, permissions, replaceExisting (booleans from the person's choices),
+         siteSettings (this site's menus and look, read by snaToolsSiteReadSource in site.js when navigation or siteLook
+         is on, or null),
+         warnings: [string], skippedItems: [{ kind, itemName, listSourceId, setSourceId, note, and for a column internalName
+         and beforeNote }] (data dictionary files only; see workbook.js) }
+       PlanList = { sourceId, title, url (the source address, such as StudyVisits), newTitle, newUrl, baseTemplate,
+         isLibrary, description, rootFolder (server-relative), settings {SP.List properties}, fields [PlanField],
+         views [PlanView], contentTypes [PlanContentType], contentTypesEnabled, ownPermissions, roleAssignments, selected }
+       PlanField = { id, internalName, staticName, title, description, type (TypeAsString), schemaXml, customFormatter,
+         isSiteColumn, lookupListId, lookupWebId, lookupField, lookupFieldGuessed (true when a data dictionary file didn't say
+         which column a lookup shows), isDependentLookup, primaryFieldId, termSetId, anchorId, sspId, isTaxonomy,
+         isTaxonomyNote, formula, fieldRefs [internal names], builtIn, builtInSiteColumn (a built-in column that a list
+         gets from SharePoint's own site columns, such as Start Date, rather than from its template), hidden, required, group }
+       PlanView = { id, title, isDefault, personalView, hidden, viewFields [internal names], viewQuery, rowLimit, paged,
+         scope, viewType, viewType2, viewData, calendarViewStyles, customFormatter, aggregations, aggregationsStatus,
+         jsLink, tabularView, includeRootFolder, mobileView, mobileDefaultView, url }
+       PlanContentType = { stringId, name, description, group, parentStringId, fieldLinks [{ internalName, id,
+         required, hidden, displayName (the name the column shows in this content type, or '' when it's the column's
+         own name) }], clientFormCustomFormatter, formComponents {}, readOnly, sealed, hidden, isBuiltIn, isHub,
+         parentLinks [{ id, required, hidden, displayName }] (site content types in the plan only: the columns of the
+         content type it's based on, or null when Sitenalyzer couldn't read that one in the source site) }
+       PlanTermSet = { sourceId, name, description, isOpen, isAvailableForTagging, languageTag, terms [PlanTerm],
+         selected, complete }
+       PlanTerm = { sourceId, parentIds [the first is the main parent], labels [{ name, languageTag, isDefault }],
+         descriptions [{ description, languageTag }], properties [{ key, value }], isDeprecated, isAvailableForTagging }
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Plan Settings ###
+
+// Most columns, views, or content types read from one list or library, and most site columns or content types.
+var SNA_TOOLS_READ_MAX = 5000;
+
+// Column types that SharePoint makes by itself, such as the ID counter, so the copy never creates columns of these types.
+var SNA_TOOLS_BUILT_IN_FIELD_TYPES = ['Computed', 'Counter', 'File', 'ContentTypeId', 'ModStat', 'Attachments', 'ThreadIndex',
+    'Threading', 'Guid', 'WorkflowStatus', 'WorkflowEventType', 'PageSeparator'];
+
+// List settings read from the source and kept in PlanList.settings. A shorter set is read when SharePoint refuses a name.
+var SNA_TOOLS_LIST_SETTINGS = ['ContentTypesEnabled', 'EnableVersioning', 'EnableMinorVersions', 'MajorVersionLimit',
+    'MajorWithMinorVersionsLimit', 'EnableModeration', 'DraftVersionVisibility', 'EnableAttachments', 'EnableFolderCreation',
+    'Hidden', 'NoCrawl', 'OnQuickLaunch', 'ForceCheckout', 'ValidationFormula', 'ValidationMessage', 'Direction',
+    'ListExperienceOptions', 'ReadSecurity', 'WriteSecurity', 'IrmEnabled'];
+var SNA_TOOLS_LIST_SETTINGS_SHORT = ['ContentTypesEnabled', 'EnableVersioning', 'EnableMinorVersions', 'MajorVersionLimit',
+    'EnableModeration', 'EnableAttachments', 'EnableFolderCreation', 'Hidden', 'OnQuickLaunch', 'ForceCheckout'];
+
+// Column properties read from the source. SchemaXml holds the rest of each column's definition.
+var SNA_TOOLS_FIELD_SELECT = 'Id,InternalName,StaticName,Title,Description,TypeAsString,SchemaXml,CustomFormatter,Required,' +
+    'Hidden,ReadOnlyField,CanBeDeleted,FromBaseType,Sealed,Group,Scope,Indexed,EnforceUniqueValues,LookupList,LookupWebId,' +
+    'LookupField,IsDependentLookup,PrimaryFieldId,Formula';
+var SNA_TOOLS_FIELD_SELECT_SHORT = 'Id,InternalName,StaticName,Title,Description,TypeAsString,SchemaXml,CustomFormatter,Required,' +
+    'Hidden,ReadOnlyField,CanBeDeleted,FromBaseType,Sealed,Group,Scope';
+
+var SNA_TOOLS_VIEW_SELECT = 'Id,Title,ServerRelativeUrl,DefaultView,PersonalView,Hidden,ViewType,ViewType2,ViewQuery,RowLimit,' +
+    'Paged,Scope,CustomFormatter,ViewData,CalendarViewStyles,Aggregations,AggregationsStatus,JSLink,IncludeRootFolder,' +
+    'TabularView,MobileView,MobileDefaultView,ViewFields/Items';
+
+var SNA_TOOLS_CONTENT_TYPE_SELECT = 'StringId,Name,Description,Group,Hidden,Sealed,ReadOnly,ClientFormCustomFormatter,' +
+    'NewFormClientSideComponentId,NewFormClientSideComponentProperties,EditFormClientSideComponentId,' +
+    'EditFormClientSideComponentProperties,DisplayFormClientSideComponentId,DisplayFormClientSideComponentProperties,' +
+    'FieldLinks/Id,FieldLinks/Name,FieldLinks/Required,FieldLinks/Hidden';
+
+// Site content types also give the name each column shows in them (FieldLink DisplayName), such as Tags.
+var SNA_TOOLS_SITE_CONTENT_TYPE_SELECT = SNA_TOOLS_CONTENT_TYPE_SELECT + ',FieldLinks/DisplayName';
+
+// What the Tools screen reads to offer the site's own content types.
+var SNA_TOOLS_CONTENT_TYPE_CHOICE_SELECT = 'StringId,Name,Group,Sealed,ReadOnly';
+
+// SharePoint's own content types whose IDs end in 00 and 32 hexadecimal digits, the same as a content type someone
+// made. Each ID must match in full: a content type someone based on Site Page, such as a news page of their own, starts
+// with Site Page's ID but isn't one of SharePoint's own. The copy never makes these.
+var SNA_TOOLS_BUILT_IN_CONTENT_TYPE_IDS = [
+    '0x0101009D1CB255DA76424F860D91F20E6C4118',                                     // Site Page
+    '0x0101009D1CB255DA76424F860D91F20E6C4118002A50BFCFB7614729B56886FADA02339B',   // Repost Page
+    '0x0101009D1CB255DA76424F860D91F20E6C41180043153F945E98468297E67C3EEE43AB70',   // Spaces page
+    '0x0101009148F5A04DDD49CBA7127AADA5FB792B',                                     // Rich Media Asset
+    '0x0101009148F5A04DDD49CBA7127AADA5FB792B00AADE34325A8B49CDA8BB4DB53328F214',   // Image
+    '0x0101009148F5A04DDD49CBA7127AADA5FB792B006973ACD696DC4858A76371B2FB2F439A',   // Audio
+    '0x0101009148F5A04DDD49CBA7127AADA5FB792B00291D173ECE694D56B19D111489C4369D',   // Video Rendition
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2',                                     // System Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF39',   // Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF3900242457EFB8B24247815D688C526CD44D', // Article Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF39004C1F8B46085B4D22B1CDC3DE08CFFB9C', // Enterprise Wiki Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF39004C1F8B46085B4D22B1CDC3DE08CFFB9C' +
+        '0055EF50AAFF2E4BADA437E4BAE09A30F8',                                       // Project Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF390064DEA0F50FC8C147B0B6EA0636C4A7D4', // Welcome Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF3900796F542FC5E446758C697981E370458C', // Error Page
+    '0x010100C568DB52D9D0A14D9B2FDCC96666E9F2007948130EC3DB064584E219954237AF3900FD0E870BA06948879DBD5F9813CD8799', // Redirect Page
+    '0x01010007FF3E057FA8AB4AA42FCB67B453FFC1',                                     // System Page Layout
+    '0x01010007FF3E057FA8AB4AA42FCB67B453FFC100E214EEE741181F4E9F7ACC43278EE811',   // Page Layout
+    '0x01010007FF3E057FA8AB4AA42FCB67B453FFC100E214EEE741181F4E9F7ACC43278EE8110003D357F861E29844953D5CAA1D4D8A3B' // Html Page Layout
+];
+
+// ### Choosing What to Copy ###
+
+// True when a report list is one Copy site structure offers: not a system list, not hidden, and not one of the
+// libraries the switches copy (Site Pages, Site Assets, Agent Assets), TaxonomyHiddenList, or the User Information List.
+function snaToolsIsChoosableList(list) {
+    var raw = list.raw || {};
+    if (list.isSystem || raw.Hidden || list.baseTemplate === 119 || list.baseTemplate === 112) { return false; }
+    var address = snaToolsListAddress(list).toLowerCase();
+    var title = String(list.title || '').toLowerCase();
+    if (title === 'taxonomyhiddenlist' || title === 'user information list') { return false; }
+    if (address === 'siteassets' || String(list.internalName || '').toLowerCase() === 'siteassets') { return false; }
+    if (address === 'agent assets' || address === 'agentassets' || title === 'agent assets') { return false; }
+    return true;
+}
+
+// Returns the last part of a report list's address, such as 'StudyVisits' for /sites/a/Lists/StudyVisits/AllItems.aspx
+// or 'Shared Documents' for a library at /sites/a/Shared Documents/Forms/AllItems.aspx.
+function snaToolsListAddress(list) {
+    var raw = list.raw || {};
+    var viewUrl = String(raw.DefaultViewUrl || '');
+    var sitePath = _snaReport ? snaToolsSiteParts(_snaReport.siteUrl).serverRelativeUrl : '';
+    var rest = viewUrl;
+    if (sitePath && sitePath !== '/' && rest.toLowerCase().indexOf(sitePath.toLowerCase() + '/') === 0) { rest = rest.substring(sitePath.length + 1); }
+    rest = rest.replace(/^\/+/, '');
+    var parts = rest.split('/').filter(function(p) { return p; });
+    if (parts.length === 0) { return String(list.internalName || list.title || ''); }
+    var name = (parts[0].toLowerCase() === 'lists' && parts.length > 1) ? parts[1] : parts[0];
+    try { name = decodeURIComponent(name); } catch (e) { /* Kept as it is. */ }
+    return name;
+}
+
+// Returns a source address that the Address box accepts, with every character other than letters, numbers,
+// hyphens, and underscores removed, such as 'SharedDocuments' for 'Shared Documents'.
+function snaToolsCleanAddress(address) {
+    return String(address || '').replace(/[^A-Za-z0-9_-]/g, '');
+}
+
+// ### Lists the Destination Already Has ###
+
+// The note under the Address box of a list or library that the copy adds to, instead of making a new one.
+var SNA_TOOLS_EXISTING_LIST_NOTE = 'The destination already has this. Sitenalyzer adds the columns and views it\'s missing.';
+
+/**
+ * Returns the note about a list or library the destination already has that the copy adds to: SNA_TOOLS_EXISTING_LIST_NOTE
+ * when it keeps its name, or, when the Name box holds another name, a note that says the copy renames it, such as "The
+ * destination already has this, named Documents. Sitenalyzer renames it Study Files and adds the columns and views it's
+ * missing."
+ * @param {string} currentTitle The name it has in the destination.
+ * @param {string} newTitle The name in the Name box.
+ * @param {boolean} later True for Before you copy, which says what the copy will do.
+ * @returns {string} The note.
+ */
+function snaToolsExistingListNote(currentTitle, newTitle, later) {
+    if (!newTitle || newTitle === currentTitle) { return SNA_TOOLS_EXISTING_LIST_NOTE; }
+    return 'The destination already has this, named ' + currentTitle + '. Sitenalyzer ' + (later ? 'will rename it ' + newTitle +
+        ' and add the columns and views it\'s missing.' : 'renames it ' + newTitle + ' and adds the columns and views it\'s missing.');
+}
+
+// The problem under the Address box when the destination has a list or library at that address made from another template.
+var SNA_TOOLS_OTHER_TEMPLATE_PROBLEM = 'The destination already has a list or library at this address. Choose another address.';
+
+// Returns the last part of a destination list's address as the Address box would show it, with only letters, numbers,
+// hyphens, and underscores, such as 'SharedDocuments' for /sites/new-study/Shared Documents. Returns '' for a list
+// that isn't at the top of the site or under Lists, such as one inside another folder.
+function snaToolsDestinationAddress(destination, serverRelativeUrl) {
+    var path = xlsxStripSlash(String(serverRelativeUrl || ''));
+    var cut = path.lastIndexOf('/');
+    if (cut < 0) { return ''; }
+    var parent = path.substring(0, cut);
+    var site = xlsxStripSlash(destination.serverRelativeUrl || '');
+    if (site === '/') { site = ''; }
+    if (!snaToolsSamePath(parent || '/', site || '/') && !snaToolsSamePath(parent, site + '/Lists')) { return ''; }
+    var name = path.substring(cut + 1);
+    try { name = decodeURIComponent(name); } catch (e) { /* Kept as it is. */ }
+    return snaToolsCleanAddress(name);
+}
+
+/**
+ * Finds the list or library in the destination at the address a person chose, and says whether the copy can use it.
+ * One made from the same template, such as the Documents library every site has, is used as it is: the copy adds the
+ * columns and views it's missing. Addresses are compared the way the Address box shows them, so SharedDocuments matches
+ * a library at Shared Documents.
+ * @param {object|null} destination The checked destination (see snaToolsCheckDestination in runner.js), or null.
+ * @param {string} newUrl The address in the Address box, such as SharedDocuments.
+ * @param {number} baseTemplate The source list's template, such as 101 for a document library.
+ * @returns {{list: object|null, usable: boolean, checkDestination: object|null}} list is the destination's list or
+ *          library at that address, or null. usable is true when the copy can add to it. checkDestination is the
+ *          destination without that list when usable, for the name and address checks, and otherwise destination.
+ */
+function snaToolsExistingDestinationList(destination, newUrl, baseTemplate) {
+    var none = { list: null, usable: false, checkDestination: destination };
+    var key = String(newUrl || '').toLowerCase();
+    if (!destination || !key) { return none; }
+    var candidates = (destination.lists || []).filter(function(l) {
+        return !l.hidden && snaToolsDestinationAddress(destination, l.serverRelativeUrl).toLowerCase() === key;
+    });
+    if (candidates.length === 0) { return none; }
+    // A list whose address is exactly the one typed wins over one that only matches without its spaces.
+    var exact = candidates.filter(function(l) { return String(l.serverRelativeUrl).split('/').pop().toLowerCase() === key; })[0];
+    var list = exact || candidates[0];
+    if (Number(list.baseTemplate) !== Number(baseTemplate)) { return { list: list, usable: false, checkDestination: destination }; }
+    var others = Object.assign({}, destination, { lists: destination.lists.filter(function(l) { return l !== list; }) });
+    return { list: list, usable: true, checkDestination: others };
+}
+
+/**
+ * Checks the name and address a person chose for one list or library against the destination and the other choices.
+ * @param {object|null} destination The checked destination, or null before a check.
+ * @param {object} choice { newTitle, newUrl, isLibrary, baseTemplate }.
+ * @param {string[]} otherTitles The new names of the other chosen lists and libraries.
+ * @param {string[]} otherUrls The new addresses of the other chosen lists and libraries.
+ * @returns {{name: string, address: string, note: string}} name and address are problems to fix, or ''. note is
+ *          the note from snaToolsExistingListNote when the copy adds to a list the destination already has, or ''.
+ */
+function snaToolsListChoiceProblems(destination, choice, otherTitles, otherUrls) {
+    var existing = snaToolsExistingDestinationList(destination, choice.newUrl, choice.baseTemplate);
+    var address = (existing.list && !existing.usable) ? SNA_TOOLS_OTHER_TEMPLATE_PROBLEM : '';
+    address = address || snaToolsAddressProblem(choice.newUrl, choice.isLibrary, existing.checkDestination, otherUrls);
+    var name = snaToolsNameProblem(choice.newTitle, existing.checkDestination, otherTitles);
+    var note = (existing.usable && !address) ? snaMaskText(snaToolsExistingListNote(existing.list.title, choice.newTitle, false)) : '';
+    return { name: name, address: address, note: note };
+}
+
+/**
+ * Returns the lists and libraries of this site's report that Copy site structure offers, in the order of Contents.
+ * @param {object} report The collected report (see collectReport in sitenalyzer.js).
+ * @returns {object[]} [{ sourceId, title, url (the cleaned source address), isLibrary, baseTemplate, columnCount }].
+ */
+function snaToolsSourceLists(report) {
+    if (!report || !report.lists) { return []; }
+    return report.lists.filter(snaToolsIsChoosableList).slice().sort(snaByTitle).map(function(list) {
+        return {
+            sourceId: snaCleanListId(list.id),
+            title: list.title || '',
+            url: snaToolsCleanAddress(snaToolsListAddress(list)),
+            isLibrary: !!list.isLib,
+            baseTemplate: list.baseTemplate,
+            columnCount: (list.columns || []).length
+        };
+    });
+}
+
+/**
+ * Returns the term sets of this site collection's own term group, which Copy site structure offers. Term sets in
+ * tenant-level groups are never copied, because the destination already has them.
+ * @param {object} report The collected report.
+ * @returns {object[]} [{ sourceId, name, termCount, groupName }].
+ */
+function snaToolsSourceTermSets(report) {
+    var sets = [];
+    ((report && report.taxonomy && report.taxonomy.groups) || []).forEach(function(group) {
+        (group.termSets || []).forEach(function(set) {
+            sets.push({ sourceId: snaCleanListId(set.setId), name: set.setName || '', termCount: (set.terms || []).length, groupName: group.groupName || '' });
+        });
+    });
+    return sets;
+}
+
+// Returns an empty plan of the given source kind, with every switch off.
+function snaToolsEmptyPlan(kind) {
+    return {
+        source: { kind: kind, siteUrl: '', siteId: '', webId: '', serverRelativeUrl: '', title: '', termStoreId: '', fileName: '' },
+        lists: [], siteColumns: [], siteContentTypes: [], hubContentTypes: [], builtInSiteColumns: [], termGroup: null,
+        siteContent: { pages: [], agents: [], skills: [] },
+        pages: false, siteAssets: false, agents: false, navigation: false, siteLook: false, permissions: false, replaceExisting: false,
+        siteSettings: null, warnings: []
+    };
+}
+
+/**
+ * Returns a copy of a plan with the person's choices applied: only the chosen lists, with their new names and
+ * addresses, the chosen term sets marked selected, and the switches. Used for a plan read from a data dictionary file.
+ * @param {object} plan A plan, such as from snaToolsReadWorkbook.
+ * @param {object} choices See snaToolsBuildPlanFromSite.
+ * @returns {object} The new plan. plan itself is unchanged.
+ */
+function snaToolsPlanWithChoices(plan, choices) {
+    var copy = JSON.parse(JSON.stringify(plan));
+    var byId = {};
+    (choices.lists || []).forEach(function(c) { byId[c.sourceId] = c; });
+    copy.lists = copy.lists.filter(function(l) { return !!byId[l.sourceId]; }).map(function(l) {
+        l.newTitle = byId[l.sourceId].newTitle;
+        l.newUrl = byId[l.sourceId].newUrl;
+        l.selected = true;
+        return l;
+    });
+    if (copy.termGroup) {
+        copy.termGroup.sets.forEach(function(set) { set.selected = (choices.termSetIds || []).indexOf(set.sourceId) > -1; });
+    }
+    var isSite = copy.source.kind === 'site';
+    copy.pages = isSite && !!choices.pages;
+    copy.siteAssets = isSite && !!choices.siteAssets;
+    copy.agents = isSite && !!choices.agents;
+    copy.navigation = isSite && !!choices.navigation;
+    copy.siteLook = isSite && !!choices.siteLook;
+    copy.permissions = isSite && !!choices.permissions;
+    copy.replaceExisting = isSite && !!choices.replaceExisting;
+    return copy;
+}
+
+// ### Reading the Source ###
+
+// Reads a source address with a full $select, and again with a shorter one when SharePoint refuses the first, which it
+// does when it doesn't know one of the names. Returns the JSON.
+async function snaToolsReadWithFallback(siteUrl, fullPath, shortPath) {
+    try {
+        return await snaToolsRead(siteUrl, fullPath);
+    } catch (err) {
+        if (snaToolsIsCancelled(err) || err.status !== 400 || !shortPath) { throw err; }
+        return snaToolsRead(siteUrl, shortPath);
+    }
+}
+
+// Reads a source collection with a full $select, and again with a shorter one when SharePoint refuses the first.
+async function snaToolsReadAllWithFallback(siteUrl, fullPath, shortPath) {
+    try {
+        return (await snaToolsReadAll(siteUrl, fullPath, SNA_TOOLS_READ_MAX)).items;
+    } catch (err) {
+        if (snaToolsIsCancelled(err) || err.status !== 400 || !shortPath) { throw err; }
+        return (await snaToolsReadAll(siteUrl, shortPath, SNA_TOOLS_READ_MAX)).items;
+    }
+}
+
+// Returns the internal names in the <FieldRefs> of a column's definition, such as the columns a formula uses.
+function snaToolsFieldRefs(root) {
+    if (!root) { return []; }
+    var names = [];
+    var refs = root.getElementsByTagName('FieldRef');
+    for (var i = 0; i < refs.length; i++) {
+        var name = refs[i].getAttribute('Name');
+        if (name && names.indexOf(name) === -1) { names.push(name); }
+    }
+    return names;
+}
+
+// True when a source column comes with the list template or SharePoint itself, so the copy never creates it from its
+// definition. See snaToolsIsBuiltInSiteColumn for the ones the copy adds from the destination's site columns.
+function snaToolsIsBuiltInField(field, root) {
+    if (field.CanBeDeleted === false || field.FromBaseType === true || field.Sealed === true) { return true; }
+    if (SNA_TOOLS_BUILT_IN_FIELD_TYPES.indexOf(field.TypeAsString) > -1) { return true; }
+    if (SITEANALYZER_SKIP_FIELDS.has(field.InternalName)) { return true; }
+    var sourceId = root ? String(root.getAttribute('SourceID') || '') : '';
+    if (sourceId.toLowerCase().indexOf('http://schemas.microsoft.com/sharepoint') === 0) { return true; }
+    return /^_/.test(String(field.InternalName || '')) && field.Hidden === true;
+}
+
+// True when a built-in column is one of SharePoint's own site columns that someone added, such as Start Date or
+// Enterprise Keywords: its definition comes from SharePoint, but nothing else marks it as part of every list.
+function snaToolsIsBuiltInSiteColumn(field, root) {
+    if (field.CanBeDeleted === false || field.FromBaseType === true || field.Sealed === true) { return false; }
+    if (SNA_TOOLS_BUILT_IN_FIELD_TYPES.indexOf(field.TypeAsString) > -1 || SITEANALYZER_SKIP_FIELDS.has(field.InternalName)) { return false; }
+    if (/^_/.test(String(field.InternalName || '')) && field.Hidden === true) { return false; }
+    var sourceId = root ? String(root.getAttribute('SourceID') || '') : '';
+    return sourceId.toLowerCase().indexOf('http://schemas.microsoft.com/sharepoint') === 0;
+}
+
+/**
+ * Returns a PlanField from a column read from SharePoint.
+ * @param {object} field A column from /fields, with the properties in SNA_TOOLS_FIELD_SELECT.
+ * @param {object} siteColumnIds Lowercase IDs of the site's own columns, as keys.
+ * @returns {object} The PlanField (see the plan shape at the top of this file).
+ */
+function snaToolsPlanField(field, siteColumnIds) {
+    var root = snaToolsParseXml(field.SchemaXml);
+    function attr(name) { return root ? (root.getAttribute(name) || '') : ''; }
+    var type = field.TypeAsString || attr('Type');
+    var isTaxonomy = SNA_TAXONOMY_FIELD_TYPES.indexOf(type) > -1;
+    var taxonomy = isTaxonomy ? snaReadTaxonomySchema(field.SchemaXml) : { termSetId: '', anchorTermId: '', termStoreId: '' };
+    var id = snaToolsCleanGuid(field.Id || attr('ID'));
+    var internalName = field.InternalName || attr('Name');
+    var isLookup = type === 'Lookup' || type === 'LookupMulti';
+    var primaryFieldId = snaToolsCleanGuid(field.PrimaryFieldId || attr('FieldRef'));
+    var formulaElement = root ? root.getElementsByTagName('Formula')[0] : null;
+    return {
+        id: id,
+        internalName: internalName,
+        staticName: field.StaticName || attr('StaticName') || internalName,
+        title: field.Title || attr('DisplayName') || internalName,
+        description: field.Description || '',
+        type: type,
+        schemaXml: field.SchemaXml || '',
+        customFormatter: field.CustomFormatter || '',
+        isSiteColumn: !!(id && siteColumnIds && siteColumnIds[id]),
+        lookupListId: isLookup ? snaToolsCleanGuid(field.LookupList || attr('List')) : '',
+        lookupWebId: isLookup ? snaToolsCleanGuid(field.LookupWebId || attr('WebId')) : '',
+        lookupField: isLookup ? (field.LookupField || attr('ShowField')) : '',
+        isDependentLookup: isLookup && (field.IsDependentLookup === true || !!attr('FieldRef')),
+        primaryFieldId: isLookup ? primaryFieldId : '',
+        termSetId: taxonomy.termSetId,
+        anchorId: taxonomy.anchorTermId,
+        sspId: taxonomy.termStoreId,
+        isTaxonomy: isTaxonomy,
+        // The hidden Note column SharePoint keeps beside each managed metadata column, such as StudyArm_0.
+        isTaxonomyNote: type === 'Note' && field.Hidden === true && /_0$/.test(internalName),
+        formula: field.Formula || (formulaElement ? formulaElement.textContent : ''),
+        fieldRefs: snaToolsFieldRefs(root),
+        builtIn: snaToolsIsBuiltInField(field, root),
+        builtInSiteColumn: snaToolsIsBuiltInSiteColumn(field, root),
+        hidden: field.Hidden === true,
+        required: field.Required === true,
+        group: field.Group || attr('Group')
+    };
+}
+
+// Returns a PlanView from a view read from SharePoint.
+function snaToolsPlanView(view) {
+    var fields = view.ViewFields && Array.isArray(view.ViewFields.Items) ? view.ViewFields.Items.slice() : [];
+    return {
+        id: snaToolsCleanGuid(view.Id),
+        title: view.Title || '',
+        isDefault: view.DefaultView === true,
+        personalView: view.PersonalView === true,
+        hidden: view.Hidden === true,
+        viewFields: fields,
+        viewQuery: view.ViewQuery || '',
+        rowLimit: view.RowLimit,
+        paged: view.Paged,
+        scope: view.Scope,
+        viewType: view.ViewType || '',
+        viewType2: view.ViewType2 || '',
+        viewData: view.ViewData || '',
+        calendarViewStyles: view.CalendarViewStyles || '',
+        customFormatter: view.CustomFormatter || '',
+        aggregations: view.Aggregations || '',
+        aggregationsStatus: view.AggregationsStatus || '',
+        jsLink: view.JSLink || '',
+        tabularView: view.TabularView,
+        includeRootFolder: view.IncludeRootFolder,
+        mobileView: view.MobileView,
+        mobileDefaultView: view.MobileDefaultView,
+        url: view.ServerRelativeUrl || ''
+    };
+}
+
+// True when a content type ID is one of SharePoint's own, such as 0x01 (Item) or 0x0101 (Document). The ID of a
+// content type someone made ends in 00 and a GUID's 32 hexadecimal digits, as do a few of SharePoint's own
+// (see SNA_TOOLS_BUILT_IN_CONTENT_TYPE_IDS).
+function snaToolsIsBuiltInContentTypeId(stringId) {
+    var id = String(stringId || '').toUpperCase();
+    if (!/00[0-9A-F]{32}$/.test(id)) { return true; }
+    return SNA_TOOLS_BUILT_IN_CONTENT_TYPE_IDS.some(function(builtIn) { return id === builtIn.toUpperCase(); });
+}
+
+// Returns a PlanContentType from a content type read from SharePoint. A list's content type ID is its site content
+// type's ID followed by 00 and 32 hexadecimal digits, so parentStringId is the ID without those 34 characters.
+function snaToolsPlanContentType(ct, isListContentType) {
+    var id = String(ct.StringId || (ct.Id && ct.Id.StringValue) || '');
+    var parent = id.length > 34 && !snaToolsIsBuiltInContentTypeId(id) ? id.substring(0, id.length - 34) : '';
+    var links = (ct.FieldLinks && (ct.FieldLinks.results || ct.FieldLinks)) || [];
+    if (!Array.isArray(links)) { links = []; }
+    return {
+        stringId: id,
+        name: ct.Name || '',
+        description: ct.Description || '',
+        group: ct.Group || '',
+        parentStringId: parent,
+        fieldLinks: links.map(function(link) {
+            return { internalName: link.Name || '', id: snaToolsCleanGuid(link.Id), required: link.Required === true, hidden: link.Hidden === true,
+                displayName: link.DisplayName || '' };
+        }),
+        clientFormCustomFormatter: ct.ClientFormCustomFormatter || '',
+        formComponents: {
+            newFormClientSideComponentId: ct.NewFormClientSideComponentId || '',
+            newFormClientSideComponentProperties: ct.NewFormClientSideComponentProperties || '',
+            editFormClientSideComponentId: ct.EditFormClientSideComponentId || '',
+            editFormClientSideComponentProperties: ct.EditFormClientSideComponentProperties || '',
+            displayFormClientSideComponentId: ct.DisplayFormClientSideComponentId || '',
+            displayFormClientSideComponentProperties: ct.DisplayFormClientSideComponentProperties || ''
+        },
+        readOnly: ct.ReadOnly === true,
+        sealed: ct.Sealed === true,
+        hidden: ct.Hidden === true,
+        isBuiltIn: isListContentType ? snaToolsIsBuiltInContentTypeId(parent || id) :
+            (snaToolsIsBuiltInContentTypeId(id) || ct.Group === '_Hidden' || ct.Sealed === true),
+        // SharePoint makes each content type that the content type hub publishes read-only in the sites that get it.
+        isHub: !isListContentType && ct.ReadOnly === true
+    };
+}
+
+/**
+ * Returns the site content types that Copy site structure offers: the site's own, not SharePoint's and not from the
+ * content type hub, in the order of their names.
+ * @param {object[]} siteTypes PlanContentTypes of the site (see snaToolsPlanContentType).
+ * @returns {object[]} The ones the person can choose.
+ */
+function snaToolsChoosableContentTypes(siteTypes) {
+    return siteTypes.filter(function(ct) { return !ct.isBuiltIn && !ct.isHub; }).sort(function(a, b) {
+        return String(a.name).localeCompare(String(b.name));
+    });
+}
+
+// Returns the uppercase ID of the site content type a list content type comes from, or '' for SharePoint's own.
+function snaToolsListTypeParent(stringId) {
+    var id = String(stringId || '');
+    return (id.length > 34 && !snaToolsIsBuiltInContentTypeId(id)) ? id.substring(0, id.length - 34).toUpperCase() : '';
+}
+
+// Adds to wanted (uppercase IDs as keys) every content type that the ones already in it are based on, up to
+// SharePoint's own. byId holds the site's PlanContentTypes by uppercase ID. Returns wanted.
+function snaToolsAddTypeParents(wanted, byId) {
+    Object.keys(wanted).forEach(function(id) {
+        for (var t = byId[id]; t && !t.isBuiltIn; t = byId[String(t.parentStringId).toUpperCase()]) {
+            wanted[t.stringId.toUpperCase()] = true;
+        }
+    });
+    return wanted;
+}
+
+// Reads one chosen list or library from the source and returns its PlanList. choice is { sourceId, newTitle, newUrl }.
+async function snaToolsReadSourceList(siteUrl, reportList, choice, siteColumnIds) {
+    var base = "/_api/web/lists(guid'" + snaCleanListId(reportList.id) + "')";
+    var common = 'Id,Title,Description,BaseTemplate,BaseType,EntityTypeName,HasUniqueRoleAssignments,RootFolder/ServerRelativeUrl';
+    var info = await snaToolsReadWithFallback(siteUrl,
+        base + '?$select=' + common + ',' + SNA_TOOLS_LIST_SETTINGS.join(',') + '&$expand=RootFolder',
+        base + '?$select=' + common + ',' + SNA_TOOLS_LIST_SETTINGS_SHORT.join(',') + '&$expand=RootFolder');
+    var settings = {};
+    SNA_TOOLS_LIST_SETTINGS.forEach(function(name) { if (info && Object.prototype.hasOwnProperty.call(info, name)) { settings[name] = info[name]; } });
+
+    var fields = await snaToolsReadAllWithFallback(siteUrl, base + '/fields?$select=' + SNA_TOOLS_FIELD_SELECT,
+        base + '/fields?$select=' + SNA_TOOLS_FIELD_SELECT_SHORT);
+    var views = await snaToolsReadAllWithFallback(siteUrl, base + '/views?$select=' + SNA_TOOLS_VIEW_SELECT + '&$expand=ViewFields',
+        base + '/views?$expand=ViewFields');
+    var contentTypes = await snaToolsReadAllWithFallback(siteUrl,
+        base + '/contenttypes?$select=' + SNA_TOOLS_CONTENT_TYPE_SELECT + '&$expand=FieldLinks',
+        base + '/contenttypes?$expand=FieldLinks');
+
+    var rootFolder = info && info.RootFolder ? info.RootFolder.ServerRelativeUrl || '' : '';
+    return {
+        sourceId: snaCleanListId(reportList.id),
+        title: reportList.title || '',
+        url: snaToolsListAddress(reportList),
+        newTitle: choice.newTitle,
+        newUrl: choice.newUrl,
+        baseTemplate: info && typeof info.BaseTemplate === 'number' ? info.BaseTemplate : reportList.baseTemplate,
+        isLibrary: info ? info.BaseType === 1 : !!reportList.isLib,
+        description: info ? (info.Description || '') : (reportList.description || ''),
+        rootFolder: rootFolder,
+        settings: settings,
+        fields: fields.map(function(f) { return snaToolsPlanField(f, siteColumnIds); }),
+        views: views.map(snaToolsPlanView),
+        contentTypes: contentTypes.map(function(ct) { return snaToolsPlanContentType(ct, true); }),
+        contentTypesEnabled: settings.ContentTypesEnabled === true,
+        ownPermissions: !!(reportList.permissions && reportList.permissions.inherits === false) ||
+            !!(info && info.HasUniqueRoleAssignments),
+        roleAssignments: (reportList.permissions && reportList.permissions.roleAssignments) || [],
+        selected: true
+    };
+}
+
+// Returns a PlanTerm from a term read from the term store, with its parent term IDs from the report.
+function snaToolsPlanTerm(term, parentIds, languageTag) {
+    var tag = languageTag || '';
+    return {
+        sourceId: snaCleanListId(term.id),
+        parentIds: (parentIds || []).map(snaCleanListId),
+        labels: (term.labels || []).filter(function(l) { return l && l.name; }).map(function(l) {
+            return { name: l.name, languageTag: l.languageTag || tag, isDefault: l.isDefault === true };
+        }),
+        descriptions: (term.descriptions || []).filter(function(d) { return d && d.description; }).map(function(d) {
+            return { description: d.description, languageTag: d.languageTag || tag };
+        }),
+        properties: (term.properties || []).map(function(p) { return { key: p.key, value: p.value }; }),
+        isDeprecated: term.isDeprecated === true,
+        isAvailableForTagging: term.isAvailableForTagging
+    };
+}
+
+// Reads the term group and every term of the chosen term sets from the source term store, and returns the plan's
+// termGroup, or null when this site collection has no term group of its own.
+async function snaToolsReadSourceTermGroup(report, chosenIds, onProgress) {
+    var taxonomy = report.taxonomy || {};
+    var groups = taxonomy.groups || [];
+    if (groups.length === 0) { return null; }
+    var siteUrl = xlsxStripSlash(report.siteUrl);
+    var termBase = '/_api/v2.1/sites/' + encodeURIComponent(taxonomy.siteCollectionId || '') + '/termStore';
+    var firstSet = (groups[0].termSets || [])[0];
+    var storeLanguage = firstSet ? firstSet.languageTag || '' : '';
+    var termGroup = { name: groups[0].groupName || '', sets: [] };
+    for (var g = 0; g < groups.length; g++) {
+        var group = groups[g];
+        var setDetails = {};
+        try {
+            var setsAnswer = await snaToolsRead(siteUrl, termBase + '/groups/' + encodeURIComponent(group.groupId) + '/sets');
+            ((setsAnswer && setsAnswer.value) || []).forEach(function(s) { setDetails[snaCleanListId(s.id)] = s; });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+        }
+        for (var s = 0; s < (group.termSets || []).length; s++) {
+            var reportSet = group.termSets[s];
+            var setId = snaCleanListId(reportSet.setId);
+            var detail = setDetails[setId] || {};
+            var planSet = {
+                sourceId: setId,
+                name: reportSet.setName || '',
+                description: reportSet.setDescription || '',
+                isOpen: detail.isOpen === true,
+                isAvailableForTagging: detail.isAvailableForTagging !== false,
+                languageTag: reportSet.languageTag || storeLanguage,
+                terms: [],
+                selected: chosenIds.indexOf(setId) > -1,
+                complete: !reportSet.termsTruncated && !reportSet.termsStoppedAtOtherSite && reportSet.parentsStatus === 'read'
+            };
+            if (planSet.selected) {
+                onProgress('Reading the terms of ' + snaMaskText(planSet.name) + '.');
+                var read = await snaToolsReadAll(siteUrl, termBase + '/sets/' + encodeURIComponent(setId) + '/terms', SNA_TERMS_PER_SET_MAX);
+                if (read.truncated || read.stoppedAtOtherSite) { planSet.complete = false; }
+                var fullById = {};
+                read.items.forEach(function(t) { fullById[snaCleanListId(t.id)] = t; });
+                var seen = {};
+                // The report holds the terms in tree order, parents before children, with their parent IDs.
+                (reportSet.terms || []).forEach(function(reportTerm) {
+                    var termId = snaCleanListId(reportTerm.termId);
+                    seen[termId] = true;
+                    var full = fullById[termId] || { id: termId, labels: [{ name: reportTerm.termName, isDefault: true }] };
+                    planSet.terms.push(snaToolsPlanTerm(full, reportTerm.parentIds, planSet.languageTag));
+                });
+                read.items.forEach(function(t) {
+                    if (seen[snaCleanListId(t.id)]) { return; }
+                    planSet.complete = false;
+                    planSet.terms.push(snaToolsPlanTerm(t, [], planSet.languageTag));
+                });
+            }
+            termGroup.sets.push(planSet);
+        }
+    }
+    return termGroup;
+}
+
+// Adds warnings that come from the plan itself: that Navigation replaces the destination's menu links, and which chosen
+// term sets weren't read in full. The columns the copy will skip are found by the check before copying (preflight.js).
+function snaToolsPlanWarnings(plan) {
+    // The copy of the menus removes the destination's own links first, so the person is told before anything changes.
+    if (plan.navigation) {
+        plan.warnings.push('Navigation replaces the links in the destination\'s menus with this site\'s links.');
+    }
+    if (plan.termGroup) {
+        plan.termGroup.sets.forEach(function(set) {
+            // A data dictionary file's own warnings already say which term sets it doesn't list in full.
+            if (set.selected && !set.complete && plan.source.kind === 'site') {
+                plan.warnings.push('Sitenalyzer couldn\'t read every term of ' + snaMaskText(set.name) + ', so the copy may leave some terms out.');
+            }
+        });
+    }
+}
+
+// Returns the content types this site can use, including the ones it gets from the sites above it, by uppercase ID.
+// Returns an empty object when they can't be read, so the copy treats those content types' columns as unknown.
+async function snaToolsReadAvailableTypes(siteUrl, progress) {
+    progress('Reading the content types this site gets from the sites above it.');
+    var byId = {};
+    try {
+        (await snaToolsReadAllWithFallback(siteUrl,
+            '/_api/web/availablecontenttypes?$select=' + SNA_TOOLS_SITE_CONTENT_TYPE_SELECT + '&$expand=FieldLinks',
+            '/_api/web/availablecontenttypes?$expand=FieldLinks')).forEach(function(item) {
+            var ct = snaToolsPlanContentType(item, false);
+            if (ct.stringId) { byId[ct.stringId.toUpperCase()] = ct; }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    return byId;
+}
+
+/**
+ * Builds the copy plan from this site's report, reading from this site what the report doesn't hold. Reads only the
+ * lists and term sets the person chose, and every one of the site's own content types except the ones the person left out.
+ * @param {object} report The collected report (see collectReport in sitenalyzer.js).
+ * @param {object} choices { lists: [{ sourceId, newTitle, newUrl }], termSetIds: [lowercase IDs], excludedContentTypeIds
+ *        [site content type IDs the person left out; a chosen list's content types are copied anyway], pages, siteAssets,
+ *        agents, navigation, siteLook, permissions, replaceExisting }.
+ * @param {function} [onProgress] Called with a plain-English sentence before each read, such as 'Reading Study Visits.'.
+ * @returns {Promise<object>} The plan (see the plan shape at the top of this file). Changes nothing.
+ * @throws {Error} snaToolsError when a read fails; the copy then stops before it changes anything.
+ */
+async function snaToolsBuildPlanFromSite(report, choices, onProgress) {
+    var progress = typeof onProgress === 'function' ? onProgress : function() {};
+    var siteUrl = xlsxStripSlash(report.siteUrl);
+    var plan = snaToolsEmptyPlan('site');
+    plan.source.siteUrl = siteUrl;
+    plan.source.siteId = (report.taxonomy && report.taxonomy.siteCollectionId) || '';
+    plan.source.webId = snaCleanListId(report.site && report.site.id);
+    plan.source.serverRelativeUrl = snaToolsSiteParts(siteUrl).serverRelativeUrl;
+    plan.source.title = (report.site && report.site.title) || '';
+    plan.source.termStoreId = snaCleanListId(report.taxonomy && report.taxonomy.termStoreId);
+    plan.pages = !!choices.pages;
+    plan.siteAssets = !!choices.siteAssets;
+    plan.agents = !!choices.agents;
+    plan.navigation = !!choices.navigation;
+    plan.siteLook = !!choices.siteLook;
+    plan.permissions = !!choices.permissions;
+    plan.replaceExisting = !!choices.replaceExisting;
+    plan.siteContent = {
+        pages: (report.pages && report.pages.pages) || [],
+        agents: (report.agents && report.agents.agents) || [],
+        skills: (report.agents && report.agents.skills) || []
+    };
+
+    // The site's own content types are copied whether or not a chosen list uses them, so they are read first.
+    var siteTypes = [];
+    progress('Reading the site content types.');
+    try {
+        siteTypes = (await snaToolsReadAllWithFallback(siteUrl,
+            '/_api/web/contenttypes?$select=' + SNA_TOOLS_SITE_CONTENT_TYPE_SELECT + '&$expand=FieldLinks',
+            '/_api/web/contenttypes?$expand=FieldLinks')).map(function(ct) { return snaToolsPlanContentType(ct, false); });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        plan.warnings.push('Sitenalyzer couldn\'t read this site\'s content types, so it will copy only the lists\' own content types that it can.');
+    }
+    var typesById = {};
+    siteTypes.forEach(function(ct) { typesById[ct.stringId.toUpperCase()] = ct; });
+    var excluded = {};
+    (choices.excludedContentTypeIds || []).forEach(function(id) { excluded[String(id).toUpperCase()] = true; });
+    var wantedTypes = {};
+    snaToolsChoosableContentTypes(siteTypes).forEach(function(ct) {
+        if (!excluded[ct.stringId.toUpperCase()]) { wantedTypes[ct.stringId.toUpperCase()] = true; }
+    });
+
+    var chosen = choices.lists || [];
+    var siteColumnIds = {};
+    var siteFields = [];
+    if (chosen.length > 0 || Object.keys(wantedTypes).length > 0) {
+        progress('Reading the site columns.');
+        siteFields = await snaToolsReadAllWithFallback(siteUrl, '/_api/web/fields?$select=' + SNA_TOOLS_FIELD_SELECT,
+            '/_api/web/fields?$select=' + SNA_TOOLS_FIELD_SELECT_SHORT);
+        siteFields.forEach(function(f) { var id = snaToolsCleanGuid(f.Id); if (id) { siteColumnIds[id] = true; } });
+    }
+
+    for (var i = 0; i < chosen.length; i++) {
+        snaToolsCheckCancelled();
+        var reportList = report.lists.filter(function(l) { return snaCleanListId(l.id) === chosen[i].sourceId; })[0];
+        if (!reportList) { continue; }
+        progress('Reading ' + snaMaskText(reportList.title) + ' (' + (i + 1) + ' of ' + chosen.length + ').');
+        plan.lists.push(await snaToolsReadSourceList(siteUrl, reportList, chosen[i], siteColumnIds));
+    }
+
+    // Site content types: the ones the person kept, the ones the chosen lists' content types come from (whether or not
+    // the person kept them), and every content type those are based on, parents first.
+    plan.lists.forEach(function(l) {
+        l.contentTypes.forEach(function(ct) { if (!ct.isBuiltIn && ct.parentStringId) { wantedTypes[ct.parentStringId.toUpperCase()] = true; } });
+    });
+    snaToolsAddTypeParents(wantedTypes, typesById);
+    plan.siteContentTypes = siteTypes.filter(function(ct) { return !ct.isBuiltIn && !ct.isHub && wantedTypes[ct.stringId.toUpperCase()]; })
+        .sort(function(a, b) { return a.stringId.length - b.stringId.length || (a.stringId < b.stringId ? -1 : 1); });
+    plan.hubContentTypes = siteTypes.filter(function(ct) { return ct.isHub && wantedTypes[ct.stringId.toUpperCase()]; })
+        .map(function(ct) { return { stringId: ct.stringId, name: ct.name }; });
+
+    // Site columns the chosen lists use (a site column added to a list has the same ID there) and the chosen content
+    // types link to. SharePoint's own site columns among them are kept apart: the destination has them already.
+    var siteById = {};
+    var planFields = siteFields.map(function(f) { return snaToolsPlanField(f, siteColumnIds); });
+    planFields.forEach(function(f) { siteById[f.id] = f; });
+    var usedIds = {};
+    var linkedIds = {};
+    var addedIds = {};
+    plan.lists.forEach(function(l) { l.fields.forEach(function(f) { if (f.isSiteColumn) { usedIds[f.id] = true; addedIds[f.id] = true; } }); });
+    // A content type that shows a column by the column's own name has no name of its own for it.
+    function ownName(link) {
+        var column = siteById[link.id];
+        return column && link.displayName === column.title ? '' : link.displayName;
+    }
+    // A subsite's own content types leave out the ones it gets from the sites above it, such as Document, so a parent
+    // missing from them is looked for among the content types the site can use.
+    var parentsById = typesById;
+    var missingParent = plan.siteContentTypes.some(function(ct) { return !!ct.parentStringId && !typesById[ct.parentStringId.toUpperCase()]; });
+    if (missingParent) { parentsById = Object.assign(await snaToolsReadAvailableTypes(siteUrl, progress), typesById); }
+    plan.siteContentTypes.forEach(function(ct) {
+        var parent = parentsById[String(ct.parentStringId).toUpperCase()];
+        var parentIds = {};
+        if (parent) { parent.fieldLinks.forEach(function(link) { parentIds[link.id] = true; }); }
+        // The columns a content type gets from the content type it's based on, such as Title from Item. The parent can be
+        // SharePoint's own, one from the content type hub, one from a site above this one, or one in the plan.
+        ct.parentLinks = parent ? parent.fieldLinks.map(function(link) {
+            return { id: link.id, required: link.required, hidden: link.hidden, displayName: ownName(link) };
+        }) : null;
+        ct.fieldLinks.forEach(function(link) {
+            usedIds[link.id] = true;
+            linkedIds[link.id] = true;
+            if (!parentIds[link.id]) { addedIds[link.id] = true; }
+            link.displayName = ownName(link);
+        });
+    });
+    plan.siteColumns = planFields.filter(function(f) { return usedIds[f.id] && !f.builtIn; });
+    // A list gets only the ones someone added (see snaToolsIsBuiltInSiteColumn); a content type can link to any of them.
+    // Only a column someone added gets its source name in the destination: SharePoint's core columns, such as Title,
+    // have names in the site's language, so a destination in another language would get the source's names.
+    plan.builtInSiteColumns = planFields.filter(function(f) { return f.builtIn && ((usedIds[f.id] && f.builtInSiteColumn) || linkedIds[f.id]); })
+        .map(function(f) { return { id: f.id, internalName: f.internalName, title: f.title, hidden: f.hidden, rename: !!(f.builtInSiteColumn && addedIds[f.id]) }; });
+
+    var chosenSets = choices.termSetIds || [];
+    plan.termGroup = await snaToolsReadSourceTermGroup(report, chosenSets, progress);
+    if (plan.navigation || plan.siteLook) { plan.siteSettings = await snaToolsSiteReadSource(plan, progress); }
+    snaToolsPlanWarnings(plan);
+    return plan;
+}
+
+/*
+This file is part of Sitenalyzer
+workbook.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-08
+Summary: Reads a data dictionary file (.xlsx, in the format in docs/data-dictionary.md) that the person chooses as the
+         source of Copy site structure, and turns it into the same copy plan that plan.js builds from this site's report.
+         Lists and libraries come from the Assets sheet, their columns from Fields, choices and term sets from Value_Sets
+         and Value_Set_Definitions, and lookups from Relationships. Each column's definition (SchemaXml) is built through
+         the DOM. The file is read only in the browser. Nothing from it is sent anywhere except the destination site.
+Notes: See README file for documentation and full license information.
+
+       Functions the rest of Tools calls (keep these names and parameters):
+       snaToolsReadWorkbook(file) -> Promise<plan>
+           file is the File from the Data dictionary file box. Resolves with a plan whose source.kind is 'workbook' and
+           source.fileName is the file's name, with every list's selected set to true. Rejects with an error from
+           snaToolsUserError whose message says what is wrong with the file and what to do, such as a file that isn't
+           .xlsx, is larger than SNA_TOOLS_WORKBOOK_MAX_BYTES, or was saved with hidden values.
+       snaToolsBuildPlanFromWorkbook(workbook) -> plan
+           workbook is a SheetJS workbook from XLSX.read(arrayBuffer, { type: 'array' }). Returns the plan, or throws an
+           error from snaToolsUserError.
+       snaToolsLogWorkbookSkipped(plan)
+           Adds a Skipped row to the results for each column and term the file can't make, and for the views of each
+           list, which a data dictionary file doesn't have. The copy calls it once, after the destination check.
+
+       A plan from a file differs from a plan from this site in these ways:
+       - source.siteUrl is '', so nothing reads from a site because of the file. source.webId is the site ID on the
+         Sources sheet when it is a GUID.
+       - Lists have no views, content types, settings, or permissions, because the file doesn't have them. A list is
+         created from template 100 (custom list), and a library from template 101 (document library).
+       - Every column is a list column (isSiteColumn false), and siteColumns and siteContentTypes are empty.
+       - A lookup column shows the Title column of the list it reads from (lookupField 'Title', lookupFieldGuessed true).
+       - A managed metadata column comes with its hidden Note column (isTaxonomyNote true), placed before it, with the
+         TextField property of the column's SchemaXml set to that Note column's ID.
+       - Term sets have languageTag '' (the destination's default language), and terms whose codes aren't GUIDs get
+         new IDs.
+       - plan.skippedItems lists what snaToolsLogWorkbookSkipped adds to the results: [{ kind, itemName,
+         listSourceId, setSourceId, note }]. A column there also has internalName, and beforeNote, which Before you
+         copy shows (see preflight.js). Those columns aren't in their list's fields, and plan.warnings doesn't name them.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Workbook Settings ###
+
+// Largest data dictionary file Sitenalyzer reads, in bytes (25 MB).
+var SNA_TOOLS_WORKBOOK_MAX_BYTES = 25 * 1024 * 1024;
+
+// The highest major format version Sitenalyzer reads. Minor versions only add sheets and columns, so 1.2 is read too.
+var SNA_TOOLS_WORKBOOK_FORMAT_MAJOR = 1;
+
+// Sheet names, from docs/data-dictionary.md. Sheets are found by name, ignoring case, never by position.
+var SNA_TOOLS_WORKBOOK_SHEETS = {
+    exportInfo: 'Export_Info', sources: 'Sources', assets: 'Assets', fields: 'Fields', valueSets: 'Value_Sets',
+    valueSetDefinitions: 'Value_Set_Definitions', relationships: 'Relationships'
+};
+
+// Messages for a file Sitenalyzer refuses.
+var SNA_TOOLS_WORKBOOK_UNREADABLE = 'Sitenalyzer couldn\'t read this file. Check that it\'s an Excel workbook (.xlsx), such as one saved with Data dictionary (.xlsx), then choose it again.';
+var SNA_TOOLS_WORKBOOK_HIDDEN = 'This file was saved with hidden values, so some names in it were replaced. Save the data dictionary again with Show hidden values on, then choose the new file.';
+
+// Columns where Sitenalyzer hides values that look like personal information (see HIDDEN_VALUE_COLUMNS in exportToXLSX).
+var SNA_TOOLS_WORKBOOK_HIDDEN_COLUMNS = ['source_name', 'database_or_site', 'description', 'asset_display_name', 'display_name',
+    'calculation_formula', 'default_value', 'value_set_name', 'value_code', 'value_label', 'value_definition',
+    'parent_value_code', 'synonyms', 'value_set_root_code'];
+// Columns that hold names and choices. A hidden-value placeholder here always stops the read, because the copy would
+// give a list, column, choice, or term the placeholder as its name.
+var SNA_TOOLS_WORKBOOK_NAME_COLUMNS = ['asset_name', 'asset_display_name', 'internal_name', 'display_name', 'value_set_name',
+    'value_code', 'value_label', 'synonyms', 'calculation_formula', 'default_value'];
+
+// Columns SharePoint gives every list or library, or adds by itself, so a file's row for one is never created.
+// Title isn't created either, but its display name and Required setting are in the plan for the Title column.
+var SNA_TOOLS_WORKBOOK_BUILT_IN_NAMES = ['ID', 'Title', 'Created', 'Modified', 'Author', 'Editor', 'Attachments', 'FileLeafRef',
+    'FileRef', 'FileDirRef', 'ContentType', 'ContentTypeId', 'LinkTitle', 'LinkTitleNoMenu', 'LinkFilename', 'LinkFilenameNoMenu',
+    'DocIcon', 'FileSizeDisplay', 'File_x0020_Size', 'File_x0020_Type', 'CheckoutUser', 'SharedWithUsers', 'SharedWithDetails',
+    'TaxCatchAll', 'TaxCatchAllLabel', 'TaxKeyword', 'TaxKeywordTaxHTField', 'AppAuthor', 'AppEditor', 'ItemChildCount',
+    'FolderChildCount', 'Edit', 'SelectTitle', '_UIVersionString', '_ExtendedDescription', '_CheckinComment', '_CopySource',
+    '_ModerationStatus', '_ModerationComments', 'ComplianceAssetId', 'MediaServiceImageTags'];
+
+// Column types a file can name in native_type that Sitenalyzer knows how to make.
+var SNA_TOOLS_WORKBOOK_NATIVE_TYPES = ['Text', 'Note', 'Number', 'Currency', 'DateTime', 'Boolean', 'Choice', 'MultiChoice',
+    'Lookup', 'LookupMulti', 'User', 'UserMulti', 'URL', 'TaxonomyFieldType', 'TaxonomyFieldTypeMulti', 'Calculated'];
+
+// The SharePoint column type for each display_type, for files from other tools that leave native_type blank.
+// Keys are lowercase. Multi-valued choices, lookups, people, and managed metadata get the Multi types.
+var SNA_TOOLS_WORKBOOK_DISPLAY_TYPES = {
+    text: 'Text', number: 'Number', currency: 'Currency', datetime: 'DateTime', boolean: 'Boolean', choice: 'Choice',
+    lookup: 'Lookup', person: 'User', hyperlink: 'URL', managedmetadata: 'TaxonomyFieldType', calculated: 'Calculated'
+};
+var SNA_TOOLS_WORKBOOK_MULTI_TYPES = { Choice: 'MultiChoice', Lookup: 'LookupMulti', User: 'UserMulti', TaxonomyFieldType: 'TaxonomyFieldTypeMulti' };
+
+// The names SharePoint's screens use for column types Sitenalyzer can't make from a file, keyed by the type the file
+// names, in lowercase. A warning names a type only when it is here, such as Image for Thumbnail; other types are left
+// out of the warning, because names such as Geolocation or Integer don't appear in SharePoint's screens.
+var SNA_TOOLS_WORKBOOK_SHOWN_TYPE_NAMES = { thumbnail: 'Image', image: 'Image', location: 'Location' };
+
+// What to do about a column the copy skips, at the end of each warning and results note about it.
+var SNA_TOOLS_WORKBOOK_SKIPPED_COLUMN_STEP = 'Make it by hand in the destination after the copy if you need it.';
+
+// Types a calculated column can return, from native_type such as 'Calculated (Number)'.
+var SNA_TOOLS_WORKBOOK_RESULT_TYPES = ['Text', 'Number', 'Currency', 'DateTime', 'Boolean'];
+
+// Types that can be indexed and that can require unique values.
+var SNA_TOOLS_WORKBOOK_INDEXABLE_TYPES = ['Text', 'Number', 'Currency', 'DateTime', 'Boolean', 'Choice', 'Lookup', 'User', 'TaxonomyFieldType'];
+
+// Types that keep a default value from the file. Person, lookup, and managed metadata defaults refer to people, items,
+// and terms in the site the file came from, so they are left out.
+var SNA_TOOLS_WORKBOOK_DEFAULT_TYPES = ['Text', 'Note', 'Number', 'Currency', 'DateTime', 'Boolean', 'Choice', 'MultiChoice'];
+
+// Names and addresses of lists and libraries that SharePoint keeps for the site itself, or that the switches copy, in
+// lowercase. A file's list with one of these names or addresses isn't offered.
+var SNA_TOOLS_WORKBOOK_SKIPPED_LISTS = ['site pages', 'sitepages', 'site assets', 'siteassets', 'agent assets', 'agentassets',
+    'taxonomyhiddenlist', 'user information list', 'userinfo', 'style library', 'form templates', 'formservertemplates'];
+
+// Where the XML of a managed metadata column's settings names its types, as SharePoint writes it.
+var SNA_TOOLS_XML_SCHEMA_NS = 'http://www.w3.org/2001/XMLSchema';
+var SNA_TOOLS_XML_INSTANCE_NS = 'http://www.w3.org/2001/XMLSchema-instance';
+var SNA_TOOLS_XMLNS_NS = 'http://www.w3.org/2000/xmlns/';
+var SNA_TOOLS_EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
+// Characters that XML 1.0 doesn't allow, which a cell can still hold. They are removed from every cell.
+var SNA_TOOLS_WORKBOOK_BAD_XML_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
+
+// ### Reading Cells ###
+
+// Returns a cell as trimmed text without characters XML can't hold. Every cell is text in the format.
+function snaToolsWorkbookText(value) {
+    if (value === null || value === undefined) { return ''; }
+    return String(value).replace(SNA_TOOLS_WORKBOOK_BAD_XML_CHARS, '').trim();
+}
+
+// Returns the sheet with this name, ignoring case, or null.
+function snaToolsWorkbookSheet(workbook, name) {
+    var names = (workbook && Array.isArray(workbook.SheetNames)) ? workbook.SheetNames : [];
+    var wanted = name.toLowerCase();
+    for (var i = 0; i < names.length; i++) {
+        if (String(names[i]).trim().toLowerCase() === wanted && workbook.Sheets) { return workbook.Sheets[names[i]] || null; }
+    }
+    return null;
+}
+
+// Returns a sheet's rows as arrays of cell text, or [] for a missing sheet.
+function snaToolsWorkbookGrid(sheet) {
+    if (!sheet) { return []; }
+    return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false, blankrows: false }).map(function(row) {
+        return Array.isArray(row) ? row.map(snaToolsWorkbookText) : [];
+    });
+}
+
+// Returns a sheet's rows as objects keyed by column name in lowercase, such as row.asset_id, found by name from the
+// header row. The objects have no prototype, so a column named like a built-in property can't change how they work.
+// A missing column reads as blank. Rows with no text are left out.
+function snaToolsWorkbookRows(sheet) {
+    var grid = snaToolsWorkbookGrid(sheet);
+    if (grid.length === 0) { return []; }
+    var header = grid[0].map(function(name) { return name.toLowerCase(); });
+    var rows = [];
+    for (var r = 1; r < grid.length; r++) {
+        var cells = grid[r];
+        if (!cells.some(function(c) { return c !== ''; })) { continue; }
+        var row = Object.create(null);
+        header.forEach(function(name, c) {
+            if (name && !(name in row)) { row[name] = cells[c] || ''; }
+        });
+        rows.push(row);
+    }
+    return rows;
+}
+
+// Returns one cell of a row from snaToolsWorkbookRows, or '' when the column is missing.
+function snaToolsCell(row, name) {
+    return (row && typeof row[name] === 'string') ? row[name] : '';
+}
+
+// Returns the values of a cell that holds several, separated by a semicolon and a space, such as 'Placebo; Control arm'.
+function snaToolsWorkbookValues(text) {
+    return String(text || '').split(';').map(function(v) { return v.trim(); }).filter(function(v) { return v !== ''; });
+}
+
+// Returns true for Y, false for N, and null for a blank or anything else, which means unknown.
+function snaToolsWorkbookYes(text) {
+    var value = String(text || '').trim().toLowerCase();
+    if (value === 'y' || value === 'yes' || value === 'true') { return true; }
+    if (value === 'n' || value === 'no' || value === 'false') { return false; }
+    return null;
+}
+
+// Returns a number from a cell, or null when the cell isn't a plain number.
+function snaToolsWorkbookNumber(text) {
+    var value = String(text || '').trim();
+    if (!/^-?\d+(\.\d+)?$/.test(value)) { return null; }
+    var number = Number(value);
+    return isFinite(number) ? number : null;
+}
+
+// Returns rows sorted by a position column such as field_order. Rows with no position keep their order, after the others.
+function snaToolsWorkbookSortBy(rows, column) {
+    return rows.map(function(row, index) { return { row: row, index: index, order: snaToolsWorkbookNumber(snaToolsCell(row, column)) }; })
+        .sort(function(a, b) {
+            if (a.order !== null && b.order !== null && a.order !== b.order) { return a.order - b.order; }
+            if ((a.order === null) !== (b.order === null)) { return a.order === null ? 1 : -1; }
+            return a.index - b.index;
+        })
+        .map(function(item) { return item.row; });
+}
+
+// Returns rows grouped by the lowercase text of one column, as an object with no prototype.
+function snaToolsWorkbookGroup(rows, column) {
+    var groups = Object.create(null);
+    rows.forEach(function(row) {
+        var key = snaToolsCell(row, column).toLowerCase();
+        if (!key) { return; }
+        if (!groups[key]) { groups[key] = []; }
+        groups[key].push(row);
+    });
+    return groups;
+}
+
+// ### Checking the File ###
+
+// Returns a pattern that finds a hidden-value placeholder, such as [phone number hidden], from the labels Sitenalyzer uses.
+function snaToolsHiddenPlaceholderPattern() {
+    var labels = SNA_HIDDEN_VALUE_PATTERNS.map(function(p) { return p.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
+    return new RegExp('\\[(?:' + labels.join('|') + ') hidden\\]', 'i');
+}
+
+// True when the hidden_values row of Export_Info says values were hidden. Sitenalyzer writes a sentence that starts
+// with "Hidden." or "Included."; other tools may write Y or N.
+function snaToolsWorkbookSaysHidden(text) {
+    return /^\s*(hidden|y|yes|true)\b/i.test(String(text || ''));
+}
+
+// Throws the hidden-values message when a name or choice holds a hidden-value placeholder, or when the file says values
+// were hidden and any column where Sitenalyzer hides values holds one. A file saved with Show hidden values off says
+// "Hidden." even when nothing looked like personal information, so the placeholders decide.
+function snaToolsCheckHiddenValues(sheetsRows, saysHidden) {
+    var pattern = snaToolsHiddenPlaceholderPattern();
+    var columns = SNA_TOOLS_WORKBOOK_NAME_COLUMNS.slice();
+    if (saysHidden) {
+        SNA_TOOLS_WORKBOOK_HIDDEN_COLUMNS.forEach(function(c) { if (columns.indexOf(c) === -1) { columns.push(c); } });
+    }
+    sheetsRows.forEach(function(rows) {
+        rows.forEach(function(row) {
+            columns.forEach(function(column) {
+                if (pattern.test(snaToolsCell(row, column))) { throw snaToolsUserError(SNA_TOOLS_WORKBOOK_HIDDEN); }
+            });
+        });
+    });
+}
+
+// Throws when the file's format version (the format_version row) is one Sitenalyzer can't read. A blank version means unknown, and is read.
+function snaToolsCheckFormatVersion(version) {
+    if (!version) { return; }
+    var shown = snaMaskText(version.length > 20 ? version.substring(0, 20) + '...' : version);
+    var match = /^(\d+)(?:\.\d+)*$/.exec(version);
+    if (!match || Number(match[1]) < 1) {
+        throw snaToolsUserError('Sitenalyzer couldn\'t tell which data dictionary format this file uses, because the format version in the file is "' +
+            shown + '". Choose a file saved with Data dictionary (.xlsx).');
+    }
+    if (Number(match[1]) > SNA_TOOLS_WORKBOOK_FORMAT_MAJOR) {
+        throw snaToolsUserError('This file uses data dictionary format ' + shown + ', but Sitenalyzer reads only format 1 files, such as format 1.1. Choose a file saved with Data dictionary (.xlsx).');
+    }
+}
+
+// ### Names and Addresses ###
+
+// Returns an internal name SharePoint accepts, with each character other than a letter, number, or underscore written
+// the way SharePoint writes it, such as 'Study_x0020_Arm' for 'Study Arm'. A first character that is a number is
+// written the same way, such as '_x0031_st_x0020_Visit' for '1st Visit'.
+function snaToolsWorkbookInternalName(text) {
+    var name = '';
+    var value = String(text || '');
+    for (var i = 0; i < value.length; i++) {
+        var c = value.charAt(i);
+        var keep = /[A-Za-z_]/.test(c) || (i > 0 && /[0-9]/.test(c));
+        name += keep ? c : '_x' + ('000' + value.charCodeAt(i).toString(16)).slice(-4) + '_';
+    }
+    return name;
+}
+
+// Returns a list's address from the file. For a file from Sitenalyzer, it is the part of the list's address after the
+// site and /Lists/, such as 'StudyVisits' for https://contoso.sharepoint.com/sites/a/Lists/StudyVisits/AllItems.aspx,
+// or 'Shared Documents' for a library whose default view is .../Shared Documents/Forms/AllItems.aspx, because asset_name
+// holds SharePoint's internal name, such as StudyVisitsList. Without an address, it uses asset_name, without the 'List'
+// that SharePoint adds to the end of a list's internal name and with its _x0020_ codes turned back into characters.
+function snaToolsWorkbookAddress(row, sitePath, fromSitenalyzer, isLibrary) {
+    // Other tools write the name programs use in asset_name, such as a table name, so it is the address.
+    if (!fromSitenalyzer && snaToolsCell(row, 'asset_name')) { return snaToolsCell(row, 'asset_name'); }
+    var candidates = [snaToolsCell(row, 'url'), snaToolsCell(row, 'qualified_path')];
+    for (var i = 0; i < candidates.length; i++) {
+        var path = '';
+        try { path = new URL(candidates[i], 'https://example.invalid').pathname; } catch (e) { path = ''; }
+        try { path = decodeURIComponent(path); } catch (e) { /* Kept as it is. */ }
+        if (!candidates[i] || !path || path === '/') { continue; }
+        var rest = path;
+        if (sitePath && sitePath !== '/' && rest.toLowerCase().indexOf(sitePath.toLowerCase() + '/') === 0) { rest = rest.substring(sitePath.length); }
+        var parts = rest.split('/').filter(function(p) { return p; });
+        if (parts.length === 0) { continue; }
+        var listsAt = parts.map(function(p) { return p.toLowerCase(); }).indexOf('lists');
+        if (listsAt > -1 && listsAt < parts.length - 1) { return parts[listsAt + 1]; }
+        var formsAt = parts.map(function(p) { return p.toLowerCase(); }).indexOf('forms');
+        if (formsAt > 0) { return parts[formsAt - 1]; }
+        if (/\.aspx$/i.test(parts[parts.length - 1]) && parts.length > 1) { return parts[parts.length - 2]; }
+        return parts[parts.length - 1];
+    }
+    var name = snaToolsCell(row, 'asset_name').replace(/_x([0-9a-f]{4})_/gi, function(all, hex) { return String.fromCharCode(parseInt(hex, 16)); });
+    if (fromSitenalyzer && !isLibrary && /.List$/.test(name)) { name = name.substring(0, name.length - 4); }
+    return name || snaToolsCell(row, 'asset_display_name');
+}
+
+// True when a list from the file is one SharePoint keeps for the site itself or that a switch copies, by name or address.
+function snaToolsWorkbookIsSkippedList(title, address) {
+    var t = String(title || '').toLowerCase();
+    var a = String(address || '').toLowerCase();
+    if (SNA_TOOLS_WORKBOOK_SKIPPED_LISTS.indexOf(t) > -1 || SNA_TOOLS_WORKBOOK_SKIPPED_LISTS.indexOf(a) > -1) { return true; }
+    // The Events list SharePoint keeps for the site, which Sitenalyzer counts as a system list.
+    return t === 'events' && a === 'events';
+}
+
+// ### Column Definitions ###
+
+// Adds one <Property> to a managed metadata column's settings, typed the way SharePoint writes it. value null leaves
+// the property without a value.
+function snaToolsAddTaxonomyProperty(doc, parent, index, name, value, xsdType) {
+    var property = doc.createElement('Property');
+    var nameElement = doc.createElement('Name');
+    nameElement.textContent = name;
+    property.appendChild(nameElement);
+    if (value !== null) {
+        var valueElement = doc.createElement('Value');
+        valueElement.setAttributeNS(SNA_TOOLS_XMLNS_NS, 'xmlns:q' + index, SNA_TOOLS_XML_SCHEMA_NS);
+        valueElement.setAttributeNS(SNA_TOOLS_XMLNS_NS, 'xmlns:p4', SNA_TOOLS_XML_INSTANCE_NS);
+        valueElement.setAttributeNS(SNA_TOOLS_XML_INSTANCE_NS, 'p4:type', 'q' + index + ':' + xsdType);
+        valueElement.textContent = value;
+        property.appendChild(valueElement);
+    }
+    parent.appendChild(property);
+}
+
+/**
+ * Builds a column's definition (SchemaXml), a <Field> element, through the DOM, so no value from the file can change
+ * the XML around it.
+ * @param {object} spec { id, type, internalName, title, description, required (true, false, or null for unknown),
+ *        indexed, unique, maxLength, min, max, decimals, dateFormat, mult, fillIn (true, false, or null), choices [],
+ *        defaultValue, formula, resultType, fieldRefs [], lookupListId, lookupWebId, showField, taxonomy
+ *        { termSetId, anchorId, textFieldId, open, listId }, note { hidden } }.
+ * @returns {string} The <Field> element as text.
+ */
+function snaToolsWorkbookSchemaXml(spec) {
+    var doc = document.implementation.createDocument(null, 'Field', null);
+    var field = doc.documentElement;
+    function set(name, value) { if (value !== null && value !== undefined && value !== '') { field.setAttribute(name, String(value)); } }
+    function flag(value) { return value === true ? 'TRUE' : (value === false ? 'FALSE' : null); }
+    function child(name, text) { var element = doc.createElement(name); element.textContent = text; field.appendChild(element); return element; }
+
+    set('Type', spec.type);
+    set('ID', '{' + spec.id + '}');
+    set('Name', spec.internalName);
+    set('StaticName', spec.internalName);
+    set('DisplayName', spec.title);
+    set('Description', spec.description);
+    set('Required', flag(spec.required));
+    if (spec.indexed || spec.unique) { set('Indexed', 'TRUE'); }
+    if (spec.unique) { set('EnforceUniqueValues', 'TRUE'); }
+    set('MaxLength', spec.maxLength);
+    set('Min', spec.min);
+    set('Max', spec.max);
+    set('Decimals', spec.decimals);
+    set('Format', spec.dateFormat);
+    if (spec.mult) { set('Mult', 'TRUE'); }
+
+    if (spec.type === 'Choice' || spec.type === 'MultiChoice') {
+        set('FillInChoice', flag(spec.fillIn));
+    }
+    if (spec.type === 'URL') { set('Format', 'Hyperlink'); }
+    if (spec.type === 'User' || spec.type === 'UserMulti') {
+        set('List', 'UserInfo');
+        set('ShowField', 'ImnName');
+        set('UserSelectionMode', 'PeopleOnly');
+        set('UserSelectionScope', '0');
+    }
+    if (spec.type === 'Lookup' || spec.type === 'LookupMulti') {
+        set('List', '{' + spec.lookupListId + '}');
+        set('WebId', spec.lookupWebId);
+        set('ShowField', spec.showField);
+    }
+    if (spec.type === 'Calculated') {
+        set('ResultType', spec.resultType);
+        set('ReadOnly', 'TRUE');
+    }
+    if (spec.note) {
+        set('ShowInViewForms', 'FALSE');
+        set('Hidden', 'TRUE');
+        set('CanToggleHidden', 'TRUE');
+    }
+    if (spec.taxonomy) {
+        set('ShowField', 'Term1033');
+        if (spec.mult) { set('Sortable', 'FALSE'); }
+        if (spec.taxonomy.listId) { set('List', '{' + spec.taxonomy.listId + '}'); }
+    }
+
+    if (spec.defaultValue !== undefined && spec.defaultValue !== null && spec.defaultValue !== '') { child('Default', spec.defaultValue); }
+    if (spec.choices && spec.choices.length > 0) {
+        var choices = doc.createElement('CHOICES');
+        spec.choices.forEach(function(text) {
+            var choice = doc.createElement('CHOICE');
+            choice.textContent = text;
+            choices.appendChild(choice);
+        });
+        field.appendChild(choices);
+    }
+    if (spec.type === 'Calculated') {
+        child('Formula', spec.formula || '');
+        if (spec.fieldRefs && spec.fieldRefs.length > 0) {
+            var refs = doc.createElement('FieldRefs');
+            spec.fieldRefs.forEach(function(name) {
+                var ref = doc.createElement('FieldRef');
+                ref.setAttribute('Name', name);
+                refs.appendChild(ref);
+            });
+            field.appendChild(refs);
+        }
+    }
+    if (spec.taxonomy) {
+        child('Default', '');
+        var customization = doc.createElement('Customization');
+        var properties = doc.createElement('ArrayOfProperty');
+        var t = spec.taxonomy;
+        snaToolsAddTaxonomyProperty(doc, properties, 1, 'SspId', SNA_TOOLS_EMPTY_GUID, 'string');
+        snaToolsAddTaxonomyProperty(doc, properties, 2, 'TermSetId', t.termSetId || SNA_TOOLS_EMPTY_GUID, 'string');
+        snaToolsAddTaxonomyProperty(doc, properties, 3, 'AnchorId', t.anchorId || SNA_TOOLS_EMPTY_GUID, 'string');
+        snaToolsAddTaxonomyProperty(doc, properties, 4, 'UserCreated', 'false', 'boolean');
+        snaToolsAddTaxonomyProperty(doc, properties, 5, 'Open', t.open ? 'true' : 'false', 'boolean');
+        snaToolsAddTaxonomyProperty(doc, properties, 6, 'TextField', '{' + t.textFieldId + '}', 'string');
+        snaToolsAddTaxonomyProperty(doc, properties, 7, 'IsPathRendered', 'false', 'boolean');
+        snaToolsAddTaxonomyProperty(doc, properties, 8, 'IsKeyword', 'false', 'boolean');
+        snaToolsAddTaxonomyProperty(doc, properties, 9, 'CreateValuesInEditForm', 'false', 'boolean');
+        customization.appendChild(properties);
+        field.appendChild(customization);
+    }
+    return snaToolsSerializeXml(field);
+}
+
+// Returns an empty PlanField with the shape plan.js documents, for a column from a file.
+function snaToolsWorkbookPlanField(id, internalName, title, type) {
+    return {
+        id: id, internalName: internalName, staticName: internalName, title: title, description: '', type: type,
+        schemaXml: '', customFormatter: '', isSiteColumn: false, lookupListId: '', lookupWebId: '', lookupField: '',
+        lookupFieldGuessed: false, isDependentLookup: false, primaryFieldId: '', termSetId: '', anchorId: '', sspId: '',
+        isTaxonomy: false, isTaxonomyNote: false, formula: '', fieldRefs: [], builtIn: false, hidden: false, required: false, group: ''
+    };
+}
+
+// Returns the name of the SharePoint column that every list has with this internal name, ignoring case, such as
+// 'Created' for 'created', or ''.
+function snaToolsWorkbookBuiltInName(internalName) {
+    var wanted = String(internalName || '').toLowerCase();
+    return SNA_TOOLS_WORKBOOK_BUILT_IN_NAMES.filter(function(name) { return name.toLowerCase() === wanted; })[0] || '';
+}
+
+// Returns the value for key in one of the maps above, or '' when the map doesn't have it. Only the map's own keys
+// count, so a cell such as "constructor" doesn't match a property every object has.
+function snaToolsWorkbookMapValue(map, key) {
+    return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : '';
+}
+
+// Returns the column type of a Fields row: { type, resultType, builtIn, shownType, nativeType }. type is '' when
+// Sitenalyzer can't make the column; shownType is the type the file names, for the warning; nativeType is native_type
+// without the result type of a calculated column, such as Counter.
+function snaToolsWorkbookFieldType(row, internalName) {
+    var native = snaToolsCell(row, 'native_type');
+    var nativeBase = native.replace(/\s*\(.*\)\s*$/, '').trim();
+    var resultMatch = /\(([^)]+)\)/.exec(native);
+    var display = snaToolsCell(row, 'display_type');
+    var multi = snaToolsWorkbookYes(snaToolsCell(row, 'multi_valued')) === true;
+    var result = { type: '', resultType: '', builtIn: false, shownType: native || display, nativeType: nativeBase };
+    if (SNA_TOOLS_BUILT_IN_FIELD_TYPES.indexOf(nativeBase) > -1 || snaToolsWorkbookBuiltInName(internalName) ||
+            SITEANALYZER_SKIP_FIELDS.has(internalName)) {
+        result.builtIn = true;
+    }
+    var type = '';
+    if (SNA_TOOLS_WORKBOOK_NATIVE_TYPES.indexOf(nativeBase) > -1) {
+        type = nativeBase;
+    } else if (snaToolsWorkbookMapValue(SNA_TOOLS_WORKBOOK_DISPLAY_TYPES, display.toLowerCase())) {
+        type = snaToolsWorkbookMapValue(SNA_TOOLS_WORKBOOK_DISPLAY_TYPES, display.toLowerCase());
+        if (multi && SNA_TOOLS_WORKBOOK_MULTI_TYPES[type]) { type = SNA_TOOLS_WORKBOOK_MULTI_TYPES[type]; }
+        var length = snaToolsWorkbookNumber(snaToolsCell(row, 'length'));
+        if (type === 'Text' && length !== null && length > 255) { type = 'Note'; }
+        if (type === 'Calculated' && SNA_TOOLS_WORKBOOK_RESULT_TYPES.indexOf(display) > -1) { result.resultType = display; }
+    }
+    if (type === 'Calculated') {
+        var asked = resultMatch ? resultMatch[1].trim() : '';
+        if (SNA_TOOLS_WORKBOOK_RESULT_TYPES.indexOf(asked) > -1) { result.resultType = asked; }
+        if (!result.resultType) { result.resultType = SNA_TOOLS_WORKBOOK_RESULT_TYPES.indexOf(display) > -1 ? display : 'Text'; }
+    }
+    result.type = type;
+    return result;
+}
+
+// Returns a default value the column can hold, or null when the file's default doesn't fit the column type.
+function snaToolsWorkbookDefault(type, text) {
+    if (!text) { return ''; }
+    if (type === 'Boolean') {
+        if (text === '1' || text === '0') { return text; }
+        var yes = snaToolsWorkbookYes(text);
+        return yes === null ? null : (yes ? '1' : '0');
+    }
+    if (type === 'Number' || type === 'Currency') { return snaToolsWorkbookNumber(text) === null ? null : text; }
+    if (type === 'DateTime') { return (/^\[today\]$/i.test(text) || /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z?)?$/.test(text)) ? text : null; }
+    return text;
+}
+
+// Returns the internal names a formula uses, from the names in square brackets, such as [Visit Count]. Each name is
+// matched to a column of the same list by display name, then by internal name, ignoring case.
+function snaToolsWorkbookFormulaRefs(formula, columns) {
+    var refs = [];
+    var pattern = /\[([^\]]+)\]/g;
+    var match;
+    while ((match = pattern.exec(String(formula || ''))) !== null) {
+        var wanted = match[1].trim().toLowerCase();
+        var column = columns.filter(function(c) { return c.title.toLowerCase() === wanted; })[0] ||
+            columns.filter(function(c) { return c.internalName.toLowerCase() === wanted; })[0];
+        if (column && refs.indexOf(column.internalName) === -1) { refs.push(column.internalName); }
+    }
+    return refs;
+}
+
+// ### Term Sets ###
+
+// Orders terms so each term comes after the term it is listed under (its first parent), keeping the file's order
+// otherwise. A parent that would make a loop is dropped, and the term is counted in loops.
+function snaToolsWorkbookTreeOrder(terms) {
+    var byId = Object.create(null);
+    terms.forEach(function(t) { byId[t.sourceId] = t; });
+    var placed = Object.create(null);
+    var visiting = Object.create(null);
+    var ordered = [];
+    var loops = 0;
+    function place(term) {
+        if (placed[term.sourceId]) { return; }
+        visiting[term.sourceId] = true;
+        term.parentIds = term.parentIds.filter(function(parentId) {
+            if (visiting[parentId]) { loops++; return false; }
+            return true;
+        });
+        if (term.parentIds.length > 0 && byId[term.parentIds[0]]) { place(byId[term.parentIds[0]]); }
+        delete visiting[term.sourceId];
+        if (!placed[term.sourceId]) { placed[term.sourceId] = true; ordered.push(term); }
+    }
+    terms.forEach(place);
+    return { terms: ordered, loops: loops };
+}
+
+/**
+ * Reads the term sets of a file: the value sets kept in the term store, and the value sets of managed metadata columns.
+ * @param {object} sheets { assets, valueSets, valueSetDefinitions } rows, from snaToolsWorkbookRows.
+ * @param {object} taxonomySetIds The value_set_id of each managed metadata column, in lowercase, as keys.
+ * @param {object} notes { warnings [], skippedItems [] } to add to.
+ * @returns {object} { sets: [PlanTermSet], byValueSetId: { lowercase value_set_id: { sourceId, copied, termIdByCode } } }.
+ *          copied is true for a term set the copy makes. A term set the file lists no terms of keeps its own ID when it
+ *          has one, such as a term set shared with every site collection, and has copied false.
+ */
+function snaToolsWorkbookTermSets(sheets, taxonomySetIds, notes) {
+    var termStoreAssets = Object.create(null);
+    sheets.assets.forEach(function(row) {
+        if (/term ?store/i.test(snaToolsCell(row, 'asset_type'))) { termStoreAssets[snaToolsCell(row, 'asset_id').toLowerCase()] = true; }
+    });
+    var definitions = Object.create(null);
+    sheets.valueSetDefinitions.forEach(function(row) {
+        var id = snaToolsCell(row, 'value_set_id').toLowerCase();
+        if (id && !definitions[id]) { definitions[id] = row; }
+    });
+    var values = snaToolsWorkbookGroup(sheets.valueSets, 'value_set_id');
+    var ids = [];
+    Object.keys(definitions).forEach(function(id) {
+        if (termStoreAssets[snaToolsCell(definitions[id], 'asset_id').toLowerCase()]) { ids.push(id); }
+    });
+    Object.keys(taxonomySetIds).forEach(function(id) { if (ids.indexOf(id) === -1) { ids.push(id); } });
+
+    var result = { sets: [], byValueSetId: Object.create(null) };
+    ids.forEach(function(id) {
+        var definition = definitions[id] || null;
+        var rows = values[id] || [];
+        var listed = definition ? snaToolsCell(definition, 'values_listed').toLowerCase() : (rows.length > 0 ? 'all' : 'none');
+        var info = { sourceId: snaToolsCleanGuid(id), copied: false, termIdByCode: Object.create(null) };
+        result.byValueSetId[id] = info;
+        if (listed === 'none' || (!listed && rows.length === 0)) { return; }
+        var name = (definition && snaToolsCell(definition, 'value_set_name')) || (rows[0] ? snaToolsCell(rows[0], 'value_set_name') : '');
+        if (!name) {
+            info.sourceId = '';
+            notes.warnings.push('The file has a term set with no name, so Sitenalyzer will skip it and the columns that use it.');
+            return;
+        }
+        info.sourceId = info.sourceId || snaToolsNewGuid();
+        info.copied = true;
+        var shownName = snaMaskText(name);
+        var set = {
+            sourceId: info.sourceId,
+            name: name,
+            description: (definition && snaToolsCell(definition, 'description')) || (rows[0] ? snaToolsCell(rows[0], 'description') : ''),
+            isOpen: false, isAvailableForTagging: true, languageTag: '', terms: [], selected: true, complete: listed === 'all'
+        };
+
+        // Each term's ID is kept by its code, so the codes in parent_value_code can be matched after every term is read.
+        var unnamed = 0;
+        var repeated = 0;
+        var parentCodes = [];
+        snaToolsWorkbookSortBy(rows, 'display_order').forEach(function(row) {
+            var code = snaToolsCell(row, 'value_code');
+            var label = snaToolsCell(row, 'value_label') || (snaToolsCleanGuid(code) ? '' : code);
+            if (!label) { unnamed++; return; }
+            var key = (code || label).toLowerCase();
+            if (info.termIdByCode[key]) { repeated++; return; }
+            var termId = snaToolsCleanGuid(code) || snaToolsNewGuid();
+            info.termIdByCode[key] = termId;
+            var synonyms = snaToolsWorkbookValues(snaToolsCell(row, 'synonyms')).filter(function(s) { return s !== label; });
+            var description = snaToolsCell(row, 'value_definition');
+            set.terms.push({
+                sourceId: termId,
+                parentIds: [],
+                labels: [{ name: label, languageTag: '', isDefault: true }].concat(synonyms.map(function(s) {
+                    return { name: s, languageTag: '', isDefault: false };
+                })),
+                descriptions: description ? [{ description: description, languageTag: '' }] : [],
+                properties: [],
+                isDeprecated: snaToolsWorkbookYes(snaToolsCell(row, 'active')) === false,
+                isAvailableForTagging: true
+            });
+            parentCodes.push(snaToolsWorkbookValues(snaToolsCell(row, 'parent_value_code')));
+        });
+        var lostParents = 0;
+        set.terms.forEach(function(term, index) {
+            parentCodes[index].forEach(function(code) {
+                var parentId = info.termIdByCode[code.toLowerCase()];
+                if (parentId && parentId !== term.sourceId && term.parentIds.indexOf(parentId) === -1) { term.parentIds.push(parentId); }
+                else if (!parentId) { lostParents++; }
+            });
+        });
+        var tree = snaToolsWorkbookTreeOrder(set.terms);
+        set.terms = tree.terms;
+        result.sets.push(set);
+
+        if (!set.complete) {
+            notes.warnings.push('The file doesn\'t list every term of ' + shownName + ', so the copy leaves out the terms that aren\'t in it.');
+        }
+        var hierarchy = definition ? snaToolsCell(definition, 'hierarchy_listed').toLowerCase() : '';
+        if (hierarchy === 'none') {
+            notes.warnings.push('The file doesn\'t say which term each term of ' + shownName + ' sits under, so the copy puts every term at the top of the term set.');
+        } else if (hierarchy === 'some' || lostParents > 0 || tree.loops > 0) {
+            notes.warnings.push('The file doesn\'t say which term some terms of ' + shownName + ' sit under, so the copy puts those terms at the top of the term set or under their other parent.');
+        }
+        if (unnamed > 0) {
+            notes.warnings.push('The file lists ' + snaCountText(unnamed, 'term', 'terms') + ' of ' + shownName + ' with no name, so Sitenalyzer will skip ' +
+                (unnamed === 1 ? 'it.' : 'them.'));
+            notes.skippedItems.push({ kind: SNA_TOOLS_KINDS.term, itemName: snaCountText(unnamed, 'term with no name', 'terms with no name') + ' in ' + name,
+                listSourceId: '', setSourceId: set.sourceId,
+                note: 'Sitenalyzer skipped ' + (unnamed === 1 ? 'this term because it has' : 'these terms because they have') +
+                    ' no name in the file. Add ' + (unnamed === 1 ? 'it' : 'them') + ' by hand in the destination if you need ' + (unnamed === 1 ? 'it.' : 'them.') });
+        }
+        if (repeated > 0) {
+            notes.warnings.push('The file lists ' + snaCountText(repeated, 'term', 'terms') + ' of ' + shownName + ' more than once, so Sitenalyzer will copy each term once.');
+        }
+    });
+    return result;
+}
+
+// ### Columns ###
+
+// Adds a column the copy will skip to the skipped items, with its internal name, so a calculated column that uses it
+// is skipped too, and two notes with the same reason: note for the results, and beforeNote for Before you copy (see
+// preflight.js). Both end with nextStep, what the person can do instead, which is SNA_TOOLS_WORKBOOK_SKIPPED_COLUMN_STEP
+// when left out. column is { title, internalName }.
+function snaToolsWorkbookSkipColumn(notes, list, column, reason, nextStep) {
+    var step = nextStep || SNA_TOOLS_WORKBOOK_SKIPPED_COLUMN_STEP;
+    notes.skippedItems.push({ kind: SNA_TOOLS_KINDS.column, itemName: column.title, internalName: column.internalName, listSourceId: list.sourceId,
+        setSourceId: '', note: 'Sitenalyzer skipped this column because ' + reason + ' ' + step,
+        beforeNote: 'Sitenalyzer will skip this column because ' + reason + ' ' + step });
+}
+
+/**
+ * Builds the PlanFields of one list from its Fields rows, in field_order.
+ * @param {object} list The PlanList, whose fields this fills.
+ * @param {object[]} rows The list's Fields rows.
+ * @param {object} context { assetId, fromSitenalyzer, valueSets, valueSetDefinitions, relationships, listIdByAsset, termSets, webId,
+ *        hiddenLists } from snaToolsBuildPlanFromWorkbook.
+ * @param {object} notes { warnings [], skippedItems [], lookups (a count) } to add to.
+ */
+function snaToolsWorkbookListFields(list, rows, context, notes) {
+    var shownList = snaMaskText(list.title);
+    var usedNames = Object.create(null);
+    var usedIds = Object.create(null);
+
+    // A file from another tool can give a column the name of one SharePoint keeps for itself in every list, such as
+    // Order or GUID. That column gets a new internal name, such as Order2, so the copy still makes it.
+    function isReservedName(name) {
+        return !context.fromSitenalyzer && SITEANALYZER_SKIP_FIELDS.has(name) && !snaToolsWorkbookBuiltInName(name);
+    }
+
+    // First pass: the names of every column, so formulas can find the columns they use.
+    var columns = snaToolsWorkbookSortBy(rows, 'field_order').map(function(row, index) {
+        var title = snaToolsCell(row, 'display_name') || snaToolsCell(row, 'internal_name') || ('Column ' + (index + 1));
+        var baseName = snaToolsWorkbookInternalName(snaToolsCell(row, 'internal_name') || title);
+        var internalName = baseName;
+        for (var n = 2; usedNames[internalName.toLowerCase()] || isReservedName(internalName); n++) { internalName = baseName + n; }
+        usedNames[internalName.toLowerCase()] = true;
+        var id = snaToolsCleanGuid(snaToolsCell(row, 'field_id'));
+        if (!id || usedIds[id]) { id = snaToolsNewGuid(); }
+        usedIds[id] = true;
+        return { row: row, title: title, internalName: internalName, id: id };
+    });
+
+    columns.forEach(function(column) {
+        var row = column.row;
+        var shownColumn = snaMaskText(column.title);
+        var kind = snaToolsWorkbookFieldType(row, column.internalName);
+        var field = snaToolsWorkbookPlanField(column.id, column.internalName, column.title, kind.type || 'Text');
+        field.description = snaToolsCell(row, 'description');
+        field.required = snaToolsWorkbookYes(snaToolsCell(row, 'required')) === true;
+        if (kind.builtIn) {
+            var builtInName = snaToolsWorkbookBuiltInName(column.internalName);
+            // In a file from another tool, a column gets here without a built-in name only when its native_type is one
+            // that SharePoint makes by itself, such as Counter, because the first pass renamed the others.
+            if (!context.fromSitenalyzer && !builtInName) {
+                snaToolsWorkbookSkipColumn(notes, list, column,
+                    'it\'s a type of column that only SharePoint makes.',
+                    'To keep its data, make a Text or Number column by hand in the destination after the copy.');
+                return;
+            }
+            field.builtIn = true;
+            if (builtInName) { field.internalName = builtInName; field.staticName = builtInName; }
+            if (!context.fromSitenalyzer && builtInName && builtInName !== 'Title') {
+                notes.warnings.push(shownList + ' has a column, ' + shownColumn + ', with the same name as a column SharePoint adds to every list, so the copy uses SharePoint\'s own ' + builtInName + ' column instead.');
+            }
+            field.type = kind.nativeType || kind.type || 'Text';
+            if (column.internalName === 'TaxKeyword') {
+                notes.warnings.push(shownList + ' has the Enterprise Keywords column, which Sitenalyzer doesn\'t copy from a data dictionary file. To add it in the destination, open the list settings and choose Enterprise Metadata and Keywords Settings.');
+            }
+            if (field.internalName === 'Title') {
+                field.type = 'Text';
+                field.schemaXml = snaToolsWorkbookSchemaXml({ id: column.id, type: 'Text', internalName: 'Title', title: column.title,
+                    description: field.description, required: snaToolsWorkbookYes(snaToolsCell(row, 'required')) });
+            }
+            list.fields.push(field);
+            return;
+        }
+        if (!kind.type) {
+            var givesType = !!kind.shownType && kind.shownType.toLowerCase() !== 'unknown';
+            var typeName = givesType ? (snaToolsWorkbookMapValue(SNA_TOOLS_WORKBOOK_SHOWN_TYPE_NAMES, kind.nativeType.toLowerCase()) ||
+                snaToolsWorkbookMapValue(SNA_TOOLS_WORKBOOK_SHOWN_TYPE_NAMES, snaToolsCell(row, 'display_type').toLowerCase())) : '';
+            snaToolsWorkbookSkipColumn(notes, list, column,
+                typeName ? 'Sitenalyzer can\'t make ' + typeName + ' columns from a data dictionary file.'
+                    : (givesType ? 'it\'s a type of column Sitenalyzer can\'t make from a data dictionary file.' : 'the file doesn\'t say what type of column it is.'));
+            return;
+        }
+
+        var spec = { id: column.id, type: kind.type, internalName: column.internalName, title: column.title,
+            description: field.description, required: snaToolsWorkbookYes(snaToolsCell(row, 'required')) };
+        var type = kind.type;
+        var isMulti = ['MultiChoice', 'LookupMulti', 'UserMulti', 'TaxonomyFieldTypeMulti'].indexOf(type) > -1;
+        spec.mult = isMulti && type !== 'MultiChoice';
+        if (SNA_TOOLS_WORKBOOK_INDEXABLE_TYPES.indexOf(type) > -1) {
+            spec.indexed = snaToolsWorkbookYes(snaToolsCell(row, 'indexed')) === true;
+            spec.unique = snaToolsWorkbookYes(snaToolsCell(row, 'unique')) === true;
+        }
+        if (type === 'Text') {
+            var maxLength = snaToolsWorkbookNumber(snaToolsCell(row, 'length'));
+            if (maxLength !== null && maxLength >= 1 && maxLength <= 255 && Math.floor(maxLength) === maxLength) { spec.maxLength = maxLength; }
+        }
+        if (type === 'Number' || type === 'Currency') {
+            spec.min = snaToolsWorkbookNumber(snaToolsCell(row, 'valid_min'));
+            spec.max = snaToolsWorkbookNumber(snaToolsCell(row, 'valid_max'));
+            var scale = snaToolsWorkbookNumber(snaToolsCell(row, 'scale'));
+            if (scale !== null && scale >= 0 && scale <= 5 && Math.floor(scale) === scale) { spec.decimals = scale; }
+        }
+        if (type === 'DateTime') {
+            var format = snaToolsCell(row, 'format').toLowerCase().replace(/[\s_-]/g, '');
+            if (format === 'dateonly' || format === 'date') { spec.dateFormat = 'DateOnly'; }
+            if (format === 'datetime') { spec.dateFormat = 'DateTime'; }
+        }
+        if (SNA_TOOLS_WORKBOOK_DEFAULT_TYPES.indexOf(type) > -1) {
+            var defaultValue = snaToolsWorkbookDefault(type, snaToolsCell(row, 'default_value'));
+            if (defaultValue === null) {
+                notes.warnings.push(shownColumn + ' in ' + shownList + ' has a default value that the column can\'t hold, so Sitenalyzer leaves the default out.');
+            } else {
+                spec.defaultValue = defaultValue;
+            }
+        }
+
+        var valueSetId = snaToolsCell(row, 'value_set_id').toLowerCase();
+        // Relationships rows are matched by field_id, so a column with a blank field_id has none, even when a row's
+        // from_field_id is blank too.
+        var fieldKey = snaToolsCell(row, 'field_id').toLowerCase();
+        var relationship = fieldKey ? (context.relationships[context.assetId + '|' + fieldKey] || null) : null;
+        if (type === 'Choice' || type === 'MultiChoice') {
+            spec.fillIn = snaToolsWorkbookYes(snaToolsCell(row, 'allows_other_values'));
+            var definition = valueSetId ? context.valueSetDefinitions[valueSetId] : null;
+            var owner = definition ? snaToolsCell(definition, 'asset_id').toLowerCase() : '';
+            if (owner && owner !== context.assetId) {
+                notes.warnings.push(shownList + ' has a choice column, ' + shownColumn + ', whose choices belong to something else in the file, so Sitenalyzer copies the column without its choices. Add the choices in the destination.');
+            } else if (valueSetId) {
+                var choices = [];
+                snaToolsWorkbookSortBy(context.valueSets[valueSetId] || [], 'display_order').forEach(function(choiceRow) {
+                    var text = snaToolsCell(choiceRow, 'value_label') || snaToolsCell(choiceRow, 'value_code');
+                    if (text && choices.indexOf(text) === -1) { choices.push(text); }
+                });
+                spec.choices = choices;
+            }
+        }
+
+        if (type === 'Calculated') {
+            var formula = snaToolsCell(row, 'calculation_formula');
+            if (!formula) {
+                snaToolsWorkbookSkipColumn(notes, list, column,
+                    'the file has no formula for it.');
+                return;
+            }
+            spec.formula = formula;
+            spec.resultType = kind.resultType;
+            spec.fieldRefs = snaToolsWorkbookFormulaRefs(formula, columns.filter(function(c) { return c !== column; }));
+            field.formula = formula;
+            field.fieldRefs = spec.fieldRefs.slice();
+        }
+
+        if (type === 'Lookup' || type === 'LookupMulti') {
+            var target = relationship ? snaToolsCell(relationship, 'to_asset_id').toLowerCase() : '';
+            if (target && context.hiddenLists[target]) {
+                snaToolsWorkbookSkipColumn(notes, list, column,
+                    'the list it reads from isn\'t one that Sitenalyzer copies.');
+                return;
+            }
+            if (!target) {
+                snaToolsWorkbookSkipColumn(notes, list, column,
+                    'the file doesn\'t say which list it reads from.');
+                return;
+            }
+            if (!context.listIdByAsset[target]) {
+                snaToolsWorkbookSkipColumn(notes, list, column,
+                    'the list it reads from isn\'t in the file.');
+                return;
+            }
+            field.lookupListId = context.listIdByAsset[target];
+            field.lookupWebId = context.webId;
+            field.lookupField = 'Title';
+            field.lookupFieldGuessed = true;
+            spec.lookupListId = field.lookupListId;
+            spec.lookupWebId = context.webId;
+            spec.showField = 'Title';
+            notes.lookups++;
+        }
+
+        if (type === 'TaxonomyFieldType' || type === 'TaxonomyFieldTypeMulti') {
+            var termSet = valueSetId ? context.termSets.byValueSetId[valueSetId] : null;
+            if (!termSet || !termSet.sourceId) {
+                snaToolsWorkbookSkipColumn(notes, list, column,
+                    'Sitenalyzer can\'t find its term set in the file.');
+                return;
+            }
+            var rootCode = snaToolsCell(row, 'value_set_root_code');
+            var anchorId = rootCode ? (termSet.termIdByCode[rootCode.toLowerCase()] || (termSet.copied ? '' : snaToolsCleanGuid(rootCode))) : '';
+            if (rootCode && !anchorId) {
+                notes.warnings.push(shownList + ' has a managed metadata column, ' + shownColumn + ', that starts at a term that isn\'t in the file, so in the destination it offers the whole term set.');
+            }
+            var note = snaToolsWorkbookPlanField(snaToolsNewGuid(), column.internalName + 'TaxHTField0', column.title + '_0', 'Note');
+            note.hidden = true;
+            note.isTaxonomyNote = true;
+            note.schemaXml = snaToolsWorkbookSchemaXml({ id: note.id, type: 'Note', internalName: note.internalName, title: note.title,
+                required: false, note: { hidden: true } });
+            list.fields.push(note);
+            field.isTaxonomy = true;
+            field.termSetId = termSet.sourceId;
+            field.anchorId = anchorId;
+            spec.taxonomy = { termSetId: termSet.sourceId, anchorId: anchorId, textFieldId: note.id,
+                open: snaToolsWorkbookYes(snaToolsCell(row, 'allows_other_values')) === true,
+                listId: relationship ? snaToolsCleanGuid(snaToolsCell(relationship, 'to_asset_id')) : '' };
+        }
+
+        field.type = type;
+        field.schemaXml = snaToolsWorkbookSchemaXml(spec);
+        list.fields.push(field);
+    });
+}
+
+// ### Building the Plan ###
+
+/**
+ * Turns a data dictionary workbook into a copy plan.
+ * @param {object} workbook A SheetJS workbook.
+ * @returns {object} The plan (see plan.js, and the notes at the top of this file for how a file's plan differs).
+ *          Reads only the workbook; sends nothing.
+ * @throws {Error} From snaToolsUserError, with a message for people: a missing Assets or Fields sheet, a format
+ *         version of 2.0 or later, hidden values, or no lists or libraries.
+ */
+function snaToolsBuildPlanFromWorkbook(workbook) {
+    if (!workbook || !Array.isArray(workbook.SheetNames) || !workbook.Sheets) { throw snaToolsUserError(SNA_TOOLS_WORKBOOK_UNREADABLE); }
+    var S = SNA_TOOLS_WORKBOOK_SHEETS;
+
+    // ### Check the File ###
+    var assetsSheet = snaToolsWorkbookSheet(workbook, S.assets);
+    var fieldsSheet = snaToolsWorkbookSheet(workbook, S.fields);
+    var missing = [];
+    if (!assetsSheet) { missing.push(S.assets); }
+    if (!fieldsSheet) { missing.push(S.fields); }
+    if (missing.length > 0) {
+        throw snaToolsUserError('This file has no ' + missing.join(' or ') + ' sheet, so it isn\'t a data dictionary that Sitenalyzer can copy from. Choose a file saved with Data dictionary (.xlsx).');
+    }
+    var info = Object.create(null);
+    snaToolsWorkbookGrid(snaToolsWorkbookSheet(workbook, S.exportInfo)).forEach(function(cells) {
+        var name = String(cells[0] || '').toLowerCase();
+        if (name && !(name in info)) { info[name] = cells[1] || ''; }
+    });
+    snaToolsCheckFormatVersion(info.format_version || '');
+
+    var sheets = {
+        sources: snaToolsWorkbookRows(snaToolsWorkbookSheet(workbook, S.sources)),
+        assets: snaToolsWorkbookRows(assetsSheet),
+        fields: snaToolsWorkbookRows(fieldsSheet),
+        valueSets: snaToolsWorkbookRows(snaToolsWorkbookSheet(workbook, S.valueSets)),
+        valueSetDefinitions: snaToolsWorkbookRows(snaToolsWorkbookSheet(workbook, S.valueSetDefinitions)),
+        relationships: snaToolsWorkbookRows(snaToolsWorkbookSheet(workbook, S.relationships))
+    };
+    snaToolsCheckHiddenValues([sheets.sources, sheets.assets, sheets.fields, sheets.valueSets, sheets.valueSetDefinitions],
+        snaToolsWorkbookSaysHidden(info.hidden_values || ''));
+
+    // ### Source ###
+    var plan = snaToolsEmptyPlan('workbook');
+    plan.skippedItems = [];
+    var notes = { warnings: [], skippedItems: plan.skippedItems, lookups: 0 };
+    var fromSitenalyzer = String(info.tool || '').trim().toLowerCase() === 'sitenalyzer';
+    var source = sheets.sources[0] || Object.create(null);
+    var sitePath = '';
+    try {
+        var sourceUrl = new URL(snaToolsCell(source, 'url'));
+        if (sourceUrl.protocol === 'https:') { sitePath = xlsxStripSlash(decodeURIComponent(sourceUrl.pathname)) || '/'; }
+    } catch (e) {
+        sitePath = '';
+    }
+    plan.source.title = snaToolsCell(source, 'source_name');
+    plan.source.webId = snaToolsCleanGuid(snaToolsCell(source, 'source_id'));
+    plan.source.serverRelativeUrl = sitePath;
+
+    // ### Lists and Libraries ###
+    var fieldsByAsset = snaToolsWorkbookGroup(sheets.fields, 'asset_id');
+    var listIdByAsset = Object.create(null);
+    var hiddenLists = Object.create(null);
+    var chosenAssets = [];
+    var unnamedLists = 0;
+    var seenAssets = Object.create(null);
+    sheets.assets.forEach(function(row) {
+        var assetId = snaToolsCell(row, 'asset_id').toLowerCase();
+        if (!assetId || seenAssets[assetId]) { return; }
+        seenAssets[assetId] = true;
+        var type = snaToolsCell(row, 'asset_type').toLowerCase();
+        var isLibrary = type === 'sharepoint document library' || /librar/.test(type);
+        var isList = type === 'sharepoint list' || isLibrary ||
+            ((/table|list/.test(type) || !type) && !/term ?store|agent|skill/.test(type) && !!fieldsByAsset[assetId]);
+        if (!isList) { return; }
+        var title = snaToolsCell(row, 'asset_display_name') || snaToolsCell(row, 'asset_name');
+        var address = snaToolsWorkbookAddress(row, sitePath, fromSitenalyzer, isLibrary);
+        if (snaToolsWorkbookIsSkippedList(title, address) || snaToolsWorkbookIsSkippedList(snaToolsCell(row, 'asset_name'), '')) {
+            hiddenLists[assetId] = title || snaToolsCell(row, 'asset_name');
+            return;
+        }
+        if (!title) { unnamedLists++; return; }
+        listIdByAsset[assetId] = snaToolsCleanGuid(assetId) || snaToolsNewGuid();
+        chosenAssets.push({ assetId: assetId, row: row, title: title, address: address, isLibrary: isLibrary });
+    });
+    if (unnamedLists > 0) {
+        notes.warnings.push('The file has ' + snaCountText(unnamedLists, 'list or library', 'lists and libraries') + ' with no name, so Sitenalyzer will skip ' +
+            (unnamedLists === 1 ? 'it.' : 'them.'));
+    }
+    if (chosenAssets.length === 0) {
+        throw snaToolsUserError('This file has no lists or libraries that Sitenalyzer can copy. Choose a data dictionary file whose Assets sheet has at least one list or library.');
+    }
+
+    // ### Term Sets ###
+    var taxonomySetIds = Object.create(null);
+    sheets.fields.forEach(function(row) {
+        // The same test snaToolsWorkbookListFields uses, so every managed metadata column it makes finds its term set.
+        var columnType = snaToolsWorkbookFieldType(row, '').type;
+        var isTaxonomy = columnType === 'TaxonomyFieldType' || columnType === 'TaxonomyFieldTypeMulti';
+        var id = snaToolsCell(row, 'value_set_id').toLowerCase();
+        if (isTaxonomy && id) { taxonomySetIds[id] = true; }
+    });
+    var termSets = snaToolsWorkbookTermSets(sheets, taxonomySetIds, notes);
+    plan.termGroup = termSets.sets.length > 0 ? { name: '', sets: termSets.sets } : null;
+
+    // ### Columns ###
+    var valueSetDefinitions = Object.create(null);
+    sheets.valueSetDefinitions.forEach(function(row) {
+        var id = snaToolsCell(row, 'value_set_id').toLowerCase();
+        if (id && !valueSetDefinitions[id]) { valueSetDefinitions[id] = row; }
+    });
+    var relationships = Object.create(null);
+    sheets.relationships.forEach(function(row) {
+        if (snaToolsCell(row, 'relationship_type').toLowerCase() !== 'lookup' || !snaToolsCell(row, 'from_field_id')) { return; }
+        var key = snaToolsCell(row, 'from_asset_id').toLowerCase() + '|' + snaToolsCell(row, 'from_field_id').toLowerCase();
+        if (!relationships[key]) { relationships[key] = row; }
+    });
+    var context = { assetId: '', fromSitenalyzer: fromSitenalyzer, valueSets: snaToolsWorkbookGroup(sheets.valueSets, 'value_set_id'), valueSetDefinitions: valueSetDefinitions,
+        relationships: relationships, listIdByAsset: listIdByAsset, termSets: termSets, webId: plan.source.webId, hiddenLists: hiddenLists };
+
+    chosenAssets.forEach(function(asset) {
+        var list = {
+            sourceId: listIdByAsset[asset.assetId],
+            title: asset.title,
+            url: asset.address,
+            newTitle: asset.title,
+            newUrl: snaToolsCleanAddress(asset.address),
+            baseTemplate: asset.isLibrary ? 101 : 100,
+            isLibrary: asset.isLibrary,
+            description: snaToolsCell(asset.row, 'description'),
+            rootFolder: '',
+            settings: {},
+            fields: [],
+            views: [],
+            contentTypes: [],
+            contentTypesEnabled: false,
+            ownPermissions: false,
+            roleAssignments: [],
+            selected: true
+        };
+        context.assetId = asset.assetId;
+        snaToolsWorkbookListFields(list, fieldsByAsset[asset.assetId] || [], context, notes);
+        plan.lists.push(list);
+        plan.skippedItems.push({ kind: SNA_TOOLS_KINDS.view, itemName: 'Views', listSourceId: list.sourceId, setSourceId: '',
+            note: 'A data dictionary file has no views, so this ' + (list.isLibrary ? 'library' : 'list') +
+                ' has only the destination\'s default view. Add other views by hand in the destination if you need them.' });
+    });
+
+    // ### Notes Before the Copy ###
+    if (notes.lookups > 0) {
+        notes.warnings.push(notes.lookups === 1
+            ? '1 lookup column will show the Title column of the list it reads from, because the file doesn\'t say which column to show. Change it in the destination if it should show another column.'
+            : notes.lookups + ' lookup columns will show the Title column of the lists they read from, because the file doesn\'t say which column to show. Change them in the destination if they should show other columns.');
+    }
+    notes.warnings.push('A data dictionary file has no views, so each list and library gets only the destination\'s default view.');
+    plan.warnings = notes.warnings;
+    return plan;
+}
+
+// ### Read a Data Dictionary File ###
+
+// Reads a File into an ArrayBuffer.
+function snaToolsReadFileBytes(file) {
+    if (typeof file.arrayBuffer === 'function') { return file.arrayBuffer(); }
+    return new Promise(function(resolve, reject) {
+        var reader = new FileReader();
+        reader.addEventListener('load', function() { resolve(reader.result); });
+        reader.addEventListener('error', function() { reject(reader.error); });
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+/**
+ * Reads a data dictionary file and returns its copy plan.
+ * @param {File} file The file the person chose.
+ * @returns {Promise<object>} The plan (see plan.js). Reads only the file, in the browser; sends nothing.
+ * @throws {Error} From snaToolsUserError, with a message for people.
+ */
+async function snaToolsReadWorkbook(file) {
+    if (!file || !/\.xlsx$/i.test(String(file.name || ''))) {
+        throw snaToolsUserError('Choose a data dictionary file that ends in .xlsx, such as one saved with Data dictionary (.xlsx).');
+    }
+    if (file.size > SNA_TOOLS_WORKBOOK_MAX_BYTES) {
+        throw snaToolsUserError('This file is larger than 25 MB, so Sitenalyzer didn\'t read it. Choose a smaller data dictionary file.');
+    }
+    if (!XLSX || typeof XLSX.read !== 'function' || !XLSX.utils || typeof XLSX.utils.sheet_to_json !== 'function') {
+        throw snaToolsUserError('Sitenalyzer couldn\'t load the part that reads Excel files. Refresh the page, then choose the file again.');
+    }
+    var bytes;
+    try {
+        bytes = new Uint8Array(await snaToolsReadFileBytes(file));
+    } catch (e) {
+        throw snaToolsUserError(SNA_TOOLS_WORKBOOK_UNREADABLE);
+    }
+    // An .xlsx file is a zip file, which starts with PK and the bytes 3 and 4. SheetJS also reads other formats, such as
+    // web pages and text, so anything else is refused before it reads the file.
+    if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b || bytes[2] !== 0x03 || bytes[3] !== 0x04) {
+        throw snaToolsUserError(SNA_TOOLS_WORKBOOK_UNREADABLE);
+    }
+    var workbook;
+    try {
+        workbook = XLSX.read(bytes, { type: 'array', cellFormula: false, cellHTML: false, cellStyles: false, bookVBA: false });
+    } catch (e) {
+        throw snaToolsUserError(SNA_TOOLS_WORKBOOK_UNREADABLE);
+    }
+    var plan;
+    try {
+        plan = snaToolsBuildPlanFromWorkbook(workbook);
+    } catch (e) {
+        if (e && e.snaUserMessage) { throw e; }
+        // Only the kind of error is logged, so no text from the file reaches the console.
+        console.warn('Sitenalyzer: could not build a copy plan from the data dictionary file:', e && e.name ? e.name : 'Error');
+        throw snaToolsUserError(SNA_TOOLS_WORKBOOK_UNREADABLE);
+    }
+    plan.source.fileName = String(file.name);
+    return plan;
+}
+
+// ### Results ###
+
+/**
+ * Adds a Skipped row to the results for each column and term the file can't make, and for the views of each list,
+ * for the lists and term sets the person chose. Does nothing for a plan from this site.
+ * @param {object} plan The copy plan, with the person's choices applied.
+ * @returns {void} Side effects: adds results.
+ */
+function snaToolsLogWorkbookSkipped(plan) {
+    if (!plan || plan.source.kind !== 'workbook' || !Array.isArray(plan.skippedItems)) { return; }
+    var lists = Object.create(null);
+    plan.lists.forEach(function(l) { lists[l.sourceId] = l; });
+    var sets = Object.create(null);
+    if (plan.termGroup) { plan.termGroup.sets.forEach(function(s) { if (s.selected) { sets[s.sourceId] = s; } }); }
+    plan.skippedItems.forEach(function(item) {
+        if (item.listSourceId) {
+            var list = lists[item.listSourceId];
+            if (!list) { return; }
+            snaToolsLog(item.kind, item.itemName + ' in ' + (list.newTitle || list.title), 'skipped', item.note);
+            return;
+        }
+        if (item.setSourceId && !sets[item.setSourceId]) { return; }
+        snaToolsLog(item.kind, item.itemName, 'skipped', item.note);
+    });
+}
+
+/*
+This file is part of Sitenalyzer
+taxonomy.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-08
+Summary: Copies the chosen term sets of this site collection's own term group into the destination site collection's
+         own term group, with their terms, synonyms, descriptions, custom properties, second parents, and the
+         deprecated setting. Term sets in tenant-level groups are never copied. Also has the helpers the columns step
+         uses to connect a managed metadata column to its term set.
+Notes: See README file for documentation and full license information.
+
+       Function the copy steps call (keep this name and its parameters):
+       snaToolsCopyTermSets(plan, dest, maps) -> Promise<void>
+           plan is the copy plan (see plan.js); plan.termGroup is null when the source has no term group of its own.
+           dest is the destination from snaToolsCheckDestination (see runner.js): { siteUrl, siteId, webId, ... }.
+           maps is the shared map of source to destination IDs (see snaToolsNewMaps in runner.js). It fills
+           maps.termSets (source set ID -> destination set ID), maps.terms (source term ID -> destination term ID), and
+           maps.destination.termStoreId, and adds every site term set it doesn't copy, chosen or not, to
+           maps.termSetsMissing (set ID -> a sentence that says why, such as "You left this term set out."), so the
+           columns step can skip the columns that use it and say why. It logs one result for each term set and each
+           term it couldn't copy in full (kinds 'Term set' and 'Term'), catches its own errors for each item, and lets
+           snaCancelledError through.
+
+       Helpers for the columns step in lists.js:
+       snaToolsTaxonomyBindField(destSiteUrl, destListId, fieldId, binding) -> Promise<void>
+           Connects a managed metadata column to its term set through CSOM. binding is { sspId, termSetId, anchorId,
+           open, isPathRendered, createValuesInEditForm }.
+       snaToolsTaxonomyHiddenListId(destSiteUrl) -> Promise<string>
+           The ID of the destination site collection's TaxonomyHiddenList, or '' when it has none.
+       snaToolsTaxonomySetExists(destSiteUrl, siteId, setId) -> Promise<boolean>
+           Whether a term set, such as one in a tenant-level group, can be found from the destination.
+
+       How changes are sent: each change goes first to the term store REST API (/_api/v2.1). When SharePoint refuses it
+       with HTTP 403 or a message about OAuth or notAllowed, which some tenants do for requests made with browser
+       cookies, that change and every later one go through CSOM (ProcessQuery) instead. When SharePoint refuses CSOM too
+       before it has worked once, the term sets not yet copied are reported as missing. A CSOM error about one change,
+       such as a label SharePoint doesn't accept, fails only that term or term set. The destination's own term group is
+       created only through CSOM (TermStore.GetSiteCollectionGroup), because the REST API has no way to ask for a
+       group of one site collection. A tenant-level group is never created.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Taxonomy Settings ###
+
+// CSOM type IDs. TaxonomySession is reached through its static method GetTaxonomySession, as Microsoft documents it.
+// RequestContext.Current gives the site and web of the site the request is sent to.
+var SNA_TOOLS_TAXONOMY_SESSION_TYPE_ID = '{981cbc68-9edc-4f8d-872f-71146fcbb84f}';
+var SNA_TOOLS_REQUEST_CONTEXT_TYPE_ID = '{3747adcd-a3c3-41b9-bfab-4a64dd2f1e0a}';
+
+// The ID SharePoint uses for "no anchor term": a managed metadata column that starts at the top of its term set.
+var SNA_TOOLS_EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
+// The parameter types a CSOM request built here may hold.
+var SNA_TOOLS_CSOM_PARAMETER_TYPES = ['String', 'Guid', 'Int32', 'Boolean'];
+
+// Windows language IDs (LCIDs) by lowercase language tag. CSOM names each language by this number instead of its tag.
+var SNA_TOOLS_LANGUAGE_IDS = {
+    'ar-sa': 1025, 'bg-bg': 1026, 'ca-es': 1027, 'zh-tw': 1028, 'cs-cz': 1029, 'da-dk': 1030, 'de-de': 1031,
+    'el-gr': 1032, 'en-us': 1033, 'fi-fi': 1035, 'fr-fr': 1036, 'he-il': 1037, 'hu-hu': 1038, 'it-it': 1040,
+    'ja-jp': 1041, 'ko-kr': 1042, 'nl-nl': 1043, 'nb-no': 1044, 'pl-pl': 1045, 'pt-br': 1046, 'ro-ro': 1048,
+    'ru-ru': 1049, 'hr-hr': 1050, 'sk-sk': 1051, 'sv-se': 1053, 'th-th': 1054, 'tr-tr': 1055, 'id-id': 1057,
+    'uk-ua': 1058, 'sl-si': 1060, 'et-ee': 1061, 'lv-lv': 1062, 'lt-lt': 1063, 'vi-vn': 1066, 'eu-es': 1069,
+    'hi-in': 1081, 'ms-my': 1086, 'kk-kz': 1087, 'cy-gb': 1106, 'gl-es': 1110, 'zh-cn': 2052, 'en-gb': 2057,
+    'es-mx': 2058, 'pt-pt': 2070, 'sr-latn-cs': 2074, 'ga-ie': 2108, 'es-es': 3082, 'fr-ca': 3084, 'sr-latn-rs': 9242
+};
+
+// Why a site term set wasn't copied. The columns step quotes these sentences when it skips a column that uses the set.
+var SNA_TOOLS_TERM_SET_LEFT_OUT = 'You left this term set out.';
+var SNA_TOOLS_TERM_GROUP_REASON = 'Sitenalyzer couldn\'t create the site\'s own term group in the destination.';
+var SNA_TOOLS_TERM_GROUP_NOTE = SNA_TOOLS_TERM_GROUP_REASON + ' In the destination, add a Managed Metadata column to any ' +
+    'list and choose Customize your term set, then copy again.';
+var SNA_TOOLS_TERM_STORE_BLOCKED_REASON = 'SharePoint didn\'t let Sitenalyzer create term sets in the destination.';
+
+// ### Taxonomy State ###
+
+// TaxonomyHiddenList IDs found in each destination site collection, by lowercase site address. The ID of a site
+// collection's TaxonomyHiddenList never changes, so it is read once.
+var _snaToolsTaxonomyHiddenLists = {};
+
+// ### Term Store Requests ###
+
+// True when err is SharePoint refusing a term store change made through the REST API, the sign to try CSOM instead.
+function snaToolsTaxonomyIsRefusal(err) {
+    if (!err || !err.snaToolsError) { return false; }
+    return err.status === 403 || /oauth|notallowed/i.test(String(err.code || '') + ' ' + String(err.serverMessage || ''));
+}
+
+// True when err is SharePoint refusing a CSOM request itself, not one change in it: HTTP 401 or 403, "Access denied"
+// (error code -2147024891, which SharePoint sends for System.UnauthorizedAccessException), or "Cannot find stub for
+// type", which SharePoint sends when it doesn't offer a type the request names. Any other error belongs to one change.
+function snaToolsTaxonomyIsCsomRefusal(err) {
+    if (!err || !err.snaToolsError) { return false; }
+    if (err.status === 401 || err.status === 403 || err.code === '-2147024891') { return true; }
+    return /cannot find stub for type/i.test(err.serverMessage);
+}
+
+// Returns the address of the destination's term store API, after the site address.
+function snaToolsTaxonomyBase(siteId) {
+    return '/_api/v2.1/sites/' + encodeURIComponent(siteId) + '/termStore';
+}
+
+// Returns the address of a term set, or of one term in it, after the site address.
+function snaToolsTaxonomySetPath(t, setId, termId) {
+    return t.base + '/sets/' + encodeURIComponent(setId) + (termId ? '/terms/' + encodeURIComponent(termId) : '');
+}
+
+// Returns the CSOM language ID of a language tag, such as 1033 for en-US, or 0 when Sitenalyzer doesn't know it.
+function snaToolsTaxonomyLanguageId(languageTag) {
+    return SNA_TOOLS_LANGUAGE_IDS[String(languageTag || '').toLowerCase()] || 0;
+}
+
+// Returns the CSOM language ID of the destination's default language, or throws an error that says what to do.
+function snaToolsTaxonomyDefaultLanguageId(t) {
+    var id = snaToolsTaxonomyLanguageId(t.defaultLanguage);
+    if (!id) {
+        throw snaToolsUserError('Sitenalyzer couldn\'t make this change, because it doesn\'t know the language ' + t.defaultLanguage +
+            ', which is the default language of the destination\'s term store. Make it by hand in the destination\'s term store.');
+    }
+    return id;
+}
+
+/**
+ * Sends one term store change: first through the REST API, then through CSOM when the REST API refuses it. After one
+ * refusal, every later change of the same copy goes through CSOM. When SharePoint refuses CSOM too before CSOM or the
+ * REST API has worked once in this copy, every later change fails with the same error, marked with
+ * snaToolsTaxonomyBlocked, without being sent. When the REST API has worked, only that change fails, and later changes
+ * go through the REST API again. A CSOM error about the change itself, such as a label SharePoint doesn't accept,
+ * fails only that change.
+ * @param {object} t The state of this copy's term store work (see snaToolsCopyTermSets).
+ * @param {function(): Promise<*>} restWork Makes the change through the REST API.
+ * @param {function(): Promise<*>} csomWork Makes the same change through CSOM.
+ * @returns {Promise<*>} What the work that made the change returns.
+ * @throws {Error} The error of the last way tried; snaCancelledError when the copy is stopped. Side effects: changes the destination.
+ */
+async function snaToolsTaxonomyLadder(t, restWork, csomWork) {
+    if (t.mode === 'blocked') { throw t.blockedError; }
+    if (t.mode === 'rest') {
+        try {
+            var result = await restWork();
+            t.restWorked = true;
+            return result;
+        } catch (err) {
+            if (snaToolsIsCancelled(err) || !snaToolsTaxonomyIsRefusal(err)) { throw err; }
+            t.mode = 'csom';
+        }
+    }
+    return snaToolsTaxonomyCsomWork(t, csomWork);
+}
+
+/**
+ * Sends one term store change through CSOM, and marks the term store as blocked when SharePoint refuses the request
+ * before CSOM or the REST API has worked once in this copy (see snaToolsTaxonomyLadder). When SharePoint refuses it
+ * after the REST API has worked, later changes go through the REST API again.
+ * @param {object} t The state of this copy's term store work.
+ * @param {function(): Promise<*>} csomWork Makes the change through CSOM.
+ * @returns {Promise<*>} What csomWork returns.
+ * @throws {Error} The error from csomWork; snaCancelledError when the copy is stopped. Side effects: changes the destination.
+ */
+async function snaToolsTaxonomyCsomWork(t, csomWork) {
+    try {
+        var result = await csomWork();
+        t.csomWorked = true;
+        return result;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        if (!t.csomWorked && snaToolsTaxonomyIsCsomRefusal(err)) {
+            if (t.restWorked) {
+                // SharePoint takes other changes through the REST API in this copy, so only this change fails.
+                t.mode = 'rest';
+            } else {
+                err.snaToolsTaxonomyBlocked = true;
+                t.mode = 'blocked';
+                t.blockedError = err;
+            }
+        }
+        throw err;
+    }
+}
+
+// ### CSOM Requests ###
+
+// Returns one CSOM <Parameter>: { type: 'String'|'Guid'|'Int32'|'Boolean', value } or { path: objectPathId }.
+function snaToolsTaxonomyCsomParameter(parameter) {
+    if (parameter.path !== undefined) { return '<Parameter ObjectPathId="' + Number(parameter.path) + '" />'; }
+    if (SNA_TOOLS_CSOM_PARAMETER_TYPES.indexOf(parameter.type) === -1) {
+        throw snaToolsUserError('Sitenalyzer didn\'t send this change because of an unexpected problem. Copy again, or make it by hand in the destination\'s term store.');
+    }
+    var text;
+    if (parameter.type === 'Guid') {
+        var guid = snaToolsCleanGuid(parameter.value);
+        if (!guid) { throw snaToolsUserError('Sitenalyzer didn\'t send a change, because one of its IDs isn\'t valid. Copy again.'); }
+        text = '{' + guid + '}';
+    } else if (parameter.type === 'Boolean') {
+        text = parameter.value ? 'true' : 'false';
+    } else if (parameter.type === 'Int32') {
+        text = String(parseInt(parameter.value, 10) || 0);
+    } else {
+        text = snaToolsXmlText(parameter.value);
+    }
+    return '<Parameter Type="' + parameter.type + '">' + text + '</Parameter>';
+}
+
+/**
+ * Starts a CSOM request. Each object path added also adds the ObjectPath action that loads it, in order. Every value
+ * is escaped with snaToolsXmlText or checked as a GUID or number, so no text is placed in the XML as it is.
+ * @returns {object} { staticMethod(typeId, name), staticProperty(typeId, name), property(parentId, name),
+ *          method(parentId, name, parameters): object path IDs; call(pathId, name, parameters), set(pathId, name,
+ *          parameter): actions; query(pathId, propertyNames): the action ID whose answer holds the properties;
+ *          xml(): the whole <Request> }.
+ */
+function snaToolsTaxonomyCsomRequest() {
+    var nextId = 0;
+    var actions = [];
+    var paths = [];
+    function parametersXml(list) {
+        return (list && list.length) ? '<Parameters>' + list.map(snaToolsTaxonomyCsomParameter).join('') + '</Parameters>' : '';
+    }
+    function addPath(xml, id) {
+        paths.push(xml);
+        actions.push('<ObjectPath Id="' + (nextId++) + '" ObjectPathId="' + id + '" />');
+        return id;
+    }
+    return {
+        staticMethod: function(typeId, name) {
+            var id = nextId++;
+            return addPath('<StaticMethod Id="' + id + '" Name="' + snaToolsXmlText(name) + '" TypeId="' + snaToolsXmlText(typeId) + '" />', id);
+        },
+        staticProperty: function(typeId, name) {
+            var id = nextId++;
+            return addPath('<StaticProperty Id="' + id + '" TypeId="' + snaToolsXmlText(typeId) + '" Name="' + snaToolsXmlText(name) + '" />', id);
+        },
+        property: function(parentId, name) {
+            var id = nextId++;
+            return addPath('<Property Id="' + id + '" ParentId="' + parentId + '" Name="' + snaToolsXmlText(name) + '" />', id);
+        },
+        method: function(parentId, name, parameters) {
+            var id = nextId++;
+            return addPath('<Method Id="' + id + '" ParentId="' + parentId + '" Name="' + snaToolsXmlText(name) + '">' +
+                parametersXml(parameters) + '</Method>', id);
+        },
+        call: function(pathId, name, parameters) {
+            actions.push('<Method Name="' + snaToolsXmlText(name) + '" Id="' + (nextId++) + '" ObjectPathId="' + pathId + '">' +
+                parametersXml(parameters) + '</Method>');
+        },
+        set: function(pathId, name, parameter) {
+            actions.push('<SetProperty Id="' + (nextId++) + '" ObjectPathId="' + pathId + '" Name="' + snaToolsXmlText(name) + '">' +
+                snaToolsTaxonomyCsomParameter(parameter) + '</SetProperty>');
+        },
+        query: function(pathId, propertyNames) {
+            var id = nextId++;
+            actions.push('<Query Id="' + id + '" ObjectPathId="' + pathId + '"><Query SelectAllProperties="false"><Properties>' +
+                propertyNames.map(function(name) { return '<Property Name="' + snaToolsXmlText(name) + '" ScalarProperty="true" />'; }).join('') +
+                '</Properties></Query></Query>');
+            return id;
+        },
+        xml: function() { return snaToolsCsomXml(actions.join(''), paths.join('')); }
+    };
+}
+
+// Adds the destination's term store to a CSOM request, through TaxonomySession.GetTaxonomySession, and returns its path.
+function snaToolsTaxonomyCsomStore(request) {
+    var session = request.staticMethod(SNA_TOOLS_TAXONOMY_SESSION_TYPE_ID, 'GetTaxonomySession');
+    return request.method(session, 'GetDefaultSiteCollectionTermStore', []);
+}
+
+// Returns the answer to one action of a CSOM request: the item after the action's ID in SharePoint's answer, or null.
+function snaToolsTaxonomyCsomValue(answer, actionId) {
+    for (var i = 1; i < answer.length - 1; i++) {
+        if (answer[i] === actionId) { return answer[i + 1]; }
+    }
+    return null;
+}
+
+// Returns a GUID from a CSOM answer, such as '/Guid(aaaaaaaa-...)/', in lowercase, or '' when there is none.
+function snaToolsTaxonomyCsomGuid(value) {
+    var match = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(String(value || ''));
+    return match ? match[1].toLowerCase() : '';
+}
+
+// Creates the destination's own term group, or finds it when it exists, with TermStore.GetSiteCollectionGroup.
+// Returns the group's ID, or '' when SharePoint's answer didn't include it.
+async function snaToolsTaxonomyCsomSiteGroup(t) {
+    var request = snaToolsTaxonomyCsomRequest();
+    var store = snaToolsTaxonomyCsomStore(request);
+    var context = request.staticProperty(SNA_TOOLS_REQUEST_CONTEXT_TYPE_ID, 'Current');
+    var site = request.property(context, 'Site');
+    var group = request.method(store, 'GetSiteCollectionGroup', [{ path: site }, { type: 'Boolean', value: true }]);
+    var queryId = request.query(group, ['Id', 'Name', 'IsSiteCollectionGroup']);
+    request.call(store, 'CommitAll', []);
+    var answer = await snaToolsCsom(t.siteUrl, request.xml());
+    var info = snaToolsTaxonomyCsomValue(answer, queryId);
+    return snaToolsTaxonomyCsomGuid(info && info.Id);
+}
+
+// ### Reading the Destination ###
+
+// Returns the destination's own term groups: groups of one site collection whose parent site is the destination.
+// With knownId, returns the group with that ID instead, such as the one CSOM just created.
+async function snaToolsTaxonomyOwnGroups(t, knownId) {
+    var groups = (await snaToolsReadAll(t.siteUrl, t.base + '/groups', SNA_TOOLS_READ_MAX)).items;
+    return groups.filter(function(g) {
+        if (g.scope !== 'siteCollection') { return false; }
+        if (knownId) { return snaToolsCleanGuid(g.id) === knownId; }
+        // SharePoint doesn't document the form of parentSiteId, so it is checked for the site collection's ID anywhere in it.
+        return String(g.parentSiteId || '').toLowerCase().indexOf(t.siteId) > -1;
+    });
+}
+
+// Finds the destination's own term group and puts its ID in t.groupId, creating the group when there is none.
+// Returns null, or { reason, note } that says why no group can be used.
+async function snaToolsTaxonomyFindGroup(t) {
+    var groups = await snaToolsTaxonomyOwnGroups(t, '');
+    if (groups.length > 1) {
+        var several = 'The destination has more than one term group of its own, so Sitenalyzer couldn\'t tell which one to use.';
+        return { reason: several, note: several + ' Ask your term store administrator to check the destination\'s term groups, then copy again.' };
+    }
+    if (groups.length === 1) {
+        t.groupId = snaToolsCleanGuid(groups[0].id);
+        return t.groupId ? null : { reason: SNA_TOOLS_TERM_GROUP_REASON, note: SNA_TOOLS_TERM_GROUP_NOTE };
+    }
+    var createdId = '';
+    try {
+        createdId = await snaToolsTaxonomyCsomSiteGroup(t);
+        t.csomWorked = true;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return { reason: SNA_TOOLS_TERM_GROUP_REASON, note: SNA_TOOLS_TERM_GROUP_NOTE };
+    }
+    // The group is read again, so its ID comes from the same API the rest of the copy uses.
+    try {
+        groups = await snaToolsTaxonomyOwnGroups(t, createdId);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        groups = [];
+    }
+    t.groupId = createdId || (groups.length === 1 ? snaToolsCleanGuid(groups[0].id) : '');
+    return t.groupId ? null : { reason: SNA_TOOLS_TERM_GROUP_REASON, note: SNA_TOOLS_TERM_GROUP_NOTE };
+}
+
+// Returns a term set's name in the destination's default language, or its first name, in lowercase for comparisons.
+function snaToolsTaxonomySetNameKey(set, t) {
+    var names = set.localizedNames || [];
+    var inDefault = names.filter(function(n) { return String(n.languageTag || '').toLowerCase() === t.defaultLanguage.toLowerCase(); })[0];
+    return String((inDefault || names[0] || {}).name || '').trim().toLowerCase();
+}
+
+// Returns the terms directly under a term set (termId '') or a term in the destination. Only a term set or term that
+// was there before this copy is read; one this copy created has only the children this copy added to it.
+async function snaToolsTaxonomyChildren(t, nodes, setId, termId) {
+    var key = termId || ('set:' + setId);
+    if (nodes.children[key]) { return nodes.children[key]; }
+    if (!nodes.existing[key]) {
+        nodes.children[key] = [];
+        return nodes.children[key];
+    }
+    var read = await snaToolsReadAll(t.siteUrl, snaToolsTaxonomySetPath(t, setId, termId) + '/children', SNA_TERMS_PER_SET_MAX);
+    nodes.children[key] = read.items;
+    return read.items;
+}
+
+// True when a term in the destination has the default label name, ignoring capitals.
+function snaToolsTaxonomyHasDefaultLabel(term, name) {
+    var key = String(name || '').trim().toLowerCase();
+    return (term.labels || []).some(function(l) { return l && l.isDefault === true && String(l.name || '').trim().toLowerCase() === key; });
+}
+
+// ### Terms ###
+
+// Returns the IDs of the terms in the same set that a source term sits under, the main one first, without itself.
+function snaToolsTaxonomyParents(term, byId) {
+    var seen = {};
+    return (term.parentIds || []).filter(function(id) {
+        if (!byId[id] || id === term.sourceId || seen[id]) { return false; }
+        seen[id] = true;
+        return true;
+    });
+}
+
+// Returns a source term's default label, as people know it.
+function snaToolsTaxonomyTermName(term) {
+    var labels = (term && term.labels) || [];
+    var label = labels.filter(function(l) { return l.isDefault; })[0] || labels[0];
+    return label ? String(label.name || '') : '';
+}
+
+/**
+ * Returns the labels and descriptions of a source term that the destination's term store can hold, with one default
+ * label in each language and always one in the store's default language.
+ * @param {object} term A PlanTerm.
+ * @param {object} t The state of this copy's term store work.
+ * @returns {{labels: object[], descriptions: object[], defaultName: string, droppedLabels: number,
+ *          droppedDescriptions: number, droppedLanguages: string[]}} The dropped counts are labels and descriptions in
+ *          languages the destination's term store doesn't have.
+ */
+function snaToolsTaxonomyTermTexts(term, t) {
+    var result = { labels: [], descriptions: [], defaultName: '', droppedLabels: 0, droppedDescriptions: 0, droppedLanguages: [] };
+    var defaultKey = t.defaultLanguage.toLowerCase();
+    function inStore(tag) { return t.languages.indexOf(String(tag || '').toLowerCase()) > -1; }
+    function dropLanguage(tag) { if (result.droppedLanguages.indexOf(tag) === -1) { result.droppedLanguages.push(tag); } }
+    var hasDefault = {};
+    (term.labels || []).forEach(function(label) {
+        var tag = label.languageTag || t.defaultLanguage;
+        var key = tag.toLowerCase();
+        if (!inStore(tag)) { result.droppedLabels++; dropLanguage(tag); return; }
+        var name = String(label.name || '').trim();
+        var repeated = result.labels.some(function(l) { return l.languageTag.toLowerCase() === key && l.name.toLowerCase() === name.toLowerCase(); });
+        if (!name || repeated) { return; }
+        var isDefault = label.isDefault === true && !hasDefault[key];
+        if (isDefault) { hasDefault[key] = true; }
+        result.labels.push({ name: name, languageTag: tag, isDefault: isDefault });
+    });
+    // A term always needs a default label in the store's default language. When the source term has none there, its
+    // own default label is used in that language.
+    if (!hasDefault[defaultKey]) {
+        var sameLanguage = result.labels.filter(function(l) { return l.languageTag.toLowerCase() === defaultKey; })[0];
+        var sourceName = snaToolsTaxonomyTermName(term).trim();
+        if (sameLanguage) {
+            sameLanguage.isDefault = true;
+        } else if (sourceName) {
+            result.labels.unshift({ name: sourceName, languageTag: t.defaultLanguage, isDefault: true });
+        }
+        hasDefault[defaultKey] = true;
+    }
+    result.labels.forEach(function(l) {
+        var key = l.languageTag.toLowerCase();
+        if (!hasDefault[key]) { l.isDefault = true; hasDefault[key] = true; }
+    });
+    var main = result.labels.filter(function(l) { return l.isDefault && l.languageTag.toLowerCase() === defaultKey; })[0];
+    result.defaultName = main ? main.name : '';
+    (term.descriptions || []).forEach(function(d) {
+        var tag = d.languageTag || t.defaultLanguage;
+        if (!inStore(tag)) { result.droppedDescriptions++; dropLanguage(tag); return; }
+        if (String(d.description || '').trim()) { result.descriptions.push({ description: String(d.description), languageTag: tag }); }
+    });
+    return result;
+}
+
+// True when a source term isn't available for tagging in the source term set sourceSetId. The REST API gives this as
+// false, or as a list with one item for each term set the term is in, such as [{ setId, isAvailable: false }]. Only
+// the item for sourceSetId counts, because a reused term can be available in one term set and not in another.
+function snaToolsTaxonomyNotForTagging(value, sourceSetId) {
+    if (value === false) { return true; }
+    if (!Array.isArray(value)) { return false; }
+    var items = value.filter(function(v) { return v && typeof v === 'object'; });
+    var setKey = snaToolsCleanGuid(sourceSetId);
+    var withSet = items.filter(function(v) { return v.setId; });
+    if (withSet.length === 0) { return items.some(function(v) { return v.isAvailable === false; }); }
+    return withSet.some(function(v) { return setKey && snaToolsCleanGuid(v.setId) === setKey && v.isAvailable === false; });
+}
+
+// Creates one term under a term set (parentId '') or a term in the destination, and returns the new term's ID.
+async function snaToolsTaxonomyCreateTerm(t, setId, parentId, texts, properties, stats) {
+    var props = (properties || []).filter(function(p) { return p && p.key; }).map(function(p) {
+        return { key: String(p.key), value: String(p.value === null || p.value === undefined ? '' : p.value) };
+    });
+    return snaToolsTaxonomyLadder(t, async function() {
+        var body = { labels: texts.labels };
+        if (texts.descriptions.length > 0) { body.descriptions = texts.descriptions; }
+        if (props.length > 0) { body.properties = props; }
+        var created = await snaToolsWrite(t.siteUrl, snaToolsTaxonomySetPath(t, setId, parentId) + '/children', { method: 'POST', body: body });
+        var id = snaToolsCleanGuid(created && created.id);
+        if (!id) { throw snaToolsError(500, '', ''); }
+        return id;
+    }, async function() {
+        var defaultId = snaToolsTaxonomyDefaultLanguageId(t);
+        var request = snaToolsTaxonomyCsomRequest();
+        var store = snaToolsTaxonomyCsomStore(request);
+        var parent = parentId
+            ? request.method(store, 'GetTerm', [{ type: 'Guid', value: parentId }])
+            : request.method(store, 'GetTermSet', [{ type: 'Guid', value: setId }]);
+        var newId = snaToolsNewGuid();
+        var term = request.method(parent, 'CreateTerm', [{ type: 'String', value: texts.defaultName }, { type: 'Int32', value: defaultId }, { type: 'Guid', value: newId }]);
+        var unnamed = { labels: 0, descriptions: 0, languages: [] };
+        var madeDefault = false;
+        texts.labels.forEach(function(label) {
+            // CreateTerm already made the default label in the default language.
+            if (!madeDefault && label.isDefault && label.languageTag.toLowerCase() === t.defaultLanguage.toLowerCase()) { madeDefault = true; return; }
+            var languageId = snaToolsTaxonomyLanguageId(label.languageTag);
+            if (!languageId) {
+                unnamed.labels++;
+                if (unnamed.languages.indexOf(label.languageTag) === -1) { unnamed.languages.push(label.languageTag); }
+                return;
+            }
+            request.call(term, 'CreateLabel', [{ type: 'String', value: label.name }, { type: 'Int32', value: languageId }, { type: 'Boolean', value: label.isDefault }]);
+        });
+        texts.descriptions.forEach(function(d) {
+            var languageId = snaToolsTaxonomyLanguageId(d.languageTag);
+            if (!languageId) {
+                unnamed.descriptions++;
+                if (unnamed.languages.indexOf(d.languageTag) === -1) { unnamed.languages.push(d.languageTag); }
+                return;
+            }
+            request.call(term, 'SetDescription', [{ type: 'String', value: d.description }, { type: 'Int32', value: languageId }]);
+        });
+        props.forEach(function(p) { request.call(term, 'SetCustomProperty', [{ type: 'String', value: p.key }, { type: 'String', value: p.value }]); });
+        request.call(store, 'CommitAll', []);
+        await snaToolsCsom(t.siteUrl, request.xml());
+        stats.unnamedLabels += unnamed.labels;
+        stats.unnamedDescriptions += unnamed.descriptions;
+        unnamed.languages.forEach(function(tag) { if (stats.unnamedLanguages.indexOf(tag) === -1) { stats.unnamedLanguages.push(tag); } });
+        return newId;
+    });
+}
+
+// Adds an existing destination term under a second parent term in the same term set, as a reused term.
+async function snaToolsTaxonomyReuseTerm(t, setId, termId, parentId) {
+    return snaToolsTaxonomyLadder(t, async function() {
+        await snaToolsWrite(t.siteUrl, snaToolsTaxonomySetPath(t, setId, termId) + '/relations', {
+            method: 'POST', body: { relationship: 'reuse', fromTerm: { id: parentId }, set: { id: setId } }
+        });
+    }, async function() {
+        var request = snaToolsTaxonomyCsomRequest();
+        var store = snaToolsTaxonomyCsomStore(request);
+        var parent = request.method(store, 'GetTerm', [{ type: 'Guid', value: parentId }]);
+        var source = request.method(store, 'GetTerm', [{ type: 'Guid', value: termId }]);
+        request.call(parent, 'ReuseTerm', [{ path: source }, { type: 'Boolean', value: false }]);
+        request.call(store, 'CommitAll', []);
+        await snaToolsCsom(t.siteUrl, request.xml());
+    });
+}
+
+// Deprecates a destination term, or makes it unavailable for tagging, or both.
+async function snaToolsTaxonomyTermSettings(t, setId, termId, deprecate, notForTagging) {
+    return snaToolsTaxonomyLadder(t, async function() {
+        var body = {};
+        if (deprecate) { body.isDeprecated = true; }
+        if (notForTagging) { body.isAvailableForTagging = [{ setId: setId, isAvailable: false }]; }
+        await snaToolsWrite(t.siteUrl, snaToolsTaxonomySetPath(t, setId, termId), { method: 'PATCH', body: body });
+    }, async function() {
+        var request = snaToolsTaxonomyCsomRequest();
+        var store = snaToolsTaxonomyCsomStore(request);
+        var term = request.method(store, 'GetTerm', [{ type: 'Guid', value: termId }]);
+        if (deprecate) { request.call(term, 'Deprecate', [{ type: 'Boolean', value: true }]); }
+        if (notForTagging) { request.set(term, 'IsAvailableForTagging', { type: 'Boolean', value: false }); }
+        request.call(store, 'CommitAll', []);
+        await snaToolsCsom(t.siteUrl, request.xml());
+    });
+}
+
+// Returns the note for a term Sitenalyzer didn't create because SharePoint refused every change to the term store.
+function snaToolsTaxonomyBlockedTermNote(err) {
+    return 'Sitenalyzer didn\'t create this term, because SharePoint didn\'t let it change the destination\'s term store.' +
+        snaToolsServerSaid(err && err.serverMessage) + ' Add the term by hand in the destination\'s term store.';
+}
+
+/**
+ * Copies the terms of one source term set into a destination term set: parents before children, then each term's
+ * other parents, then the deprecated and tagging settings. Terms already there with the same default label under the
+ * same parent are used instead of being created again. Logs a row for each term it couldn't copy in full.
+ * @param {object} t The state of this copy's term store work.
+ * @param {object} set The PlanTermSet.
+ * @param {string} destSetId The destination term set's ID.
+ * @param {boolean} setExisted True when the destination term set was there before this copy.
+ * @param {object} maps Source to destination IDs; maps.terms is filled.
+ * @param {object} stats Counts for the term set's row, changed here.
+ * @returns {Promise<number>} How many of the set's terms are in the destination, created or found.
+ */
+async function snaToolsTaxonomyCopyTerms(t, set, destSetId, setExisted, maps, stats) {
+    var K = SNA_TOOLS_KINDS;
+    var terms = set.terms || [];
+    var byId = {};
+    terms.forEach(function(term) { byId[term.sourceId] = term; });
+    var childrenOf = {};
+    terms.forEach(function(term) {
+        var main = snaToolsTaxonomyParents(term, byId)[0] || '';
+        (childrenOf[main] = childrenOf[main] || []).push(term);
+    });
+    // Parents before children, each term under its main parent, in the order the source gave.
+    var order = [];
+    var placed = {};
+    function place(term) {
+        if (placed[term.sourceId]) { return; }
+        placed[term.sourceId] = true;
+        order.push(term);
+        (childrenOf[term.sourceId] || []).forEach(place);
+    }
+    (childrenOf[''] || []).forEach(place);
+
+    function rowName(name) { return (name || 'A term with no name') + ' in ' + set.name; }
+    terms.forEach(function(term) {
+        if (placed[term.sourceId]) { return; }
+        stats.failed++;
+        snaToolsLog(K.term, rowName(snaToolsTaxonomyTermName(term)), 'failed', 'Sitenalyzer couldn\'t work out which term this term sits under, ' +
+            'so it didn\'t copy it. Add it by hand in the destination\'s term store.');
+    });
+
+    var nodes = { children: {}, existing: {} };
+    if (setExisted) { nodes.existing['set:' + destSetId] = true; }
+    var copied = {};    // Source term ID -> { destId, existed }
+    var problems = {};  // Source term ID -> sentences for its Partly copied row
+    var destIds = {};
+
+    for (var i = 0; i < order.length; i++) {
+        var term = order[i];
+        var texts = snaToolsTaxonomyTermTexts(term, t);
+        var name = rowName(texts.defaultName || snaToolsTaxonomyTermName(term));
+        if (!texts.defaultName) {
+            stats.failed++;
+            snaToolsLog(K.term, name, 'failed', 'Sitenalyzer couldn\'t copy this term, because it has no name it can use in the destination. Add it by hand in the destination\'s term store.');
+            continue;
+        }
+        if (t.mode === 'blocked') {
+            stats.failed++;
+            snaToolsLog(K.term, name, 'failed', snaToolsTaxonomyBlockedTermNote(t.blockedError));
+            continue;
+        }
+        var parentSourceId = snaToolsTaxonomyParents(term, byId)[0] || '';
+        var parentDestId = parentSourceId ? (copied[parentSourceId] && copied[parentSourceId].destId) || '' : '';
+        if (parentSourceId && !parentDestId) {
+            stats.failed++;
+            snaToolsLog(K.term, name, 'failed', 'Sitenalyzer didn\'t create this term, because it couldn\'t create ' +
+                snaToolsTaxonomyTermName(byId[parentSourceId]) + ', the term it sits under. Add both by hand in the destination\'s term store, or copy again.');
+            continue;
+        }
+        try {
+            var siblings = await snaToolsTaxonomyChildren(t, nodes, destSetId, parentDestId);
+            var match = siblings.filter(function(s) { return snaToolsTaxonomyHasDefaultLabel(s, texts.defaultName); })[0];
+            var destId;
+            if (match && snaToolsCleanGuid(match.id)) {
+                destId = snaToolsCleanGuid(match.id);
+                nodes.existing[destId] = true;
+                copied[term.sourceId] = { destId: destId, existed: true };
+                stats.found++;
+            } else {
+                destId = await snaToolsTaxonomyCreateTerm(t, destSetId, parentDestId, texts, term.properties, stats);
+                siblings.push({ id: destId, labels: texts.labels });
+                nodes.children[destId] = [];
+                copied[term.sourceId] = { destId: destId, existed: false };
+                stats.added++;
+                stats.droppedLabels += texts.droppedLabels;
+                stats.droppedDescriptions += texts.droppedDescriptions;
+                texts.droppedLanguages.forEach(function(tag) { if (stats.languages.indexOf(tag) === -1) { stats.languages.push(tag); } });
+            }
+            maps.terms[term.sourceId] = destId;
+            destIds[destId] = true;
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            stats.failed++;
+            snaToolsLog(K.term, name, 'failed', err.snaToolsTaxonomyBlocked
+                ? snaToolsTaxonomyBlockedTermNote(err)
+                : 'Sitenalyzer couldn\'t create this term. ' + snaToolsFriendlyError(err));
+        }
+    }
+
+    // ### Other Parents ###
+    // A term under more than one term is created under its main parent, then reused under each other parent.
+    for (var r = 0; r < order.length; r++) {
+        var reusedTerm = order[r];
+        var done = copied[reusedTerm.sourceId];
+        var others = snaToolsTaxonomyParents(reusedTerm, byId).slice(1);
+        if (!done || others.length === 0) { continue; }
+        var missing = [];
+        for (var p = 0; p < others.length; p++) {
+            var otherDestId = copied[others[p]] && copied[others[p]].destId;
+            if (!otherDestId) { missing.push(snaToolsTaxonomyTermName(byId[others[p]])); continue; }
+            try {
+                var under = await snaToolsTaxonomyChildren(t, nodes, destSetId, otherDestId);
+                if (under.some(function(c) { return snaToolsCleanGuid(c.id) === done.destId; })) { continue; }
+                await snaToolsTaxonomyReuseTerm(t, destSetId, done.destId, otherDestId);
+                under.push({ id: done.destId });
+            } catch (err) {
+                if (snaToolsIsCancelled(err)) { throw err; }
+                missing.push(snaToolsTaxonomyTermName(byId[others[p]]));
+            }
+        }
+        if (missing.length > 0) {
+            var mainName = snaToolsTaxonomyTermName(byId[snaToolsTaxonomyParents(reusedTerm, byId)[0]]);
+            (problems[reusedTerm.sourceId] = problems[reusedTerm.sourceId] || []).push('The term is under ' + mainName +
+                ' in the destination, but Sitenalyzer couldn\'t also add it under ' + snaJoinWords(missing) +
+                '. In the destination\'s term store, reuse the term under ' + (missing.length === 1 ? 'that term' : 'those terms') + '.');
+        }
+    }
+
+    // ### Deprecated and Tagging Settings ###
+    // These come last, because a deprecated term can't get new children or be reused.
+    for (var s = 0; s < order.length; s++) {
+        var settingsTerm = order[s];
+        var made = copied[settingsTerm.sourceId];
+        if (!made || made.existed) { continue; }
+        var deprecate = settingsTerm.isDeprecated === true;
+        var notForTagging = snaToolsTaxonomyNotForTagging(settingsTerm.isAvailableForTagging, set.sourceId);
+        if (!deprecate && !notForTagging) { continue; }
+        try {
+            await snaToolsTaxonomyTermSettings(t, destSetId, made.destId, deprecate, notForTagging);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var changes = [];
+            if (deprecate) { changes.push('deprecate it'); }
+            if (notForTagging) { changes.push('make it unavailable for tagging'); }
+            (problems[settingsTerm.sourceId] = problems[settingsTerm.sourceId] || []).push('Sitenalyzer created the term, but couldn\'t ' +
+                snaJoinWords(changes) + '. Change this by hand in the destination\'s term store.');
+        }
+    }
+
+    order.forEach(function(term) {
+        if (!problems[term.sourceId]) { return; }
+        stats.partial++;
+        snaToolsLog(K.term, rowName(snaToolsTaxonomyTermName(term)), 'partial', problems[term.sourceId].join(' '));
+    });
+    return Object.keys(destIds).length;
+}
+
+// ### Term Sets ###
+
+// Creates a term set in the destination's own term group and returns its ID. Settings that the term set create request
+// doesn't take are changed afterwards; a failure there is added to stats.setSettings instead of failing the term set.
+async function snaToolsTaxonomyCreateSet(t, set, stats) {
+    var wantOpen = set.isOpen === true;
+    var wantHidden = set.isAvailableForTagging === false;
+    function settingsFailed() {
+        if (wantOpen) { stats.setSettings.push('open to new terms'); }
+        if (wantHidden) { stats.setSettings.push('unavailable for tagging'); }
+    }
+    return snaToolsTaxonomyLadder(t, async function() {
+        var body = { parentGroup: { id: t.groupId }, localizedNames: [{ languageTag: t.defaultLanguage, name: set.name }] };
+        if (set.description) { body.description = set.description; }
+        var created = await snaToolsWrite(t.siteUrl, t.base + '/sets', { method: 'POST', body: body });
+        var id = snaToolsCleanGuid(created && created.id);
+        if (!id) { throw snaToolsError(500, '', ''); }
+        t.restWorked = true;
+        if (wantOpen || wantHidden) {
+            var patch = {};
+            if (wantOpen) { patch.isOpen = true; }
+            if (wantHidden) { patch.isAvailableForTagging = false; }
+            try {
+                await snaToolsWrite(t.siteUrl, snaToolsTaxonomySetPath(t, id, ''), { method: 'PATCH', body: patch });
+            } catch (err) {
+                if (snaToolsIsCancelled(err)) { throw err; }
+                if (!snaToolsTaxonomyIsRefusal(err)) { settingsFailed(); return id; }
+                // The REST API refused the change, so it goes through CSOM. When CSOM works, every later change goes
+                // through CSOM too. When CSOM fails, later changes go through the REST API, which created the term set.
+                try {
+                    await snaToolsTaxonomyCsomWork(t, function() { return snaToolsTaxonomySetSettingsCsom(t, id, wantOpen, wantHidden); });
+                    t.mode = 'csom';
+                } catch (csomErr) {
+                    if (snaToolsIsCancelled(csomErr)) { throw csomErr; }
+                    settingsFailed();
+                }
+            }
+        }
+        return id;
+    }, async function() {
+        var languageId = snaToolsTaxonomyDefaultLanguageId(t);
+        var request = snaToolsTaxonomyCsomRequest();
+        var store = snaToolsTaxonomyCsomStore(request);
+        var group = request.method(store, 'GetGroup', [{ type: 'Guid', value: t.groupId }]);
+        var newId = snaToolsNewGuid();
+        var created = request.method(group, 'CreateTermSet', [{ type: 'String', value: set.name }, { type: 'Guid', value: newId }, { type: 'Int32', value: languageId }]);
+        if (set.description) { request.set(created, 'Description', { type: 'String', value: set.description }); }
+        if (wantOpen) { request.set(created, 'IsOpenForTermCreation', { type: 'Boolean', value: true }); }
+        if (wantHidden) { request.set(created, 'IsAvailableForTagging', { type: 'Boolean', value: false }); }
+        request.call(store, 'CommitAll', []);
+        await snaToolsCsom(t.siteUrl, request.xml());
+        return newId;
+    });
+}
+
+// Makes a destination term set open to new terms, or unavailable for tagging, or both, through CSOM.
+async function snaToolsTaxonomySetSettingsCsom(t, setId, open, hidden) {
+    var request = snaToolsTaxonomyCsomRequest();
+    var store = snaToolsTaxonomyCsomStore(request);
+    var termSet = request.method(store, 'GetTermSet', [{ type: 'Guid', value: setId }]);
+    if (open) { request.set(termSet, 'IsOpenForTermCreation', { type: 'Boolean', value: true }); }
+    if (hidden) { request.set(termSet, 'IsAvailableForTagging', { type: 'Boolean', value: false }); }
+    request.call(store, 'CommitAll', []);
+    await snaToolsCsom(t.siteUrl, request.xml());
+}
+
+// Returns the English name of a language tag, such as French (France) for fr-FR, or the tag when the browser can't
+// name it. People see language names, not tags, on SharePoint's term store screens.
+function snaToolsTaxonomyLanguageName(languageTag) {
+    var tag = String(languageTag || '');
+    try {
+        var name = new Intl.DisplayNames(['en'], { type: 'language' }).of(tag);
+        if (name && name.toLowerCase() !== tag.toLowerCase()) { return name; }
+    } catch (err) {
+        // The browser doesn't know the tag, or has no Intl.DisplayNames, so the tag is shown instead.
+    }
+    return tag;
+}
+
+// Returns the sentences about problems in a copied term set, for the end of its row's note. fromFile is true when the
+// copy comes from a data dictionary file instead of a site.
+function snaToolsTaxonomySetProblems(set, stats, fromFile) {
+    var problems = [];
+    if (stats.failed > 0) {
+        problems.push('Couldn\'t copy ' + snaCountText(stats.failed, 'term', 'terms') + ', which ' + (stats.failed === 1 ? 'has its own row.' : 'have their own rows.'));
+    }
+    if (stats.partial > 0) {
+        problems.push('Partly copied ' + snaCountText(stats.partial, 'term', 'terms') + ', which ' + (stats.partial === 1 ? 'has its own row.' : 'have their own rows.'));
+    }
+    if (stats.droppedLabels > 0 || stats.droppedDescriptions > 0) {
+        var parts = [];
+        if (stats.droppedLabels > 0) { parts.push(snaCountText(stats.droppedLabels, 'label', 'labels')); }
+        if (stats.droppedDescriptions > 0) { parts.push(snaCountText(stats.droppedDescriptions, 'description', 'descriptions')); }
+        var one = stats.languages.length === 1;
+        problems.push('Left out ' + parts.join(' and ') + ' in ' + snaJoinWords(stats.languages.map(snaToolsTaxonomyLanguageName)) + ', because the destination\'s term store doesn\'t have ' +
+            (one ? 'that language' : 'those languages') + '. Ask your term store administrator to add ' + (one ? 'it' : 'them') + ', then copy again.');
+    }
+    if (stats.unnamedLabels > 0 || stats.unnamedDescriptions > 0) {
+        var unnamedParts = [];
+        if (stats.unnamedLabels > 0) { unnamedParts.push(snaCountText(stats.unnamedLabels, 'label', 'labels')); }
+        if (stats.unnamedDescriptions > 0) { unnamedParts.push(snaCountText(stats.unnamedDescriptions, 'description', 'descriptions')); }
+        var oneLanguage = stats.unnamedLanguages.length === 1;
+        var oneText = stats.unnamedLabels + stats.unnamedDescriptions === 1;
+        problems.push('Left out ' + unnamedParts.join(' and ') + ' in ' + snaJoinWords(stats.unnamedLanguages.map(snaToolsTaxonomyLanguageName)) +
+            ', because Sitenalyzer can\'t add text in ' + (oneLanguage ? 'that language' : 'those languages') +
+            ' to this destination. Add ' + (oneText ? 'it' : 'them') + ' by hand in the destination\'s term store.');
+    }
+    if (stats.setSettings.length > 0) {
+        problems.push('Couldn\'t make the term set ' + snaJoinWords(stats.setSettings) + '. Change this by hand in the destination\'s term store.');
+    }
+    if (set.complete === false && fromFile) {
+        problems.push('The data dictionary file doesn\'t list every term of this term set, so some terms may be missing. ' +
+            'Check the term set in the destination, and add any missing terms by hand.');
+    } else if (set.complete === false) {
+        problems.push('Sitenalyzer couldn\'t read every term of this term set in the site you copy from, so some terms may be missing. ' +
+            'Check the term set in the destination, and add any missing terms by hand.');
+    }
+    return problems;
+}
+
+// Copies one chosen term set into the destination's own term group, or uses the one there with the same name, and
+// logs its row. Records the set in maps.termSetsMissing when it can't be created.
+async function snaToolsTaxonomyCopySet(t, set, existingSets, maps) {
+    var K = SNA_TOOLS_KINDS;
+    var stats = { added: 0, found: 0, failed: 0, partial: 0, droppedLabels: 0, droppedDescriptions: 0, languages: [],
+        unnamedLabels: 0, unnamedDescriptions: 0, unnamedLanguages: [], setSettings: [] };
+    var nameKey = String(set.name || '').trim().toLowerCase();
+    var match = existingSets.filter(function(s) { return snaToolsTaxonomySetNameKey(s, t) === nameKey; })[0];
+    var setExisted = !!(match && snaToolsCleanGuid(match.id));
+    var destSetId = setExisted ? snaToolsCleanGuid(match.id) : '';
+    if (!setExisted) {
+        if (t.mode === 'blocked') {
+            maps.termSetsMissing[set.sourceId] = SNA_TOOLS_TERM_STORE_BLOCKED_REASON;
+            snaToolsLog(K.termSet, set.name, 'failed', snaToolsTaxonomyBlockedSetNote(t.blockedError));
+            return;
+        }
+        try {
+            destSetId = await snaToolsTaxonomyCreateSet(t, set, stats);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var reason = err.snaToolsTaxonomyBlocked ? SNA_TOOLS_TERM_STORE_BLOCKED_REASON : 'Sitenalyzer couldn\'t create this term set in the destination.';
+            maps.termSetsMissing[set.sourceId] = reason;
+            snaToolsLog(K.termSet, set.name, 'failed', err.snaToolsTaxonomyBlocked ? snaToolsTaxonomyBlockedSetNote(err) : reason + ' ' + snaToolsFriendlyError(err));
+            return;
+        }
+        existingSets.push({ id: destSetId, localizedNames: [{ name: set.name, languageTag: t.defaultLanguage }] });
+    }
+    maps.termSets[set.sourceId] = destSetId;
+
+    var termCount = await snaToolsTaxonomyCopyTerms(t, set, destSetId, setExisted, maps, stats);
+    var lead;
+    if (setExisted) {
+        lead = 'The destination already had a term set with this name, so Sitenalyzer used it. Added ' +
+            snaCountText(stats.added, 'new term', 'new terms') + ' to it, and ' + snaCountText(stats.found, 'term was', 'terms were') + ' already there.';
+    } else if ((set.terms || []).length === 0) {
+        lead = 'Created the term set, which has no terms.';
+    } else {
+        lead = 'Created the term set with ' + snaCountText(stats.added, 'term', 'terms') + '.';
+    }
+    var problems = snaToolsTaxonomySetProblems(set, stats, t.fromFile);
+    snaToolsLog(K.termSet, set.name, problems.length > 0 ? 'partial' : 'copied', [lead].concat(problems).join(' '),
+        { verify: { type: 'termSet', groupId: t.groupId, setId: destSetId, termCount: termCount } });
+}
+
+// Returns the note for a term set Sitenalyzer couldn't create because SharePoint refused every change to the term store.
+function snaToolsTaxonomyBlockedSetNote(err) {
+    return SNA_TOOLS_TERM_STORE_BLOCKED_REASON + snaToolsServerSaid(err && err.serverMessage) +
+        ' Create the term set by hand in the destination\'s term store, then copy again.';
+}
+
+// True when the plan has a managed metadata column, which needs the destination's term store ID.
+function snaToolsTaxonomyPlanHasColumns(plan) {
+    function isTaxonomy(field) { return field && field.isTaxonomy; }
+    return (plan.siteColumns || []).some(isTaxonomy) ||
+        (plan.lists || []).some(function(list) { return list.selected !== false && (list.fields || []).some(isTaxonomy); });
+}
+
+// ### Copy Term Sets ###
+
+/**
+ * Copies the chosen site term sets into the destination's own term group, creating the group when there is none.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; see the notes at the top of this file.
+ * @returns {Promise<void>} Side effects: changes the destination's term store, and adds results.
+ * @throws {Error} snaCancelledError when the copy is stopped. Every other problem is logged as a result.
+ */
+async function snaToolsCopyTermSets(plan, dest, maps) {
+    var K = SNA_TOOLS_KINDS;
+    var sets = (plan.termGroup && plan.termGroup.sets) || [];
+    var chosen = [];
+    sets.forEach(function(set) {
+        if (set.selected) { chosen.push(set); return; }
+        maps.termSetsMissing[set.sourceId] = SNA_TOOLS_TERM_SET_LEFT_OUT;
+        snaToolsLog(K.termSet, set.name, 'skipped', 'You left this term set out, so Sitenalyzer didn\'t copy it or the columns that use it. ' +
+            'Copy again with it chosen if you need it.');
+    });
+    if (chosen.length === 0 && !snaToolsTaxonomyPlanHasColumns(plan)) { return; }
+
+    // t holds this copy's term store work: where to send changes, which way works (mode), the destination's languages,
+    // and whether the copy comes from a data dictionary file.
+    var t = { siteUrl: xlsxStripSlash(dest.siteUrl), siteId: snaToolsCleanGuid(dest.siteId), base: '', mode: 'rest', csomWorked: false,
+        restWorked: false, blockedError: null, defaultLanguage: '', languages: [], groupId: '',
+        fromFile: !!(plan.source && plan.source.kind === 'workbook') };
+    function missAll(reason, note) {
+        chosen.forEach(function(set) {
+            maps.termSetsMissing[set.sourceId] = reason;
+            snaToolsLog(K.termSet, set.name, 'failed', note);
+        });
+    }
+
+    // ### Read the Destination's Term Store ###
+    var storeReason = 'Sitenalyzer couldn\'t read the destination\'s term store.';
+    if (!t.siteId) {
+        missAll(storeReason, storeReason + ' Check the destination again, then copy again.');
+        return;
+    }
+    t.base = snaToolsTaxonomyBase(t.siteId);
+    var store;
+    try {
+        store = await snaToolsRead(t.siteUrl, t.base);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        missAll(storeReason, storeReason + ' ' + snaToolsFriendlyError(err));
+        return;
+    }
+    maps.destination.termStoreId = snaToolsCleanGuid(store && store.id);
+    t.defaultLanguage = String((store && store.defaultLanguageTag) || 'en-US');
+    t.languages = ((store && store.languageTags) || []).map(function(tag) { return String(tag).toLowerCase(); });
+    if (t.languages.indexOf(t.defaultLanguage.toLowerCase()) === -1) { t.languages.push(t.defaultLanguage.toLowerCase()); }
+    if (chosen.length === 0) { return; }
+
+    // ### Find or Create the Destination's Own Term Group ###
+    var groupProblem;
+    try {
+        groupProblem = await snaToolsTaxonomyFindGroup(t);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        var readReason = 'Sitenalyzer couldn\'t read the term groups in the destination.';
+        groupProblem = { reason: readReason, note: readReason + ' ' + snaToolsFriendlyError(err) };
+    }
+    if (groupProblem) {
+        missAll(groupProblem.reason, groupProblem.note);
+        return;
+    }
+
+    var existingSets;
+    try {
+        existingSets = (await snaToolsReadAll(t.siteUrl, t.base + '/groups/' + encodeURIComponent(t.groupId) + '/sets', SNA_TOOLS_READ_MAX)).items;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        var setsReason = 'Sitenalyzer couldn\'t read the term sets already in the destination.';
+        missAll(setsReason, setsReason + ' ' + snaToolsFriendlyError(err));
+        return;
+    }
+
+    // ### Copy Each Term Set ###
+    for (var i = 0; i < chosen.length; i++) {
+        snaToolsCheckCancelled();
+        snaToolsProgress('Copying the term set ' + snaMaskText(chosen[i].name) + '.');
+        await snaToolsTaxonomyCopySet(t, chosen[i], existingSets, maps);
+    }
+}
+
+// ### Helpers for Managed Metadata Columns ###
+
+/**
+ * Connects a managed metadata column in a destination list, or a destination site column, to its term set through
+ * CSOM: sets SspId, TermSetId, AnchorId, Open, IsPathRendered, and CreateValuesInEditForm on the column, then saves it
+ * with Update. Microsoft documents this as the way to finish a managed metadata column created from its XML.
+ * @param {string} destSiteUrl The destination site address, with no slash at the end.
+ * @param {string} destListId The destination list's ID, or '' for a site column.
+ * @param {string} fieldId The column's ID in that list, or the site column's ID.
+ * @param {object} binding { sspId (the term store ID), termSetId, anchorId ('' or the empty GUID for the whole set),
+ *        open, isPathRendered, createValuesInEditForm (true or false) }.
+ * @returns {Promise<void>} Side effects: changes the column. Needs the person to be able to manage the list.
+ * @throws {Error} snaToolsUserError when an ID isn't valid; snaToolsError when SharePoint refuses the change;
+ *         snaCancelledError when the copy is stopped.
+ */
+async function snaToolsTaxonomyBindField(destSiteUrl, destListId, fieldId, binding) {
+    var settings = binding || {};
+    var listId = snaToolsCleanGuid(destListId);
+    var columnId = snaToolsCleanGuid(fieldId);
+    var sspId = snaToolsCleanGuid(settings.sspId);
+    var termSetId = snaToolsCleanGuid(settings.termSetId);
+    var anchorId = snaToolsCleanGuid(settings.anchorId) || SNA_TOOLS_EMPTY_GUID;
+    if ((destListId && !listId) || !columnId || !sspId || !termSetId) {
+        throw snaToolsUserError('Sitenalyzer couldn\'t connect this column to its term set, because it doesn\'t have every ID it needs. ' +
+            'Choose the term set for the column by hand in the destination.');
+    }
+    var request = snaToolsTaxonomyCsomRequest();
+    var context = request.staticProperty(SNA_TOOLS_REQUEST_CONTEXT_TYPE_ID, 'Current');
+    var web = request.property(context, 'Web');
+    var fields = listId
+        ? request.property(request.method(request.property(web, 'Lists'), 'GetById', [{ type: 'Guid', value: listId }]), 'Fields')
+        : request.property(web, 'Fields');
+    var field = request.method(fields, 'GetById', [{ type: 'Guid', value: columnId }]);
+    request.set(field, 'SspId', { type: 'Guid', value: sspId });
+    request.set(field, 'TermSetId', { type: 'Guid', value: termSetId });
+    request.set(field, 'AnchorId', { type: 'Guid', value: anchorId });
+    request.set(field, 'Open', { type: 'Boolean', value: settings.open === true });
+    request.set(field, 'IsPathRendered', { type: 'Boolean', value: settings.isPathRendered === true });
+    request.set(field, 'CreateValuesInEditForm', { type: 'Boolean', value: settings.createValuesInEditForm === true });
+    request.call(field, 'Update', []);
+    await snaToolsCsom(xlsxStripSlash(destSiteUrl), request.xml());
+}
+
+/**
+ * Returns the ID of the destination site collection's TaxonomyHiddenList, the hidden list in its top-level site that
+ * every managed metadata column looks up. The answer is kept for the rest of the session once found.
+ * @param {string} destSiteUrl The destination site address, with no slash at the end.
+ * @returns {Promise<string>} The list ID in lowercase, or '' when the site collection has no TaxonomyHiddenList.
+ * @throws {Error} snaToolsError when the read fails; snaCancelledError when the copy is stopped. Reads only.
+ */
+async function snaToolsTaxonomyHiddenListId(destSiteUrl) {
+    var site = xlsxStripSlash(destSiteUrl);
+    var key = site.toLowerCase();
+    if (_snaToolsTaxonomyHiddenLists[key]) { return _snaToolsTaxonomyHiddenLists[key]; }
+    var json = await snaToolsRead(site, '/_api/site/rootweb/lists?$select=Id,Title&$filter=' +
+        encodeURIComponent('Title eq ' + snaToolsQuote('TaxonomyHiddenList')));
+    var list = ((json && json.value) || []).filter(function(l) { return l && l.Title === 'TaxonomyHiddenList'; })[0];
+    var id = snaToolsCleanGuid(list && list.Id);
+    if (id) { _snaToolsTaxonomyHiddenLists[key] = id; }
+    return id;
+}
+
+/**
+ * Checks that the destination can use a term set, such as one in a tenant-level group that a column in the source uses.
+ * @param {string} destSiteUrl The destination site address, with no slash at the end.
+ * @param {string} siteId The destination site collection's ID.
+ * @param {string} setId The term set's ID.
+ * @returns {Promise<boolean>} true when the term set is found; false when SharePoint answers that there is no such set,
+ *          or an ID isn't valid.
+ * @throws {Error} snaToolsError for any other failed read; snaCancelledError when the copy is stopped. Reads only.
+ */
+async function snaToolsTaxonomySetExists(destSiteUrl, siteId, setId) {
+    var site = snaToolsCleanGuid(siteId);
+    var set = snaToolsCleanGuid(setId);
+    if (!site || !set) { return false; }
+    try {
+        var json = await snaToolsRead(xlsxStripSlash(destSiteUrl), snaToolsTaxonomyBase(site) + '/sets/' + encodeURIComponent(set));
+        return !!(json && snaToolsCleanGuid(json.id));
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        if (err.status === 404) { return false; }
+        throw err;
+    }
+}
+
+/*
+This file is part of Sitenalyzer
+lists.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: Copies lists and libraries without their items or files, with their settings, columns, site columns, content
+         types, views, and form settings. Columns are made in an order that lets each one find what it needs: plain
+         columns, then lookup columns (after every list exists), then managed metadata columns (after the term sets),
+         then calculated columns (in the order their formulas use each other), then the columns a lookup column shows
+         from its list. A list or library the destination already has at the same address, made from the same template,
+         is used as it is: the copy adds the columns and views it's missing and leaves the rest alone.
+Notes: See README file for documentation and full license information.
+
+       Functions the copy steps call, in this order (keep these names and parameters). Each one takes
+       (plan, dest, maps) and returns Promise<void>: plan is the copy plan (see plan.js), dest is the destination from
+       snaToolsCheckDestination (see runner.js), and maps is the shared map of source to destination IDs (see
+       snaToolsNewMaps in runner.js). Each one catches its own errors for each item, logs one result for each item
+       (see snaToolsLog in core.js), and lets snaCancelledError through.
+       snaToolsCopySiteColumns(plan, dest, maps)   Site columns other than lookups (plan.siteColumns), and the names of
+                                                   renamed built-in site columns (plan.builtInSiteColumns); fills maps.fieldIds.
+       snaToolsCopyLists(plan, dest, maps)         Creates each list with Title = newUrl, then sets Title = newTitle,
+                                                   Description, and settings. Fills maps.lists and maps.listUrls.
+       snaToolsCopyContentTypes(plan, dest, maps)  Site content types (plan.siteContentTypes; plan.hubContentTypes are only
+                                                   reported), then each list's content types. Fills maps.contentTypes.
+       snaToolsCopyListColumns(plan, dest, maps)   List columns, lookup site columns, and column formatting. Fills
+                                                   maps.fields and maps.fieldIds. Skips managed metadata columns whose
+                                                   term set is in maps.termSetsMissing, naming the column, list, and term set.
+       snaToolsCopyViews(plan, dest, maps)         Public views; the default view is updated in place. Fills maps.views.
+       snaToolsCopyFormSettings(plan, dest, maps)  Form formatting and form customizers on list content types.
+
+       Managed metadata columns are connected to their term set with snaToolsTaxonomyBindField(destSiteUrl, destListId,
+       fieldId, { sspId, termSetId, anchorId, open, isPathRendered, createValuesInEditForm }) from taxonomy.js, with
+       destListId '' for a site column. When taxonomy.js doesn't have it, snaToolsListsBindTaxonomyField here sends the
+       same change.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Lists Settings ###
+
+// Parts of a column's definition (SchemaXml) that describe how the source site stores it, so the copy removes them.
+// CustomFormatter is removed too and set with a MERGE after the column exists, once the column names in it are updated.
+var SNA_TOOLS_LISTS_SOURCE_ATTRIBUTES = ['Version', 'SourceID', 'ColName', 'RowOrdinal', 'ColName2', 'RowOrdinal2', 'JoinColName',
+    'JoinRowOrdinal', 'JoinType', 'UniqueId', 'XName', 'SetAs', 'DisplaceOnUpgrade', 'FromBaseType', 'Sealed', 'PITarget',
+    'PIAttribute', 'Node', 'CustomFormatter'];
+
+// AddFieldOptions for createfieldasxml: 8 keeps the internal name from the Name attribute, and 1 adds the column to the
+// list's default content type, for lists that don't use content types.
+var SNA_TOOLS_LISTS_KEEP_NAME = 8;
+var SNA_TOOLS_LISTS_ADD_TO_DEFAULT_TYPE = 1;
+
+// Columns SharePoint adds by itself to a list with a managed metadata column, by internal name and by ID.
+var SNA_TOOLS_LISTS_TAXONOMY_HELPERS = ['taxcatchall', 'taxcatchalllabel'];
+var SNA_TOOLS_LISTS_TAXONOMY_HELPER_IDS = ['f3b0adf9-c1a2-4b02-920d-943fba4b3611', '8f6b6dd8-9357-4019-8172-966fcd502ed2'];
+
+// The ID of the Content Type column every content type has. It isn't shown in a content type's settings.
+var SNA_TOOLS_LISTS_CONTENT_TYPE_FIELD_ID = 'c042a256-787d-4a6f-8a8a-cf6ab767f12d';
+
+// The ID SharePoint uses for "none", such as a managed metadata column with no starting term.
+var SNA_TOOLS_LISTS_EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
+// Added to the note of a lookup column read from a data dictionary file, which doesn't say which column a lookup shows.
+var SNA_TOOLS_LISTS_GUESSED_LOOKUP_NOTE = 'This lookup shows the Title column, because the data dictionary file doesn\'t say which column it shows.';
+
+// List settings, in the order they are set. Version history goes first, because some other settings need it.
+var SNA_TOOLS_LISTS_VERSION_SETTINGS = ['EnableVersioning', 'EnableMinorVersions', 'MajorVersionLimit', 'MajorWithMinorVersionsLimit',
+    'EnableModeration', 'DraftVersionVisibility'];
+var SNA_TOOLS_LISTS_OTHER_SETTINGS = ['ContentTypesEnabled', 'EnableAttachments', 'EnableFolderCreation', 'NoCrawl', 'OnQuickLaunch',
+    'ForceCheckout', 'Direction', 'ListExperienceOptions', 'ReadSecurity', 'WriteSecurity', 'IrmEnabled'];
+
+// Settings only lists have, and settings only libraries have. SharePoint refuses them on the other kind.
+var SNA_TOOLS_LISTS_LIST_ONLY_SETTINGS = ['EnableAttachments', 'ReadSecurity', 'WriteSecurity'];
+var SNA_TOOLS_LISTS_LIBRARY_ONLY_SETTINGS = ['EnableMinorVersions', 'MajorWithMinorVersionsLimit', 'ForceCheckout'];
+
+// Words for each setting in a note, such as "Sitenalyzer couldn't copy these settings: version history and folders."
+var SNA_TOOLS_LISTS_SETTING_WORDS = {
+    EnableVersioning: 'version history', EnableMinorVersions: 'minor versions', MajorVersionLimit: 'how many versions to keep',
+    MajorWithMinorVersionsLimit: 'how many draft versions to keep', EnableModeration: 'content approval',
+    DraftVersionVisibility: 'who can see drafts', ContentTypesEnabled: 'content types', EnableAttachments: 'attachments',
+    EnableFolderCreation: 'new folders', NoCrawl: 'search results', OnQuickLaunch: 'site navigation',
+    ForceCheckout: 'required check out', Direction: 'reading direction', ListExperienceOptions: 'list experience',
+    ReadSecurity: 'which items people can read', WriteSecurity: 'which items people can edit',
+    IrmEnabled: 'information rights management', ValidationFormula: 'validation formula'
+};
+
+// View kinds for views/add (SP.ViewType), by the source view's ViewType.
+var SNA_TOOLS_LISTS_VIEW_KINDS = { HTML: 1, GRID: 2048, RECURRENCE: 8193, CHART: 131072, CALENDAR: 524288, GANTT: 67108864 };
+
+// View settings set with a MERGE after the view exists: [view property, PlanView property].
+var SNA_TOOLS_LISTS_VIEW_SETTINGS = [['Scope', 'scope'], ['Aggregations', 'aggregations'], ['AggregationsStatus', 'aggregationsStatus'],
+    ['JSLink', 'jsLink'], ['TabularView', 'tabularView'], ['IncludeRootFolder', 'includeRootFolder'], ['MobileView', 'mobileView'],
+    ['MobileDefaultView', 'mobileDefaultView']];
+
+// The layout of a modern view, such as a board (ViewType2 KANBAN), and its formatting: [view property, PlanView property].
+var SNA_TOOLS_LISTS_VIEW_LAYOUT = [['ViewType2', 'viewType2'], ['ViewData', 'viewData'], ['CalendarViewStyles', 'calendarViewStyles'],
+    ['CustomFormatter', 'customFormatter']];
+
+// CSOM type IDs: the request context (SP.RequestContext.Current) and SP.FieldLinkCreationInformation.
+var SNA_TOOLS_LISTS_CSOM_CONTEXT = '{3747adcd-a3c3-41b9-bfab-4a64dd2f1e0a}';
+var SNA_TOOLS_LISTS_CSOM_FIELD_LINK = '{63fb2c92-8f65-4bbb-a658-b6cd294403f4}';
+
+// Notes used in more than one place.
+var SNA_TOOLS_LISTS_BAD_DEFINITION_NOTE = 'Sitenalyzer couldn\'t read this column\'s definition, so it didn\'t make it. Make it by hand in the destination.';
+var SNA_TOOLS_LISTS_NOT_BOUND_NOTE = 'Created, but it isn\'t connected to its term set. Open the column settings in the destination and choose the term set.';
+var SNA_TOOLS_LISTS_HUB_NOTE = 'Sitenalyzer didn\'t copy this content type, because it comes from the content type hub and the destination ' +
+    'doesn\'t have it yet. Publish it to the destination from the content type gallery, then copy again.';
+
+// What one copy has done so far, by the maps object of that copy, so each step can find what an earlier step made.
+var _snaToolsListsRuns = new WeakMap();
+
+// ### Names in the Results ###
+
+// Returns the name of something inside a list for the results, such as 'Visit Date in Study Visits'.
+function snaToolsInList(list, name) {
+    return String(name || '') + ' in ' + String(list.newTitle || list.title || '');
+}
+
+// Returns the kind of a list in the results: 'Library' or 'List'.
+function snaToolsListKind(list) {
+    return list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list;
+}
+
+// Returns 'list' or 'library', for a sentence.
+function snaToolsListsWord(list) {
+    return list.isLibrary ? 'library' : 'list';
+}
+
+// Returns the name of a site column in the results, such as 'Study Code (site column)'.
+function snaToolsListsSiteColumnName(field) {
+    return String(field.title || field.internalName || '') + ' (site column)';
+}
+
+// ### Shared Helpers ###
+
+// Returns what this copy has done so far (see _snaToolsListsRuns): { lists: { sourceListId: state }, taxonomy, termSets,
+// pendingSiteLinks, siteColumnEntries }. Each list's state is described in snaToolsListsNewState.
+function snaToolsListsRun(maps) {
+    var run = _snaToolsListsRuns.get(maps);
+    if (!run) {
+        run = { lists: {}, taxonomy: null, termSets: {}, pendingSiteLinks: [], siteColumnEntries: {} };
+        _snaToolsListsRuns.set(maps, run);
+    }
+    return run;
+}
+
+// Returns the state of one destination list for this copy.
+function snaToolsListsNewState(destId, title, serverRelativeUrl, existing, entry) {
+    return {
+        destId: destId, title: title, serverRelativeUrl: serverRelativeUrl, existing: existing, entry: entry,
+        destFields: null,       // The destination list's columns by lowercase internal name: { id, internalName, title, required, customFormatter }
+        created: {},            // Source internal names of the columns this copy made, with their destination IDs
+        skipped: {},            // Source internal names of the columns this copy didn't make, with their names
+        entries: {},            // Result rows of columns, by source internal name
+        contentTypes: {},       // Destination content types by uppercase source content type ID: { stringId, name }
+        contentTypeEntries: {}  // Result rows of content types, by uppercase source content type ID
+    };
+}
+
+// Returns the REST address of a destination list, such as /_api/web/lists(guid'...').
+function snaToolsListsApi(listId) {
+    return "/_api/web/lists(guid'" + snaToolsCleanGuid(listId) + "')";
+}
+
+// Returns the REST address of one column: in a list, or a site column when listId is ''.
+function snaToolsListsFieldApi(listId, fieldId) {
+    return (listId ? snaToolsListsApi(listId) : '/_api/web') + "/fields(guid'" + snaToolsCleanGuid(fieldId) + "')";
+}
+
+// True for a lookup column, such as Lookup or LookupMulti. Managed metadata columns are lookups inside SharePoint, but
+// they have their own types.
+function snaToolsListsIsLookup(field) {
+    return field.type === 'Lookup' || field.type === 'LookupMulti';
+}
+
+// Returns the source to destination internal names of one list that changed, such as { Status: 'Status0' }.
+function snaToolsListsRenames(maps, sourceListId) {
+    var all = (maps.fields && maps.fields[sourceListId]) || {};
+    var renames = {};
+    Object.keys(all).forEach(function(name) { if (all[name] && all[name] !== name) { renames[name] = all[name]; } });
+    return renames;
+}
+
+// Returns the destination internal name of a source column, which is the same name unless the copy had to change it.
+function snaToolsListsDestName(maps, sourceListId, internalName) {
+    var all = (maps.fields && maps.fields[sourceListId]) || {};
+    return all[internalName] || internalName;
+}
+
+// Returns column formatting or view formatting JSON with each [$Name] of a renamed column changed to its new name.
+function snaToolsListsRenameInJson(text, renames) {
+    if (!text || Object.keys(renames).length === 0) { return text || ''; }
+    return String(text).replace(/\[\$([A-Za-z0-9_]+)\]/g, function(all, name) {
+        return renames[name] ? '[$' + renames[name] + ']' : all;
+    });
+}
+
+// Returns a formula with each [Name] of a renamed column changed, for the internal-name form of a calculated column.
+function snaToolsListsRenameInFormula(text, renames) {
+    if (!text || Object.keys(renames).length === 0) { return text || ''; }
+    return String(text).replace(/\[([^\]]+)\]/g, function(all, name) { return renames[name] ? '[' + renames[name] + ']' : all; });
+}
+
+// Returns a view's query or other CAML fragment, such as '<OrderBy><FieldRef Name="Status"/></OrderBy>', with the Name of
+// each FieldRef of a renamed column changed. Returns the text as it is when it isn't well-formed XML.
+function snaToolsListsRenameInXml(text, renames) {
+    if (!text || Object.keys(renames).length === 0) { return text || ''; }
+    var root = snaToolsParseXml('<Root>' + text + '</Root>');
+    if (!root) { return text; }
+    var refs = root.getElementsByTagName('FieldRef');
+    for (var i = 0; i < refs.length; i++) {
+        var name = refs[i].getAttribute('Name');
+        if (name && renames[name]) { refs[i].setAttribute('Name', renames[name]); }
+    }
+    var out = '';
+    for (var c = 0; c < root.childNodes.length; c++) { out += snaToolsSerializeXml(root.childNodes[c]); }
+    return out;
+}
+
+// Elements that hold FieldRef elements as a plain list, such as <OrderBy>, so only the FieldRef of a skipped column is
+// removed from them. Anywhere else a FieldRef is part of a filter condition, such as <Eq>, and the whole condition goes.
+var SNA_TOOLS_LISTS_FIELD_REF_LISTS = ['Root', 'OrderBy', 'GroupBy', 'ViewFields', 'FieldRefs', 'ProjectedFields'];
+
+/**
+ * Removes the parts of a view's CAML fragment, such as its query, that use a column the copy skipped: each FieldRef of
+ * that column in a sort, grouping, or list of columns, and each filter condition on it. An And or Or left with one
+ * condition becomes that condition, and an empty Where, OrderBy, GroupBy, And, or Or is removed.
+ * @param {string} text The fragment, such as '<GroupBy><FieldRef Name="ArmTerm"/></GroupBy>'.
+ * @param {object} skipped Source internal names of the skipped columns, as keys.
+ * @returns {{text: string, dropped: string[]}} The fragment, and the skipped internal names it used. The text is
+ *          returned as it is when it uses none of them or isn't well-formed XML.
+ */
+function snaToolsListsDropSkipped(text, skipped) {
+    var out = { text: text || '', dropped: [] };
+    if (!text || Object.keys(skipped || {}).length === 0) { return out; }
+    var root = snaToolsParseXml('<Root>' + text + '</Root>');
+    if (!root) { return out; }
+    var refs = Array.prototype.slice.call(root.getElementsByTagName('FieldRef'));
+    refs.forEach(function(ref) {
+        var name = ref.getAttribute('Name');
+        if (!name || !skipped[name] || !ref.parentNode) { return; }
+        if (out.dropped.indexOf(name) === -1) { out.dropped.push(name); }
+        var parent = ref.parentNode;
+        var target = SNA_TOOLS_LISTS_FIELD_REF_LISTS.indexOf(parent.localName || parent.nodeName) > -1 ? ref : parent;
+        if (target.parentNode) { target.parentNode.removeChild(target); }
+    });
+    if (out.dropped.length === 0) { return out; }
+    function elements(node) { return Array.prototype.filter.call(node.childNodes, function(n) { return n.nodeType === 1; }); }
+    function tidy(node) {
+        elements(node).forEach(tidy);
+        var name = node.localName || node.nodeName;
+        var left = elements(node);
+        if ((name === 'And' || name === 'Or') && left.length < 2) {
+            if (left.length === 1) { node.parentNode.replaceChild(left[0], node); } else { node.parentNode.removeChild(node); }
+        } else if ((name === 'Where' || name === 'OrderBy' || name === 'GroupBy') && left.length === 0) {
+            node.parentNode.removeChild(node);
+        }
+    }
+    elements(root).forEach(tidy);
+    out.text = '';
+    for (var c = 0; c < root.childNodes.length; c++) { out.text += snaToolsSerializeXml(root.childNodes[c]); }
+    return out;
+}
+
+// Returns the first child element of parent named name, or null.
+function snaToolsListsChild(parent, name) {
+    for (var i = 0; i < parent.childNodes.length; i++) {
+        var node = parent.childNodes[i];
+        if (node.nodeType === 1 && (node.localName || node.nodeName) === name) { return node; }
+    }
+    return null;
+}
+
+// Returns the <Property> element of a managed metadata column's Customization block with this name, or null.
+function snaToolsListsCustomizationProperty(root, name) {
+    var props = root.getElementsByTagName('Property');
+    for (var i = 0; i < props.length; i++) {
+        var nameElement = snaToolsListsChild(props[i], 'Name');
+        if (nameElement && nameElement.textContent.trim() === name) { return props[i]; }
+    }
+    return null;
+}
+
+// Returns the text of one Customization property, such as TextField, or ''.
+function snaToolsListsCustomizationValue(root, name) {
+    var prop = snaToolsListsCustomizationProperty(root, name);
+    var value = prop ? snaToolsListsChild(prop, 'Value') : null;
+    return value ? value.textContent.trim() : '';
+}
+
+// Sets one Customization property of a managed metadata column, adding it when the definition doesn't have it.
+function snaToolsListsSetCustomization(root, name, value) {
+    var doc = root.ownerDocument;
+    var prop = snaToolsListsCustomizationProperty(root, name);
+    if (!prop) {
+        var customization = snaToolsListsChild(root, 'Customization');
+        if (!customization) { customization = doc.createElement('Customization'); root.appendChild(customization); }
+        var array = snaToolsListsChild(customization, 'ArrayOfProperty');
+        if (!array) { array = doc.createElement('ArrayOfProperty'); customization.appendChild(array); }
+        prop = doc.createElement('Property');
+        var nameElement = doc.createElement('Name');
+        nameElement.textContent = name;
+        prop.appendChild(nameElement);
+        array.appendChild(prop);
+    }
+    var valueElement = snaToolsListsChild(prop, 'Value');
+    if (!valueElement) { valueElement = doc.createElement('Value'); prop.appendChild(valueElement); }
+    valueElement.textContent = value;
+}
+
+// Returns the IDs of the hidden Note columns that the managed metadata columns in fields keep their values in (the
+// TextField of each one), so those Note columns are made with their managed metadata column and never on their own.
+function snaToolsListsNoteFieldIds(fields) {
+    var ids = {};
+    fields.forEach(function(field) {
+        if (!field.isTaxonomy) { return; }
+        var root = snaToolsParseXml(field.schemaXml);
+        var id = root ? snaToolsCleanGuid(snaToolsListsCustomizationValue(root, 'TextField')) : '';
+        if (id) { ids[id] = true; }
+    });
+    return ids;
+}
+
+// True when a source column is one the copy never makes on its own: a built-in column, the hidden Note column of a
+// managed metadata column, or a column SharePoint adds by itself with the first managed metadata column.
+function snaToolsListsIsMadeElsewhere(field, noteIds) {
+    return !!field.builtIn || snaToolsListsIsHelperColumn(field, noteIds);
+}
+
+// True when a source column is one SharePoint makes beside another column: the hidden Note column of a managed metadata
+// column, or a column SharePoint adds by itself with the first managed metadata column.
+function snaToolsListsIsHelperColumn(field, noteIds) {
+    if (field.isTaxonomyNote || noteIds[field.id]) { return true; }
+    if (SNA_TOOLS_LISTS_TAXONOMY_HELPERS.indexOf(String(field.internalName || '').toLowerCase()) > -1) { return true; }
+    if (SNA_TOOLS_LISTS_TAXONOMY_HELPER_IDS.indexOf(field.id) > -1) { return true; }
+    // The hidden Note column's display name ends in _0 even when its internal name doesn't.
+    return field.type === 'Note' && field.hidden && /_0$/.test(String(field.title || ''));
+}
+
+// Returns the calculated columns in an order where each comes after the calculated columns its formula uses.
+function snaToolsListsByFormulaOrder(fields) {
+    var byName = {};
+    fields.forEach(function(f) { byName[f.internalName] = f; });
+    var done = {};
+    var visiting = {};
+    var order = [];
+    function visit(field) {
+        var name = field.internalName;
+        if (done[name] || visiting[name]) { return; }
+        visiting[name] = true;
+        (field.fieldRefs || []).forEach(function(ref) { if (byName[ref] && ref !== name) { visit(byName[ref]); } });
+        done[name] = true;
+        order.push(field);
+    }
+    fields.forEach(visit);
+    return order;
+}
+
+// Returns a source column's definition, ready for the destination: the parts that describe the source site's storage
+// removed, and Name and StaticName set to the source internal name. Returns null when the definition can't be read.
+function snaToolsListsCleanDefinition(field) {
+    var root = snaToolsParseXml(field.schemaXml);
+    if (!root || (root.localName || root.nodeName) !== 'Field') { return null; }
+    SNA_TOOLS_LISTS_SOURCE_ATTRIBUTES.forEach(function(name) { root.removeAttribute(name); });
+    var displayNames = root.getElementsByTagName('FormulaDisplayNames');
+    for (var i = displayNames.length - 1; i >= 0; i--) { displayNames[i].parentNode.removeChild(displayNames[i]); }
+    if (!root.getAttribute('ID')) { root.setAttribute('ID', '{' + (field.id || snaToolsNewGuid()) + '}'); }
+    if (field.internalName) { root.setAttribute('Name', field.internalName); }
+    root.setAttribute('StaticName', field.staticName || field.internalName || root.getAttribute('Name') || '');
+    if (!root.getAttribute('DisplayName')) { root.setAttribute('DisplayName', field.title || field.internalName || ''); }
+    return root;
+}
+
+// Creates one column from its definition with createfieldasxml, in a destination list or, when listId is '', as a site
+// column. Returns { id, internalName } of the new column.
+async function snaToolsListsCreateColumn(dest, listId, root, addToDefaultType) {
+    var path = (listId ? snaToolsListsApi(listId) : '/_api/web') + '/fields/createfieldasxml';
+    var options = SNA_TOOLS_LISTS_KEEP_NAME + (addToDefaultType ? SNA_TOOLS_LISTS_ADD_TO_DEFAULT_TYPE : 0);
+    var answer = await snaToolsWrite(dest.siteUrl, path, { body: { parameters: { SchemaXml: snaToolsSerializeXml(root), Options: options } } });
+    var made = (answer && answer.d) ? answer.d : (answer || {});
+    return {
+        id: snaToolsCleanGuid(made.Id || root.getAttribute('ID')),
+        internalName: made.InternalName || root.getAttribute('Name') || ''
+    };
+}
+
+// Returns a CSOM request builder. Each method adds one object path or action and returns its ID; xml() returns the request.
+function snaToolsListsCsomRequest() {
+    var state = { id: 0, actions: '', paths: '' };
+    function param(type, value) { return '<Parameter Type="' + type + '">' + snaToolsXmlText(value) + '</Parameter>'; }
+    return {
+        param: param,
+        guid: function(value) { return param('Guid', '{' + snaToolsCleanGuid(value) + '}'); },
+        current: function() {
+            var id = ++state.id;
+            state.paths += '<StaticProperty Id="' + id + '" TypeId="' + SNA_TOOLS_LISTS_CSOM_CONTEXT + '" Name="Current" />';
+            return id;
+        },
+        property: function(parentId, name) {
+            var id = ++state.id;
+            state.paths += '<Property Id="' + id + '" ParentId="' + parentId + '" Name="' + snaToolsXmlText(name) + '" />';
+            return id;
+        },
+        method: function(parentId, name, parametersXml) {
+            var id = ++state.id;
+            state.paths += '<Method Id="' + id + '" ParentId="' + parentId + '" Name="' + snaToolsXmlText(name) + '"><Parameters>' +
+                (parametersXml || '') + '</Parameters></Method>';
+            return id;
+        },
+        objectPath: function(pathId) {
+            var id = ++state.id;
+            state.actions += '<ObjectPath Id="' + id + '" ObjectPathId="' + pathId + '" />';
+            return id;
+        },
+        setProperty: function(pathId, name, parameterXml) {
+            var id = ++state.id;
+            state.actions += '<SetProperty Id="' + id + '" ObjectPathId="' + pathId + '" Name="' + snaToolsXmlText(name) + '">' + parameterXml + '</SetProperty>';
+            return id;
+        },
+        call: function(pathId, name, parametersXml) {
+            var id = ++state.id;
+            state.actions += '<Method Name="' + snaToolsXmlText(name) + '" Id="' + id + '" ObjectPathId="' + pathId + '"><Parameters>' +
+                (parametersXml || '') + '</Parameters></Method>';
+            return id;
+        },
+        xml: function() { return snaToolsCsomXml(state.actions, state.paths); }
+    };
+}
+
+/**
+ * Connects a managed metadata column to its term set through CSOM (ProcessQuery): sets SspId, TermSetId, AnchorId,
+ * Open, IsPathRendered, and CreateValuesInEditForm, then Update. Used only when taxonomy.js has no
+ * snaToolsTaxonomyBindField.
+ * @param {string} siteUrl The destination site.
+ * @param {string} listId The destination list, or '' for a site column.
+ * @param {string} fieldId The column's ID.
+ * @param {object} options { sspId, termSetId, anchorId, open, isPathRendered, createValuesInEditForm }.
+ * @returns {Promise<void>} Side effects: changes the column. Throws snaToolsError when SharePoint refuses.
+ */
+async function snaToolsListsBindTaxonomyField(siteUrl, listId, fieldId, options) {
+    var q = snaToolsListsCsomRequest();
+    var web = q.property(q.current(), 'Web');
+    var fields = listId ? q.property(q.method(q.property(web, 'Lists'), 'GetById', q.guid(listId)), 'Fields') : q.property(web, 'Fields');
+    var field = q.method(fields, 'GetById', q.guid(fieldId));
+    q.setProperty(field, 'SspId', q.guid(options.sspId));
+    q.setProperty(field, 'TermSetId', q.guid(options.termSetId));
+    q.setProperty(field, 'AnchorId', q.guid(options.anchorId || SNA_TOOLS_LISTS_EMPTY_GUID));
+    q.setProperty(field, 'Open', q.param('Boolean', options.open ? 'true' : 'false'));
+    q.setProperty(field, 'IsPathRendered', q.param('Boolean', options.isPathRendered ? 'true' : 'false'));
+    q.setProperty(field, 'CreateValuesInEditForm', q.param('Boolean', options.createValuesInEditForm ? 'true' : 'false'));
+    q.call(field, 'Update');
+    await snaToolsCsom(siteUrl, q.xml());
+}
+
+/**
+ * Adds columns to one content type and changes the settings of columns it already has, through CSOM, then Update.
+ * Each column in a content type is a field link with its own Required, Hidden, and DisplayName (the name the column shows
+ * in this content type, such as Tags for Enterprise Keywords).
+ * @param {string} siteUrl The destination site.
+ * @param {string} listId The destination list, or '' for a site content type, whose columns are site columns. Update(true)
+ *        passes a site content type's change on to the lists that use it.
+ * @param {string} contentTypeId The destination content type's ID.
+ * @param {object[]} links Columns to add (FieldLinks.Add): [{ fieldId, required, hidden, displayName }].
+ * @param {object[]} [changes] Columns it already has to change (FieldLinks.GetById): [{ fieldId, required, hidden, displayName }].
+ * @returns {Promise<void>} Side effects: changes the content type. Throws snaToolsError when SharePoint refuses.
+ */
+async function snaToolsListsAddFieldLinks(siteUrl, listId, contentTypeId, links, changes) {
+    var q = snaToolsListsCsomRequest();
+    var web = q.property(q.current(), 'Web');
+    var owner = listId ? q.method(q.property(web, 'Lists'), 'GetById', q.guid(listId)) : web;
+    var type = q.method(q.property(owner, 'ContentTypes'), 'GetById', q.param('String', contentTypeId));
+    var fields = listId ? q.property(owner, 'Fields') : q.property(web, 'AvailableFields');
+    var fieldLinks = q.property(type, 'FieldLinks');
+    links.forEach(function(link) {
+        var field = q.method(fields, 'GetById', q.guid(link.fieldId));
+        var added = q.method(fieldLinks, 'Add', '<Parameter TypeId="' + SNA_TOOLS_LISTS_CSOM_FIELD_LINK + '"><Property Name="Field" ObjectPathId="' + field + '" /></Parameter>');
+        q.objectPath(added);
+        if (link.required) { q.setProperty(added, 'Required', q.param('Boolean', 'true')); }
+        if (link.hidden) { q.setProperty(added, 'Hidden', q.param('Boolean', 'true')); }
+        if (link.displayName) { q.setProperty(added, 'DisplayName', q.param('String', link.displayName)); }
+    });
+    (changes || []).forEach(function(change) {
+        var existing = q.method(fieldLinks, 'GetById', q.guid(change.fieldId));
+        q.objectPath(existing);
+        q.setProperty(existing, 'Required', q.param('Boolean', change.required ? 'true' : 'false'));
+        q.setProperty(existing, 'Hidden', q.param('Boolean', change.hidden ? 'true' : 'false'));
+        if (change.displayName) { q.setProperty(existing, 'DisplayName', q.param('String', change.displayName)); }
+    });
+    q.call(type, 'Update', q.param('Boolean', listId ? 'false' : 'true'));
+    await snaToolsCsom(siteUrl, q.xml());
+}
+
+// Adds one of the destination's site columns, such as SharePoint's own Start Date, to a destination list through CSOM:
+// the list's Fields.Add with the column from the site's AvailableFields, which include the parent sites' columns.
+async function snaToolsListsAddSiteColumnToList(siteUrl, listId, fieldId) {
+    var q = snaToolsListsCsomRequest();
+    var web = q.property(q.current(), 'Web');
+    var column = q.method(q.property(web, 'AvailableFields'), 'GetById', q.guid(fieldId));
+    var listFields = q.property(q.method(q.property(web, 'Lists'), 'GetById', q.guid(listId)), 'Fields');
+    q.objectPath(q.method(listFields, 'Add', '<Parameter ObjectPathId="' + column + '" />'));
+    await snaToolsCsom(siteUrl, q.xml());
+}
+
+// Returns a result row's note with more text, and the row Partly copied, such as when formatting couldn't be copied.
+function snaToolsListsAddProblem(entry, note) {
+    if (!entry) { return; }
+    if (entry.result === 'copied') { entry.result = 'partial'; }
+    entry.note = (entry.note ? entry.note + ' ' : '') + note;
+}
+
+// Returns the source list or library a lookup column reads from, as { sourceId, title, url (as the Address box would
+// show it), baseTemplate, chosen }, from the plan or, for this site's report, from the report. null when unknown.
+function snaToolsListsSourceList(plan, listId) {
+    var chosen = plan.lists.filter(function(l) { return l.sourceId === listId; })[0];
+    if (chosen) { return { sourceId: listId, title: chosen.title, url: snaToolsCleanAddress(chosen.url), baseTemplate: chosen.baseTemplate, chosen: true }; }
+    if (plan.source.kind !== 'site' || !_snaReport || !_snaReport.lists) { return null; }
+    var other = _snaReport.lists.filter(function(l) { return snaCleanListId(l.id) === listId; })[0];
+    if (!other) { return null; }
+    return { sourceId: listId, title: other.title || '', url: snaToolsCleanAddress(snaToolsListAddress(other)), baseTemplate: other.baseTemplate, chosen: false };
+}
+
+// Returns the name of a source term set for a note, such as 'Study Arms', or '' when the plan doesn't have it.
+function snaToolsListsTermSetName(plan, termSetId) {
+    var set = plan.termGroup ? plan.termGroup.sets.filter(function(s) { return s.sourceId === termSetId; })[0] : null;
+    return set ? set.name : '';
+}
+
+// ### Site Columns ###
+
+/**
+ * Creates the site columns the chosen lists and site content types use, other than lookup columns, which wait until the
+ * lists they read from exist (see snaToolsCopyListColumns). Plain and managed metadata columns go first, then calculated
+ * columns. A site column the destination already has, with the same ID or internal name, is left as it is. Then gives
+ * SharePoint's own site columns that were renamed in the source, such as Enterprise Keywords shown as Tags, the same name
+ * in the destination, when both sites use the same language (see snaToolsListsRenameBuiltInSiteColumn).
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; fills maps.fieldIds.
+ * @returns {Promise<void>} Side effects: creates site columns in the destination and adds results.
+ */
+async function snaToolsCopySiteColumns(plan, dest, maps) {
+    var noteIds = snaToolsListsNoteFieldIds(plan.siteColumns);
+    var columns = plan.siteColumns.filter(function(f) { return !snaToolsListsIsMadeElsewhere(f, noteIds) && !snaToolsListsIsLookup(f); });
+    var calculated = columns.filter(function(f) { return f.type === 'Calculated'; });
+    var others = columns.filter(function(f) { return f.type !== 'Calculated'; });
+    var ordered = others.concat(snaToolsListsByFormulaOrder(calculated));
+    for (var i = 0; i < ordered.length; i++) {
+        await snaToolsListsCopySiteColumn(plan, dest, maps, ordered[i]);
+    }
+    // A hidden Note column the copy didn't make, because the destination already had its managed metadata column, is
+    // matched with the destination's Note column of the same ID or internal name, so content types can still show it.
+    plan.siteColumns.filter(function(f) { return !f.builtIn && !maps.fieldIds[f.id] && snaToolsListsIsHelperColumn(f, noteIds); }).forEach(function(f) {
+        var key = String(f.internalName || '').toLowerCase();
+        var there = (dest.siteColumns || []).filter(function(c) { return c.id === f.id || String(c.internalName).toLowerCase() === key; })[0];
+        if (there) { maps.fieldIds[f.id] = there.id; }
+    });
+    var builtIn = (plan.builtInSiteColumns || []).filter(function(f) { return f.rename; });
+    var languages = { same: undefined };
+    for (var b = 0; b < builtIn.length; b++) {
+        await snaToolsListsRenameBuiltInSiteColumn(plan, dest, builtIn[b], languages);
+    }
+}
+
+// Returns true when this site and the destination's top-level site use the same language, false when they don't, and
+// null when Sitenalyzer couldn't read one of them. SharePoint names its own site columns, such as Start Date, in each
+// site's language, so a different name in another language doesn't mean that someone renamed the column.
+async function snaToolsListsSameLanguage(plan, dest) {
+    if (!plan.source || !plan.source.siteUrl) { return null; }
+    try {
+        var source = await snaToolsRead(plan.source.siteUrl, '/_api/web?$select=Language');
+        var there = await snaToolsRead(dest.siteUrl, '/_api/site/rootweb?$select=Language');
+        var sourceLanguage = Number(source && source.Language);
+        var destLanguage = Number(there && there.Language);
+        if (!sourceLanguage || !destLanguage) { return null; }
+        return sourceLanguage === destLanguage;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return null;
+    }
+}
+
+// Reads one of SharePoint's own site columns from the destination's top-level site, where these columns belong, and
+// returns { Id, Title, InternalName }, or null when the destination doesn't have it. Throws when SharePoint refuses.
+async function snaToolsListsReadBuiltInSiteColumn(dest, column) {
+    var alias = '@f=' + encodeURIComponent(snaToolsQuote(snaToolsCleanGuid(column.id)));
+    try {
+        return await snaToolsRead(dest.siteUrl, '/_api/site/rootweb/fields/getbyid(@f)?$select=Id,Title,InternalName&' + alias);
+    } catch (err) {
+        if (!snaToolsIsCancelled(err) && err.status === 404) { return null; }
+        throw err;
+    }
+}
+
+/**
+ * Returns what the copy does with one of SharePoint's own site columns whose name in this site isn't its name in the
+ * destination, such as Enterprise Keywords shown as Tags: { rename: true } when both sites use the same language, so
+ * someone renamed it, and otherwise { rename: false, note } with the reason. Used by the copy and by Before you copy.
+ * @param {object} column The column from plan.builtInSiteColumns.
+ * @param {string} oldTitle Its name in the destination.
+ * @param {boolean|null} sameLanguage See snaToolsListsSameLanguage.
+ * @param {boolean} later True for Before you copy, which says what the copy will do.
+ * @returns {{rename: boolean, note: string}} note is plain English for the results or for Before you copy.
+ */
+function snaToolsListsBuiltInRename(column, oldTitle, sameLanguage, later) {
+    var source = later ? 'this site' : 'the site you copied from';
+    var where = 'rename ' + oldTitle + ' in the site settings of the destination\'s top-level site, under Site columns. The new name shows in ' +
+        'every site of the destination\'s site collection.';
+    if (sameLanguage === true) {
+        return { rename: true, note: (later ? 'Sitenalyzer will rename' : 'Renamed') + ' the destination\'s site column ' + oldTitle + ' to ' +
+            column.title + ', the name it has in ' + source + '. The new name shows in every site of the destination\'s site ' +
+            'collection, because the column belongs to its top-level site. To undo it, rename the column back to ' + oldTitle +
+            ' in the site settings of that top-level site, under Site columns.' };
+    }
+    var why = sameLanguage === false
+        ? source + ' and the destination use different languages, and SharePoint names its own columns in each site\'s language.'
+        : 'Sitenalyzer couldn\'t check that ' + source + ' and the destination use the same language.';
+    return { rename: false, note: 'Sitenalyzer ' + (later ? 'won\'t rename' : 'didn\'t rename') + ' the destination\'s site column ' + oldTitle +
+        ' to ' + column.title + ', because ' + why + ' If you want the name ' + column.title + ', ' + where };
+}
+
+// Gives one of SharePoint's own site columns in the destination the name it has in the source site, such as Tags for
+// Enterprise Keywords (TaxKeyword), when someone renamed it in the source site. These columns belong to the destination's
+// top-level site, so the new name shows in every site of its site collection. When the two sites use different languages,
+// the names differ only because of the language, so the column keeps its name and its row says why. languages holds
+// what snaToolsListsSameLanguage returned, read once for the whole copy. A column the destination doesn't have gets no
+// row here; the list or content type that needs it says so.
+async function snaToolsListsRenameBuiltInSiteColumn(plan, dest, column, languages) {
+    snaToolsCheckCancelled();
+    var name = snaToolsListsSiteColumnName(column);
+    var there;
+    try {
+        there = await snaToolsListsReadBuiltInSiteColumn(dest, column);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(SNA_TOOLS_KINDS.column, name, 'failed', 'Sitenalyzer couldn\'t read this site column in the destination to check its name. ' +
+            'Check that it\'s named ' + column.title + ' in the destination\'s site columns.');
+        return;
+    }
+    var oldTitle = (there && there.Title) || '';
+    if (!there || !column.title || oldTitle === column.title) { return; }
+    if (languages.same === undefined) { languages.same = await snaToolsListsSameLanguage(plan, dest); }
+    var decision = snaToolsListsBuiltInRename(column, oldTitle, languages.same, false);
+    if (!decision.rename) {
+        snaToolsLog(SNA_TOOLS_KINDS.column, name, 'skipped', decision.note);
+        return;
+    }
+    var path = '/_api/site/rootweb/fields/getbyid(@f)?@f=' + encodeURIComponent(snaToolsQuote(snaToolsCleanGuid(column.id)));
+    try {
+        await snaToolsWrite(dest.siteUrl, path, { method: 'MERGE', body: { Title: column.title } });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(SNA_TOOLS_KINDS.column, name, 'failed', 'Sitenalyzer couldn\'t rename the destination\'s site column ' + oldTitle + ' to ' +
+            column.title + '. Rename it in the site settings of the destination\'s top-level site, under Site columns.');
+        return;
+    }
+    snaToolsLog(SNA_TOOLS_KINDS.column, name, 'copied', decision.note);
+}
+
+// Copies one site column and logs its result.
+async function snaToolsListsCopySiteColumn(plan, dest, maps, field) {
+    var run = snaToolsListsRun(maps);
+    snaToolsCheckCancelled();
+    var name = snaToolsListsSiteColumnName(field);
+    var key = String(field.internalName || '').toLowerCase();
+    var existing = (dest.siteColumns || []).filter(function(c) { return c.id === field.id || String(c.internalName).toLowerCase() === key; })[0];
+    if (existing) {
+        maps.fieldIds[field.id] = existing.id;
+        snaToolsLog(SNA_TOOLS_KINDS.column, name, 'skipped', 'The destination already has this site column, so Sitenalyzer left it as it is.');
+        return;
+    }
+    var outcome;
+    try {
+        outcome = await snaToolsListsMakeColumn(plan, dest, maps, snaToolsListsSiteScope(plan, dest), field);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        outcome = { result: 'failed', note: snaToolsFriendlyError(err) };
+    }
+    if (outcome.id) {
+        maps.fieldIds[field.id] = outcome.id;
+        dest.siteColumns = (dest.siteColumns || []).concat([{ id: outcome.id, internalName: outcome.internalName }]);
+    }
+    run.siteColumnEntries[field.id] = snaToolsLog(SNA_TOOLS_KINDS.column, name, outcome.result, outcome.note,
+        outcome.id ? { verify: { type: 'field', listId: '', internalName: outcome.internalName } } : null);
+}
+
+// Returns where a site column is made: the site's own columns, with the site columns of the plan as its other columns.
+function snaToolsListsSiteScope(plan, dest) {
+    var destFields = {};
+    (dest.siteColumns || []).forEach(function(c) { destFields[String(c.internalName).toLowerCase()] = { id: c.id, internalName: c.internalName }; });
+    return { list: null, destListId: '', sourceListId: '', fields: plan.siteColumns, destFields: destFields, state: null, addToDefaultType: false };
+}
+
+// ### Lists and Libraries ###
+
+/**
+ * Creates each chosen list or library in the destination, without items or files, with its new name, address,
+ * description, and settings. The address comes from the title SharePoint gets first, so the list is created with
+ * Title = newUrl and then renamed to newTitle. A list or library the destination already has at that address, made
+ * from the same template, is used instead (see snaToolsExistingDestinationList in plan.js): it keeps its settings,
+ * and it is renamed only when the person chose another name.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; fills maps.lists, maps.existingLists, maps.listUrls, and an empty maps.fields
+ *     entry for each list.
+ * @returns {Promise<void>} Side effects: creates and changes lists in the destination and adds results.
+ */
+async function snaToolsCopyLists(plan, dest, maps) {
+    var run = snaToolsListsRun(maps);
+    for (var i = 0; i < plan.lists.length; i++) {
+        var list = plan.lists[i];
+        snaToolsCheckCancelled();
+        var match = snaToolsExistingDestinationList(dest, list.newUrl, list.baseTemplate);
+        if (match.list && match.usable) {
+            await snaToolsListsUseExisting(list, match.list, maps, run);
+            continue;
+        }
+        if (match.list) {
+            snaToolsLog(snaToolsListKind(list), list.newTitle, 'failed', 'The destination already has a list or library at this address, made from ' +
+                'another template, so Sitenalyzer didn\'t copy this ' + snaToolsListsWord(list) + '. Choose another address, then copy again.');
+            continue;
+        }
+        try {
+            await snaToolsListsCreate(list, dest, maps, run);
+        } catch (err) {
+            // When the copy was stopped after SharePoint made the list, its row says what the stop left undone.
+            if (snaToolsIsCancelled(err)) {
+                snaToolsLogStopped(snaToolsListKind(list), list.newTitle, 'You stopped the copy after SharePoint made this ' + snaToolsListsWord(list) +
+                    ', before Sitenalyzer finished it, so its name or settings may not be the ones you chose. Copy again into the same destination ' +
+                    'to give it its name, columns, and views, then check its settings in the destination.');
+            }
+            throw err;
+        }
+    }
+}
+
+// Uses a list or library the destination already has for a chosen one, renaming it when the person chose another name.
+async function snaToolsListsUseExisting(list, existing, maps, run) {
+    var dest = maps.destination;
+    var word = snaToolsListsWord(list);
+    var listId = existing.id;
+    maps.lists[list.sourceId] = listId;
+    maps.existingLists[list.sourceId] = true;
+    maps.fields[list.sourceId] = {};
+    if (list.rootFolder) { maps.listUrls[list.rootFolder] = existing.serverRelativeUrl; }
+    var title = existing.title;
+    var result = 'copied';
+    var note = 'The destination already had this ' + word + ', so Sitenalyzer used it, added the columns and views it was missing, ' +
+        'and left its other columns, views, and settings as they were.';
+    if (list.newTitle && list.newTitle !== existing.title) {
+        try {
+            await snaToolsWrite(dest.siteUrl, snaToolsListsApi(listId), { method: 'MERGE', body: { Title: list.newTitle } });
+            title = list.newTitle;
+            note = 'The destination already had this ' + word + ', so Sitenalyzer used it, renamed it ' + list.newTitle + ', added the columns ' +
+                'and views it was missing, and left its other columns, views, and settings as they were.';
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            result = 'partial';
+            note = 'The destination already had this ' + word + ', so Sitenalyzer used it, but couldn\'t rename it ' + list.newTitle +
+                '. Rename it in the destination.';
+        }
+    }
+    var entry = snaToolsLog(snaToolsListKind(list), list.newTitle, result, note,
+        { verify: { type: 'list', listId: listId, title: title, serverRelativeUrl: existing.serverRelativeUrl } });
+    run.lists[list.sourceId] = snaToolsListsNewState(listId, title, existing.serverRelativeUrl, true, entry);
+}
+
+// Creates one list or library, renames it to its new name, and copies its settings.
+async function snaToolsListsCreate(list, dest, maps, run) {
+    var kind = snaToolsListKind(list);
+    var listId = '';
+    try {
+        var created = await snaToolsWrite(dest.siteUrl, '/_api/web/lists', {
+            verbose: true,
+            body: { __metadata: { type: 'SP.List' }, Title: list.newUrl, BaseTemplate: list.baseTemplate, Description: list.description || '' }
+        });
+        listId = snaToolsCleanGuid(created && (created.Id || (created.d && created.d.Id)));
+        if (!listId) { throw snaToolsError(500, 'id', ''); }
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(kind, list.newTitle, 'failed', snaToolsFriendlyError(err));
+        return;
+    }
+    var destPath = (created && created.RootFolder && created.RootFolder.ServerRelativeUrl) ||
+        snaToolsJoinPath(dest.serverRelativeUrl, (list.isLibrary ? '' : 'Lists/') + list.newUrl);
+    maps.lists[list.sourceId] = listId;
+    maps.fields[list.sourceId] = {};
+    if (list.rootFolder) { maps.listUrls[list.rootFolder] = destPath; }
+    var note = list.isLibrary ? 'Created the library without its files.' : 'Created the list without its items.';
+    var result = 'copied';
+    var title = list.newUrl;
+    if (list.newTitle !== list.newUrl) {
+        try {
+            await snaToolsWrite(dest.siteUrl, snaToolsListsApi(listId), { method: 'MERGE', body: { Title: list.newTitle } });
+            title = list.newTitle;
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            result = 'partial';
+            note = 'Created it, but couldn\'t give it the name you chose, so it\'s named ' + list.newUrl + '. Rename it in the destination.';
+        }
+    } else {
+        title = list.newTitle;
+    }
+    var missed = await snaToolsListsCopySettings(dest, listId, list);
+    if (missed.length > 0) {
+        result = 'partial';
+        note += ' Sitenalyzer couldn\'t copy ' + (missed.length === 1 ? 'this setting: ' : 'these settings: ') +
+            snaJoinWords(missed.map(function(name) { return SNA_TOOLS_LISTS_SETTING_WORDS[name] || name; })) +
+            '. Set ' + (missed.length === 1 ? 'it' : 'them') + ' in the ' + snaToolsListsWord(list) + ' settings in the destination.';
+    }
+    var entry = snaToolsLog(kind, list.newTitle, result, note, { verify: { type: 'list', listId: listId, title: title, serverRelativeUrl: destPath } });
+    run.lists[list.sourceId] = snaToolsListsNewState(listId, title, destPath, false, entry);
+}
+
+// Copies a new list's settings: version history first, then the rest, each group in one MERGE. When SharePoint refuses a
+// group, each setting in it is sent alone, so one it doesn't accept doesn't stop the others. Returns the names it couldn't set.
+// The validation formula is set after the columns exist, because it uses them (see snaToolsListsCopyValidation).
+async function snaToolsListsCopySettings(dest, listId, list) {
+    var settings = list.settings || {};
+    var skip = list.isLibrary ? SNA_TOOLS_LISTS_LIST_ONLY_SETTINGS : SNA_TOOLS_LISTS_LIBRARY_ONLY_SETTINGS;
+    var missed = [];
+    var groups = [SNA_TOOLS_LISTS_VERSION_SETTINGS, SNA_TOOLS_LISTS_OTHER_SETTINGS];
+    for (var g = 0; g < groups.length; g++) {
+        var names = groups[g].filter(function(name) {
+            return skip.indexOf(name) === -1 && Object.prototype.hasOwnProperty.call(settings, name) &&
+                settings[name] !== null && settings[name] !== undefined;
+        });
+        if (names.length === 0) { continue; }
+        var body = {};
+        names.forEach(function(name) { body[name] = settings[name]; });
+        try {
+            await snaToolsWrite(dest.siteUrl, snaToolsListsApi(listId), { method: 'MERGE', body: body });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            for (var n = 0; n < names.length; n++) {
+                var single = {};
+                single[names[n]] = settings[names[n]];
+                try {
+                    await snaToolsWrite(dest.siteUrl, snaToolsListsApi(listId), { method: 'MERGE', body: single });
+                } catch (inner) {
+                    if (snaToolsIsCancelled(inner)) { throw inner; }
+                    missed.push(names[n]);
+                }
+            }
+        }
+    }
+    return missed;
+}
+
+// ### Content Types ###
+
+/**
+ * Creates the site's own content types the person kept and the ones the chosen lists use, parents first, with the
+ * source's own content type IDs, and adds their columns through CSOM, each with its Required, Hidden, and display name.
+ * Content types from the content type hub are reported, not made. Then adds each list's content types to it, removes
+ * the content types SharePoint gave a new list that the source list doesn't have, and sets the order of the list's
+ * content types.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; fills maps.contentTypes.
+ * @returns {Promise<void>} Side effects: changes content types in the destination and adds results.
+ */
+async function snaToolsCopyContentTypes(plan, dest, maps) {
+    var run = snaToolsListsRun(maps);
+    // Content types from the content type hub are never made here, so the hub can still publish them to the destination.
+    (plan.hubContentTypes || []).forEach(function(hub) {
+        var there = (dest.contentTypes || []).filter(function(d) { return String(d.stringId).toUpperCase() === hub.stringId.toUpperCase(); })[0];
+        if (there) {
+            maps.contentTypes[hub.stringId] = there.stringId;
+            return;
+        }
+        snaToolsLog(SNA_TOOLS_KINDS.contentType, hub.name, 'skipped', SNA_TOOLS_LISTS_HUB_NOTE);
+    });
+    var types = plan.siteContentTypes.slice().sort(function(a, b) {
+        return a.stringId.length - b.stringId.length || (a.stringId < b.stringId ? -1 : 1);
+    });
+    for (var i = 0; i < types.length; i++) {
+        await snaToolsListsCopySiteContentType(plan, dest, maps, run, types[i]);
+    }
+    for (var l = 0; l < plan.lists.length; l++) {
+        var list = plan.lists[l];
+        var state = run.lists[list.sourceId];
+        if (!state) { continue; }
+        snaToolsCheckCancelled();
+        await snaToolsListsCopyListContentTypes(plan, dest, maps, list, state);
+    }
+}
+
+// Returns the destination content type for a source content type ID: one this copy made or matched, or one the
+// destination has with the same ID. Returns '' when there is none. Built-in content types have the same ID everywhere.
+function snaToolsListsDestTypeId(dest, maps, stringId) {
+    var key = String(stringId || '').toUpperCase();
+    if (!key) { return ''; }
+    var mapped = Object.keys(maps.contentTypes).filter(function(id) { return id.toUpperCase() === key; })[0];
+    if (mapped) { return maps.contentTypes[mapped]; }
+    if (snaToolsIsBuiltInContentTypeId(stringId)) { return stringId; }
+    var there = (dest.contentTypes || []).filter(function(ct) { return String(ct.stringId).toUpperCase() === key; })[0];
+    return there ? there.stringId : '';
+}
+
+// Returns the note for a content type skipped because the content type it comes from is from the content type hub and
+// isn't in the destination, such as one based on Policy Document, or '' when that isn't why.
+function snaToolsListsHubParentNote(plan, parentStringId) {
+    var key = String(parentStringId || '').toUpperCase();
+    var hub = (plan.hubContentTypes || []).filter(function(h) { return h.stringId.toUpperCase() === key; })[0];
+    if (!hub) { return ''; }
+    return 'Sitenalyzer skipped this content type, because it\'s based on ' + hub.name + ', a content type from the content type hub that ' +
+        'the destination doesn\'t have yet. Publish ' + hub.name + ' to the destination from the content type gallery, then copy again.';
+}
+
+// Creates one site content type and adds its columns, and logs its result.
+async function snaToolsListsCopySiteContentType(plan, dest, maps, run, ct) {
+    snaToolsCheckCancelled();
+    var K = SNA_TOOLS_KINDS;
+    var key = ct.stringId.toUpperCase();
+    var sameId = (dest.contentTypes || []).filter(function(d) { return String(d.stringId).toUpperCase() === key; })[0];
+    if (sameId) {
+        maps.contentTypes[ct.stringId] = sameId.stringId;
+        snaToolsLog(K.contentType, ct.name, 'skipped', 'The destination already has this content type, so Sitenalyzer left it as it is.');
+        return;
+    }
+    var sameName = (dest.contentTypes || []).filter(function(d) { return String(d.name).toLowerCase() === String(ct.name).toLowerCase(); })[0];
+    if (sameName) {
+        maps.contentTypes[ct.stringId] = sameName.stringId;
+        snaToolsLog(K.contentType, ct.name, 'skipped', 'The destination already has a content type with this name, so Sitenalyzer used that one ' +
+            'and left it as it is.');
+        return;
+    }
+    var parentId = snaToolsListsDestTypeId(dest, maps, ct.parentStringId);
+    if (!parentId) {
+        snaToolsLog(K.contentType, ct.name, 'skipped', snaToolsListsHubParentNote(plan, ct.parentStringId) ||
+            'Sitenalyzer skipped this content type, because it couldn\'t make the content type it\'s based on. Make both by hand in the destination.');
+        return;
+    }
+    // The ID of a content type starts with its parent's, so it can keep the source ID only when its parent kept its ID.
+    var newId = parentId.toUpperCase() === String(ct.parentStringId).toUpperCase() ? ct.stringId :
+        parentId + '00' + snaToolsNewGuid().replace(/-/g, '').toUpperCase();
+    var createdId = '';
+    try {
+        var created = await snaToolsWrite(dest.siteUrl, '/_api/web/contenttypes', {
+            body: { Id: { StringValue: newId }, Name: ct.name, Description: ct.description || '', Group: ct.group || '' }
+        });
+        createdId = (created && (created.StringId || (created.Id && created.Id.StringValue))) || newId;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(K.contentType, ct.name, 'failed', snaToolsFriendlyError(err));
+        return;
+    }
+    maps.contentTypes[ct.stringId] = createdId;
+    dest.contentTypes = (dest.contentTypes || []).concat([{ stringId: createdId, name: ct.name }]);
+    var entry = snaToolsLog(K.contentType, ct.name, 'copied', 'Created the content type.', { verify: { type: 'contentType', listId: '', name: ct.name } });
+    await snaToolsListsCopyTypeColumns(plan, dest, maps, run, ct, createdId, entry);
+}
+
+// Returns the columns a new destination site content type already has, by lowercase destination column ID:
+// { required, hidden, displayName }. They come from its parent. When they can't be read, returns the source parent's
+// columns, or null when Sitenalyzer couldn't read the parent in the source site.
+async function snaToolsListsReadTypeColumns(dest, maps, ct, createdId) {
+    try {
+        var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/contenttypes/getbyid(@c)/fieldlinks?$select=Id,Name,DisplayName,Required,Hidden&@c=' +
+            encodeURIComponent(snaToolsQuote(createdId)), SNA_TOOLS_READ_MAX);
+        var have = {};
+        read.items.forEach(function(link) {
+            have[snaToolsCleanGuid(link.Id)] = { required: link.Required === true, hidden: link.Hidden === true, displayName: link.DisplayName || '' };
+        });
+        return have;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    var parentLinks = ct.parentLinks;
+    if (!parentLinks) { return null; }
+    var fromParent = {};
+    parentLinks.forEach(function(link) {
+        fromParent[snaToolsCleanGuid(maps.fieldIds[link.id] || link.id)] = { required: link.required, hidden: link.hidden, displayName: link.displayName };
+    });
+    return fromParent;
+}
+
+// Gives a new destination site content type the source content type's columns, each with its Required, Hidden, and
+// display name: the site columns this copy made, and SharePoint's own site columns, which the destination already has.
+// Columns that came with its parent are changed when their settings differ. A column it can't get is named in the note.
+async function snaToolsListsCopyTypeColumns(plan, dest, maps, run, ct, createdId, entry) {
+    var have = await snaToolsListsReadTypeColumns(dest, maps, ct, createdId);
+    var siteIds = {};
+    plan.siteColumns.forEach(function(f) { if (!f.builtIn) { siteIds[f.id] = f; } });
+    var builtInIds = {};
+    (plan.builtInSiteColumns || []).forEach(function(f) { builtInIds[f.id] = f; });
+    var noteIds = snaToolsListsNoteFieldIds(plan.siteColumns);
+    var adds = [];
+    var builtInAdds = [];
+    var changes = [];
+    var notCopied = [];
+    var unchecked = [];
+    ct.fieldLinks.forEach(function(link) {
+        var custom = siteIds[link.id];
+        var destId = snaToolsCleanGuid(maps.fieldIds[link.id] || link.id);
+        var settings = { fieldId: destId, required: link.required, hidden: link.hidden, displayName: link.displayName || '',
+            name: link.displayName || (custom && custom.title) || (builtInIds[link.id] && builtInIds[link.id].title) || link.internalName };
+        // A hidden Note column comes with its managed metadata column, and people don't see it, so it's never named.
+        if (custom && !maps.fieldIds[link.id] && snaToolsListsIsHelperColumn(custom, noteIds)) { return; }
+        if (have === null && !custom) {
+            // Hidden columns and Content Type aren't shown in the content type's settings, so the note doesn't name them.
+            var builtIn = builtInIds[link.id];
+            if (link.id !== SNA_TOOLS_LISTS_CONTENT_TYPE_FIELD_ID && !(builtIn && builtIn.hidden)) { unchecked.push(settings.name); }
+            return;
+        }
+        if (have && have[destId]) {
+            var now = have[destId];
+            var differs = now.required !== link.required || now.hidden !== link.hidden || (!!link.displayName && now.displayName !== link.displayName);
+            if (differs) { changes.push(settings); }
+            return;
+        }
+        if (custom) {
+            if (maps.fieldIds[link.id]) {
+                adds.push(settings);
+            } else if (snaToolsListsIsLookup(custom)) {
+                // Lookup site columns are made after the lists exist, so they are added to the content type then.
+                run.pendingSiteLinks.push({ contentTypeId: createdId, sourceFieldId: link.id, required: link.required, hidden: link.hidden,
+                    displayName: link.displayName || '', entry: entry, name: settings.name });
+            } else {
+                notCopied.push(settings.name);
+            }
+        } else if (builtInIds[link.id]) {
+            builtInAdds.push(settings);
+        } else {
+            notCopied.push(settings.name);
+        }
+    });
+    if (notCopied.length > 0) {
+        snaToolsListsAddProblem(entry, 'Sitenalyzer couldn\'t add ' + snaJoinWords(notCopied) + ' to it, because ' +
+            (notCopied.length === 1 ? 'that column wasn\'t' : 'those columns weren\'t') + ' copied.');
+    }
+    if (unchecked.length > 0) {
+        snaToolsListsAddProblem(entry, 'Sitenalyzer couldn\'t read its columns in the destination, so it didn\'t check ' + snaJoinWords(unchecked) +
+            ', which ' + (unchecked.length === 1 ? 'comes' : 'come') + ' from SharePoint\'s own site columns. Check that it has ' +
+            (unchecked.length === 1 ? 'that column' : 'those columns') + ' in the content type\'s settings in the destination.');
+    }
+    if (adds.length > 0 || changes.length > 0) {
+        try {
+            await snaToolsListsAddFieldLinks(dest.siteUrl, '', createdId, adds, changes);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var names = adds.concat(changes).map(function(link) { return link.name; });
+            snaToolsListsAddProblem(entry, 'Sitenalyzer couldn\'t add or set up ' + snaJoinWords(names) + ' in it. Check ' +
+                (names.length === 1 ? 'that column' : 'those columns') + ' in the content type\'s settings in the destination.');
+        }
+    }
+    // SharePoint's own site columns go in a request of their own, so one the destination lacks doesn't stop the others.
+    if (builtInAdds.length > 0) {
+        try {
+            await snaToolsListsAddFieldLinks(dest.siteUrl, '', createdId, builtInAdds);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var builtInNames = builtInAdds.map(function(link) { return link.name; });
+            snaToolsListsAddProblem(entry, 'Sitenalyzer couldn\'t add ' + snaJoinWords(builtInNames) + ', which ' +
+                (builtInNames.length === 1 ? 'comes' : 'come') + ' from SharePoint\'s own site columns, to it. Add ' +
+                (builtInNames.length === 1 ? 'it' : 'them') + ' in the content type\'s settings in the destination.');
+        }
+    }
+}
+
+// Adds the lookup site columns that waited for their lists to the site content types that use them.
+async function snaToolsListsAddPendingSiteLinks(dest, maps, run) {
+    var byType = {};
+    run.pendingSiteLinks.forEach(function(link) { (byType[link.contentTypeId] = byType[link.contentTypeId] || []).push(link); });
+    run.pendingSiteLinks = [];
+    var ids = Object.keys(byType);
+    for (var i = 0; i < ids.length; i++) {
+        var links = byType[ids[i]];
+        var ready = links.filter(function(link) { return !!maps.fieldIds[link.sourceFieldId]; });
+        links.filter(function(link) { return !maps.fieldIds[link.sourceFieldId]; }).forEach(function(link) {
+            snaToolsListsAddProblem(link.entry, 'Sitenalyzer couldn\'t add the site column ' + link.name + ' to it, because that column wasn\'t copied.');
+        });
+        if (ready.length === 0) { continue; }
+        try {
+            await snaToolsListsAddFieldLinks(dest.siteUrl, '', ids[i], ready.map(function(link) {
+                return { fieldId: maps.fieldIds[link.sourceFieldId], required: link.required, hidden: link.hidden, displayName: link.displayName };
+            }));
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            ready.forEach(function(link) {
+                snaToolsListsAddProblem(link.entry, 'Sitenalyzer couldn\'t add the site column ' + link.name + ' to it. Add it in the content type\'s settings in the destination.');
+            });
+        }
+    }
+}
+
+// Adds one list's content types to the destination list. In a list this copy made, also removes the ones the source list
+// doesn't have and sets their order on the New menu.
+async function snaToolsListsCopyListContentTypes(plan, dest, maps, list, state) {
+    var K = SNA_TOOLS_KINDS;
+    var listApi = snaToolsListsApi(state.destId);
+    var destTypes;
+    try {
+        destTypes = (await snaToolsReadAll(dest.siteUrl, listApi + '/contenttypes?$select=StringId,Name', SNA_TOOLS_READ_MAX)).items.map(function(ct) {
+            return { stringId: ct.StringId || (ct.Id && ct.Id.StringValue) || '', name: ct.Name || '' };
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        list.contentTypes.filter(function(ct) { return !ct.isBuiltIn; }).forEach(function(ct) {
+            snaToolsLog(K.contentType, snaToolsInList(list, ct.name), 'failed', 'Sitenalyzer couldn\'t read the content types of this ' +
+                snaToolsListsWord(list) + ' in the destination, so it didn\'t add this one. Copy again, or add it in the ' + snaToolsListsWord(list) + ' settings.');
+        });
+        return;
+    }
+    function byName(name) {
+        return destTypes.filter(function(d) { return String(d.name).toLowerCase() === String(name).toLowerCase(); })[0];
+    }
+    var enabled = !!list.contentTypesEnabled;
+    var custom = list.contentTypes.filter(function(ct) { return !ct.isBuiltIn; });
+    var missingCount = custom.filter(function(ct) { return !byName(ct.name); }).length;
+    if (state.existing && enabled && missingCount > 0) {
+        await snaToolsListsTurnOnContentTypes(dest, list, state, missingCount);
+    }
+    var addedTypes = [];
+    for (var i = 0; i < list.contentTypes.length; i++) {
+        var ct = list.contentTypes[i];
+        var key = ct.stringId.toUpperCase();
+        var there = byName(ct.name);
+        if (ct.isBuiltIn) {
+            there = there || snaToolsListsSameBuiltInType(destTypes, ct);
+            if (there) {
+                state.contentTypes[key] = there;
+            } else if (!ct.hidden && String(ct.parentStringId).toUpperCase() !== '0X0120') {
+                // Folder and hidden content types aren't on the New menu, so one the destination lacks isn't reported.
+                snaToolsLog(K.contentType, snaToolsInList(list, ct.name), 'skipped', 'The destination ' + snaToolsListsWord(list) +
+                    ' doesn\'t have this content type, which comes from SharePoint, and Sitenalyzer doesn\'t add those. Add it in the ' +
+                    snaToolsListsWord(list) + ' settings, under Content types, if you need it.');
+            }
+            continue;
+        }
+        snaToolsCheckCancelled();
+        var name = snaToolsInList(list, ct.name);
+        if (there) {
+            state.contentTypes[key] = there;
+            state.contentTypeEntries[key] = snaToolsLog(K.contentType, name, 'skipped', 'The destination ' + snaToolsListsWord(list) +
+                ' already has a content type with this name, so Sitenalyzer left it as it is.');
+            continue;
+        }
+        var parentId = snaToolsListsDestTypeId(dest, maps, ct.parentStringId);
+        if (!parentId) {
+            snaToolsLog(K.contentType, name, 'skipped', snaToolsListsHubParentNote(plan, ct.parentStringId) ||
+                'Sitenalyzer skipped this content type, because it couldn\'t make the site content type it comes from. Make that content type ' +
+                'by hand in the destination, then add it to the ' + snaToolsListsWord(list) + '.');
+            continue;
+        }
+        try {
+            var added = await snaToolsWrite(dest.siteUrl, listApi + '/contenttypes/addavailablecontenttype', { body: { contentTypeId: parentId } });
+            var made = { stringId: (added && (added.StringId || (added.Id && added.Id.StringValue))) || '', name: (added && added.Name) || ct.name };
+            destTypes.push(made);
+            state.contentTypes[key] = made;
+            state.contentTypeEntries[key] = snaToolsLog(K.contentType, name, 'copied', 'Added the content type to the ' + snaToolsListsWord(list) + '.',
+                { verify: { type: 'contentType', listId: state.destId, name: made.name } });
+            addedTypes.push({ made: made, entry: state.contentTypeEntries[key] });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(K.contentType, name, 'failed', snaToolsFriendlyError(err));
+        }
+    }
+    if (!state.existing && enabled) {
+        await snaToolsListsRemoveExtraTypes(dest, list, state, destTypes);
+        await snaToolsListsSetTypeOrder(dest, list, state);
+    } else if (enabled) {
+        // A list the destination already had keeps its own New menu, so content types only it has stay on that menu.
+        await snaToolsListsAddToTypeOrder(dest, list, state, addedTypes);
+    }
+}
+
+// Turns on content types in a list the destination already had, which SharePoint needs before the list can get the
+// source list's content types, and says so in the list's row. A list that uses content types already is left as it is.
+// missingCount is the number of the source list's own content types that the destination list doesn't have.
+async function snaToolsListsTurnOnContentTypes(dest, list, state, missingCount) {
+    var listApi = snaToolsListsApi(state.destId);
+    var wasOn = null;
+    try {
+        var read = await snaToolsRead(dest.siteUrl, listApi + '?$select=ContentTypesEnabled');
+        wasOn = !!(read && read.ContentTypesEnabled === true);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    if (wasOn) { return; }
+    try {
+        await snaToolsWrite(dest.siteUrl, listApi, { method: 'MERGE', body: { ContentTypesEnabled: true } });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        // Adding each content type then fails, and its own row says so.
+        return;
+    }
+    if (!state.entry) { return; }
+    var word = snaToolsListsWord(list);
+    var types = missingCount === 1 ? 'content type' : missingCount + ' content types';
+    state.entry.note = (state.entry.note ? state.entry.note + ' ' : '') + 'Sitenalyzer also turned on Allow management of content types ' +
+        'for the ' + word + (wasOn === null ? ', if it wasn\'t on already,' : ',') + ' so it could add the ' + types + ' it was missing. ' +
+        'You can turn it off again in the ' + word + '\'s advanced settings.';
+}
+
+// Returns the destination list's content type that comes from the same SharePoint content type as a source list's
+// built-in content type, such as Item, or undefined. Its name can differ when the destination uses another language.
+function snaToolsListsSameBuiltInType(destTypes, ct) {
+    var parent = String(ct.parentStringId || '').toUpperCase();
+    if (!parent) { return undefined; }
+    return destTypes.filter(function(d) {
+        var id = String(d.stringId).toUpperCase();
+        return id.length === parent.length + 34 && id.indexOf(parent + '00') === 0;
+    })[0];
+}
+
+// Removes the content types SharePoint gave a new list that the source list doesn't have, such as Item on a list that
+// uses only its own content type. The Folder content type always stays, and nothing is removed until at least one content
+// type the source list has, other than Folder, is in the destination list, so people can always add items.
+async function snaToolsListsRemoveExtraTypes(dest, list, state, destTypes) {
+    var wanted = {};
+    list.contentTypes.forEach(function(ct) { wanted[String(ct.name).toLowerCase()] = true; });
+    // A content type matched by its ID, such as Item under a name in another language, is wanted too.
+    var matchedIds = {};
+    Object.keys(state.contentTypes).forEach(function(k) { matchedIds[String(state.contentTypes[k].stringId).toUpperCase()] = true; });
+    function isWanted(d) { return wanted[String(d.name).toLowerCase()] || !!(d.stringId && matchedIds[String(d.stringId).toUpperCase()]); }
+    function isFolder(d) { return String(d.name).toLowerCase() === 'folder'; }
+    var kept = destTypes.filter(function(d) { return isWanted(d) && !isFolder(d); });
+    if (kept.length === 0) { return; }
+    var extra = destTypes.filter(function(d) { return !isWanted(d) && !isFolder(d) && d.stringId; });
+    for (var i = 0; i < extra.length; i++) {
+        try {
+            await snaToolsWrite(dest.siteUrl, snaToolsListsApi(state.destId) + '/contenttypes(' + encodeURIComponent(snaToolsQuote(extra[i].stringId)) + ')', { method: 'DELETE' });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(SNA_TOOLS_KINDS.contentType, snaToolsInList(list, extra[i].name), 'partial', 'The ' + snaToolsListsWord(list) +
+                ' you copied doesn\'t have this content type, but Sitenalyzer couldn\'t remove it from the destination. Remove it in the ' +
+                snaToolsListsWord(list) + ' settings in the destination.');
+        }
+    }
+}
+
+// Sets the order of a list's content types on its New menu, the same as the source list's, when it has more than one.
+async function snaToolsListsSetTypeOrder(dest, list, state) {
+    var order = list.contentTypes.filter(function(ct) { return !ct.hidden && String(ct.name).toLowerCase() !== 'folder'; })
+        .map(function(ct) { return state.contentTypes[ct.stringId.toUpperCase()]; })
+        .filter(function(made) { return made && made.stringId; });
+    if (order.length < 2) { return; }
+    try {
+        await snaToolsWrite(dest.siteUrl, snaToolsListsApi(state.destId) + '/RootFolder', {
+            method: 'MERGE', body: { UniqueContentTypeOrder: order.map(function(made) { return { StringValue: made.stringId }; }) }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(SNA_TOOLS_KINDS.contentType, snaToolsInList(list, 'Order of content types'), 'partial', 'Sitenalyzer added the content types, ' +
+            'but couldn\'t put them in the same order on the New menu. Change the order in the ' + snaToolsListsWord(list) + ' settings in the destination.');
+    }
+}
+
+// Adds the content types this copy added to a list the destination already had to the end of that list's New menu, when
+// the list has a New menu order of its own. A list without one shows every content type it has on its New menu, so it
+// needs no change. The content types the list had before keep their places.
+async function snaToolsListsAddToTypeOrder(dest, list, state, added) {
+    if (added.length === 0) { return; }
+    var folderApi = snaToolsListsApi(state.destId) + '/RootFolder';
+    var word = snaToolsListsWord(list);
+    try {
+        var folder = await snaToolsRead(dest.siteUrl, folderApi + '?$select=UniqueContentTypeOrder');
+        var current = (folder && folder.UniqueContentTypeOrder) || [];
+        current = Array.isArray(current) ? current : (current.results || []);
+        if (current.length === 0) { return; }
+        var ids = current.map(function(o) { return String((o && o.StringValue) || o || ''); }).filter(function(id) { return !!id; });
+        var have = {};
+        ids.forEach(function(id) { have[id.toUpperCase()] = true; });
+        var more = added.filter(function(a) { return a.made.stringId && !have[a.made.stringId.toUpperCase()]; });
+        if (more.length === 0) { return; }
+        var order = ids.concat(more.map(function(a) { return a.made.stringId; }));
+        await snaToolsWrite(dest.siteUrl, folderApi, {
+            method: 'MERGE', body: { UniqueContentTypeOrder: order.map(function(id) { return { StringValue: id }; }) }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        added.forEach(function(a) {
+            snaToolsListsAddProblem(a.entry, 'Sitenalyzer couldn\'t add it to the ' + word + '\'s New menu. In the ' + word + ' settings in the destination, ' +
+                'select Change new button order and default content type, and check Visible for it.');
+        });
+    }
+}
+
+// ### List Columns ###
+
+/**
+ * Creates each list's columns in passes across every list, so lookups and formulas find the columns they use:
+ * SharePoint's own site columns that someone added to the list (from the destination's site columns), plain
+ * columns, lookup columns (and lookup site columns), managed metadata columns, calculated columns, then the columns a
+ * lookup column shows from its list. Then copies column formatting, the Title column's name, whether it's required,
+ * and its formatting, the list's validation formula, and the columns of each list content type. Columns the destination
+ * list already has with the same internal name are left as they are.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; fills maps.fields and maps.fieldIds.
+ * @returns {Promise<void>} Side effects: creates and changes columns in the destination and adds results.
+ */
+async function snaToolsCopyListColumns(plan, dest, maps) {
+    var run = snaToolsListsRun(maps);
+    var lists = plan.lists.filter(function(l) { return !!run.lists[l.sourceId]; });
+    // A data dictionary file's columns that the copy can't make count as skipped, so a calculated column that uses one
+    // is skipped too. Each already has its own Skipped row (see snaToolsLogWorkbookSkipped in workbook.js).
+    (plan.skippedItems || []).forEach(function(item) {
+        var state = item.kind === SNA_TOOLS_KINDS.column && item.internalName ? run.lists[item.listSourceId] : null;
+        if (state) { state.skipped[item.internalName] = item.itemName; }
+    });
+
+    // Lookup site columns read from a list, so they wait until the lists exist. The ones that show another column of a
+    // lookup come last; the copy can't make those, and each gets a Skipped row that says so.
+    var siteLookups = plan.siteColumns.filter(function(f) { return !f.builtIn && snaToolsListsIsLookup(f); }).sort(function(a, b) {
+        return (a.isDependentLookup ? 1 : 0) - (b.isDependentLookup ? 1 : 0);
+    });
+    for (var s = 0; s < siteLookups.length; s++) { await snaToolsListsCopySiteColumn(plan, dest, maps, siteLookups[s]); }
+    await snaToolsListsAddPendingSiteLinks(dest, maps, run);
+
+    // Each list's columns are read only now, because adding a lookup site column to a site content type also adds it to
+    // every list that uses that content type, and the passes below must not try to make it again.
+    var scopes = [];
+    for (var i = 0; i < lists.length; i++) {
+        snaToolsCheckCancelled();
+        scopes.push(await snaToolsListsListScope(dest, lists[i], run.lists[lists[i].sourceId]));
+    }
+
+    // SharePoint's own site columns that someone added to a source list come first, from the destination's site columns.
+    for (var b = 0; b < scopes.length; b++) {
+        for (var bc = 0; bc < scopes[b].builtInColumns.length; bc++) { await snaToolsListsAddBuiltInColumn(dest, maps, scopes[b], scopes[b].builtInColumns[bc]); }
+    }
+
+    var passes = [
+        function(f) { return !snaToolsListsIsLookup(f) && !f.isTaxonomy && f.type !== 'Calculated'; },
+        function(f) { return snaToolsListsIsLookup(f) && !f.isDependentLookup; },
+        function(f) { return f.isTaxonomy; },
+        function(f) { return f.type === 'Calculated'; },
+        function(f) { return f.isDependentLookup; }
+    ];
+    for (var p = 0; p < passes.length; p++) {
+        for (var l = 0; l < scopes.length; l++) {
+            var scope = scopes[l];
+            var columns = scope.columns.filter(passes[p]);
+            if (p === 3) { columns = snaToolsListsByFormulaOrder(columns); }
+            for (var c = 0; c < columns.length; c++) { await snaToolsListsCopyListColumn(plan, dest, maps, scope, columns[c]); }
+        }
+    }
+    for (var f = 0; f < scopes.length; f++) {
+        snaToolsCheckCancelled();
+        await snaToolsListsCopyFormatting(dest, maps, scopes[f]);
+        await snaToolsListsCopyTitleColumn(dest, maps, scopes[f]);
+        await snaToolsListsCopyValidation(dest, scopes[f]);
+        await snaToolsListsAddTypeColumns(dest, maps, scopes[f]);
+    }
+}
+
+// Reads a destination list's columns and returns where its columns are made: { list, destListId, sourceListId, fields
+// (every source column of the list), columns (the ones to make), destFields, state, addToDefaultType }.
+async function snaToolsListsListScope(dest, list, state) {
+    var destFields = {};
+    try {
+        var read = await snaToolsReadAll(dest.siteUrl, snaToolsListsApi(state.destId) + '/fields?$select=Id,InternalName,Title,Required,CustomFormatter',
+            SNA_TOOLS_READ_MAX);
+        read.items.forEach(function(f) {
+            destFields[String(f.InternalName || '').toLowerCase()] = { id: snaToolsCleanGuid(f.Id), internalName: f.InternalName || '',
+                title: f.Title || '', required: f.Required === true, customFormatter: f.CustomFormatter || '' };
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    state.destFields = destFields;
+    var noteIds = snaToolsListsNoteFieldIds(list.fields);
+    return {
+        list: list, destListId: state.destId, sourceListId: list.sourceId, fields: list.fields, destFields: destFields, state: state,
+        columns: list.fields.filter(function(f) { return !snaToolsListsIsMadeElsewhere(f, noteIds); }),
+        builtInColumns: list.fields.filter(function(f) { return f.builtIn && f.builtInSiteColumn && !snaToolsListsIsHelperColumn(f, noteIds); }),
+        addToDefaultType: !list.contentTypesEnabled
+    };
+}
+
+// Adds one of SharePoint's own site columns that the source list has, such as Start Date, to the destination list,
+// from the destination's site columns, and logs its result. A destination list that has it already, such as one made
+// from a template that includes it, keeps its own and gets no result row.
+async function snaToolsListsAddBuiltInColumn(dest, maps, scope, field) {
+    snaToolsCheckCancelled();
+    var state = scope.state;
+    var there = scope.destFields[String(field.internalName).toLowerCase()];
+    if (there) {
+        maps.fields[scope.sourceListId][field.internalName] = there.internalName;
+        maps.fieldIds[field.id] = there.id;
+        return;
+    }
+    var word = snaToolsListsWord(scope.list);
+    var name = snaToolsInList(scope.list, field.title);
+    try {
+        await snaToolsListsAddSiteColumnToList(dest.siteUrl, scope.destListId, field.id);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        state.skipped[field.internalName] = field.title;
+        state.entries[field.internalName] = snaToolsLog(SNA_TOOLS_KINDS.column, name, 'failed', 'Sitenalyzer couldn\'t add this column, which comes from ' +
+            'SharePoint\'s own site columns, to the ' + word + '. Add it from the existing site columns in the ' + word + ' settings in the destination.');
+        return;
+    }
+    maps.fields[scope.sourceListId][field.internalName] = field.internalName;
+    maps.fieldIds[field.id] = field.id;
+    scope.destFields[String(field.internalName).toLowerCase()] = { id: field.id, internalName: field.internalName, title: field.title };
+    state.created[field.internalName] = field.id;
+    state.entries[field.internalName] = snaToolsLog(SNA_TOOLS_KINDS.column, name, 'copied', 'Added this column to the ' + word + ' from SharePoint\'s own site columns.',
+        { verify: { type: 'field', listId: scope.destListId, internalName: field.internalName } });
+}
+
+// Copies one list column and logs its result. A column the destination list already has with the same internal name is
+// left as it is. In a list this copy made, such a column came with one of the list's content types.
+async function snaToolsListsCopyListColumn(plan, dest, maps, scope, field) {
+    snaToolsCheckCancelled();
+    var state = scope.state;
+    var name = snaToolsInList(scope.list, field.title);
+    var there = scope.destFields[String(field.internalName).toLowerCase()];
+    if (there) {
+        maps.fields[scope.sourceListId][field.internalName] = there.internalName;
+        maps.fieldIds[field.id] = there.id;
+        if (!state.existing) { state.created[field.internalName] = there.id; }
+        state.entries[field.internalName] = state.existing
+            ? snaToolsLog(SNA_TOOLS_KINDS.column, name, 'skipped', 'The destination ' + snaToolsListsWord(scope.list) +
+                ' already has a column with this internal name, so Sitenalyzer left it as it is.')
+            : snaToolsLog(SNA_TOOLS_KINDS.column, name, 'copied', 'SharePoint added this column with a content type that uses it.',
+                { verify: { type: 'field', listId: scope.destListId, internalName: there.internalName } });
+        return;
+    }
+    var outcome;
+    try {
+        outcome = await snaToolsListsMakeColumn(plan, dest, maps, scope, field);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        outcome = { result: 'failed', note: snaToolsFriendlyError(err) };
+    }
+    if (outcome.id) {
+        maps.fields[scope.sourceListId][field.internalName] = outcome.internalName;
+        maps.fieldIds[field.id] = outcome.id;
+        scope.destFields[String(outcome.internalName).toLowerCase()] = { id: outcome.id, internalName: outcome.internalName, title: field.title };
+        state.created[field.internalName] = outcome.id;
+    } else {
+        state.skipped[field.internalName] = field.title;
+    }
+    var detail = outcome.id ? { verify: { type: 'field', listId: scope.destListId, internalName: outcome.internalName } } : {};
+    if (outcome.userSelectionScope) { detail.userSelectionScope = outcome.userSelectionScope; detail.destFieldId = outcome.id; }
+    state.entries[field.internalName] = snaToolsLog(SNA_TOOLS_KINDS.column, name, outcome.result, outcome.note, detail);
+}
+
+/**
+ * Makes one column in the destination, in a list or as a site column, by its type.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs.
+ * @param {object} scope Where it's made (see snaToolsListsListScope and snaToolsListsSiteScope).
+ * @param {object} field The source column (a PlanField).
+ * @returns {Promise<{result: string, note: string, id: string, internalName: string, userSelectionScope: number}>} The
+ *          result for the results table, and the new column's ID and internal name when it was made.
+ * @throws {Error} snaToolsError when SharePoint refuses; the caller logs it. Side effects: creates columns.
+ */
+async function snaToolsListsMakeColumn(plan, dest, maps, scope, field) {
+    if (field.isDependentLookup) { return snaToolsListsMakeDependentLookup(dest, maps, scope, field); }
+    if (field.isTaxonomy) { return snaToolsListsMakeTaxonomyColumn(plan, dest, maps, scope, field); }
+    var root = snaToolsListsCleanDefinition(field);
+    if (!root) { return { result: 'failed', note: SNA_TOOLS_LISTS_BAD_DEFINITION_NOTE }; }
+    var notes = [];
+    if (snaToolsListsIsLookup(field)) {
+        var target = snaToolsListsPointLookup(plan, dest, maps, scope, field, root);
+        if (target.skip) { return { result: 'skipped', note: target.skip }; }
+        if (target.note) { notes.push(target.note); }
+        if (field.lookupFieldGuessed) { notes.push(SNA_TOOLS_LISTS_GUESSED_LOOKUP_NOTE); }
+    }
+    var people = snaToolsListsAdjustPeople(root, field, notes, !!plan.permissions);
+    if (field.type === 'Calculated') { return snaToolsListsMakeCalculated(dest, maps, scope, field, root, notes); }
+    var made = await snaToolsListsCreateColumn(dest, scope.destListId, root, scope.addToDefaultType);
+    var partial = notes.length > 0 && people.changed;
+    return {
+        result: partial ? 'partial' : 'copied', note: ['Created the column.'].concat(notes).join(' '),
+        id: made.id, internalName: made.internalName, userSelectionScope: people.scope
+    };
+}
+
+// Points a lookup column at its list in the destination: the copy of that list, the list itself for a lookup to its own
+// list, or a list the destination already has at the same address. Also updates the column it shows, when that was
+// renamed. Returns { note } or { skip: note } when the column can't be made.
+function snaToolsListsPointLookup(plan, dest, maps, scope, field, root) {
+    var listAttr = String(root.getAttribute('List') || '');
+    var targetId = field.lookupListId || '';
+    var isSelf = /^self$/i.test(listAttr) || (!!scope.list && targetId === scope.sourceListId);
+    if (field.lookupWebId && plan.source.webId && field.lookupWebId !== snaToolsCleanGuid(plan.source.webId)) {
+        return { skip: 'Sitenalyzer skipped this column, because it reads from a list on another site. Make it by hand in the destination if you need it.' };
+    }
+    var destListId = '';
+    var note = '';
+    if (isSelf && scope.list) {
+        destListId = scope.destListId;
+    } else if (maps.lists[targetId]) {
+        destListId = maps.lists[targetId];
+    } else {
+        var source = snaToolsListsSourceList(plan, targetId);
+        if (source && source.chosen) {
+            return { skip: 'Sitenalyzer skipped this column, because it couldn\'t copy the list it reads from, ' + source.title + '.' +
+                ' Copy that list again, then copy this column again.' };
+        }
+        var match = source ? snaToolsExistingDestinationList(dest, source.url, source.baseTemplate) : null;
+        if (!match || !match.usable) {
+            // Without the source list, nothing was looked up in the destination, so the note claims only that the list isn't in this copy.
+            return { skip: source
+                ? 'Sitenalyzer skipped this column, because it reads from ' + source.title + ', which you didn\'t choose to copy and the destination doesn\'t have. Copy that list too, then copy again.'
+                : 'Sitenalyzer skipped this column, because it reads from a list that isn\'t in this copy. Copy that list too, then copy again.' };
+        }
+        destListId = match.list.id;
+        note = 'It reads from the destination\'s own ' + match.list.title + '.';
+    }
+    root.setAttribute('List', '{' + destListId + '}');
+    root.setAttribute('WebId', snaToolsCleanGuid(maps.destination.webId || dest.webId));
+    var show = root.getAttribute('ShowField');
+    var showSource = isSelf ? scope.sourceListId : targetId;
+    if (show) { root.setAttribute('ShowField', snaToolsListsDestName(maps, showSource, show)); }
+    if (!scope.list) {
+        // A site column can't stop or pass on deletions in the list it reads from.
+        root.removeAttribute('RelationshipDeleteBehavior');
+    }
+    return { note: note };
+}
+
+// Changes a Person column so it works in the destination: leaves out a default person, whose ID belongs to the source,
+// and lets people choose anyone when it chose only from one SharePoint group, whose ID belongs to the source too. When
+// permissions are copied, the permissions step limits the column to the destination's copy of that group afterwards
+// (it reads maps.fieldIds), so the column isn't marked as changed for that. Returns { changed, scope (the source group
+// ID, or 0) } and adds a note for each change.
+function snaToolsListsAdjustPeople(root, field, notes, permissionsCopied) {
+    var out = { changed: false, scope: 0 };
+    if (field.type !== 'User' && field.type !== 'UserMulti') { return out; }
+    var defaults = snaToolsListsChild(root, 'Default');
+    if (defaults && defaults.textContent.trim()) {
+        root.removeChild(defaults);
+        out.changed = true;
+        notes.push('Sitenalyzer left out its default person, because people have different IDs in each site. Set the default again in the destination if you need it.');
+    }
+    var group = parseInt(root.getAttribute('UserSelectionScope'), 10);
+    if (group > 0) {
+        root.setAttribute('UserSelectionScope', '0');
+        out.scope = group;
+        if (permissionsCopied) {
+            notes.push('For now, it lets people choose anyone. Sitenalyzer limits it to the same group as in this site after it copies the groups, ' +
+                'and another row for this column says whether that worked.');
+            return out;
+        }
+        out.changed = true;
+        notes.push('It lets people choose anyone, because it chose only from a SharePoint group that the destination doesn\'t have yet. ' +
+            'Change the column settings in the destination to choose from that group again.');
+    }
+    return out;
+}
+
+// Makes a calculated column. Its formula is sent first as people wrote it, with display names, and then, when SharePoint
+// refuses that, with the internal names the source site keeps. A column whose formula uses a column the copy skipped is skipped.
+async function snaToolsListsMakeCalculated(dest, maps, scope, field, root, notes) {
+    var state = scope.state;
+    var missing = (field.fieldRefs || []).filter(function(ref) { return state && state.skipped[ref]; });
+    if (missing.length > 0) {
+        return { result: 'skipped', note: 'Sitenalyzer skipped this column, because its formula uses ' +
+            snaJoinWords(missing.map(function(ref) { return state.skipped[ref]; })) + ', which ' + (missing.length === 1 ? 'wasn\'t' : 'weren\'t') +
+            ' copied. Make it by hand in the destination after you add ' + (missing.length === 1 ? 'that column' : 'those columns') + '.' };
+    }
+    var renames = snaToolsListsRenames(maps, scope.sourceListId);
+    var refs = root.getElementsByTagName('FieldRef');
+    for (var i = 0; i < refs.length; i++) {
+        var refName = refs[i].getAttribute('Name');
+        if (refName && renames[refName]) { refs[i].setAttribute('Name', renames[refName]); }
+    }
+    var formulaElement = root.getElementsByTagName('Formula')[0];
+    var stored = formulaElement ? formulaElement.textContent : '';
+    if (!formulaElement) {
+        formulaElement = root.ownerDocument.createElement('Formula');
+        root.insertBefore(formulaElement, root.firstChild);
+    }
+    var attempts = [];
+    if (field.formula) { attempts.push(field.formula); }
+    var internalForm = snaToolsListsRenameInFormula(stored, renames);
+    if (internalForm && attempts.indexOf(internalForm) === -1) { attempts.push(internalForm); }
+    if (attempts.length === 0) { return { result: 'failed', note: 'Sitenalyzer couldn\'t find this calculated column\'s formula, so it didn\'t make it. Make it by hand in the destination.' }; }
+    var lastError = null;
+    for (var a = 0; a < attempts.length; a++) {
+        formulaElement.textContent = attempts[a];
+        try {
+            var made = await snaToolsListsCreateColumn(dest, scope.destListId, root, scope.addToDefaultType);
+            return { result: notes.length ? 'partial' : 'copied', note: ['Created the column.'].concat(notes).join(' '), id: made.id, internalName: made.internalName };
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            lastError = err;
+        }
+    }
+    return { result: 'failed', note: 'Sitenalyzer couldn\'t make this calculated column, because SharePoint didn\'t accept its formula.' +
+        snaToolsServerSaid(lastError && lastError.serverMessage) + ' Check that every column its formula uses was copied, then make it by hand in the destination.' };
+}
+
+// Makes a column that shows another column of a lookup column's list, such as Study Arm:Arm Label, with
+// adddependentlookupfield. Its primary lookup column must already be in the destination. SharePoint names it.
+async function snaToolsListsMakeDependentLookup(dest, maps, scope, field) {
+    if (!scope.list) {
+        return { result: 'skipped', note: 'Sitenalyzer skipped this site column, because it shows a column of another lookup column. Make it by hand in the destination.' };
+    }
+    var primary = scope.fields.filter(function(f) { return f.id === field.primaryFieldId; })[0];
+    var primaryId = maps.fieldIds[field.primaryFieldId];
+    var primaryThere = !!primary && (!!scope.state.created[primary.internalName] || !!scope.destFields[String(primary.internalName).toLowerCase()]);
+    if (!primaryId || !primaryThere) {
+        return { result: 'skipped', note: 'Sitenalyzer skipped this column, because the lookup column it comes from' +
+            (primary ? ', ' + primary.title + ',' : '') + ' wasn\'t copied.' };
+    }
+    var show = snaToolsListsDestName(maps, primary.lookupListId, field.lookupField);
+    var path = snaToolsListsApi(scope.destListId) + '/fields/adddependentlookupfield(displayname=@d,primarylookupfieldid=@p,showfield=@s)' +
+        '?@d=' + encodeURIComponent(snaToolsQuote(field.title)) + '&@p=' + encodeURIComponent(snaToolsQuote(primaryId)) +
+        '&@s=' + encodeURIComponent(snaToolsQuote(show));
+    var answer = await snaToolsWrite(dest.siteUrl, path, {});
+    var made = (answer && answer.d) ? answer.d : (answer || {});
+    if (!made.InternalName) { throw snaToolsError(500, 'name', ''); }
+    return { result: 'copied', note: 'Created the column.', id: snaToolsCleanGuid(made.Id), internalName: made.InternalName };
+}
+
+// ### Managed Metadata Columns ###
+
+// Returns what managed metadata columns need from the destination, read once for each copy: { termStoreId,
+// hiddenListId (the site collection's TaxonomyHiddenList), rootWebId }. Throws snaToolsUserError when it can't.
+async function snaToolsListsTaxonomyTargets(dest, maps, run) {
+    if (run.taxonomy) {
+        if (run.taxonomy.error) { throw run.taxonomy.error; }
+        return run.taxonomy;
+    }
+    try {
+        var storeId = snaToolsCleanGuid(maps.destination.termStoreId);
+        if (!storeId) {
+            var store = await snaToolsRead(dest.siteUrl, '/_api/v2.1/sites/' + encodeURIComponent(dest.siteId) + '/termStore');
+            storeId = snaToolsCleanGuid(store && store.id);
+        }
+        var lists = await snaToolsRead(dest.siteUrl, "/_api/site/rootweb/lists?$select=Id,Title&$filter=Title%20eq%20'TaxonomyHiddenList'");
+        var hidden = ((lists && lists.value) || [])[0];
+        var root = await snaToolsRead(dest.siteUrl, '/_api/site/rootweb?$select=Id');
+        run.taxonomy = { termStoreId: storeId, hiddenListId: snaToolsCleanGuid(hidden && hidden.Id), rootWebId: snaToolsCleanGuid(root && root.Id) };
+        if (!run.taxonomy.termStoreId || !run.taxonomy.hiddenListId || !run.taxonomy.rootWebId) { throw snaToolsError(404, 'taxonomy', ''); }
+        return run.taxonomy;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        run.taxonomy = { error: snaToolsUserError('Sitenalyzer couldn\'t read what managed metadata columns need from the destination, so it ' +
+            'didn\'t make this column. Add a managed metadata column to any list in the destination, then copy again.') };
+        throw run.taxonomy.error;
+    }
+}
+
+// True when the destination's term store has a term set, read once for each term set. Used for term sets in tenant-level
+// groups, which keep their IDs in every site.
+async function snaToolsListsTermSetThere(dest, run, termSetId) {
+    if (Object.prototype.hasOwnProperty.call(run.termSets, termSetId)) { return run.termSets[termSetId]; }
+    try {
+        await snaToolsRead(dest.siteUrl, '/_api/v2.1/sites/' + encodeURIComponent(dest.siteId) + '/termStore/sets/' + encodeURIComponent(termSetId) + '?$select=id');
+        run.termSets[termSetId] = true;
+    } catch (err) {
+        if (snaToolsIsCancelled(err) || err.status !== 404) { throw err; }
+        run.termSets[termSetId] = false;
+    }
+    return run.termSets[termSetId];
+}
+
+// Makes a managed metadata column: its hidden Note column first, then the column pointed at the destination's term store,
+// term set, and TaxonomyHiddenList, then connects it to its term set and reads it back to check.
+async function snaToolsListsMakeTaxonomyColumn(plan, dest, maps, scope, field) {
+    var run = snaToolsListsRun(maps);
+    var where = scope.list ? ' in ' + (scope.list.newTitle || scope.list.title) : '';
+    var setName = snaToolsListsTermSetName(plan, field.termSetId);
+    var isSiteSet = !!plan.termGroup && plan.termGroup.sets.some(function(s) { return s.sourceId === field.termSetId; });
+    if (!field.termSetId) {
+        return { result: 'skipped', note: 'Sitenalyzer skipped the column ' + field.title + where + ', because it isn\'t connected to a term set ' +
+            'in the site you copied from. Make it by hand in the destination.' };
+    }
+    var missing = maps.termSetsMissing[field.termSetId];
+    if (missing || (isSiteSet && !maps.termSets[field.termSetId])) {
+        return { result: 'skipped', note: 'Sitenalyzer skipped the column ' + field.title + where + ', because it uses the term set ' +
+            (setName || 'of this site') + ', which wasn\'t copied.' + (missing ? ' ' + missing : '') + ' Copy the term set, then copy again.' };
+    }
+    var notes = [];
+    var termSetId = field.termSetId;
+    var anchorId = field.anchorId || '';
+    if (isSiteSet) {
+        termSetId = snaToolsCleanGuid(maps.termSets[field.termSetId]);
+        if (anchorId) {
+            anchorId = snaToolsCleanGuid(maps.terms[anchorId]);
+            if (!anchorId) { notes.push('The term it started at wasn\'t copied, so it shows the whole term set. Choose the starting term in the column settings in the destination.'); }
+        }
+    } else if (!(await snaToolsListsTermSetThere(dest, run, termSetId))) {
+        return { result: 'skipped', note: 'Sitenalyzer skipped the column ' + field.title + where + ', because the destination\'s term store doesn\'t ' +
+            'have the term set it uses. Ask your term store administrator to make that term set available to the destination, then copy again.' };
+    }
+    var targets = await snaToolsListsTaxonomyTargets(dest, maps, run);
+    var root = snaToolsListsCleanDefinition(field);
+    if (!root) { return { result: 'failed', note: SNA_TOOLS_LISTS_BAD_DEFINITION_NOTE }; }
+
+    var sourceNoteId = snaToolsCleanGuid(snaToolsListsCustomizationValue(root, 'TextField'));
+    var noteId = await snaToolsListsMakeNoteColumn(dest, scope, field, root);
+    // A site content type that shows the managed metadata column links to its Note column too.
+    if (!scope.list && sourceNoteId && noteId) { maps.fieldIds[sourceNoteId] = noteId; }
+    root.setAttribute('List', '{' + targets.hiddenListId + '}');
+    root.setAttribute('WebId', targets.rootWebId);
+    snaToolsListsSetCustomization(root, 'SspId', targets.termStoreId);
+    snaToolsListsSetCustomization(root, 'TermSetId', termSetId);
+    snaToolsListsSetCustomization(root, 'AnchorId', anchorId || SNA_TOOLS_LISTS_EMPTY_GUID);
+    snaToolsListsSetCustomization(root, 'TextField', '{' + noteId + '}');
+    // A default term holds IDs from the source site collection, so it is left out.
+    var defaults = root.getElementsByTagName('Default');
+    for (var d = 0; d < defaults.length; d++) {
+        if (defaults[d].textContent.trim()) { notes.push('Sitenalyzer left out its default term. Set it again in the column settings in the destination.'); }
+        defaults[d].textContent = '';
+    }
+    var made = await snaToolsListsCreateColumn(dest, scope.destListId, root, scope.addToDefaultType);
+    var source = snaToolsParseXml(field.schemaXml);
+    var options = {
+        sspId: targets.termStoreId, termSetId: termSetId, anchorId: anchorId || SNA_TOOLS_LISTS_EMPTY_GUID,
+        open: source && /^true$/i.test(snaToolsListsCustomizationValue(source, 'Open')),
+        isPathRendered: source && /^true$/i.test(snaToolsListsCustomizationValue(source, 'IsPathRendered')),
+        createValuesInEditForm: source && /^true$/i.test(snaToolsListsCustomizationValue(source, 'CreateValuesInEditForm'))
+    };
+    var bound = true;
+    try {
+        if (typeof snaToolsTaxonomyBindField === 'function') {
+            await snaToolsTaxonomyBindField(dest.siteUrl, scope.destListId, made.id, options);
+        } else {
+            await snaToolsListsBindTaxonomyField(dest.siteUrl, scope.destListId, made.id, options);
+        }
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        bound = false;
+    }
+    var checked = bound ? await snaToolsListsCheckBinding(dest, scope.destListId, made.id, termSetId, targets) : false;
+    if (checked === false) {
+        return { result: 'partial', note: [SNA_TOOLS_LISTS_NOT_BOUND_NOTE].concat(notes).join(' '), id: made.id, internalName: made.internalName };
+    }
+    if (checked === null) { notes.push('Sitenalyzer couldn\'t read it back to check that it\'s connected to its term set, so check its settings in the destination.'); }
+    return { result: notes.length ? 'partial' : 'copied', note: ['Created the column and connected it to its term set.'].concat(notes).join(' '),
+        id: made.id, internalName: made.internalName };
+}
+
+// Makes the hidden Note column a managed metadata column keeps its values in, with the source Note column's ID and
+// internal name, or reuses the destination's when it already has one with that name. Returns its ID.
+async function snaToolsListsMakeNoteColumn(dest, scope, field, root) {
+    var noteId = snaToolsCleanGuid(snaToolsListsCustomizationValue(root, 'TextField'));
+    var source = noteId ? scope.fields.filter(function(f) { return f.id === noteId; })[0] : null;
+    var noteRoot = source ? snaToolsListsCleanDefinition(source) : null;
+    if (!noteRoot) {
+        var doc = snaToolsParseXml('<Field />').ownerDocument;
+        noteRoot = doc.documentElement;
+        var name = String(field.internalName || '') + 'TaxHTField0';
+        noteRoot.setAttribute('Type', 'Note');
+        noteRoot.setAttribute('ID', '{' + snaToolsNewGuid() + '}');
+        noteRoot.setAttribute('Name', name);
+        noteRoot.setAttribute('StaticName', name);
+        noteRoot.setAttribute('DisplayName', String(field.title || '') + '_0');
+        noteRoot.setAttribute('ShowInViewForms', 'FALSE');
+        noteRoot.setAttribute('Required', 'FALSE');
+        noteRoot.setAttribute('Hidden', 'TRUE');
+        noteRoot.setAttribute('CanToggleHidden', 'TRUE');
+    }
+    var noteName = String(noteRoot.getAttribute('Name') || '').toLowerCase();
+    if (scope.destFields[noteName]) { return scope.destFields[noteName].id; }
+    var made = await snaToolsListsCreateColumn(dest, scope.destListId, noteRoot, false);
+    scope.destFields[String(made.internalName).toLowerCase()] = { id: made.id, internalName: made.internalName, title: noteRoot.getAttribute('DisplayName') };
+    return made.id;
+}
+
+// Reads a managed metadata column back and returns true when it's connected to the term set and term store it should be
+// and reads from the destination's TaxonomyHiddenList, false when it isn't, or null when it couldn't be read.
+async function snaToolsListsCheckBinding(dest, listId, fieldId, termSetId, targets) {
+    var answer;
+    try {
+        answer = await snaToolsRead(dest.siteUrl, snaToolsListsFieldApi(listId, fieldId) + '?$select=SchemaXml,LookupList');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return null;
+    }
+    var schema = snaReadTaxonomySchema(answer && answer.SchemaXml);
+    var root = snaToolsParseXml(answer && answer.SchemaXml);
+    var lookupList = snaToolsCleanGuid((answer && answer.LookupList) || (root ? root.getAttribute('List') : ''));
+    return schema.termSetId === snaToolsCleanGuid(termSetId) && schema.termStoreId === targets.termStoreId && lookupList === targets.hiddenListId;
+}
+
+// ### Formatting, Title, and Validation ###
+
+// Copies column formatting (CustomFormatter) with a MERGE, after the column names in it are updated: onto the columns this
+// copy made, and onto built-in columns the destination list has with the same internal name. A list the destination
+// already had keeps the formatting of its built-in columns. The Title column's formatting goes with the rest of its
+// settings in snaToolsListsCopyTitleColumn.
+async function snaToolsListsCopyFormatting(dest, maps, scope) {
+    var state = scope.state;
+    var renames = snaToolsListsRenames(maps, scope.sourceListId);
+    for (var i = 0; i < scope.fields.length; i++) {
+        var field = scope.fields[i];
+        if (!field.customFormatter || field.internalName === 'Title') { continue; }
+        var made = state.created[field.internalName];
+        var there = (field.builtIn && !made && !state.existing) ? scope.destFields[String(field.internalName).toLowerCase()] : null;
+        if (!made && !there) { continue; }
+        snaToolsCheckCancelled();
+        var fieldId = made || there.id;
+        var formatter = snaToolsListsRenameInJson(field.customFormatter, renames);
+        if (there && there.customFormatter === formatter) { continue; }
+        try {
+            await snaToolsWrite(dest.siteUrl, snaToolsListsFieldApi(scope.destListId, fieldId), { method: 'MERGE', body: { CustomFormatter: formatter } });
+            if (there) {
+                snaToolsLog(SNA_TOOLS_KINDS.column, snaToolsInList(scope.list, field.title), 'copied', 'Copied the column\'s formatting.',
+                    { verify: { type: 'field', listId: scope.destListId, internalName: there.internalName } });
+            }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var problem = 'Sitenalyzer couldn\'t copy its formatting. Copy the formatting by hand in the destination, under Format this column.';
+            if (made) {
+                snaToolsListsAddProblem(state.entries[field.internalName], problem);
+            } else {
+                snaToolsLog(SNA_TOOLS_KINDS.column, snaToolsInList(scope.list, field.title), 'failed', problem);
+            }
+        }
+    }
+}
+
+// Gives the destination list's Title column the source's name, whether it's required, and its formatting, when any of them
+// differ. A list the destination already had keeps its own Title column.
+async function snaToolsListsCopyTitleColumn(dest, maps, scope) {
+    if (scope.state.existing) { return; }
+    var source = scope.fields.filter(function(f) { return f.internalName === 'Title'; })[0];
+    var there = scope.destFields.title;
+    if (!source || !there) { return; }
+    var body = {};
+    if (source.title && source.title !== there.title) { body.Title = source.title; }
+    if (source.required !== there.required) { body.Required = source.required; }
+    var formatter = snaToolsListsRenameInJson(source.customFormatter, snaToolsListsRenames(maps, scope.sourceListId));
+    if (formatter && formatter !== there.customFormatter) { body.CustomFormatter = formatter; }
+    if (Object.keys(body).length === 0) { return; }
+    var name = snaToolsInList(scope.list, source.title || 'Title');
+    try {
+        await snaToolsWrite(dest.siteUrl, snaToolsListsFieldApi(scope.destListId, there.id), { method: 'MERGE', body: body });
+        snaToolsLog(SNA_TOOLS_KINDS.column, name, 'copied', 'Gave the destination\'s Title column the same name, required setting, and formatting.',
+            { verify: { type: 'field', listId: scope.destListId, internalName: 'Title' } });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(SNA_TOOLS_KINDS.column, name, 'failed', 'Sitenalyzer couldn\'t change the destination\'s Title column to match. ' + snaToolsFriendlyError(err));
+    }
+}
+
+// Sets a new list's validation formula, which uses the list's columns by their names, now that the columns exist.
+async function snaToolsListsCopyValidation(dest, scope) {
+    var settings = scope.list.settings || {};
+    if (scope.state.existing || !settings.ValidationFormula) { return; }
+    try {
+        await snaToolsWrite(dest.siteUrl, snaToolsListsApi(scope.destListId), {
+            method: 'MERGE', body: { ValidationFormula: settings.ValidationFormula, ValidationMessage: settings.ValidationMessage || '' }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsListsAddProblem(scope.state.entry, 'Sitenalyzer couldn\'t copy its validation formula. Check that every column the formula uses ' +
+            'was copied, then add the formula in the ' + snaToolsListsWord(scope.list) + ' settings in the destination.');
+    }
+}
+
+// Adds the columns this copy made to the list content types that have them in the source, for a list that uses content
+// types. New columns go only to a list's default content type when they are made.
+async function snaToolsListsAddTypeColumns(dest, maps, scope) {
+    var list = scope.list;
+    var state = scope.state;
+    if (!list.contentTypesEnabled || Object.keys(state.created).length === 0) { return; }
+    var destTypes;
+    try {
+        destTypes = (await snaToolsReadAll(dest.siteUrl, snaToolsListsApi(state.destId) + '/contenttypes?$select=StringId,Name,FieldLinks/Name&$expand=FieldLinks',
+            SNA_TOOLS_READ_MAX)).items;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return;
+    }
+    for (var i = 0; i < list.contentTypes.length; i++) {
+        var ct = list.contentTypes[i];
+        var key = ct.stringId.toUpperCase();
+        var made = state.contentTypes[key];
+        if (!made) { continue; }
+        var there = destTypes.filter(function(d) { return String(d.Name).toLowerCase() === String(made.name).toLowerCase(); })[0];
+        if (!there) { continue; }
+        var links = (there.FieldLinks && (there.FieldLinks.results || there.FieldLinks)) || [];
+        var has = {};
+        (Array.isArray(links) ? links : []).forEach(function(link) { has[String(link.Name || '').toLowerCase()] = true; });
+        var missing = ct.fieldLinks.filter(function(link) {
+            return state.created[link.internalName] && !has[String(snaToolsListsDestName(maps, list.sourceId, link.internalName)).toLowerCase()];
+        });
+        if (missing.length === 0) { continue; }
+        snaToolsCheckCancelled();
+        try {
+            await snaToolsListsAddFieldLinks(dest.siteUrl, state.destId, there.StringId || made.stringId, missing.map(function(link) {
+                return { fieldId: state.created[link.internalName], required: link.required, hidden: link.hidden };
+            }));
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var problem = 'Sitenalyzer couldn\'t add ' + snaCountText(missing.length, 'column', 'columns') + ' to the content type ' + ct.name +
+                '. Add ' + (missing.length === 1 ? 'it' : 'them') + ' in the content type\'s settings in the ' + snaToolsListsWord(list) + ' in the destination.';
+            if (state.contentTypeEntries[key]) {
+                snaToolsListsAddProblem(state.contentTypeEntries[key], problem);
+            } else {
+                snaToolsLog(SNA_TOOLS_KINDS.contentType, snaToolsInList(list, ct.name), 'partial', problem);
+            }
+        }
+    }
+}
+
+// ### Views ###
+
+/**
+ * Copies each list's public views. The destination list's default view is updated in place, so the list keeps its one
+ * default view, and the other views are created with views/add. Personal views belong to the people who made them and are
+ * skipped, and hidden views are counted in one note for each list. A list the destination already had keeps its views,
+ * and gets only the views whose names it doesn't have.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; fills maps.views.
+ * @returns {Promise<void>} Side effects: creates and changes views in the destination and adds results.
+ */
+async function snaToolsCopyViews(plan, dest, maps) {
+    var run = snaToolsListsRun(maps);
+    for (var i = 0; i < plan.lists.length; i++) {
+        var list = plan.lists[i];
+        var state = run.lists[list.sourceId];
+        if (!state) { continue; }
+        snaToolsCheckCancelled();
+        var destViews = null;
+        try {
+            destViews = (await snaToolsReadAll(dest.siteUrl, snaToolsListsApi(state.destId) + '/views?$select=Id,Title,DefaultView,PersonalView,Hidden',
+                SNA_TOOLS_READ_MAX)).items;
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+        }
+        // The default view goes first, so the destination's default view gets its name before other views are matched by name.
+        var views = list.views.slice().sort(function(a, b) { return (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0); });
+        var hidden = 0;
+        for (var v = 0; v < views.length; v++) {
+            var view = views[v];
+            if (view.hidden && !view.personalView) { hidden++; continue; }
+            if (view.personalView) {
+                snaToolsLog(SNA_TOOLS_KINDS.view, snaToolsInList(list, view.title), 'skipped', 'Sitenalyzer skipped this view, because it\'s a ' +
+                    'personal view that only the person who made it can see. They can make it again in the destination.');
+                continue;
+            }
+            await snaToolsListsCopyView(dest, maps, list, state, view, destViews);
+        }
+        if (hidden > 0) {
+            snaToolsLog(SNA_TOOLS_KINDS.view, snaToolsInList(list, 'Hidden views'), 'skipped', 'Sitenalyzer skipped ' +
+                snaCountText(hidden, 'hidden view', 'hidden views') + '. SharePoint uses hidden views for list web parts on pages, so check those ' +
+                'web parts in the destination.');
+        }
+    }
+}
+
+// Copies one public view and logs its result.
+async function snaToolsListsCopyView(dest, maps, list, state, view, destViews) {
+    var name = snaToolsInList(list, view.title);
+    var listApi = snaToolsListsApi(state.destId);
+    var renames = snaToolsListsRenames(maps, list.sourceId);
+    var sameTitle = destViews ? destViews.filter(function(d) { return d.Title === view.title && !d.PersonalView; })[0] : null;
+    var destDefault = destViews ? destViews.filter(function(d) { return d.DefaultView === true; })[0] : null;
+    var update = !state.existing && view.isDefault && destDefault;
+    if (!update && sameTitle) {
+        maps.views[view.id] = snaToolsCleanGuid(sameTitle.Id);
+        snaToolsLog(SNA_TOOLS_KINDS.view, name, 'skipped', 'The destination ' + snaToolsListsWord(list) + ' already has a view with this name, ' +
+            'so Sitenalyzer left it as it is.');
+        return;
+    }
+    snaToolsCheckCancelled();
+    var notes = [];
+    var left = view.viewFields.filter(function(f) { return state.skipped[f]; });
+    var fields = view.viewFields.filter(function(f) { return !state.skipped[f]; }).map(function(f) { return renames[f] || f; });
+    if (left.length > 0) {
+        notes.push('It doesn\'t show ' + snaJoinWords(left.map(function(f) { return state.skipped[f]; })) + ', because Sitenalyzer didn\'t copy ' +
+            (left.length === 1 ? 'that column' : 'those columns') + '.');
+    }
+    // The query, layout, and totals leave out the columns the copy skipped, so the view doesn't refer to a missing column.
+    var dropped = [];
+    function withoutSkipped(text) {
+        var cleaned = snaToolsListsDropSkipped(text, state.skipped);
+        cleaned.dropped.forEach(function(f) { if (dropped.indexOf(f) === -1) { dropped.push(f); } });
+        return cleaned.text;
+    }
+    var layout = {};
+    SNA_TOOLS_LISTS_VIEW_LAYOUT.forEach(function(pair) {
+        var value = view[pair[1]];
+        if (value === null || value === undefined || value === '') { return; }
+        layout[pair[0]] = pair[0] === 'CustomFormatter' ? snaToolsListsRenameInJson(value, renames) :
+            (pair[0] === 'ViewData' ? snaToolsListsRenameInXml(withoutSkipped(value), renames) : value);
+    });
+    var settings = {};
+    SNA_TOOLS_LISTS_VIEW_SETTINGS.forEach(function(pair) {
+        var value = view[pair[1]];
+        if (value === null || value === undefined || value === '') { return; }
+        settings[pair[0]] = pair[0] === 'Aggregations' ? snaToolsListsRenameInXml(withoutSkipped(value), renames) : value;
+    });
+    var query = snaToolsListsRenameInXml(withoutSkipped(view.viewQuery), renames);
+    if (dropped.length > 0) {
+        notes.push('It doesn\'t sort, group, filter, or total by ' + snaJoinWords(dropped.map(function(f) { return state.skipped[f]; })) +
+            ', because Sitenalyzer didn\'t copy ' + (dropped.length === 1 ? 'that column' : 'those columns') + '. Check the view\'s settings in the destination.');
+    }
+    var viewId = '';
+    try {
+        if (update) {
+            viewId = snaToolsCleanGuid(destDefault.Id);
+            await snaToolsListsUpdateView(dest, listApi, viewId, view, query, layout, settings, fields, notes);
+            // The default view now has the source view's name, so a later view that had the old name, such as All Items, is made.
+            destDefault.Title = view.title;
+        } else {
+            viewId = await snaToolsListsAddView(dest, listApi, view, query, layout, settings, fields, notes);
+        }
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(SNA_TOOLS_KINDS.view, name, 'failed', snaToolsFriendlyError(err));
+        return;
+    }
+    maps.views[view.id] = viewId;
+    var done = update ? 'Updated the ' + snaToolsListsWord(list) + '\'s default view to match.' : 'Created the view.';
+    snaToolsLog(SNA_TOOLS_KINDS.view, name, notes.length ? 'partial' : 'copied', [done].concat(notes).join(' '),
+        { verify: { type: 'view', listId: state.destId, title: view.title } });
+}
+
+// Updates the destination list's default view in place to match a source view, then sets its columns in order.
+async function snaToolsListsUpdateView(dest, listApi, viewId, view, query, layout, settings, fields, notes) {
+    var viewApi = listApi + "/views(guid'" + viewId + "')";
+    var body = Object.assign({ Title: view.title, ViewQuery: query || '' }, settings);
+    if (view.rowLimit) { body.RowLimit = view.rowLimit; }
+    if (typeof view.paged === 'boolean') { body.Paged = view.paged; }
+    var withLayout = Object.assign({}, body, layout);
+    try {
+        await snaToolsWrite(dest.siteUrl, viewApi, { method: 'MERGE', body: withLayout });
+    } catch (err) {
+        if (snaToolsIsCancelled(err) || Object.keys(layout).length === 0) { throw err; }
+        await snaToolsWrite(dest.siteUrl, viewApi, { method: 'MERGE', body: body });
+        notes.push('Sitenalyzer couldn\'t copy its layout or formatting. Choose them again in the destination, under Format current view.');
+    }
+    await snaToolsListsSetViewFields(dest, viewApi, fields, notes);
+}
+
+// Creates a view with views/add, with its columns, query, kind, and layout, then sets the rest of its settings. When
+// SharePoint refuses the layout in the new view, the view is made without it and the layout is set afterwards. Returns its ID.
+async function snaToolsListsAddView(dest, listApi, view, query, layout, settings, fields, notes) {
+    var parameters = {
+        __metadata: { type: 'SP.ViewCreationInformation' },
+        Title: view.title, ViewFields: { results: fields }, Query: query || '', PersonalView: false, SetAsDefaultView: false,
+        Paged: view.paged !== false, RowLimit: Number(view.rowLimit) || 30,
+        ViewTypeKind: SNA_TOOLS_LISTS_VIEW_KINDS[String(view.viewType || 'HTML').toUpperCase()] || SNA_TOOLS_LISTS_VIEW_KINDS.HTML
+    };
+    var created;
+    var later = {};
+    try {
+        created = await snaToolsWrite(dest.siteUrl, listApi + '/views/add', { verbose: true, body: { parameters: Object.assign({}, parameters, layout) } });
+    } catch (err) {
+        if (snaToolsIsCancelled(err) || Object.keys(layout).length === 0) { throw err; }
+        created = await snaToolsWrite(dest.siteUrl, listApi + '/views/add', { verbose: true, body: { parameters: parameters } });
+        later = layout;
+    }
+    var made = (created && created.d) ? created.d : (created || {});
+    var viewId = snaToolsCleanGuid(made.Id);
+    if (!viewId) { throw snaToolsError(500, 'id', ''); }
+    var rest = Object.assign({}, settings, later);
+    if (Object.keys(rest).length === 0) { return viewId; }
+    var viewApi = listApi + "/views(guid'" + viewId + "')";
+    try {
+        await snaToolsWrite(dest.siteUrl, viewApi, { method: 'MERGE', body: rest });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        notes.push(Object.keys(later).length > 0
+            ? 'Sitenalyzer couldn\'t copy its layout or formatting. Choose them again in the destination, under Format current view.'
+            : 'Sitenalyzer couldn\'t copy all of its settings, such as totals and which folders it shows. Check the view\'s settings in the destination.');
+    }
+    return viewId;
+}
+
+// Sets a view's columns, in order: removes them all, then adds each one. Adds a note naming the columns SharePoint refused.
+async function snaToolsListsSetViewFields(dest, viewApi, fields, notes) {
+    await snaToolsWrite(dest.siteUrl, viewApi + '/viewfields/removeallviewfields', {});
+    var refused = [];
+    for (var i = 0; i < fields.length; i++) {
+        try {
+            await snaToolsWrite(dest.siteUrl, viewApi + '/viewfields/addviewfield(@f)?@f=' + encodeURIComponent(snaToolsQuote(fields[i])), {});
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            refused.push(fields[i]);
+        }
+    }
+    if (refused.length > 0) {
+        notes.push('SharePoint didn\'t add ' + snaCountText(refused.length, 'column', 'columns') + ' to it: ' + snaJoinWords(refused) +
+            '. Add ' + (refused.length === 1 ? 'it' : 'them') + ' to the view in the destination.');
+    }
+}
+
+// ### Form Settings ###
+
+/**
+ * Copies the form layout (ClientFormCustomFormatter) and form customizers (the New, Edit, and Display form component
+ * IDs and their properties) of each list content type onto the matching content type of the destination list.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs.
+ * @returns {Promise<void>} Side effects: changes list content types in the destination and adds results.
+ */
+async function snaToolsCopyFormSettings(plan, dest, maps) {
+    var run = snaToolsListsRun(maps);
+    for (var i = 0; i < plan.lists.length; i++) {
+        var list = plan.lists[i];
+        var state = run.lists[list.sourceId];
+        if (!state || state.existing) { continue; }
+        var renames = snaToolsListsRenames(maps, list.sourceId);
+        for (var c = 0; c < list.contentTypes.length; c++) {
+            var ct = list.contentTypes[c];
+            var body = snaToolsListsFormBody(ct, renames);
+            if (!body) { continue; }
+            snaToolsCheckCancelled();
+            var name = snaToolsInList(list, ct.name + ' form');
+            var made = state.contentTypes[ct.stringId.toUpperCase()];
+            if (!made || !made.stringId) {
+                snaToolsLog(SNA_TOOLS_KINDS.contentType, name, 'skipped', 'Sitenalyzer skipped this form\'s settings, because the content type ' + ct.name +
+                    ' isn\'t in the destination ' + snaToolsListsWord(list) + '.');
+                continue;
+            }
+            var customizer = !!(body.NewFormClientSideComponentId || body.EditFormClientSideComponentId || body.DisplayFormClientSideComponentId);
+            try {
+                await snaToolsWrite(dest.siteUrl, snaToolsListsApi(state.destId) + '/contenttypes(' + encodeURIComponent(snaToolsQuote(made.stringId)) + ')', { method: 'MERGE', body: body });
+                snaToolsLog(SNA_TOOLS_KINDS.contentType, name, 'copied', 'Copied the form settings.' + (customizer
+                    ? ' The form uses a form customizer, which works only when the destination has the same app installed. Ask your SharePoint administrator if it doesn\'t show.'
+                    : ''), { verify: { type: 'contentType', listId: state.destId, name: made.name } });
+            } catch (err) {
+                if (snaToolsIsCancelled(err)) { throw err; }
+                snaToolsLog(SNA_TOOLS_KINDS.contentType, name, 'failed', 'Sitenalyzer couldn\'t copy the form settings. ' + snaToolsFriendlyError(err));
+            }
+        }
+    }
+}
+
+// Returns the MERGE body with a content type's form layout and form customizers, or null when it has neither. Column
+// names in the layout's fieldsettings are internal names, so renamed columns are updated.
+function snaToolsListsFormBody(ct, renames) {
+    var body = {};
+    if (ct.clientFormCustomFormatter) {
+        var text = ct.clientFormCustomFormatter;
+        try {
+            var json = JSON.parse(text);
+            if (json && Array.isArray(json.fieldsettings)) {
+                json.fieldsettings.forEach(function(setting) { if (setting && renames[setting.name]) { setting.name = renames[setting.name]; } });
+                text = JSON.stringify(json);
+            }
+        } catch (e) {
+            // Sent as it is when it isn't JSON, so SharePoint decides.
+        }
+        body.ClientFormCustomFormatter = text;
+    }
+    var forms = ct.formComponents || {};
+    [['New', 'newForm'], ['Edit', 'editForm'], ['Display', 'displayForm']].forEach(function(pair) {
+        var id = snaToolsCleanGuid(forms[pair[1] + 'ClientSideComponentId']);
+        if (!id || id === SNA_TOOLS_LISTS_EMPTY_GUID) { return; }
+        body[pair[0] + 'FormClientSideComponentId'] = id;
+        body[pair[0] + 'FormClientSideComponentProperties'] = forms[pair[1] + 'ClientSideComponentProperties'] || '';
+    });
+    return Object.keys(body).length > 0 ? body : null;
+}
+
+/*
+This file is part of Sitenalyzer
+files.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: Copies the files Copy site structure copies: the folders and files in Site Assets, agents (.agent files) into
+         the matching destination library, site skills into the destination's Agent Assets library, and the pages in
+         Site Pages. Modern pages are made again through SharePoint's site pages API, with every link and ID of this
+         site in their content pointed at the destination by snaToolsRewriteSourceLinks (core.js). A modern page in a
+         folder is copied on the server, and then its content gets the same change. Page templates are copied first.
+         After every page is copied, a page that names a page copied after it, such as in a Quick links web part, is
+         saved again with that page's destination ID.
+         Other files are copied on the server, or downloaded and uploaded again when SharePoint refuses the server copy;
+         a modern page is never uploaded, because an upload leaves it blank. Each file gets its own result, and a failed
+         file or folder doesn't stop the others.
+Notes: See README file for documentation and full license information.
+
+       Functions the copy steps call, in this order, only when the matching switch is on (keep these names and
+       parameters). Each one takes (plan, dest, maps) and returns Promise<void>: plan is the copy plan (see plan.js;
+       plan.siteContent holds the report's pages, agents, and site skills, and plan.replaceExisting says whether files
+       already in the destination are replaced), dest is the destination from snaToolsCheckDestination (see runner.js),
+       and maps is the shared map of source to destination IDs (see snaToolsNewMaps in runner.js). Each one catches its
+       own errors for each file, logs one result for each file, and lets snaCancelledError through.
+       snaToolsCopySiteAssets(plan, dest, maps)  Site Assets folders and files (kind 'Site Assets file').
+       snaToolsCopyAgents(plan, dest, maps)      .agent files and site skills (kinds 'Agent' and 'Site skill').
+       snaToolsCopyPages(plan, dest, maps)       Pages in Site Pages, with their content pointed at the destination (kind 'Page').
+       A copied file that verify.js should look for is logged with detail { verify: { type: 'file', serverRelativeUrl } }.
+
+       These steps add two maps to maps, for the steps after them: maps.fileUrls { srcServerRelativePath: destPath } and
+       maps.fileIds { srcFileUniqueId: destFileUniqueId }. Page content uses file IDs, such as in the Image web part.
+
+       SharePoint addresses used here, all with parameter aliases (@p) so a quote, #, or % in a name is safe:
+         GET  {site}/_api/web/lists?$select=...,IsSiteAssetsLibrary,RootFolder/ServerRelativeUrl&$expand=RootFolder
+         GET  {source}/_api/web/webinfos?$select=ServerRelativeUrl, GET {source}/_api/site/rootweb?$select=Id   (for page links)
+         GET  {site}/_api/web/GetFolderByServerRelativePath(decodedurl=@p)?$expand=Folders,Files
+         POST {dest}/_api/web/Folders/AddUsingPath(decodedurl=@p)
+         POST {dest}/_api/SP.MoveCopyUtil.CopyFileByPath(overwrite=@a1)   (absolute addresses in the body)
+         POST {dest}/_api/web/GetFolderByServerRelativePath(decodedurl=@f)/Files/AddUsingPath(decodedurl=@n,overwrite=@o)
+         POST {dest}/_api/web/lists/EnsureSiteAssetsLibrary
+         GET  {dest}/_api/web/GetList(@listUrl), POST {dest}/_api/site/features/add   (Agent Assets)
+         GET  {source}/_api/web/lists(guid'...')/items(n)?$select=CanvasContent1,...   (a page's content)
+         POST {dest}/_api/sitepages/pages, then pages(n)/checkoutpage, savepage, publish, discardpage,
+              savepageastemplate, and savepageasdraft
+         POST {dest}/_api/web/rootfolder (MERGE WelcomePage), POST {dest}/_api/web/GetFileByServerRelativePath(...)/recycle
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Files Settings ###
+
+// Largest file Sitenalyzer copies: 250 MB, the most SharePoint Online takes in one upload request.
+var SNA_TOOLS_FILES_MAX_BYTES = 262144000;
+
+// The site collection feature that makes the Agent Assets library for site skills (from the PnP script samples).
+var SNA_TOOLS_AGENT_ASSETS_FEATURE_ID = '9e14d30c-1e0d-4c8c-8dcb-a8d29f7d4c15';
+
+// Every modern page has this ClientSideApplicationId. Classic pages have none, so they're copied as files.
+var SNA_TOOLS_MODERN_PAGE_APP_ID = 'b6917cb1-93a0-4b97-a84d-7cf49975d4ec';
+
+// The folder in Site Pages that holds page templates, in lowercase.
+var SNA_TOOLS_TEMPLATES_FOLDER = 'templates';
+
+// Folders at the top of a library that SharePoint makes for itself, such as the library's forms, in lowercase.
+var SNA_TOOLS_SKIPPED_ROOT_FOLDERS = ['forms'];
+
+// What a folder read asks for: the folder, its folders, and its files.
+var SNA_TOOLS_FOLDER_SELECT = '$select=Exists,ServerRelativeUrl,Folders/Name,Folders/ServerRelativeUrl,Files/Name,' +
+    'Files/ServerRelativeUrl,Files/Length,Files/UniqueId&$expand=Folders,Files';
+
+// The columns of a page that the copy reads. Older Site Pages libraries have no Description or TopicHeader column.
+var SNA_TOOLS_PAGE_SELECT = 'Id,UniqueId,Title,FileLeafRef,ClientSideApplicationId,PageLayoutType,PromotedState,' +
+    'CanvasContent1,LayoutWebpartsContent,BannerImageUrl,Description,TopicHeader';
+var SNA_TOOLS_PAGE_SELECT_SHORT = 'Id,UniqueId,Title,FileLeafRef,ClientSideApplicationId,PageLayoutType,PromotedState,' +
+    'CanvasContent1,LayoutWebpartsContent,BannerImageUrl';
+
+// Notes the results show.
+var SNA_TOOLS_AGENT_COPIED_NOTE = 'Copied. It still uses the knowledge sources in this site. To use the destination\'s lists and libraries instead, edit the agent in the destination and change its sources.';
+var SNA_TOOLS_NO_AGENT_ASSETS_NOTE = 'The destination has no Agent Assets library. Turn on site skills in the destination, then copy again.';
+var SNA_TOOLS_PAGE_PARTIAL_NOTE = 'Copied. Some parts of this page may still show the original site\'s content. Open the page and check it.';
+var SNA_TOOLS_PAGE_STOPPED_NOTE = 'You stopped the copy while Sitenalyzer was saving this page in the destination, so the page there may be blank, ' +
+    'checked out to you, or not published. In the destination\'s Site Pages, delete the page if it\'s blank, or discard its check out, then copy again.';
+var SNA_TOOLS_PAGE_TEMPLATE_STOPPED_NOTE = 'You stopped the copy while Sitenalyzer was saving this page template in the destination, so Site Pages ' +
+    'or its Templates folder may have a blank page with this name. Delete it there, then copy again.';
+var SNA_TOOLS_TOO_LARGE_NOTE = 'This file is larger than 250 MB, so Sitenalyzer didn\'t copy it. Copy it to the destination by hand, such as with Copy to in Site Assets.';
+var SNA_TOOLS_MAKE_HOME_HINT = 'To make it the home page, select it in Site Pages in the destination and choose Make homepage.';
+var SNA_TOOLS_PAGE_NOT_UPLOADED_NOTE = 'SharePoint didn\'t let Sitenalyzer copy this page to the destination, and uploading it as a file would leave ' +
+    'it blank, so Sitenalyzer didn\'t copy it. Copy it by hand, such as with Copy to in Site Pages.';
+var SNA_TOOLS_FOLDER_NOT_READ_NOTE = 'Sitenalyzer couldn\'t read this folder, so it didn\'t copy the files in it. Copy again, or copy them by hand, ' +
+    'such as with Copy to in Site Assets.';
+
+// ### Files State ###
+
+// What the file steps of one copy share: { maps, sourceLists, destLists, folders, folderErrors, fileResults, sourceIds,
+// leftoverPages, subsites, sourceIsTopSite, pagesToRelink }.
+// It belongs to the maps object of that copy, so a new copy starts with a new state.
+var _snaToolsFilesState = null;
+
+// Returns the file steps' state for the copy that maps belongs to, and adds maps.fileUrls and maps.fileIds.
+function snaToolsFilesState(maps) {
+    if (!_snaToolsFilesState || _snaToolsFilesState.maps !== maps) {
+        _snaToolsFilesState = {
+            maps: maps,
+            sourceLists: null,  // This site's lists and libraries, read once
+            destLists: null,    // The destination's lists and libraries, read again by each step
+            folders: {},        // Destination folders by lowercase path: { exists, files: { lowercase name: { uniqueId } } }
+            folderErrors: {},   // Destination folders Sitenalyzer couldn't create, by lowercase path
+            fileResults: {},    // What happened to each source file, by lowercase path: { result, note, destPath }
+            sourceIds: {},      // IDs of this site's files, so a page that still uses one can be found
+            leftoverPages: {},  // Pages SharePoint made a template from that Sitenalyzer couldn't remove, by lowercase path
+            subsites: [],       // Addresses of this site's subsites, which the copy doesn't include
+            sourceIsTopSite: null,  // True for the top site of its site collection, false for a subsite, null when unknown
+            pagesToRelink: []       // Pages whose content was saved, for snaToolsFilesRelinkPages
+        };
+    }
+    maps.fileUrls = maps.fileUrls || {};
+    maps.fileIds = maps.fileIds || {};
+    return _snaToolsFilesState;
+}
+
+// ### Paths ###
+
+// Returns a value as an OData parameter alias in an address, such as @p='/sites/a/Study''s file.docx', encoded.
+function snaToolsFilesAlias(value) {
+    return encodeURIComponent(snaToolsQuote(value));
+}
+
+// Returns a site path in lowercase without a slash at the end, for comparisons. Unlike snaToolsPathKey, it doesn't
+// decode the path, because paths here are already decoded and a name can hold a % of its own.
+function snaToolsFilesKey(path) {
+    return xlsxStripSlash(String(path || '')).toLowerCase();
+}
+
+// Returns the decoded path of an address, such as /sites/a/Shared Documents/Helper.agent, or '' when it isn't one.
+function snaToolsFilesUrlPath(url) {
+    if (!url) { return ''; }
+    try { return decodeURIComponent(new URL(url).pathname); } catch (e) { return ''; }
+}
+
+// Returns the folder that holds a path, such as /sites/a/SiteAssets for /sites/a/SiteAssets/logo.png.
+function snaToolsFilesParent(path) {
+    var text = xlsxStripSlash(path);
+    return text.substring(0, text.lastIndexOf('/'));
+}
+
+// Returns the last part of a path, such as logo.png.
+function snaToolsFilesLeaf(path) {
+    var text = xlsxStripSlash(path);
+    return text.substring(text.lastIndexOf('/') + 1);
+}
+
+// Returns the part of path after root, such as 'images/logo.png', '' when they're the same, or null when path isn't
+// inside root. Ignores capitals.
+function snaToolsFilesUnder(path, root) {
+    var pathKey = snaToolsFilesKey(path);
+    var rootKey = snaToolsFilesKey(root);
+    if (pathKey === rootKey) { return ''; }
+    if (pathKey.indexOf(rootKey + '/') !== 0) { return null; }
+    return xlsxStripSlash(path).substring(xlsxStripSlash(root).length + 1);
+}
+
+// Returns this site's path, such as /sites/research, or '/' for a site at the root of the host.
+function snaToolsFilesSourcePath(plan) {
+    return plan.source.serverRelativeUrl || snaToolsSiteParts(plan.source.siteUrl).serverRelativeUrl;
+}
+
+// Returns the note for a file that couldn't be copied. When its folder couldn't be made, the note says which folder.
+function snaToolsFilesErrorNote(err) {
+    var folder = err && err.snaToolsFolder ? 'Sitenalyzer couldn\'t make the folder ' + snaToolsFilesLeaf(err.snaToolsFolder) + ' in the destination. ' : '';
+    return folder + snaToolsFriendlyError(err);
+}
+
+// ### Lists and Folders ###
+
+// Reads a site's lists and libraries: [{ id, title, baseTemplate, isSiteAssets, root }]. root is the server-relative
+// address of the library, such as /sites/a/SiteAssets.
+async function snaToolsFilesReadLists(siteUrl) {
+    var items = await snaToolsReadAllWithFallback(siteUrl,
+        '/_api/web/lists?$select=Id,Title,BaseTemplate,IsSiteAssetsLibrary,RootFolder/ServerRelativeUrl&$expand=RootFolder',
+        '/_api/web/lists?$select=Id,Title,BaseTemplate,RootFolder/ServerRelativeUrl&$expand=RootFolder');
+    return items.map(function(l) {
+        return { id: snaToolsCleanGuid(l.Id), title: l.Title || '', baseTemplate: Number(l.BaseTemplate) || 0,
+            isSiteAssets: l.IsSiteAssetsLibrary === true, root: (l.RootFolder && l.RootFolder.ServerRelativeUrl) || '' };
+    });
+}
+
+// Returns this site's lists and libraries, read once for each copy.
+async function snaToolsFilesSourceLists(plan, state) {
+    if (!state.sourceLists) { state.sourceLists = await snaToolsFilesReadLists(plan.source.siteUrl); }
+    return state.sourceLists;
+}
+
+// Returns this site's lists and libraries, or [] when they can't be read, for the steps that can go on without them.
+async function snaToolsFilesSourceListsOrNone(plan, state) {
+    try {
+        return await snaToolsFilesSourceLists(plan, state);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return [];
+    }
+}
+
+// Returns the destination's lists and libraries. refresh reads them again, because earlier steps add libraries.
+async function snaToolsFilesDestLists(dest, state, refresh) {
+    if (!state.destLists || refresh) { state.destLists = await snaToolsFilesReadLists(dest.siteUrl); }
+    return state.destLists;
+}
+
+// Returns the Site Assets library among lists: the one SharePoint marks as Site Assets, or else the library at
+// <site>/SiteAssets. Returns null when there is none.
+function snaToolsFilesSiteAssetsOf(lists, sitePath) {
+    var marked = lists.filter(function(l) { return l.isSiteAssets && l.root; })[0];
+    if (marked) { return marked; }
+    var key = snaToolsFilesKey(snaToolsJoinPath(sitePath, 'SiteAssets'));
+    return lists.filter(function(l) { return l.baseTemplate === 101 && snaToolsFilesKey(l.root) === key; })[0] || null;
+}
+
+// Reads one folder: { exists, folders: [{ name, path }], files: [{ name, path, size, uniqueId }] }. A folder that isn't
+// there has exists false, whether SharePoint says so or answers 404.
+async function snaToolsFilesReadFolder(siteUrl, path) {
+    var json;
+    try {
+        json = await snaToolsRead(siteUrl, '/_api/web/GetFolderByServerRelativePath(decodedurl=@p)?@p=' + snaToolsFilesAlias(path) +
+            '&' + SNA_TOOLS_FOLDER_SELECT);
+    } catch (err) {
+        if (!snaToolsIsCancelled(err) && err.status === 404) { return { exists: false, folders: [], files: [] }; }
+        throw err;
+    }
+    function many(value) { return Array.isArray(value) ? value : ((value && Array.isArray(value.results)) ? value.results : []); }
+    return {
+        exists: !!json && json.Exists !== false,
+        folders: many(json && json.Folders).map(function(f) {
+            return { name: f.Name || '', path: f.ServerRelativeUrl || snaToolsJoinPath(path, f.Name) };
+        }),
+        files: many(json && json.Files).map(function(f) {
+            return { name: f.Name || '', path: f.ServerRelativeUrl || snaToolsJoinPath(path, f.Name), size: Number(f.Length) || 0,
+                uniqueId: snaToolsCleanGuid(f.UniqueId) };
+        })
+    };
+}
+
+// Reads every folder and file under rootPath, folder by folder, parents before their folders. Leaves out the folders
+// at the top whose lowercase names are in skipRootFolders. Stops after SNA_TOOLS_READ_MAX files. A folder below
+// rootPath that can't be read goes in failedFolders, and the others are still read; rootPath itself throws.
+// Returns { folders: [paths], files: [{ name, path, size, uniqueId }], failedFolders: [{ path, error }], truncated }.
+async function snaToolsFilesWalk(siteUrl, rootPath, skipRootFolders) {
+    var result = { folders: [], files: [], failedFolders: [], truncated: false };
+    var queue = [rootPath];
+    while (queue.length > 0 && !result.truncated) {
+        snaToolsCheckCancelled();
+        var current = queue.shift();
+        var info;
+        try {
+            info = await snaToolsFilesReadFolder(siteUrl, current);
+        } catch (err) {
+            if (snaToolsIsCancelled(err) || current === rootPath) { throw err; }
+            result.failedFolders.push({ path: current, error: err });
+            continue;
+        }
+        if (!info.exists) { continue; }
+        var atRoot = current === rootPath;
+        info.folders.forEach(function(folder) {
+            if (atRoot && skipRootFolders.indexOf(folder.name.toLowerCase()) > -1) { return; }
+            result.folders.push(folder.path);
+            queue.push(folder.path);
+        });
+        info.files.forEach(function(file) {
+            if (result.files.length >= SNA_TOOLS_READ_MAX) { result.truncated = true; return; }
+            result.files.push(file);
+        });
+    }
+    return result;
+}
+
+// Returns what Sitenalyzer knows about a destination folder: { exists, files: { lowercase name: { uniqueId } } }.
+// Read once for each copy, and kept up to date as the copy adds folders and files.
+async function snaToolsFilesDestFolder(dest, state, path) {
+    var key = snaToolsFilesKey(path);
+    if (!state.folders[key]) {
+        var info = await snaToolsFilesReadFolder(dest.siteUrl, path);
+        var files = {};
+        info.files.forEach(function(f) { files[f.name.toLowerCase()] = { uniqueId: f.uniqueId }; });
+        state.folders[key] = { exists: info.exists, files: files };
+    }
+    return state.folders[key];
+}
+
+// Makes each destination folder from just inside root down to path, in path order, when it isn't there. Returns what
+// Sitenalyzer knows about the folder at path (see snaToolsFilesDestFolder). A folder that couldn't be made throws
+// the same error again for each file in it, without asking SharePoint again.
+async function snaToolsFilesEnsureFolders(dest, state, root, path) {
+    var rest = snaToolsFilesUnder(path, root);
+    if (rest === null) {
+        throw snaToolsUserError('Sitenalyzer couldn\'t work out where this goes in the destination, so it didn\'t copy it. Copy it by hand.');
+    }
+    var current = xlsxStripSlash(root);
+    var info = await snaToolsFilesDestFolder(dest, state, current);
+    var parts = rest ? rest.split('/') : [];
+    for (var i = 0; i < parts.length; i++) {
+        current = current + '/' + parts[i];
+        var key = snaToolsFilesKey(current);
+        if (state.folderErrors[key]) { throw state.folderErrors[key]; }
+        info = await snaToolsFilesDestFolder(dest, state, current);
+        if (info.exists) { continue; }
+        try {
+            await snaToolsWrite(dest.siteUrl, '/_api/web/Folders/AddUsingPath(decodedurl=@p)?@p=' + snaToolsFilesAlias(current), { method: 'POST' });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            err.snaToolsFolder = current;
+            state.folderErrors[key] = err;
+            throw err;
+        }
+        info.exists = true;
+        info.files = {};
+    }
+    return info;
+}
+
+// ### Copying One File ###
+
+// Returns a file's ID in the destination, or '' when it can't be read. Changes nothing.
+async function snaToolsFilesUniqueId(dest, path) {
+    try {
+        var file = await snaToolsRead(dest.siteUrl, '/_api/web/GetFileByServerRelativePath(decodedurl=@p)?@p=' + snaToolsFilesAlias(path) + '&$select=UniqueId');
+        return snaToolsCleanGuid(file && file.UniqueId);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return '';
+    }
+}
+
+/**
+ * Copies one file from this site into the destination. SharePoint copies it on the server first. When it refuses
+ * that (any 4xx answer other than 429), Sitenalyzer downloads the file and uploads it to the destination.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {string} srcPath The file in this site, such as /sites/research/SiteAssets/logo.png.
+ * @param {string} destPath Where it goes, such as /sites/new-study/SiteAssets/logo.png. Its folder must be there.
+ * @param {boolean} overwrite True replaces a file already at destPath.
+ * @param {boolean} [serverOnly] True never downloads and uploads the file, such as for a modern page, which an upload
+ *        leaves blank. A refused server copy then throws snaToolsUserError(SNA_TOOLS_PAGE_NOT_UPLOADED_NOTE).
+ * @returns {Promise<string>} The new file's ID when SharePoint said it, or ''.
+ * @throws {Error} snaToolsError when both ways fail; snaToolsUserError for a download over 250 MB. Side effects: adds a file.
+ */
+async function snaToolsFilesCopyFile(plan, dest, srcPath, destPath, overwrite, serverOnly) {
+    var sourceOrigin = snaToolsSiteParts(plan.source.siteUrl).origin;
+    var destOrigin = snaToolsSiteParts(dest.siteUrl).origin;
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/SP.MoveCopyUtil.CopyFileByPath(overwrite=@a1)?@a1=' + (overwrite ? 'true' : 'false'), {
+            body: {
+                srcPath: { DecodedUrl: sourceOrigin + srcPath },
+                destPath: { DecodedUrl: destOrigin + destPath },
+                options: { KeepBoth: false, ResetAuthorAndCreatedOnCopy: false, ShouldBypassSharedLocks: true }
+            }
+        });
+        return '';
+    } catch (err) {
+        if (snaToolsIsCancelled(err) || !(err.status >= 400 && err.status < 500) || err.status === 429) { throw err; }
+        if (serverOnly) { throw snaToolsUserError(SNA_TOOLS_PAGE_NOT_UPLOADED_NOTE); }
+    }
+    // SharePoint refused the copy on the server, which some tenants do between site collections.
+    var blob = await snaToolsReadBlob(plan.source.siteUrl, srcPath);
+    if (blob.size > SNA_TOOLS_FILES_MAX_BYTES) { throw snaToolsUserError(SNA_TOOLS_TOO_LARGE_NOTE); }
+    var file = await snaToolsWrite(dest.siteUrl, '/_api/web/GetFolderByServerRelativePath(decodedurl=@f)/Files/AddUsingPath(decodedurl=@n,overwrite=@o)' +
+        '?@f=' + snaToolsFilesAlias(snaToolsFilesParent(destPath)) + '&@n=' + snaToolsFilesAlias(snaToolsFilesLeaf(destPath)) +
+        '&@o=' + (overwrite ? 'true' : 'false'), { body: blob });
+    return snaToolsCleanGuid(file && file.UniqueId);
+}
+
+/**
+ * Copies one file into a destination library, unless it's too large or already there and Replace isn't checked.
+ * Makes its folders first. Doesn't log a result; the caller does.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; fills maps.fileUrls and maps.fileIds.
+ * @param {object} state The file steps' state.
+ * @param {object} file { path, size (bytes, or 0 when unknown), uniqueId } of the file in this site.
+ * @param {string} destRoot The destination library's address, such as /sites/new-study/SiteAssets.
+ * @param {string} destPath Where the file goes.
+ * @param {string} what The item in a sentence, such as 'file' or 'agent'.
+ * @param {boolean} [serverOnly] True never downloads and uploads the file (see snaToolsFilesCopyFile).
+ * @returns {Promise<{result: string, note: string, replaced: boolean}>} result is 'copied' or 'skipped'. A file the
+ *          destination already has stays as it is, but still goes in maps.fileUrls and maps.fileIds, so pages that use
+ *          it point at the destination's file.
+ * @throws {Error} When the copy fails. Side effects: adds folders and the file to the destination.
+ */
+async function snaToolsFilesTransfer(plan, dest, maps, state, file, destRoot, destPath, what, serverOnly) {
+    if (file.size > SNA_TOOLS_FILES_MAX_BYTES) { return { result: 'skipped', note: SNA_TOOLS_TOO_LARGE_NOTE, replaced: false }; }
+    var folder = await snaToolsFilesEnsureFolders(dest, state, destRoot, snaToolsFilesParent(destPath));
+    var leafKey = snaToolsFilesLeaf(destPath).toLowerCase();
+    var existing = !!folder.files[leafKey];
+    if (existing && !plan.replaceExisting) {
+        var kept = folder.files[leafKey].uniqueId;
+        maps.fileUrls[file.path] = destPath;
+        if (file.uniqueId && kept) { maps.fileIds[file.uniqueId] = kept; }
+        return { result: 'skipped', note: snaToolsFilesExistsNote(what), replaced: false };
+    }
+    var uniqueId = await snaToolsFilesCopyFile(plan, dest, file.path, destPath, existing, serverOnly);
+    if (!uniqueId) { uniqueId = await snaToolsFilesUniqueId(dest, destPath); }
+    folder.files[leafKey] = { uniqueId: uniqueId };
+    maps.fileUrls[file.path] = destPath;
+    if (file.uniqueId && uniqueId) { maps.fileIds[file.uniqueId] = uniqueId; }
+    return { result: 'copied', note: existing ? 'Replaced the ' + what + ' in the destination.' : 'Copied the ' + what + '.', replaced: existing };
+}
+
+// Returns the note for an item the destination already has, such as 'page'.
+function snaToolsFilesExistsNote(what) {
+    return 'The destination already has this ' + what + ', so Sitenalyzer left it as it is. To replace it, check Replace pages and files ' +
+        'that already exist in the destination, then copy again.';
+}
+
+// ### Site Assets ###
+
+// Returns the address of the destination's Site Assets library, such as /sites/new-study/SiteAssets. When it has none,
+// asks SharePoint to make it and looks again. Returns '' when it still has none. refresh reads the destination's lists
+// and libraries again first, because earlier steps add libraries.
+async function snaToolsFilesDestSiteAssets(dest, state, refresh) {
+    var target = snaToolsFilesSiteAssetsOf(await snaToolsFilesDestLists(dest, state, refresh), dest.serverRelativeUrl);
+    if (target && target.root) { return target.root; }
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/web/lists/EnsureSiteAssetsLibrary', { method: 'POST' });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    target = snaToolsFilesSiteAssetsOf(await snaToolsFilesDestLists(dest, state, true), dest.serverRelativeUrl);
+    return target && target.root ? target.root : '';
+}
+
+/**
+ * Copies the folders and files in Site Assets, except the library's Forms folder. Makes the destination's Site Assets
+ * library when it has none.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; fills maps.fileUrls and maps.fileIds.
+ * @returns {Promise<void>} Side effects: adds folders and files to the destination and results to the copy.
+ */
+async function snaToolsCopySiteAssets(plan, dest, maps) {
+    var kind = SNA_TOOLS_KINDS.siteAssetsFile;
+    var state = snaToolsFilesState(maps);
+    var source = snaToolsFilesSiteAssetsOf(await snaToolsFilesSourceLists(plan, state), snaToolsFilesSourcePath(plan));
+    if (!source || !source.root) {
+        snaToolsLog(kind, 'Site Assets', 'skipped', 'This site has no Site Assets library, so there was nothing to copy.');
+        return;
+    }
+    var targetRoot = await snaToolsFilesDestSiteAssets(dest, state, true);
+    if (!targetRoot) {
+        snaToolsLog(kind, 'Site Assets', 'failed', 'The destination has no Site Assets library, and Sitenalyzer couldn\'t make one. ' +
+            'Add an image to a page in the destination, which makes Site Assets, then copy again.');
+        return;
+    }
+
+    snaToolsProgress('Reading Site Assets.');
+    var tree = await snaToolsFilesWalk(plan.source.siteUrl, source.root, SNA_TOOLS_SKIPPED_ROOT_FOLDERS);
+    tree.files.forEach(function(f) { if (f.uniqueId) { state.sourceIds[f.uniqueId] = true; } });
+    if (tree.folders.length === 0 && tree.files.length === 0 && tree.failedFolders.length === 0) {
+        snaToolsLog(kind, 'Site Assets', 'skipped', 'Site Assets in this site has no files, so there was nothing to copy.');
+        return;
+    }
+
+    // Folders first, in path order, so empty folders are copied too.
+    for (var f = 0; f < tree.folders.length; f++) {
+        var folderPath = snaToolsJoinPath(targetRoot, snaToolsFilesUnder(tree.folders[f], source.root));
+        try {
+            await snaToolsFilesEnsureFolders(dest, state, targetRoot, folderPath);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            // Only the folder that failed gets a row, not the folders inside it. Each file inside it gets its own failed row.
+            if (state.folderErrors[snaToolsFilesKey(folderPath)] === err) {
+                snaToolsLog(kind, snaToolsFilesUnder(tree.folders[f], source.root), 'failed',
+                    'Sitenalyzer couldn\'t make this folder in the destination. ' + snaToolsFriendlyError(err));
+            }
+        }
+    }
+
+    for (var i = 0; i < tree.files.length; i++) {
+        var file = tree.files[i];
+        var relative = snaToolsFilesUnder(file.path, source.root);
+        var destPath = snaToolsJoinPath(targetRoot, relative);
+        snaToolsProgress('Copying Site Assets (' + (i + 1) + ' of ' + tree.files.length + ').');
+        var outcome;
+        try {
+            outcome = await snaToolsFilesTransfer(plan, dest, maps, state, file, targetRoot, destPath, 'file');
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            outcome = { result: 'failed', note: snaToolsFilesErrorNote(err) };
+        }
+        state.fileResults[snaToolsFilesKey(file.path)] = { result: outcome.result, note: outcome.note, destPath: destPath };
+        snaToolsLog(kind, relative, outcome.result, outcome.note,
+            outcome.result === 'copied' ? { verify: { type: 'file', serverRelativeUrl: destPath } } : null);
+    }
+    tree.failedFolders.forEach(function(failed) {
+        snaToolsLog(kind, snaToolsFilesUnder(failed.path, source.root), 'failed', SNA_TOOLS_FOLDER_NOT_READ_NOTE);
+    });
+    if (tree.truncated) {
+        snaToolsLog(kind, 'Site Assets', 'partial', 'Site Assets has more than ' + SNA_TOOLS_READ_MAX + ' files, so Sitenalyzer copied only the first ' +
+            SNA_TOOLS_READ_MAX + '. Copy the rest by hand, such as with Copy to in Site Assets.');
+    }
+}
+
+// ### Agents and Site Skills ###
+
+/**
+ * Copies agents into the matching destination libraries and site skills into the destination's Agent Assets library.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; reads maps.listUrls and fills maps.fileUrls and maps.fileIds.
+ * @returns {Promise<void>} Side effects: adds files to the destination and results to the copy. May turn on the
+ *          destination's Agent Assets feature.
+ */
+async function snaToolsCopyAgents(plan, dest, maps) {
+    var state = snaToolsFilesState(maps);
+    var agents = (plan.siteContent && plan.siteContent.agents) || [];
+    var skills = (plan.siteContent && plan.siteContent.skills) || [];
+    if (agents.length > 0) { await snaToolsFilesCopyAgentFiles(plan, dest, maps, state, agents); }
+    if (skills.length > 0) { await snaToolsFilesCopySkills(plan, dest, maps, state, skills); }
+}
+
+// Returns the library that holds an agent, from the agent's path and its folder inside the library, such as
+// /sites/a/Shared Documents for /sites/a/Shared Documents/Protocols/Reviewer.agent in folder Protocols.
+function snaToolsFilesAgentRoot(path, folder) {
+    var dir = snaToolsFilesParent(path);
+    var inside = xlsxStripSlash(String(folder || ''));
+    if (inside && snaToolsFilesKey(dir).slice(-(inside.length + 1)) === '/' + inside.toLowerCase()) {
+        return dir.substring(0, dir.length - inside.length - 1);
+    }
+    return dir;
+}
+
+// Returns the address of the destination library that matches a library of this site: the one the copy made from it
+// (maps.listUrls), or else one at the same address in the destination. Returns '' when the destination has none.
+function snaToolsFilesMatchLibrary(plan, dest, maps, destLists, sourceRoot) {
+    var mapped = '';
+    Object.keys(maps.listUrls || {}).forEach(function(from) {
+        if (snaToolsFilesKey(from) === snaToolsFilesKey(sourceRoot)) { mapped = maps.listUrls[from]; }
+    });
+    var relative = snaToolsFilesUnder(sourceRoot, snaToolsFilesSourcePath(plan));
+    var wanted = mapped || (relative ? snaToolsJoinPath(dest.serverRelativeUrl, relative) : '');
+    if (!wanted) { return ''; }
+    var found = destLists.filter(function(l) { return snaToolsFilesKey(l.root) === snaToolsFilesKey(wanted); })[0];
+    return found ? found.root : '';
+}
+
+// Copies each .agent file to the same place in the matching destination library. An agent in Site Assets that the
+// Site Assets step already copied gets that step's result, so it isn't copied twice.
+async function snaToolsFilesCopyAgentFiles(plan, dest, maps, state, agents) {
+    var kind = SNA_TOOLS_KINDS.agent;
+    var sourceAssets = snaToolsFilesSiteAssetsOf(await snaToolsFilesSourceListsOrNone(plan, state), snaToolsFilesSourcePath(plan));
+    var destLists;
+    try {
+        destLists = await snaToolsFilesDestLists(dest, state, true);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        // Only the agents need this read, so the site skills are still copied.
+        agents.forEach(function(agent) {
+            snaToolsLog(kind, agent.name || agent.fileName, 'failed', 'Sitenalyzer couldn\'t read the destination\'s lists and libraries, so it ' +
+                'didn\'t copy this agent. ' + snaToolsFriendlyError(err));
+        });
+        return;
+    }
+    for (var i = 0; i < agents.length; i++) {
+        var agent = agents[i];
+        var name = agent.name || agent.fileName;
+        snaToolsProgress('Copying agents (' + (i + 1) + ' of ' + agents.length + ').');
+        try {
+            var srcPath = snaToolsFilesUrlPath(agent.url);
+            if (!srcPath) {
+                snaToolsLog(kind, name, 'skipped', 'Sitenalyzer couldn\'t find where this agent is saved. Refresh the report, then copy again.');
+                continue;
+            }
+            var done = state.fileResults[snaToolsFilesKey(srcPath)];
+            var inSiteAssets = !!sourceAssets && snaToolsFilesUnder(srcPath, sourceAssets.root) !== null;
+            if (plan.siteAssets && inSiteAssets && done) {
+                snaToolsLog(kind, name, done.result, done.result === 'copied' ? SNA_TOOLS_AGENT_COPIED_NOTE : done.note,
+                    done.result === 'copied' ? { verify: { type: 'file', serverRelativeUrl: done.destPath } } : null);
+                continue;
+            }
+            var sourceRoot = inSiteAssets ? sourceAssets.root : snaToolsFilesAgentRoot(srcPath, agent.folder);
+            // Site Assets can't be chosen in Lists and libraries, so the destination's is found, or made when it has none.
+            var destRoot = inSiteAssets ? await snaToolsFilesDestSiteAssets(dest, state, false) :
+                snaToolsFilesMatchLibrary(plan, dest, maps, destLists, sourceRoot);
+            if (!destRoot && inSiteAssets) {
+                snaToolsLog(kind, name, 'failed', 'The destination has no Site Assets library, and Sitenalyzer couldn\'t make one, so it didn\'t ' +
+                    'copy this agent. Add an image to a page in the destination, which makes Site Assets, then copy again.');
+                continue;
+            }
+            if (!destRoot) {
+                var library = agent.libraryTitle || snaToolsFilesLeaf(sourceRoot);
+                snaToolsLog(kind, name, 'skipped', 'The destination has no library at the same address as ' + library +
+                    ', so Sitenalyzer didn\'t copy this agent. Choose ' + library + ' in Lists and libraries, then copy again.');
+                continue;
+            }
+            var destPath = snaToolsJoinPath(destRoot, snaToolsFilesUnder(srcPath, sourceRoot));
+            var outcome = await snaToolsFilesTransfer(plan, dest, maps, state, { path: srcPath, size: 0, uniqueId: snaToolsCleanGuid(agent.uniqueId) },
+                destRoot, destPath, 'agent');
+            snaToolsLog(kind, name, outcome.result, outcome.result === 'copied' ? SNA_TOOLS_AGENT_COPIED_NOTE : outcome.note,
+                outcome.result === 'copied' ? { verify: { type: 'file', serverRelativeUrl: destPath } } : null);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(kind, name, 'failed', snaToolsFilesErrorNote(err));
+        }
+    }
+}
+
+// Returns the address of a site's library at path, such as /sites/a/Agent Assets, or '' when it has none.
+async function snaToolsFilesGetList(siteUrl, path) {
+    try {
+        var list = await snaToolsRead(siteUrl, '/_api/web/GetList(@listUrl)?@listUrl=' + snaToolsFilesAlias(path) +
+            '&$select=Id,RootFolder/ServerRelativeUrl&$expand=RootFolder');
+        if (!list || !snaToolsCleanGuid(list.Id)) { return ''; }
+        return (list.RootFolder && list.RootFolder.ServerRelativeUrl) || path;
+    } catch (err) {
+        if (!snaToolsIsCancelled(err) && err.status === 404) { return ''; }
+        throw err;
+    }
+}
+
+// Returns the address of the destination's Agent Assets library. When it has none, turns on the Agent Assets feature,
+// which makes the library, and looks again. Returns '' when it still has none.
+async function snaToolsFilesAgentAssets(dest) {
+    var path = snaToolsJoinPath(dest.serverRelativeUrl, SNA_AGENT_ASSETS_FOLDER);
+    var found = await snaToolsFilesGetList(dest.siteUrl, path);
+    if (found) { return found; }
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/site/features/add', {
+            body: { featureId: SNA_TOOLS_AGENT_ASSETS_FEATURE_ID, force: true, featdefScope: 0 }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return '';
+    }
+    return snaToolsFilesGetList(dest.siteUrl, path);
+}
+
+// Copies each site skill's folder, with every file in it, to Skills/<name>/ in the destination's Agent Assets library.
+// Only the skill folders are copied, so Copilot's Plans folder in Agent Assets is left out.
+async function snaToolsFilesCopySkills(plan, dest, maps, state, skills) {
+    var kind = SNA_TOOLS_KINDS.siteSkill;
+    var sourceRoot = snaToolsJoinPath(snaToolsFilesSourcePath(plan), SNA_AGENT_ASSETS_FOLDER);
+    var destRoot;
+    try {
+        destRoot = await snaToolsFilesAgentAssets(dest);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        skills.forEach(function(skill) {
+            snaToolsLog(kind, skill.name || skill.folderName, 'failed', 'Sitenalyzer couldn\'t look for Agent Assets in the destination. ' + snaToolsFriendlyError(err));
+        });
+        return;
+    }
+    if (!destRoot) {
+        skills.forEach(function(skill) { snaToolsLog(kind, skill.name || skill.folderName, 'skipped', SNA_TOOLS_NO_AGENT_ASSETS_NOTE); });
+        return;
+    }
+    for (var i = 0; i < skills.length; i++) {
+        var skill = skills[i];
+        var name = skill.name || skill.folderName;
+        snaToolsProgress('Copying site skills (' + (i + 1) + ' of ' + skills.length + ').');
+        try {
+            await snaToolsFilesCopyOneSkill(plan, dest, maps, state, skill, name, sourceRoot, destRoot);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(kind, name, 'failed', snaToolsFilesErrorNote(err));
+        }
+    }
+}
+
+// Copies one site skill's folder and logs its result.
+async function snaToolsFilesCopyOneSkill(plan, dest, maps, state, skill, name, sourceRoot, destRoot) {
+    var kind = SNA_TOOLS_KINDS.siteSkill;
+    var skillPath = snaToolsFilesUrlPath(skill.url);
+    var folder = skillPath ? snaToolsFilesParent(skillPath) : '';
+    var relative = folder ? snaToolsFilesUnder(folder, sourceRoot) : null;
+    if (!relative || relative.split('/')[0].toLowerCase() !== SNA_SKILLS_FOLDER.toLowerCase()) {
+        snaToolsLog(kind, name, 'skipped', 'Sitenalyzer couldn\'t find where this site skill is saved. Refresh the report, then copy again.');
+        return;
+    }
+    var destFolder = snaToolsJoinPath(destRoot, relative);
+    var destSkill = snaToolsJoinPath(destFolder, snaToolsFilesLeaf(skillPath));
+    var existing = await snaToolsFilesDestFolder(dest, state, destFolder);
+    if (existing.exists && existing.files[snaToolsFilesLeaf(skillPath).toLowerCase()] && !plan.replaceExisting) {
+        snaToolsLog(kind, name, 'skipped', snaToolsFilesExistsNote('site skill'));
+        return;
+    }
+    var tree = await snaToolsFilesWalk(plan.source.siteUrl, folder, []);
+    if (!tree.files.some(function(f) { return snaToolsFilesKey(f.path) === snaToolsFilesKey(skillPath); })) {
+        tree.files.unshift({ name: snaToolsFilesLeaf(skillPath), path: skillPath, size: 0, uniqueId: '' });
+    }
+    // Folders and files are kept apart, because a folder that couldn't be read may hold many files.
+    var failedFolders = tree.failedFolders.map(function(failed) { return 'the ' + snaToolsFilesUnder(failed.path, folder) + ' folder'; });
+    var failedFiles = [];
+    var mainProblem = '';
+    for (var i = 0; i < tree.files.length; i++) {
+        var file = tree.files[i];
+        var destPath = snaToolsJoinPath(destFolder, snaToolsFilesUnder(file.path, folder));
+        var isMain = snaToolsFilesKey(file.path) === snaToolsFilesKey(skillPath);
+        try {
+            var outcome = await snaToolsFilesTransfer(plan, dest, maps, state, file, destRoot, destPath, 'file');
+            if (outcome.result !== 'copied' && outcome.note === SNA_TOOLS_TOO_LARGE_NOTE) { throw snaToolsUserError(SNA_TOOLS_TOO_LARGE_NOTE); }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            if (isMain) { mainProblem = snaToolsFilesErrorNote(err); } else { failedFiles.push(snaToolsFilesUnder(file.path, folder)); }
+        }
+    }
+    if (mainProblem) {
+        snaToolsLog(kind, name, 'failed', 'Sitenalyzer couldn\'t copy the skill\'s SKILL.md file. ' + mainProblem);
+        return;
+    }
+    var verify = { verify: { type: 'file', serverRelativeUrl: destSkill } };
+    var missed = failedFolders.concat(failedFiles);
+    if (missed.length > 0) {
+        var them = missed.length === 1 ? 'it' : 'them';
+        snaToolsLog(kind, name, 'partial', 'Copied the site skill, but not ' + snaToolsFilesJoinOr(missed) + '. Copy ' + them +
+            ' to the skill\'s folder in Agent Assets by hand.', verify);
+        return;
+    }
+    snaToolsLog(kind, name, 'copied', 'Copied the site skill.', verify);
+}
+
+// Joins words into a list that reads as a sentence with "or", such as "a, b, or c".
+function snaToolsFilesJoinOr(words) {
+    if (words.length < 3) { return words.join(' or '); }
+    return words.slice(0, -1).join(', ') + ', or ' + words[words.length - 1];
+}
+
+// ### Page Content ###
+
+// Returns the server-relative addresses of this site's subsites, such as /sites/research/archive, or [] when they can't be
+// read. Links into them stay as they are, because the copy doesn't include them.
+async function snaToolsFilesSourceSubsites(plan) {
+    try {
+        var read = await snaToolsReadAll(plan.source.siteUrl, '/_api/web/webinfos?$select=ServerRelativeUrl', SNA_TOOLS_READ_MAX);
+        return read.items.map(function(w) { return String((w && w.ServerRelativeUrl) || ''); }).filter(Boolean);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return [];
+    }
+}
+
+// Returns true when this site is the top site of its site collection, false when it's a subsite, or null when that
+// can't be read.
+async function snaToolsFilesIsTopSite(plan) {
+    try {
+        var root = await snaToolsRead(plan.source.siteUrl, '/_api/site/rootweb?$select=Id');
+        var rootId = snaToolsCleanGuid(root && root.Id);
+        return rootId ? rootId === snaToolsCleanGuid(plan.source.webId) : null;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return null;
+    }
+}
+
+// True when the site collection ID in page content can be changed everywhere: this site is the top site of its site
+// collection, so the ID means this site. In a subsite, the same ID also belongs to the other sites in the collection.
+function snaToolsFilesMapsSiteIdEverywhere(plan, dest, state) {
+    var from = snaToolsCleanGuid(plan.source.siteId);
+    var to = snaToolsCleanGuid(dest.siteId);
+    return !from || !to || from === to || state.sourceIsTopSite === true;
+}
+
+// An HTML tag edge in the forms page content stores it: < and >, &lt; and &gt;, or \u003c and \u003e. The part of the
+// text around an ID never reaches past one, so two links in a Text web part are two parts.
+var SNA_TOOLS_FILES_TAG_EDGE = '<|>|&lt;|&gt;|\\\\u003c|\\\\u003e';
+
+// A quote, in the forms page content stores it, such as ", &quot;, ", %22, or %2522. A quoted value, such as
+// the query of a web part item, never reaches past one.
+var SNA_TOOLS_FILES_QUOTE_EDGE = '"|\'|&quot;|&#34;|&#39;|\\\\u0022|\\\\u0027|%22|%27|%2522|%2527';
+
+// Where a link ends: a space or a quote.
+var SNA_TOOLS_FILES_LINK_EDGE = '\\s|' + SNA_TOOLS_FILES_QUOTE_EDGE;
+
+// The = before a value in a link, such as siteid=<id>, siteid%3D<id>, or siteid%253D<id>.
+var SNA_TOOLS_FILES_LINK_VALUE = /^(?:=|%3d|%253d|&#61;|\\u003d)$/i;
+
+// A link that names the site it opens, such as ?siteid=<id>&webid=<id> or getpreview.ashx?guidSite=<id>&guidWeb=<id>.
+var SNA_TOOLS_FILES_LINK_NAMES_SITE = /(?:^|[^a-z])(?:webid|guidweb)(?:=|%3d|%253d|&#61;|\\u003d)/i;
+
+// Returns text with the braces right around each ID, as in {<id>}, &#123;<id>&#125;, or %7B<id>%7D, changed to
+// underscores, so they aren't taken for the edges of a part of the text (see snaToolsFilesIdPart). The length stays the same.
+function snaToolsFilesMaskIdBraces(text) {
+    function mask(brace) { return brace ? new Array(brace.length + 1).join('_') : ''; }
+    var guids = new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi');
+    var out = '';
+    var last = 0;
+    var found;
+    while ((found = guids.exec(text)) !== null) {
+        var open = found.index + found[1].length;
+        var close = found.index + found[0].length - (found[12] || '').length;
+        out += text.substring(last, open) + mask(found[2]) + text.substring(open + (found[2] || '').length, close) + mask(found[12]);
+        last = found.index + found[0].length;
+        // The next ID may start right after this one's closing brace, as in {<id>}{<id>}, so that brace is looked at again.
+        guids.lastIndex = Math.max(last - 1, found.index + 1);
+    }
+    return out + text.substring(last);
+}
+
+// Returns the part of masked around the ID from start to end, such as one item of a Quick links web part or one link:
+// from the nearest { or HTML tag edge before it to the nearest } or tag edge after it. For an ID that is a value in a
+// link (inLink), such as ?siteid=<id>, the part is the first of these that names a site with webid= or guidWeb=: the
+// text up to a space or a quote, so two links in one item are two parts; the text up to a quote, such as the query
+// SiteId=<id> WebId=<id>; and last the whole item. masked is from snaToolsFilesMaskIdBraces.
+function snaToolsFilesIdPart(masked, start, end, inLink) {
+    var wide = snaToolsFilesTextBetween(masked, start, end, SNA_TOOLS_FILES_TAG_EDGE);
+    if (!inLink) { return wide; }
+    var link = snaToolsFilesTextBetween(masked, start, end, SNA_TOOLS_FILES_TAG_EDGE + '|' + SNA_TOOLS_FILES_LINK_EDGE);
+    if (SNA_TOOLS_FILES_LINK_NAMES_SITE.test(link)) { return link; }
+    var quoted = snaToolsFilesTextBetween(masked, start, end, SNA_TOOLS_FILES_TAG_EDGE + '|' + SNA_TOOLS_FILES_QUOTE_EDGE);
+    return SNA_TOOLS_FILES_LINK_NAMES_SITE.test(quoted) ? quoted : wide;
+}
+
+// Returns the text of masked from the nearest { or match of edges before start to the nearest } or match of edges
+// after end. edges is a regular expression source, such as SNA_TOOLS_FILES_TAG_EDGE.
+function snaToolsFilesTextBetween(masked, start, end, edges) {
+    var startEdge = new RegExp('\\{|&#123;|' + edges, 'gi');
+    var before = masked.substring(0, start);
+    var from = 0;
+    var edge;
+    while ((edge = startEdge.exec(before)) !== null) { from = edge.index; }
+    var after = masked.substring(end);
+    var stop = after.search(new RegExp('\\}|&#125;|' + edges, 'i'));
+    return before.substring(from) + after.substring(0, stop > -1 ? stop : after.length);
+}
+
+// True when text holds the ID (lowercase, with hyphens) in any form SNA_TOOLS_LINK_GUID_SOURCE finds.
+function snaToolsFilesHasId(text, id) {
+    var guids = new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi');
+    var found;
+    while ((found = guids.exec(text)) !== null) {
+        if (snaToolsLinkGuidOf(found) === id) { return true; }
+    }
+    return false;
+}
+
+// For a source that is a subsite: changes the site collection ID (siteId) only where the destination site's own ID
+// (destWebId) is in the same part of the text (see snaToolsFilesIdPart). There it meant this site, whose own ID the
+// rewrite already changed. Elsewhere it may mean another site in the collection, such as the parent site, so it stays
+// as it is. Finds the ID in every form the rewrite in core.js does, leaves a file name alone, and keeps the ID's
+// capitals, braces, and separators. Returns the new text.
+function snaToolsFilesPairSiteId(text, siteId, destSiteId, destWebId) {
+    var from = snaToolsCleanGuid(siteId);
+    var webKey = snaToolsCleanGuid(destWebId);
+    var to = snaToolsCleanGuid(destSiteId).split('-');
+    var masked = snaToolsFilesMaskIdBraces(text);
+    return text.replace(new RegExp(SNA_TOOLS_LINK_GUID_SOURCE, 'gi'), function() {
+        var parts = arguments;
+        var offset = parts[13];
+        var end = offset + parts[0].length;
+        if (snaToolsLinkGuidOf(parts) !== from || snaToolsLinkIsFileName(parts[1], parts[14], end)) { return parts[0]; }
+        var inLink = SNA_TOOLS_FILES_LINK_VALUE.test(parts[1]);
+        if (!snaToolsFilesHasId(snaToolsFilesIdPart(masked, offset + parts[1].length, end, inLink), webKey)) { return parts[0]; }
+        var digits = parts[3] + parts[5] + parts[7] + parts[9] + parts[11];
+        var upper = /[A-F]/.test(digits) && !/[a-f]/.test(digits);
+        var g = to.map(function(p) { return upper ? p.toUpperCase() : p; });
+        return parts[1] + (parts[2] || '') + g[0] + (parts[4] || '') + g[1] + (parts[6] || '') + g[2] + (parts[8] || '') + g[3] +
+            (parts[10] || '') + g[4] + (parts[12] || '');
+    });
+}
+
+// Returns the map of this site's IDs to the destination's that page content can hold: lists, views, columns, term
+// sets, terms, files, the site, and the site collection. A library of this site that the copy didn't make, such as
+// Documents or Site Pages, maps to the destination's library at the same address, when there is one.
+// mapSiteId false leaves out the site collection ID (see snaToolsFilesMapsSiteIdEverywhere).
+function snaToolsFilesIdMap(plan, dest, maps, sourceLists, destLists, mapSiteId) {
+    var map = {};
+    function add(from, to) {
+        var a = snaToolsCleanGuid(from);
+        var b = snaToolsCleanGuid(to);
+        if (a && b) { map[a] = b; }
+    }
+    [maps.lists, maps.views, maps.fieldIds, maps.termSets, maps.terms, maps.fileIds].forEach(function(m) {
+        Object.keys(m || {}).forEach(function(from) { add(from, m[from]); });
+    });
+    add(plan.source.webId, dest.webId);
+    if (mapSiteId !== false) { add(plan.source.siteId, dest.siteId); }
+    var sitePath = snaToolsFilesSourcePath(plan);
+    sourceLists.forEach(function(l) {
+        if (!l.id || map[l.id] || !l.root) { return; }
+        var relative = snaToolsFilesUnder(l.root, sitePath);
+        if (!relative) { return; }
+        var wanted = snaToolsFilesKey(snaToolsJoinPath(dest.serverRelativeUrl, relative));
+        var match = destLists.filter(function(d) { return snaToolsFilesKey(d.root) === wanted; })[0];
+        if (match) { add(l.id, match.id); }
+    });
+    return map;
+}
+
+// Returns the IDs that Sitenalyzer knows belong to this site, by lowercase ID: its lists, views, files, the site, and the
+// site collection. A page that still holds one of them after the IDs are changed may show this site's content.
+function snaToolsFilesKnownSourceIds(plan, state, sourceLists) {
+    var known = Object.assign({}, state.sourceIds);
+    function add(id) { var key = snaToolsCleanGuid(id); if (key) { known[key] = true; } }
+    sourceLists.forEach(function(l) { add(l.id); });
+    add(plan.source.webId);
+    add(plan.source.siteId);
+    (plan.lists || []).forEach(function(l) {
+        add(l.sourceId);
+        (l.views || []).forEach(function(v) { add(v.id); });
+    });
+    return known;
+}
+
+// Returns the options snaToolsRewriteSourceLinks needs for this copy's pages (see core.js). Lists and libraries both
+// sites have at the same address, such as Site Pages and Documents, and the Site Assets libraries, are paired, so links
+// to them and their IDs point at the destination's. A list or library of this site with no match in the destination is
+// listed as one the copy didn't make. Links into a subsite of this site stay as they are and are listed too.
+function snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destLists) {
+    var sitePath = snaToolsFilesSourcePath(plan);
+    var copied = {};
+    Object.keys(maps.listUrls || {}).forEach(function(from) { copied[snaToolsFilesKey(from)] = true; });
+    var listUrls = {};
+    var uncopied = [];
+    var sourceAssets = snaToolsFilesSiteAssetsOf(sourceLists, sitePath);
+    var destAssets = snaToolsFilesSiteAssetsOf(destLists, dest.serverRelativeUrl);
+    sourceLists.forEach(function(l) {
+        if (!l.root || copied[snaToolsFilesKey(l.root)]) { return; }
+        var match = null;
+        if (sourceAssets && l.id === sourceAssets.id) {
+            match = destAssets;
+        } else {
+            var relative = snaToolsFilesUnder(l.root, sitePath);
+            var wanted = relative ? snaToolsFilesKey(snaToolsJoinPath(dest.serverRelativeUrl, relative)) : '';
+            match = wanted ? destLists.filter(function(d) { return snaToolsFilesKey(d.root) === wanted; })[0] : null;
+        }
+        if (match && match.root) { listUrls[l.root] = match.root; } else { uncopied.push(l.root); }
+    });
+    var mapSiteId = snaToolsFilesMapsSiteIdEverywhere(plan, dest, state);
+    var ids = snaToolsFilesIdMap(plan, dest, maps, sourceLists, destLists, mapSiteId);
+    if (sourceAssets && destAssets && sourceAssets.id && destAssets.id && !ids[sourceAssets.id]) { ids[sourceAssets.id] = destAssets.id; }
+    return {
+        source: { siteUrl: plan.source.siteUrl, serverRelativeUrl: sitePath, webId: plan.source.webId, siteId: plan.source.siteId },
+        listUrls: listUrls,
+        ids: ids,
+        knownIds: snaToolsFilesKnownSourceIds(plan, state, sourceLists),
+        uncopied: uncopied,
+        subsites: state.subsites || [],
+        mapSiteId: mapSiteId,
+        // Only used when this site is at the root of the host: the first parts of a path that belong to it.
+        rootSegments: ['SitePages', 'SiteAssets', 'default.aspx']
+    };
+}
+
+// Returns the page's content with every link and ID of this site pointed at the destination (see
+// snaToolsRewriteSourceLinks in core.js): { body (for SavePage), changed, unmapped }. unmapped is true when the
+// content still points at this site or at something the copy didn't include, such as a list that wasn't copied.
+// For a source that is a subsite, the site collection ID is changed by snaToolsFilesPairSiteId.
+function snaToolsFilesRewritePage(item, fileName, maps, linkOptions) {
+    var banner = item.BannerImageUrl && typeof item.BannerImageUrl === 'object' ? (item.BannerImageUrl.Url || '') : (item.BannerImageUrl || '');
+    var parts = {
+        CanvasContent1: item.CanvasContent1 || '',
+        LayoutWebpartsContent: item.LayoutWebpartsContent || '',
+        BannerImageUrl: banner,
+        Description: item.Description || '',
+        TopicHeader: item.TopicHeader || ''
+    };
+    var body = { Title: item.Title || fileName.replace(/\.aspx$/i, '') };
+    var changed = false;
+    var unmapped = false;
+    var siteKey = snaToolsCleanGuid(linkOptions.source.siteId);
+    var destination = maps.destination || {};
+    var pairSiteId = linkOptions.mapSiteId === false && !!siteKey && !!snaToolsCleanGuid(destination.siteId) && !!snaToolsCleanGuid(destination.webId);
+    Object.keys(parts).forEach(function(name) {
+        var rewritten = snaToolsRewriteSourceLinks(parts[name], maps, linkOptions);
+        var text = rewritten.text;
+        var left = rewritten.unmapped;
+        if (pairSiteId) {
+            text = snaToolsFilesPairSiteId(text, siteKey, destination.siteId, destination.webId);
+            // Listed again only while the old ID is still in the text in some form, found by its 32 hex digits.
+            left = left.filter(function(value) { return value !== siteKey; });
+            if (snaToolsLinkHexDigits(text).indexOf(siteKey.replace(/-/g, '')) > -1) { left.push(siteKey); }
+        }
+        body[name] = text;
+        changed = changed || text !== parts[name];
+        unmapped = unmapped || left.length > 0;
+    });
+    return { body: body, changed: changed, unmapped: unmapped };
+}
+
+// ### Site Pages ###
+
+// Headers that some site pages API calls send besides the request digest, as the CLI for Microsoft 365 and PnPjs send them.
+var SNA_TOOLS_PAGE_CALL_HEADERS = {
+    savepage: { 'IF-MATCH': '*' },
+    savepageasdraft: { 'IF-MATCH': '*', 'X-HTTP-Method': 'MERGE' },
+    savepageastemplate: { 'IF-MATCH': '*', 'X-HTTP-Method': 'POST' }
+};
+
+// Sends one request to a destination page through the site pages API, such as action 'publish', with its content in
+// body when it has any. Always sent as a POST.
+function snaToolsFilesPageCall(dest, pageId, action, body) {
+    var options = { method: 'POST', headers: SNA_TOOLS_PAGE_CALL_HEADERS[action] || {} };
+    if (body) { options.body = body; }
+    return snaToolsWrite(dest.siteUrl, '/_api/sitepages/pages(' + Number(pageId) + ')/' + action, options);
+}
+
+// Moves a destination file to its recycle bin. Returns true when it did. Used only for pages this copy made.
+async function snaToolsFilesRecycle(dest, path) {
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/web/GetFileByServerRelativePath(decodedurl=@p)/recycle?@p=' + snaToolsFilesAlias(path), { method: 'POST' });
+        return true;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return false;
+    }
+}
+
+// After a failure, discards the changes to a page this copy checked out, so it isn't left checked out, and moves a page
+// this copy made to the recycle bin (newPath, or '' to keep the page). Sets err.snaToolsStillCheckedOut when
+// SharePoint refused the discard. Stopping the copy stops this too, because no request is sent after a stop.
+async function snaToolsFilesUndoPage(dest, pageId, newPath, err) {
+    try {
+        await snaToolsFilesPageCall(dest, pageId, 'discardpage');
+    } catch (discardErr) {
+        if (snaToolsIsCancelled(discardErr)) { throw discardErr; }
+        if (!newPath) { err.snaToolsStillCheckedOut = true; }
+    }
+    if (newPath && !(await snaToolsFilesRecycle(dest, newPath))) { err.snaToolsStillCheckedOut = true; }
+}
+
+// Checks out a page (unless checkedOut says it is already), saves its content with saveAction, and publishes it. On a
+// failure, undoes it with snaToolsFilesUndoPage and throws the error again.
+async function snaToolsFilesSaveAndPublish(dest, pageId, body, saveAction, checkedOut, newPath) {
+    try {
+        if (!checkedOut) {
+            try {
+                await snaToolsFilesPageCall(dest, pageId, 'checkoutpage');
+            } catch (err) {
+                // A new page is already checked out to the person who made it, and SharePoint may say so with an error.
+                if (snaToolsIsCancelled(err)) { throw err; }
+            }
+        }
+        await snaToolsFilesPageCall(dest, pageId, saveAction, body);
+        await snaToolsFilesPageCall(dest, pageId, 'publish');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        await snaToolsFilesUndoPage(dest, pageId, newPath, err);
+        throw err;
+    }
+}
+
+// Makes a new page in the destination's Site Pages. Returns { id, uniqueId, path, checkedOut } of the new page.
+// SharePoint usually checks a new page out to the person who made it, and checkedOut says whether its answer said so.
+async function snaToolsFilesNewPage(dest, destLibrary, item, body, fileName) {
+    var created = await snaToolsWrite(dest.siteUrl, '/_api/sitepages/pages', {
+        body: { Name: fileName, Title: body.Title, PageLayoutType: item.PageLayoutType || 'Article', PromotedState: Number(item.PromotedState) || 0 }
+    });
+    var id = Number(created && created.Id);
+    if (!(id > 0)) { throw snaToolsError(500, 'page', ''); }
+    // SharePoint answers with the page's address in the site, such as SitePages/Visit-Report.aspx.
+    var path = created.Url ? snaToolsJoinPath(dest.serverRelativeUrl, created.Url) : snaToolsJoinPath(destLibrary.root, fileName);
+    return { id: id, uniqueId: snaToolsCleanGuid(created.UniqueId), path: path, checkedOut: created.IsPageCheckedOutToCurrentUser === true };
+}
+
+// Saves new content into a page the destination already has: check out, save, publish.
+async function snaToolsFilesReplacePage(dest, destPath, body) {
+    var file = await snaToolsRead(dest.siteUrl, '/_api/web/GetFileByServerRelativePath(decodedurl=@p)?@p=' + snaToolsFilesAlias(destPath) +
+        '&$select=UniqueId,ListItemAllFields/Id&$expand=ListItemAllFields');
+    var id = Number(file && file.ListItemAllFields && file.ListItemAllFields.Id);
+    if (!(id > 0)) { throw snaToolsError(404, 'page', ''); }
+    try {
+        await snaToolsFilesPageCall(dest, id, 'checkoutpage');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        // Not discarded, because the check out may be someone else's work in progress.
+        throw snaToolsUserError('Sitenalyzer couldn\'t check out this page in the destination, so it didn\'t change it. ' +
+            'If someone is editing the page, wait until they publish it, then copy again.');
+    }
+    await snaToolsFilesSaveAndPublish(dest, id, body, 'savepage', true, '');
+    return { uniqueId: snaToolsCleanGuid(file.UniqueId) };
+}
+
+// Makes a new page in Site Pages, saves its content, and publishes it.
+async function snaToolsFilesCreatePage(dest, destLibrary, item, body, fileName) {
+    var page = await snaToolsFilesNewPage(dest, destLibrary, item, body, fileName);
+    await snaToolsFilesSaveAndPublish(dest, page.id, body, 'savepage', page.checkedOut, page.path);
+    return { uniqueId: page.uniqueId };
+}
+
+// Makes a page template: a page in Site Pages with this content, saved as a template, which SharePoint puts in the
+// Templates folder. The page the template was made from isn't part of the copy, so it goes to the recycle bin.
+// Returns { uniqueId, leftover }, where leftover is the page's address when it couldn't be moved to the recycle bin.
+async function snaToolsFilesCreateTemplate(dest, destLibrary, item, body, fileName) {
+    var page = await snaToolsFilesNewPage(dest, destLibrary, item, body, fileName);
+    var template;
+    try {
+        if (!page.checkedOut) {
+            try {
+                await snaToolsFilesPageCall(dest, page.id, 'checkoutpage');
+            } catch (err) {
+                if (snaToolsIsCancelled(err)) { throw err; }
+            }
+        }
+        await snaToolsFilesPageCall(dest, page.id, 'savepage', body);
+        template = await snaToolsFilesPageCall(dest, page.id, 'savepageastemplate');
+        if (!(Number(template && template.Id) > 0)) { throw snaToolsError(500, 'template', ''); }
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        await snaToolsFilesUndoPage(dest, page.id, page.path, err);
+        throw err;
+    }
+    var templatePath = template.Url ? snaToolsJoinPath(dest.serverRelativeUrl, template.Url) :
+        snaToolsJoinPath(destLibrary.root, 'Templates/' + fileName);
+    try {
+        await snaToolsFilesSaveAndPublish(dest, template.Id, body, 'savepageasdraft', false, templatePath);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        await snaToolsFilesUndoPage(dest, page.id, page.path, err);
+        throw err;
+    }
+    var removed = await snaToolsFilesRecycle(dest, page.path);
+    return { uniqueId: snaToolsCleanGuid(template.UniqueId), leftover: removed ? '' : page.path };
+}
+
+// Returns the address of this site's home page in the site, such as SitePages/Home.aspx, or '' when it can't be read.
+async function snaToolsFilesWelcomePage(siteUrl) {
+    try {
+        var folder = await snaToolsRead(siteUrl, '/_api/web/rootfolder?$select=WelcomePage');
+        return String((folder && folder.WelcomePage) || '');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return '';
+    }
+}
+
+// Makes a copied page the destination's home page when Replace is checked, and returns the result and note to log.
+async function snaToolsFilesHomePage(plan, dest, destPath, result, note) {
+    if (!plan.replaceExisting) {
+        return { result: result, note: note + ' It\'s this site\'s home page, but Sitenalyzer didn\'t make it the destination\'s home page, ' +
+            'because Replace pages and files that already exist in the destination isn\'t checked. ' + SNA_TOOLS_MAKE_HOME_HINT };
+    }
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/web/rootfolder', { method: 'MERGE', body: { WelcomePage: snaToolsFilesUnder(destPath, dest.serverRelativeUrl) } });
+        return { result: result, note: note + ' Made it the destination\'s home page.' };
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return { result: 'partial', note: note + ' Sitenalyzer couldn\'t make it the destination\'s home page. ' + SNA_TOOLS_MAKE_HOME_HINT };
+    }
+}
+
+/**
+ * Copies the pages in Site Pages. Modern pages are made again through the site pages API with this site's addresses and
+ * IDs in their content changed to the destination's; templates are saved as templates. Classic pages and pages in
+ * other folders are copied as files. The home page becomes the destination's home page only when Replace is checked.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs; reads the ID maps and fills maps.fileUrls and maps.fileIds.
+ * @returns {Promise<void>} Side effects: adds or replaces pages in the destination and adds results to the copy.
+ */
+async function snaToolsCopyPages(plan, dest, maps) {
+    var kind = SNA_TOOLS_KINDS.page;
+    var pages = (plan.siteContent && plan.siteContent.pages) || [];
+    if (pages.length === 0) { return; }
+    var state = snaToolsFilesState(maps);
+    var sourceLists = await snaToolsFilesSourceListsOrNone(plan, state);
+    var destLists = await snaToolsFilesDestLists(dest, state, true);
+    var destLibrary = destLists.filter(function(l) { return l.baseTemplate === 119 && l.root; })[0];
+    if (!destLibrary) {
+        pages.forEach(function(page) {
+            snaToolsLog(kind, page.name || page.fileName, 'failed', 'The destination has no Site Pages library, so Sitenalyzer couldn\'t copy pages there. ' +
+                'Ask your SharePoint admin to check the destination site, then copy again.');
+        });
+        return;
+    }
+    var welcome = await snaToolsFilesWelcomePage(plan.source.siteUrl);
+    state.subsites = await snaToolsFilesSourceSubsites(plan);
+    state.sourceIsTopSite = await snaToolsFilesIsTopSite(plan);
+    // Page templates go first. SharePoint makes a template from a page with the same name at the top of Site Pages, so a
+    // page copied before its template, such as Visit-Report.aspx before Templates/Visit-Report.aspx, would block it.
+    var ordered = pages.map(function(page, index) {
+        return { page: page, index: index, template: snaToolsFilesPagePlace(plan, page, sourceLists).isTemplate };
+    });
+    ordered.sort(function(a, b) { return (a.template === b.template) ? a.index - b.index : (a.template ? -1 : 1); });
+    for (var i = 0; i < ordered.length; i++) {
+        var page = ordered[i].page;
+        snaToolsProgress('Copying site pages (' + (i + 1) + ' of ' + pages.length + ').');
+        try {
+            await snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLists, destLists, destLibrary, welcome);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) {
+                // A stop after SharePoint made or checked out the page leaves it as it was then, so its row says how to clean it up.
+                snaToolsLogStopped(kind, page.name || page.fileName, ordered[i].template ? SNA_TOOLS_PAGE_TEMPLATE_STOPPED_NOTE : SNA_TOOLS_PAGE_STOPPED_NOTE);
+                throw err;
+            }
+            snaToolsLog(kind, page.name || page.fileName, 'failed', snaToolsFilesErrorNote(err) +
+                (err.snaToolsStillCheckedOut ? ' The page may still be checked out to you in the destination. Open Site Pages there and discard the check out.' : ''));
+        }
+    }
+    await snaToolsFilesRelinkPages(plan, dest, maps, state, sourceLists, destLists);
+}
+
+// Saves a page again when its content names a page copied after it, such as a Quick links item that names
+// Visit-Guide.aspx by its ID. A page's destination ID is known only once that page is made, so this runs after every
+// page is copied. The content is changed again from the source page, and the page's result is changed to match.
+async function snaToolsFilesRelinkPages(plan, dest, maps, state, sourceLists, destLists) {
+    var pending = state.pagesToRelink;
+    state.pagesToRelink = [];
+    if (pending.length === 0) { return; }
+    var linkOptions = snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destLists);
+    for (var i = 0; i < pending.length; i++) {
+        var saved = pending[i];
+        var content = snaToolsFilesRewritePage(saved.item, saved.fileName, maps, linkOptions);
+        if (JSON.stringify(content.body) === JSON.stringify(saved.body)) { continue; }
+        snaToolsProgress('Updating links between the copied pages.');
+        try {
+            await snaToolsFilesReplacePage(dest, saved.destPath, content.body);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            saved.entry.result = 'partial';
+            saved.entry.note += ' Sitenalyzer couldn\'t update its links to pages it copied after this one. Open the page in the destination and ' +
+                'check its links.' + (err.snaToolsStillCheckedOut ? ' The page may still be checked out to you. Open Site Pages there and discard the check out.' : '');
+            continue;
+        }
+        saved.entry.result = content.unmapped || saved.otherPartial ? 'partial' : 'copied';
+        saved.entry.note = (content.unmapped ? SNA_TOOLS_PAGE_PARTIAL_NOTE : saved.copiedNote) + saved.suffix;
+    }
+}
+
+// Returns where a page is in this site's Site Pages: { srcPath (or '' when unknown), relative (such as
+// 'Templates/Visit-Report.aspx'), isTemplate, inFolder (in a folder other than Templates) }.
+function snaToolsFilesPagePlace(plan, page, sourceLists) {
+    var srcPath = snaToolsFilesUrlPath(page.url);
+    if (!srcPath) { return { srcPath: '', relative: '', isTemplate: false, inFolder: false }; }
+    var libraryId = snaToolsCleanGuid(page.libraryId);
+    var sourceLibrary = sourceLists.filter(function(l) { return l.id === libraryId; })[0];
+    var sourceRoot = (sourceLibrary && sourceLibrary.root) || snaToolsJoinPath(snaToolsFilesSourcePath(plan), 'SitePages');
+    var relative = snaToolsFilesUnder(srcPath, sourceRoot) || snaToolsFilesLeaf(srcPath);
+    var parts = relative.split('/');
+    var isTemplate = parts.length === 2 && parts[0].toLowerCase() === SNA_TOOLS_TEMPLATES_FOLDER;
+    return { srcPath: srcPath, relative: relative, isTemplate: isTemplate, inFolder: parts.length > 1 && !isTemplate };
+}
+
+// Copies one page and logs its result.
+async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLists, destLists, destLibrary, welcome) {
+    var kind = SNA_TOOLS_KINDS.page;
+    var name = page.name || page.fileName;
+    var sitePath = snaToolsFilesSourcePath(plan);
+    var place = snaToolsFilesPagePlace(plan, page, sourceLists);
+    var srcPath = place.srcPath;
+    if (!srcPath) {
+        snaToolsLog(kind, name, 'skipped', 'Sitenalyzer couldn\'t find where this page is saved. Refresh the report, then copy again.');
+        return;
+    }
+    var libraryId = snaToolsCleanGuid(page.libraryId);
+    var destPath = snaToolsJoinPath(destLibrary.root, place.relative);
+    var isTemplate = place.isTemplate;
+    var inFolder = place.inFolder;
+    var isHome = !!welcome && snaToolsFilesKey(snaToolsJoinPath(sitePath, welcome)) === snaToolsFilesKey(srcPath);
+    if (!isTemplate && state.leftoverPages[snaToolsFilesKey(destPath)]) {
+        // The page at this address is the one SharePoint made a template from, not a page of the destination.
+        snaToolsLog(kind, name, 'failed', 'Sitenalyzer didn\'t copy this page. Site Pages in the destination has a page with the same name, ' +
+            'which SharePoint made while copying the page template, and Sitenalyzer couldn\'t remove it. Delete that page in the ' +
+            'destination, then copy again.');
+        return;
+    }
+
+    var item = null;
+    if (libraryId && /^\d+$/.test(String(page.id || ''))) {
+        var itemPath = "/_api/web/lists(guid'" + libraryId + "')/items(" + Number(page.id) + ')?$select=';
+        item = await snaToolsReadWithFallback(plan.source.siteUrl, itemPath + SNA_TOOLS_PAGE_SELECT, itemPath + SNA_TOOLS_PAGE_SELECT_SHORT);
+    }
+    var sourceId = snaToolsCleanGuid(item && item.UniqueId);
+    if (sourceId) { state.sourceIds[sourceId] = true; }
+    var modern = !!item && snaToolsCleanGuid(item.ClientSideApplicationId) === SNA_TOOLS_MODERN_PAGE_APP_ID && item.PageLayoutType !== 'RepostPage';
+    var linkOptions = snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destLists);
+    var outcome;
+    // The saved content and the pieces of the page's note, for snaToolsFilesRelinkPages: { item, fileName, body,
+    // copiedNote (the note when nothing of this site is left), suffix (more notes after it), otherPartial }.
+    var relink = null;
+
+    if (!modern || inFolder) {
+        // An uploaded modern page is blank, so a modern page is only copied on the server.
+        outcome = await snaToolsFilesTransfer(plan, dest, maps, state, { path: srcPath, size: 0, uniqueId: sourceId }, destLibrary.root, destPath,
+            'page', modern);
+        if (outcome.result === 'copied') {
+            var copiedText = outcome.replaced ? 'Replaced the page in the destination' : 'Copied the page as a file, because it\'s in a folder';
+            if (modern) {
+                // A copied file keeps its content as it is, so its links are pointed at the destination afterwards.
+                var kept = snaToolsFilesRewritePage(item, page.fileName || name, maps, linkOptions);
+                outcome = { result: kept.unmapped ? 'partial' : 'copied', note: kept.unmapped ? SNA_TOOLS_PAGE_PARTIAL_NOTE : copiedText + '.' };
+                relink = { item: item, fileName: page.fileName || name, body: kept.body, copiedNote: copiedText + '.', suffix: '', otherPartial: false };
+                if (kept.changed) {
+                    try {
+                        await snaToolsFilesReplacePage(dest, destPath, kept.body);
+                    } catch (err) {
+                        if (snaToolsIsCancelled(err)) { throw err; }
+                        relink = null;
+                        outcome = { result: 'partial', note: copiedText + ', but Sitenalyzer couldn\'t point ' +
+                            'its links at the destination, so some of them still open the original site. Open the page in the destination and ' +
+                            'check its links.' + (err.snaToolsStillCheckedOut ? ' The page may still be checked out to you. Open Site Pages there ' +
+                            'and discard the check out.' : '') };
+                    }
+                }
+            } else {
+                outcome.note = (outcome.replaced ? 'Replaced the page in the destination. It\'s a classic page, so open it' :
+                    'Copied the page as a file, because it\'s a classic page. Open it') + ' in the destination and check its links.';
+            }
+        }
+    } else {
+        var fileName = snaToolsFilesLeaf(destPath);
+        var folder = isTemplate
+            ? await snaToolsFilesDestFolder(dest, state, snaToolsFilesParent(destPath))
+            : await snaToolsFilesEnsureFolders(dest, state, destLibrary.root, snaToolsFilesParent(destPath));
+        var existing = folder.exists && !!folder.files[fileName.toLowerCase()];
+        if (existing && !plan.replaceExisting) {
+            snaToolsLog(kind, name, 'skipped', snaToolsFilesExistsNote(isTemplate ? 'page template' : 'page'));
+            return;
+        }
+        if (isTemplate && !existing) {
+            var root = await snaToolsFilesDestFolder(dest, state, destLibrary.root);
+            if (root.files[fileName.toLowerCase()]) {
+                snaToolsLog(kind, name, 'failed', 'Sitenalyzer didn\'t copy this page template, because the destination has a page with the same name in ' +
+                    'Site Pages, and SharePoint makes a template from a page there. Rename one of them, then copy again.');
+                return;
+            }
+        }
+        var content = snaToolsFilesRewritePage(item, fileName, maps, linkOptions);
+        var saved;
+        if (existing) {
+            saved = await snaToolsFilesReplacePage(dest, destPath, content.body);
+        } else if (isTemplate) {
+            saved = await snaToolsFilesCreateTemplate(dest, destLibrary, item, content.body, fileName);
+        } else {
+            saved = await snaToolsFilesCreatePage(dest, destLibrary, item, content.body, fileName);
+        }
+        folder.exists = true;
+        folder.files[fileName.toLowerCase()] = { uniqueId: saved.uniqueId };
+        maps.fileUrls[srcPath] = destPath;
+        if (sourceId && saved.uniqueId) { maps.fileIds[sourceId] = saved.uniqueId; }
+        var note = existing ? 'Replaced the page in the destination.' : (isTemplate ? 'Copied the page template.' : 'Copied the page.');
+        outcome = content.unmapped ? { result: 'partial', note: SNA_TOOLS_PAGE_PARTIAL_NOTE } : { result: 'copied', note: note };
+        relink = { item: item, fileName: fileName, body: content.body, copiedNote: note, suffix: '', otherPartial: false };
+        if (saved.leftover) {
+            // The page SharePoint made the template from is still at the top of Site Pages, so a page with its name can't go there.
+            root.files[fileName.toLowerCase()] = { uniqueId: '' };
+            state.leftoverPages[snaToolsFilesKey(saved.leftover)] = true;
+            var leftoverNote = ' SharePoint made the template from a page named ' + fileName +
+                ' in Site Pages, which Sitenalyzer couldn\'t remove. Delete that page in the destination.';
+            outcome = { result: 'partial', note: outcome.note + leftoverNote };
+            relink.suffix = leftoverNote;
+            relink.otherPartial = true;
+        }
+    }
+
+    if (outcome.result !== 'copied' && outcome.result !== 'partial') {
+        snaToolsLog(kind, name, outcome.result, outcome.note);
+        return;
+    }
+    if (isHome) {
+        // Asked with 'copied', so 'partial' in the answer means the page didn't become the destination's home page.
+        var home = await snaToolsFilesHomePage(plan, dest, destPath, 'copied', '');
+        outcome = { result: home.result === 'partial' ? 'partial' : outcome.result, note: outcome.note + home.note };
+        if (relink) {
+            relink.suffix += home.note;
+            relink.otherPartial = relink.otherPartial || home.result === 'partial';
+        }
+    }
+    var entry = snaToolsLog(kind, name, outcome.result, outcome.note, { verify: { type: 'file', serverRelativeUrl: destPath } });
+    if (relink && entry) {
+        relink.entry = entry;
+        relink.destPath = destPath;
+        state.pagesToRelink.push(relink);
+    }
+}
+
+/*
+This file is part of Sitenalyzer
+site.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-08
+Last Modified: 2026-11-09
+Summary: The navigation and site look parts of Copy site structure. Reads this site's menus (the left menu, the top
+         menu, and the footer menu), its theme, logo, header, and footer settings, and copies them into the
+         destination. Every link into this site is pointed at the destination with snaToolsRewriteSourceLinks (see
+         core.js), and links to other sites stay as they are. Each menu the copy changes ends up the same as this
+         site's, so a second copy adds no links twice. Hub menus belong to the hub, so they are reported, not copied.
+         Settings that need a SharePoint admin, or that SharePoint refuses, are reported with what to do instead.
+Notes: See README file for documentation and full license information.
+
+       Several of the SharePoint addresses here have no Microsoft documentation and come from the PnP libraries:
+       /_api/navigation/MenuState and SaveMenuState, MoveAfter on a menu, AudienceIds on a menu link, SetChromeOptions,
+       siteiconmanager/setsitelogo, GroupService/SetGroupImage, and SP.Web.GetContextWebThemeData. Each is used so that
+       a refusal is reported for that one item and the copy goes on.
+
+       What plan.js keeps in plan.siteSettings (from snaToolsSiteReadSource):
+       { web: { WebTemplate, Configuration, SiteLogoUrl, QuickLaunchEnabled, NavAudienceTargetingEnabled, HeaderLayout,
+                ... } | null,
+         site: { IsHubSite, HubSiteId, GroupId } | null, hubName,
+         communication: true when this site has the communication site feature, false when it hasn't, null when
+                        it wasn't needed or Sitenalyzer couldn't read the site's features,
+         menus: { quickLaunch: MenuRead, topNavigationBar: MenuRead | null },
+         footer: { links: [MenuNode], name, logoUrl } | { error: true } | null (null when the footer is off),
+         theme: { palette { slot: '#rrggbb' }, isInverted, isDefault } | { error: true } | null }
+       MenuRead = { nodes: [MenuNode], overLimit (true when the menu has more links than SNA_TOOLS_SITE_MENU_MAX, so
+                  some links under others weren't read) } or { error: true }
+       MenuNode = { id, title, url, isVisible, audienceIds [GUIDs], openInNewWindow, children [MenuNode] }
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Site Settings ###
+
+// The site's own menus that the copy can change. QuickLaunch is the left menu on team sites and the menu across the
+// top of communication sites. TopNavigationBar is the top link bar of classic sites, and a hub's menu on a hub site.
+// menuStateKey is the key of the same menu in SharePoint's menu editor (MenuState).
+var SNA_TOOLS_SITE_MENUS = {
+    quickLaunch: { collection: 'QuickLaunch', label: 'Left menu', words: 'left menu', menuStateKey: '1025' },
+    topNavigationBar: { collection: 'TopNavigationBar', label: 'Top menu', words: 'top menu', menuStateKey: '1002' }
+};
+
+// A link with this address is a label: a heading in the menu with no link.
+var SNA_TOOLS_SITE_LABEL_URL = 'http://linkless.header/';
+
+// The footer is a hidden menu of its own. Its key, and the titles of the three items under it that hold the footer's
+// links, its display name, and its logo. The same in every site (PnP libraries; Microsoft doesn't document them).
+var SNA_TOOLS_SITE_FOOTER_KEY = '13b7c916-4fea-4bb2-8994-5cf274aeb530';
+var SNA_TOOLS_SITE_FOOTER_LINKS = '3a94b35f-030b-468e-80e3-b75ee84ae0ad';
+var SNA_TOOLS_SITE_FOOTER_NAME = '7376cd83-67ac-4753-b156-6a7b3fa0fc1f';
+var SNA_TOOLS_SITE_FOOTER_LOGO = '2e456c2e-3ded-4a6c-a9ea-f7ac4c1b5100';
+
+// The footer shows at most this many links or labels.
+var SNA_TOOLS_SITE_FOOTER_MAX = 8;
+
+// Deepest level of a menu that is read, and most links read from one menu. Menus in SharePoint have three levels.
+var SNA_TOOLS_SITE_MENU_DEPTH = 5;
+var SNA_TOOLS_SITE_MENU_MAX = 500;
+
+// The site feature that communication sites have. Only a site with it has a footer.
+var SNA_TOOLS_SITE_COMMUNICATION_FEATURE = 'f39dad74-ea79-46ef-9ef7-fe2370754f6f';
+
+// CSOM type IDs: the request's own context (to reach the site), and the details of a new menu link.
+var SNA_TOOLS_SITE_CONTEXT_TYPE = '{3747adcd-a3c3-41b9-bfab-4a64dd2f1e0a}';
+var SNA_TOOLS_SITE_NEW_LINK_TYPE = '{7aaaa605-79a9-4fda-ae1e-db952e5083e0}';
+
+// The GUID SharePoint uses for "none", such as the hub of a site that isn't connected to one.
+var SNA_TOOLS_SITE_NO_GUID = '00000000-0000-0000-0000-000000000000';
+
+// Properties of a menu link read from a site, and the shorter set for a site that doesn't know AudienceIds.
+var SNA_TOOLS_SITE_NODE_SELECT = 'Id,Title,Url,IsVisible,AudienceIds';
+var SNA_TOOLS_SITE_NODE_SELECT_SHORT = 'Id,Title,Url,IsVisible';
+
+// Properties of a site that describe its menus and look, and the shorter set that every site knows.
+var SNA_TOOLS_SITE_WEB_SELECT = 'Title,WebTemplate,Configuration,SiteLogoUrl,QuickLaunchEnabled,NavAudienceTargetingEnabled,' +
+    'HeaderLayout,HeaderEmphasis,HideTitleInHeader,LogoAlignment,MegaMenuEnabled,HorizontalQuickLaunch,FooterEnabled,' +
+    'FooterLayout,FooterEmphasis';
+var SNA_TOOLS_SITE_WEB_SELECT_SHORT = 'Title,WebTemplate,Configuration,SiteLogoUrl,QuickLaunchEnabled';
+
+// Site templates that show modern pages. A site with any other template is a classic site, which shows its top menu.
+var SNA_TOOLS_SITE_MODERN_TEMPLATES = ['GROUP', 'SITEPAGEPUBLISHING', 'TEAMCHANNEL'];
+
+// The header, menu, and footer settings that SetChromeOptions sets together. part says which part of the look each
+// belongs to, and words names each value the way Change the look shows it. SetChromeOptions needs every one of them,
+// so a setting that isn't copied is sent with the destination's own value.
+var SNA_TOOLS_SITE_CHROME = [
+    { property: 'HeaderLayout', option: 'headerLayout', part: 'header', name: 'Header layout', words: ['None', 'Standard', 'Compact', 'Minimal', 'Extended'] },
+    { property: 'HeaderEmphasis', option: 'headerEmphasis', part: 'header', name: 'Header background', words: ['None', 'Neutral', 'Soft', 'Strong'] },
+    { property: 'HideTitleInHeader', option: 'hideTitleInHeader', part: 'header', name: 'Site title in the header', words: { 'true': 'Hidden', 'false': 'Shown' } },
+    { property: 'LogoAlignment', option: 'logoAlignment', part: 'header', name: 'Logo alignment', words: ['Left', 'Middle', 'Right'] },
+    { property: 'MegaMenuEnabled', option: 'megaMenuEnabled', part: 'menu', name: 'Menu style', words: { 'true': 'Mega menu', 'false': 'Cascading' } },
+    { property: 'HorizontalQuickLaunch', option: 'horizontalQuickLaunch', part: 'orientation', name: 'Menu orientation', words: { 'true': 'Horizontal', 'false': 'Vertical' } },
+    { property: 'FooterEnabled', option: 'footerEnabled', part: 'footer', name: 'Footer', words: { 'true': 'On', 'false': 'Off' } },
+    { property: 'FooterLayout', option: 'footerLayout', part: 'footer', name: 'Footer layout', words: ['Simple', 'Extended', 'Stacked'] },
+    { property: 'FooterEmphasis', option: 'footerEmphasis', part: 'footer', name: 'Footer background', words: ['Strong', 'Neutral', 'Soft', 'None'] }
+];
+
+// Picture types SetGroupImage takes, by file extension.
+var SNA_TOOLS_SITE_IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp' };
+
+// The name Microsoft gives for a site picture saved in Site Assets, which a site with a Microsoft 365 group shows when
+// the group's picture can't be changed (Microsoft's troubleshooting page "Error when changing site logo on Microsoft
+// 365 group SharePoint site").
+var SNA_TOOLS_SITE_ICON_NAME = '__siteIcon__.png';
+
+// Web addresses of the apps of a Microsoft 365 group, with the app's name. A link to one of them from a site with a
+// group opens that group, not the destination's.
+var SNA_TOOLS_SITE_GROUP_APPS = { 'teams.microsoft.com': 'Microsoft Teams', 'teams.cloud.microsoft': 'Microsoft Teams',
+    'tasks.office.com': 'Planner', 'planner.cloud.microsoft': 'Planner' };
+
+// Where a person changes each part of the look by hand in the destination.
+var SNA_TOOLS_SITE_WHERE = {
+    theme: 'Settings > Change the look > Theme', header: 'Settings > Change the look > Header',
+    menu: 'Settings > Change the look > Navigation', footer: 'Settings > Change the look > Footer',
+    picture: 'Settings > Site information'
+};
+
+// The note for a site look setting that the destination shows differently after the copy.
+var SNA_TOOLS_SITE_LOOK_CHANGED_NOTE = 'Sitenalyzer set this, but the destination shows something else now. Check it in Settings > Change the look in the destination.';
+
+// ### Site State ###
+
+// What the two steps of this file share during one copy: the destination's look settings and footer, and the
+// settings for pointing links at the destination. It belongs to the maps object of that copy.
+var _snaToolsSiteState = null;
+
+// Returns the state for the copy that maps belongs to.
+function snaToolsSiteState(maps) {
+    if (!_snaToolsSiteState || _snaToolsSiteState.maps !== maps) {
+        // communication is undefined until the destination's features are read (see snaToolsSiteIsCommunication).
+        _snaToolsSiteState = { maps: maps, destWeb: null, communication: undefined, footerRoot: null, links: null };
+    }
+    return _snaToolsSiteState;
+}
+
+// ### Values ###
+
+// Returns a list of GUIDs from AudienceIds, which SharePoint sends as an array, or as { results: [...] } in verbose JSON.
+function snaToolsSiteAudiences(value) {
+    var list = Array.isArray(value) ? value : (value && Array.isArray(value.results) ? value.results : []);
+    return list.map(snaToolsCleanGuid).filter(function(id) { return !!id; });
+}
+
+// Returns a value for an address after menuNodeKey=, such as '1025' with its quotes, encoded.
+function snaToolsSiteMenuKey(key) {
+    return encodeURIComponent("'" + key + "'");
+}
+
+// True when a site template shows modern pages, which don't show the top menu.
+function snaToolsSiteIsModern(web) {
+    var template = String((web && web.WebTemplate) || '').toUpperCase();
+    if (!template) { return true; }
+    if (SNA_TOOLS_SITE_MODERN_TEMPLATES.indexOf(template) > -1) { return true; }
+    return template === 'STS' && Number(web.Configuration) === 3;
+}
+
+// True when a site has a Microsoft 365 group, from its site collection's GroupId.
+function snaToolsSiteHasGroup(groupId) {
+    var id = snaToolsCleanGuid(groupId);
+    return !!id && id !== SNA_TOOLS_SITE_NO_GUID;
+}
+
+// Returns the address of a link in a form for comparisons: the path and query, decoded and in lowercase, without a
+// slash at the end. A link to another host keeps its host.
+function snaToolsSiteUrlKey(value, origin) {
+    var text = String(value || '').trim();
+    var url;
+    try { url = new URL(text, origin + '/'); } catch (e) { return text.toLowerCase(); }
+    if (!/^https?:$/.test(url.protocol)) { return text.toLowerCase(); }
+    var path = url.pathname;
+    try { path = decodeURIComponent(path); } catch (e) { /* Compared as it is. */ }
+    var key = xlsxStripSlash(path).toLowerCase() + url.search.toLowerCase();
+    return url.origin.toLowerCase() === String(origin).toLowerCase() ? key : url.origin.toLowerCase() + key;
+}
+
+// Returns the words for a setting's value, such as 'Compact' for HeaderLayout 2.
+function snaToolsSiteValueWords(setting, value) {
+    var words = Array.isArray(setting.words) ? setting.words[Number(value)] : setting.words[String(!!value)];
+    return words || String(value);
+}
+
+// Throws snaToolsError when SaveMenuState answered with anything but its success value, 200.
+function snaToolsSiteCheckSaved(answer) {
+    if (answer && typeof answer === 'object' && Object.prototype.hasOwnProperty.call(answer, 'value') && Number(answer.value) !== 200) {
+        throw snaToolsError(500, 'menu', '');
+    }
+}
+
+/**
+ * Returns the result and note for a site look setting that SharePoint refused: Skipped when the destination doesn't
+ * allow custom scripts or only a SharePoint admin can make the change, and Failed otherwise.
+ * @param {Error} err The error from snaToolsWrite or snaToolsCsom.
+ * @param {string} where Where the person makes the change by hand, such as SNA_TOOLS_SITE_WHERE.theme.
+ * @returns {{result: string, note: string}}
+ */
+function snaToolsSiteRefusal(err, where) {
+    var said = String((err && err.serverMessage) || '');
+    if (/custom script|DenyAddAndCustomizePages|NoScript/i.test(said)) {
+        return { result: 'skipped', note: 'The destination doesn\'t allow custom scripts, so SharePoint didn\'t let Sitenalyzer change this. ' +
+            'Ask your SharePoint admin to allow custom scripts there, or change it by hand in ' + where + '.' };
+    }
+    if (/tenant admin|tenant administrator|SharePoint admin|global admin/i.test(said)) {
+        return { result: 'skipped', note: 'Only a SharePoint admin can change this in the destination. Ask your SharePoint admin, or change it by hand in ' + where + '.' };
+    }
+    return { result: 'failed', note: snaToolsFriendlyError(err) + ' You can also change it in ' + where + '.' };
+}
+
+// ### Read the Source ###
+
+// Returns the menu links in one collection of a site, such as /_api/web/navigation/QuickLaunch, without their children.
+async function snaToolsSiteReadNodes(siteUrl, collectionPath) {
+    var items = await snaToolsReadAllWithFallback(siteUrl, collectionPath + '?$select=' + SNA_TOOLS_SITE_NODE_SELECT,
+        collectionPath + '?$select=' + SNA_TOOLS_SITE_NODE_SELECT_SHORT);
+    return items.map(function(n) {
+        return { id: Number(n.Id), title: String(n.Title || ''), url: String(n.Url || ''), isVisible: n.IsVisible !== false,
+            audienceIds: snaToolsSiteAudiences(n.AudienceIds), openInNewWindow: false, children: [] };
+    });
+}
+
+// Reads one menu of a site with every level of links under it, one request for each link that has links under it.
+// counter.count stops the read at SNA_TOOLS_SITE_MENU_MAX links, and counter.overLimit is then set to true, because
+// the links under the links not yet read are left out.
+async function snaToolsSiteReadTree(siteUrl, collectionPath, depth, counter) {
+    var nodes = await snaToolsSiteReadNodes(siteUrl, collectionPath);
+    counter.count += nodes.length;
+    for (var i = 0; i < nodes.length; i++) {
+        if (depth >= SNA_TOOLS_SITE_MENU_DEPTH) { break; }
+        if (counter.count >= SNA_TOOLS_SITE_MENU_MAX) {
+            counter.overLimit = true;
+            break;
+        }
+        nodes[i].children = await snaToolsSiteReadTree(siteUrl, '/_api/web/navigation/GetNodeById(' + nodes[i].id + ')/Children', depth + 1, counter);
+    }
+    return nodes;
+}
+
+// Reads one of the site's own menus (see SNA_TOOLS_SITE_MENUS). Returns { nodes, overLimit } or { error: true }.
+async function snaToolsSiteReadMenu(siteUrl, menu) {
+    try {
+        var counter = { count: 0, overLimit: false };
+        var nodes = await snaToolsSiteReadTree(siteUrl, '/_api/web/navigation/' + menu.collection, 1, counter);
+        return { nodes: nodes, overLimit: counter.overLimit };
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return { error: true };
+    }
+}
+
+// Reads which links of a menu open in a new tab, which only the menu editor's MenuState says. Returns { linkId: true }
+// for each one, or {} when SharePoint doesn't answer.
+async function snaToolsSiteReadNewTabs(siteUrl, menu) {
+    var found = {};
+    function walk(nodes) {
+        (nodes || []).forEach(function(n) {
+            if (n.OpenInNewWindow === true) { found[String(n.Key)] = true; }
+            walk(n.Nodes);
+        });
+    }
+    try {
+        walk((await snaToolsRead(siteUrl, '/_api/navigation/MenuState?menuNodeKey=' + snaToolsSiteMenuKey(menu.menuStateKey))).Nodes);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    return found;
+}
+
+// Marks each link in a menu that opens in a new tab, from snaToolsSiteReadNewTabs.
+function snaToolsSiteMarkNewTabs(nodes, newTabs) {
+    (nodes || []).forEach(function(n) {
+        n.openInNewWindow = !!newTabs[String(n.id)];
+        snaToolsSiteMarkNewTabs(n.children, newTabs);
+    });
+}
+
+// Returns a footer link from the menu editor's MenuState, with the links under it.
+function snaToolsSiteFooterNode(node) {
+    return { id: Number(node.Key) || 0, title: String(node.Title || ''), url: String(node.SimpleUrl || ''), isVisible: node.IsHidden !== true,
+        audienceIds: snaToolsSiteAudiences(node.AudienceIds), openInNewWindow: node.OpenInNewWindow === true,
+        children: (node.Nodes || []).filter(function(n) { return n && n.IsDeleted !== true; }).map(snaToolsSiteFooterNode) };
+}
+
+// Reads the footer's links, display name, and logo. Returns { links, name, logoUrl }, or { error: true }.
+async function snaToolsSiteReadFooter(siteUrl) {
+    var state;
+    try {
+        state = await snaToolsRead(siteUrl, '/_api/navigation/MenuState?menuNodeKey=' + snaToolsSiteMenuKey(SNA_TOOLS_SITE_FOOTER_KEY));
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return { error: true };
+    }
+    var nodes = ((state && state.Nodes) || []).filter(function(n) { return n && n.IsDeleted !== true; });
+    function byTitle(title) { return nodes.filter(function(n) { return n.Title === title; })[0]; }
+    var nameNode = byTitle(SNA_TOOLS_SITE_FOOTER_NAME);
+    var logoNode = byTitle(SNA_TOOLS_SITE_FOOTER_LOGO);
+    var linksNode = byTitle(SNA_TOOLS_SITE_FOOTER_LINKS);
+    // The links are under their own item in most sites, and right under the footer in some.
+    var links = linksNode ? (linksNode.Nodes || []) : nodes.filter(function(n) { return n !== nameNode && n !== logoNode; });
+    return {
+        links: links.filter(function(n) { return n && n.IsDeleted !== true; }).map(snaToolsSiteFooterNode),
+        name: nameNode && nameNode.Nodes && nameNode.Nodes[0] ? String(nameNode.Nodes[0].Title || '') : '',
+        logoUrl: logoNode ? String(logoNode.SimpleUrl || '') : ''
+    };
+}
+
+// Returns a color from the theme data, { R, G, B }, as #rrggbb, or '' when it isn't one.
+function snaToolsSiteColor(color) {
+    if (!color || typeof color !== 'object') { return ''; }
+    var parts = [color.R, color.G, color.B].map(function(c) { return Number(c); });
+    if (parts.some(function(c) { return !(c >= 0 && c <= 255); })) { return ''; }
+    return '#' + parts.map(function(c) { return ('0' + Math.round(c).toString(16)).slice(-2); }).join('');
+}
+
+// Reads the theme applied to a site: { palette { slot: '#rrggbb' }, isInverted, isDefault }, or { error: true }. Only
+// the modern color slots, whose names start with a lowercase letter, such as themePrimary, are kept. The theme's
+// background image is left out, because it would point at a file in this site.
+async function snaToolsSiteReadTheme(siteUrl) {
+    try {
+        var answer = await snaToolsRead(siteUrl, '/_api/SP.Web.GetContextWebThemeData?noImages=true&lcid=en-US');
+        var value = answer && answer.value !== undefined ? answer.value : answer;
+        var data = typeof value === 'string' ? JSON.parse(value) : value;
+        var colors = (data && data.Palette && data.Palette.Colors) || {};
+        var palette = {};
+        Object.keys(colors).forEach(function(slot) {
+            var hex = /^[a-z]/.test(slot) ? snaToolsSiteColor(colors[slot] && colors[slot].DefaultColor) : '';
+            if (hex) { palette[slot] = hex; }
+        });
+        if (Object.keys(palette).length === 0) { return { error: true }; }
+        return { palette: palette, isInverted: data.IsInverted === true, isDefault: data.IsDefault === true };
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return { error: true };
+    }
+}
+
+// Reads the name of the hub a site is in, or is, or '' when SharePoint doesn't say.
+async function snaToolsSiteReadHubName(siteUrl) {
+    try {
+        var answer = await snaToolsRead(siteUrl, '/_api/web/HubSiteData(true)');
+        var value = answer && answer.value !== undefined ? answer.value : answer;
+        var data = typeof value === 'string' ? JSON.parse(value) : value;
+        return String((data && data.name) || '');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return '';
+    }
+}
+
+/**
+ * Reads from this site what the navigation and site look parts of the copy need: its menu and look settings, its
+ * menus, its footer, and its theme. Reads only what the plan's switches ask for. A read that fails is kept as
+ * { error: true }, so the copy reports that part and goes on.
+ * @param {object} plan The copy plan, with source, navigation, and siteLook set.
+ * @param {function} [onProgress] Called with a plain-English sentence before the reads.
+ * @returns {Promise<object>} plan.siteSettings (see the notes at the top of this file). Changes nothing.
+ */
+async function snaToolsSiteReadSource(plan, onProgress) {
+    var progress = typeof onProgress === 'function' ? onProgress : function() {};
+    var siteUrl = plan.source.siteUrl;
+    var settings = { web: null, site: null, hubName: '', communication: null, menus: { quickLaunch: null, topNavigationBar: null }, footer: null, theme: null };
+    progress('Reading this site\'s menus and look.');
+    try {
+        settings.web = await snaToolsReadWithFallback(siteUrl, '/_api/web?$select=' + SNA_TOOLS_SITE_WEB_SELECT, '/_api/web?$select=' + SNA_TOOLS_SITE_WEB_SELECT_SHORT);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    try {
+        settings.site = await snaToolsReadWithFallback(siteUrl, '/_api/site?$select=IsHubSite,HubSiteId,GroupId', '/_api/site?$select=GroupId');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    var site = settings.site || {};
+    var isHub = site.IsHubSite === true;
+    var inHub = !isHub && snaToolsSiteHasGroup(site.HubSiteId);
+
+    if (plan.navigation) {
+        settings.menus.quickLaunch = await snaToolsSiteReadMenu(siteUrl, SNA_TOOLS_SITE_MENUS.quickLaunch);
+        if (settings.menus.quickLaunch.nodes) {
+            snaToolsSiteMarkNewTabs(settings.menus.quickLaunch.nodes, await snaToolsSiteReadNewTabs(siteUrl, SNA_TOOLS_SITE_MENUS.quickLaunch));
+        }
+        // A hub's top menu is its hub menu, which the copy reports without reading.
+        if (!isHub) {
+            var top = settings.menus.topNavigationBar = await snaToolsSiteReadMenu(siteUrl, SNA_TOOLS_SITE_MENUS.topNavigationBar);
+            // Only a classic site shows its top menu. Its links that open in a new tab are read so the copy can say that
+            // this isn't copied.
+            if (top.nodes && top.nodes.length && settings.web && !snaToolsSiteIsModern(settings.web)) {
+                snaToolsSiteMarkNewTabs(top.nodes, await snaToolsSiteReadNewTabs(siteUrl, SNA_TOOLS_SITE_MENUS.topNavigationBar));
+            }
+        }
+        if (isHub || inHub) { settings.hubName = await snaToolsSiteReadHubName(siteUrl); }
+    }
+    // Only a site with the communication site feature has a footer, whatever its FooterEnabled says. When the features
+    // can't be read, the footer is read anyway, so its links aren't lost.
+    var footerOn = !!settings.web && settings.web.FooterEnabled === true;
+    if (settings.web && (plan.siteLook || (plan.navigation && footerOn))) {
+        settings.communication = await snaToolsSiteHasCommunicationFeature(siteUrl, settings.web.WebTemplate);
+    }
+    if ((plan.navigation || plan.siteLook) && footerOn && settings.communication !== false) {
+        settings.footer = await snaToolsSiteReadFooter(siteUrl);
+    }
+    if (plan.siteLook) { settings.theme = await snaToolsSiteReadTheme(siteUrl); }
+    return settings;
+}
+
+// ### Destination ###
+
+// Returns the destination's menu and look settings, read once for each copy unless refresh is true.
+async function snaToolsSiteDestWeb(dest, state, refresh) {
+    if (!state.destWeb || refresh) {
+        state.destWeb = await snaToolsReadWithFallback(dest.siteUrl, '/_api/web?$select=' + SNA_TOOLS_SITE_WEB_SELECT,
+            '/_api/web?$select=' + SNA_TOOLS_SITE_WEB_SELECT_SHORT);
+    }
+    return state.destWeb;
+}
+
+// True when a site has the communication site feature, which gives it a footer: a site made as a communication site,
+// or one whose features include it. False when it hasn't, and null when its features can't be read.
+async function snaToolsSiteHasCommunicationFeature(siteUrl, webTemplate) {
+    if (String(webTemplate || '').toUpperCase() === 'SITEPAGEPUBLISHING') { return true; }
+    try {
+        var features = (await snaToolsReadAll(siteUrl, '/_api/web/features?$select=DefinitionId', SNA_TOOLS_READ_MAX)).items;
+        return features.some(function(f) { return snaToolsCleanGuid(f.DefinitionId) === SNA_TOOLS_SITE_COMMUNICATION_FEATURE; });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return null;
+    }
+}
+
+// True when the destination has the communication site feature, false when it hasn't, and null when Sitenalyzer
+// couldn't read its features. Read once for each copy.
+async function snaToolsSiteIsCommunication(dest, state) {
+    if (state.communication === undefined) { state.communication = await snaToolsSiteHasCommunicationFeature(dest.siteUrl, dest.webTemplate); }
+    return state.communication;
+}
+
+// Returns the settings for pointing menu links at the destination (see snaToolsRewriteSourceLinks in core.js), built
+// once for each copy from the lists and libraries both sites have, the same way the copy of pages builds them.
+async function snaToolsSiteLinkContext(plan, dest, maps, state) {
+    if (state.links) { return state.links; }
+    var fileState = snaToolsFilesState(maps);
+    var sourceLists = await snaToolsFilesSourceListsOrNone(plan, fileState);
+    var destLists = [];
+    try {
+        destLists = await snaToolsFilesDestLists(dest, fileState, true);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    var options = snaToolsFilesLinkOptions(plan, dest, maps, fileState, sourceLists, destLists);
+    options.wholeLink = true;
+    var sourceSite = (plan.siteSettings && plan.siteSettings.site) || {};
+    var sourceHasGroup = snaToolsSiteHasGroup(sourceSite.GroupId);
+    // A group's notebook is a folder right inside the Site Assets library of the group's site, named for the site, such
+    // as Study One Notebook.
+    var sourceAssets = sourceHasGroup ? snaToolsFilesSiteAssetsOf(sourceLists, snaToolsFilesSourcePath(plan)) : null;
+    state.links = { maps: maps, options: options, destHasGroup: snaToolsSiteHasGroup(dest.groupId), sourceHasGroup: sourceHasGroup,
+        notebookRoot: sourceAssets && sourceAssets.root ? sourceAssets.root : '', origin: snaToolsSiteParts(plan.source.siteUrl).origin };
+    return state.links;
+}
+
+// Returns the name of the Microsoft 365 group app that an address opens, such as 'Microsoft Teams', 'the notebook' for
+// the group's notebook in this site, or '' for any other address. Only for a site with a group.
+function snaToolsSiteGroupApp(text, context) {
+    if (!context.sourceHasGroup) { return ''; }
+    var url;
+    try { url = new URL(text, context.origin + '/'); } catch (e) { return ''; }
+    var app = SNA_TOOLS_SITE_GROUP_APPS[url.hostname.toLowerCase()];
+    if (app) { return app; }
+    if (!context.notebookRoot || url.origin.toLowerCase() !== String(context.origin).toLowerCase()) { return ''; }
+    var path = url.pathname;
+    try { path = decodeURIComponent(path); } catch (e) { return ''; }
+    var under = snaToolsFilesUnder(xlsxStripSlash(path), context.notebookRoot);
+    // SharePoint names the notebook folder for the site, such as /sites/a/SiteAssets/Study One Notebook. Other folders
+    // in Site Assets, such as Logos, aren't the notebook.
+    return under && under.indexOf('/') === -1 && / Notebook$/i.test(under) ? 'the notebook' : '';
+}
+
+/**
+ * Returns a menu link's address for the destination.
+ * @param {string} url The link's address in this site.
+ * @param {object} context From snaToolsSiteLinkContext.
+ * @returns {{url: string, isLabel: boolean, kept: boolean, changed: boolean, unmapped: boolean, groupApp: string,
+ *          skipNote: string}} kept is true for an address the copy never changes, such as a label, #, or an email
+ *          link. groupApp names the app of this site's Microsoft 365 group the link opens (see snaToolsSiteGroupApp),
+ *          or is ''. skipNote says why the link isn't copied, or is ''.
+ */
+function snaToolsSiteRewriteLink(url, context) {
+    var text = String(url || '').trim();
+    var result = { url: text, isLabel: false, kept: false, changed: false, unmapped: false, groupApp: '', skipNote: '' };
+    if (!text || text.toLowerCase().replace(/\/$/, '') === SNA_TOOLS_SITE_LABEL_URL.replace(/\/$/, '')) {
+        result.isLabel = true;
+        result.kept = true;
+        return result;
+    }
+    // Links to a part of the site's Microsoft 365 group, such as its conversations, work only in a site with a group.
+    if (/(^|\/)_layouts\/15\/groupstatus\.aspx/i.test(text) && !context.destHasGroup) {
+        result.skipNote = 'This link opens a part of this site\'s Microsoft 365 group, such as its conversations, and the destination has no group, so Sitenalyzer didn\'t copy it.';
+        return result;
+    }
+    // #, tokens such as ~site/ that SharePoint fills in for each site, addresses that aren't web pages, such as email
+    // links, and addresses relative to the site the menu is in, such as SitePages/Home.aspx, stay as they are.
+    var scheme = /^([a-z][a-z0-9+.-]*):/i.exec(text);
+    if (text.charAt(0) === '#' || /^~(site|sitecollection)\//i.test(text) || (scheme && !/^https?$/i.test(scheme[1])) ||
+        (!scheme && !/^[\/\\]/.test(text))) {
+        result.kept = true;
+        return result;
+    }
+    // A link to the group's notebook, Teams, or Planner would still open this site's group, so it stays as it is and
+    // is reported. Copied notebook files in the destination's Site Assets aren't a working notebook.
+    result.groupApp = snaToolsSiteGroupApp(text, context);
+    if (result.groupApp) {
+        result.kept = true;
+        return result;
+    }
+    var rewritten = snaToolsRewriteSourceLinks(text, context.maps, context.options);
+    result.url = rewritten.text;
+    result.changed = rewritten.changed;
+    result.unmapped = rewritten.unmapped.length > 0;
+    return result;
+}
+
+// ### Menu Links in the Destination ###
+
+// Returns the CSOM object paths, with IDs 1 to 4, to a menu collection of the destination: target.collection, such as
+// QuickLaunch, or the links under target.parentId.
+function snaToolsSiteCsomCollection(target) {
+    var paths = '<StaticProperty Id="1" TypeId="' + SNA_TOOLS_SITE_CONTEXT_TYPE + '" Name="Current" />' +
+        '<Property Id="2" ParentId="1" Name="Web" /><Property Id="3" ParentId="2" Name="Navigation" />';
+    if (target.collection) {
+        return paths + '<Property Id="4" ParentId="3" Name="' + snaToolsXmlText(target.collection) + '" />';
+    }
+    return paths + '<Method Id="5" ParentId="3" Name="GetNodeById"><Parameters><Parameter Type="Int32">' + (Number(target.parentId) || 0) +
+        '</Parameter></Parameters></Method><Property Id="4" ParentId="5" Name="Children" />';
+}
+
+// Adds a link with CSOM as one that SharePoint doesn't check, for an address the REST API refused, such as a page in
+// another site collection. Returns the new link's ID.
+async function snaToolsSiteAddNodeCsom(dest, target, title, url) {
+    var paths = snaToolsSiteCsomCollection(target) +
+        '<Method Id="6" ParentId="4" Name="Add"><Parameters><Parameter TypeId="' + SNA_TOOLS_SITE_NEW_LINK_TYPE + '">' +
+            '<Property Name="AsLastNode" Type="Boolean">true</Property><Property Name="IsExternal" Type="Boolean">true</Property>' +
+            '<Property Name="PreviousNode" Type="Null" /><Property Name="Title" Type="String">' + snaToolsXmlText(title) + '</Property>' +
+            '<Property Name="Url" Type="String">' + snaToolsXmlText(url) + '</Property>' +
+        '</Parameter></Parameters></Method>';
+    var actions = '<ObjectPath Id="7" ObjectPathId="6" /><Query Id="8" ObjectPathId="6"><Query SelectAllProperties="false"><Properties>' +
+        '<Property Name="Id" ScalarProperty="true" /></Properties></Query></Query>';
+    var answer = await snaToolsCsom(dest.siteUrl, snaToolsCsomXml(actions, paths));
+    var made = answer.filter(function(part) { return part && typeof part === 'object' && typeof part.Id === 'number'; })[0];
+    if (!made) { throw snaToolsError(500, 'menu', ''); }
+    return made.Id;
+}
+
+/**
+ * Adds one link to a menu of the destination, at the end of target. Tries the REST API, and CSOM when the REST API
+ * refuses the address.
+ * @param {object} dest The checked destination.
+ * @param {object} target { path (REST address of the collection), collection ('QuickLaunch' or 'TopNavigationBar' for
+ *        the top level), parentId (the link the new one goes under, otherwise) }.
+ * @param {string} title The link's text.
+ * @param {string} url The link's address in the destination.
+ * @param {boolean} isVisible False adds a hidden link.
+ * @param {string[]} audienceIds Microsoft Entra group IDs of the people who see it, or [].
+ * @returns {Promise<{id: number, hiddenSet: boolean, audiencesSet: boolean}>} The new link's ID. hiddenSet is false
+ *          when the link should be hidden but SharePoint refused to hide it, and audiencesSet is false when the link has
+ *          audiences but SharePoint refused to give them to it. Side effects: changes the destination's menu.
+ */
+async function snaToolsSiteAddNode(dest, target, title, url, isVisible, audienceIds) {
+    var body = { __metadata: { type: 'SP.NavigationNode' }, Title: title, Url: url, IsVisible: isVisible };
+    if (audienceIds.length) { body.AudienceIds = { __metadata: { type: 'Collection(Edm.Guid)' }, results: audienceIds }; }
+    try {
+        var made = await snaToolsWrite(dest.siteUrl, target.path, { body: body, verbose: true });
+        var id = made && (made.Id !== undefined ? made.Id : (made.d && made.d.Id));
+        if (typeof id === 'number') { return { id: id, hiddenSet: true, audiencesSet: true }; }
+        throw snaToolsError(500, 'menu', '');
+    } catch (err) {
+        if (snaToolsIsCancelled(err) || err.status === 401 || err.status === 403 || err.status === 429 || err.status === 0) { throw err; }
+        var csomId;
+        try {
+            csomId = await snaToolsSiteAddNodeCsom(dest, target, title, url);
+        } catch (csomErr) {
+            if (snaToolsIsCancelled(csomErr)) { throw csomErr; }
+            throw err;
+        }
+        // CSOM adds a visible link for everyone. The hidden state and the audiences are then changed one at a time,
+        // because a tenant that refuses AudienceIds refuses the whole change. The changes leave out Title and Url, which
+        // SharePoint may refuse again for the same reason it refused the REST request.
+        var made = { id: csomId, hiddenSet: isVisible, audiencesSet: !audienceIds.length };
+        if (!isVisible) {
+            made.hiddenSet = await snaToolsSiteChangeNode(dest, csomId, { IsVisible: false });
+        }
+        if (audienceIds.length) {
+            made.audiencesSet = await snaToolsSiteChangeNode(dest, csomId, { AudienceIds: body.AudienceIds });
+        }
+        return made;
+    }
+}
+
+// Changes one link of the destination's menu with MERGE. Returns false when SharePoint refuses the change.
+async function snaToolsSiteChangeNode(dest, id, change) {
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/web/navigation/GetNodeById(' + id + ')', { method: 'MERGE', verbose: true,
+            body: Object.assign({ __metadata: { type: 'SP.NavigationNode' } }, change) });
+        return true;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return false;
+    }
+}
+
+// Removes links from the destination's menu, last first. Removing a link removes the links under it too. done.count,
+// when given, counts the links removed, so a stop partway can say how many are gone.
+async function snaToolsSiteRemoveNodes(dest, nodes, done) {
+    for (var i = nodes.length - 1; i >= 0; i--) {
+        await snaToolsWrite(dest.siteUrl, '/_api/web/navigation/GetNodeById(' + nodes[i].id + ')', { method: 'DELETE' });
+        if (done) { done.count++; }
+    }
+}
+
+// Puts links that were just added under one parent in the order of ids. SharePoint may add a link at the start or
+// at the end, so the order is read back, and each link is moved after the one before it only when it's wrong.
+async function snaToolsSiteFixOrder(dest, target, ids) {
+    if (ids.length < 2) { return; }
+    var now = (await snaToolsSiteReadNodes(dest.siteUrl, target.path)).map(function(n) { return n.id; });
+    var positions = ids.map(function(id) { return now.indexOf(id); });
+    var inOrder = positions.every(function(p, i) { return p > -1 && (i === 0 || p > positions[i - 1]); });
+    if (inOrder) { return; }
+    for (var i = 1; i < ids.length; i++) {
+        await snaToolsWrite(dest.siteUrl, target.path + '/MoveAfter', { body: { nodeId: ids[i], previousNodeId: ids[i - 1] } });
+    }
+}
+
+/**
+ * Returns the result and note for a copied link, from what happened to its address, its hidden state, its audiences,
+ * and whether it opens in a new tab.
+ * @param {object} node The source link (MenuNode).
+ * @param {object} link From snaToolsSiteRewriteLink.
+ * @param {object} menu { words, menuStateKey }. A menu without menuStateKey can't keep links that open in a new tab.
+ * @param {string[]} audienceIds The audiences given to the copy, which are [] when this site doesn't use them.
+ * @param {object} set { hidden, audiences }, from hiddenSet and audiencesSet of snaToolsSiteAddNode: false when
+ *        SharePoint refused to hide the copy or to give it its audiences.
+ * @returns {{result: string, note: string}}
+ */
+function snaToolsSiteLinkRow(node, link, menu, audienceIds, set) {
+    var parts = [];
+    var partial = false;
+    var edit = 'with Edit in the destination\'s ' + menu.words + '.';
+    if (link.isLabel) { parts.push('Copied the label, which has no link.'); }
+    else if (link.groupApp) {
+        var opens = link.groupApp === 'the notebook' ? 'the notebook of this site\'s Microsoft 365 group' : link.groupApp + ' for this site\'s Microsoft 365 group';
+        parts.push('Copied the link as it is. It opens ' + opens + ', so in the destination it still opens this site\'s group. Change or remove it ' + edit);
+        partial = true;
+    } else if (link.unmapped) {
+        parts.push('Copied the link, but it still points to this site or to something the copy didn\'t include. Change it in the destination\'s menu.');
+        partial = true;
+    } else if (link.changed) { parts.push('Copied the link and pointed it at the destination.'); }
+    else if (link.kept) { parts.push('Copied the link as it is.'); }
+    else { parts.push('Copied the link. It points outside this site, so it stays the same.'); }
+    var hidden = !node.isVisible;
+    var hiddenOk = !hidden || set.hidden;
+    var audiencesOk = !audienceIds.length || set.audiences;
+    if (hiddenOk && audiencesOk) {
+        if (hidden) { parts.push('It\'s hidden, as in this site.'); }
+        if (audienceIds.length) { parts.push('Only its audiences see it, as in this site.'); }
+    } else {
+        if (!hiddenOk && !audiencesOk) {
+            parts.push('SharePoint didn\'t let Sitenalyzer hide it or show it only to its audiences, so it shows to everyone.');
+        } else if (!hiddenOk) {
+            parts.push('SharePoint didn\'t let Sitenalyzer hide it, so ' + (audienceIds.length ? 'its audiences see it.' : 'it shows to everyone.'));
+        } else if (hidden) {
+            parts.push('It\'s hidden, as in this site, but SharePoint didn\'t let Sitenalyzer give it its audiences, so everyone would see it if someone showed it.');
+        } else {
+            parts.push('SharePoint didn\'t let Sitenalyzer show it only to its audiences, so it shows to everyone.');
+        }
+        parts.push('Change it ' + edit);
+        partial = true;
+    }
+    if (node.openInNewWindow && !menu.menuStateKey) {
+        parts.push('It opens in a new tab in this site, but Sitenalyzer can\'t copy that for the ' + menu.words + ', so it opens in the same tab in the destination.');
+        partial = true;
+    }
+    return { result: partial ? 'partial' : 'copied', note: parts.join(' ') };
+}
+
+// Logs a Skipped row for each link under a link that wasn't copied.
+function snaToolsSiteSkipChildren(menu, nodes, trail, parentTitle) {
+    (nodes || []).forEach(function(node) {
+        var path = trail.concat(node.title);
+        snaToolsLog(SNA_TOOLS_KINDS.menuLink, menu.label + ': ' + path.join(' > '), 'skipped',
+            'Sitenalyzer didn\'t copy this link, because it didn\'t copy the link above it, ' + parentTitle + '.');
+        snaToolsSiteSkipChildren(menu, node.children, path, parentTitle);
+    });
+}
+
+/**
+ * Adds links to a menu of the destination in the order of this site's menu, with the links under each one, and logs
+ * a result for each. The links under a link are added after all the links beside it.
+ * @param {object} dest The checked destination.
+ * @param {object} context From snaToolsSiteLinkContext.
+ * @param {object} menu { label (such as 'Left menu'), words, menuStateKey, useAudiences (false copies the links without
+ *        their audiences), max (most links at the top level, or 0), created ([{ id, node, link, audienceIds, hiddenSet,
+ *        audiencesSet, row }], filled here), orderProblem (set to true when the order couldn't be fixed) }.
+ * @param {object} target Where the links go (see snaToolsSiteAddNode).
+ * @param {object[]} nodes The source links (MenuNode).
+ * @param {string[]} trail The titles of the links above these, for the names in the results.
+ * @returns {Promise<void>} Side effects: changes the destination's menu and adds results.
+ */
+async function snaToolsSiteAddLinks(dest, context, menu, target, nodes, trail) {
+    var K = SNA_TOOLS_KINDS.menuLink;
+    var ids = [];
+    var added = [];
+    for (var i = 0; i < nodes.length; i++) {
+        snaToolsCheckCancelled();
+        var node = nodes[i];
+        var path = trail.concat(node.title);
+        var name = menu.label + ': ' + path.join(' > ');
+        if (menu.max && trail.length === 0 && i >= menu.max) {
+            snaToolsLog(K, name, 'skipped', 'The footer shows at most ' + menu.max + ' links, so Sitenalyzer didn\'t copy this one. Change the footer by hand to choose which links it shows.');
+            snaToolsSiteSkipChildren(menu, node.children, path, node.title);
+            continue;
+        }
+        var link = snaToolsSiteRewriteLink(node.url, context);
+        if (link.skipNote) {
+            snaToolsLog(K, name, 'skipped', link.skipNote);
+            snaToolsSiteSkipChildren(menu, node.children, path, node.title);
+            continue;
+        }
+        var audienceIds = menu.useAudiences ? node.audienceIds : [];
+        var made;
+        try {
+            made = await snaToolsSiteAddNode(dest, target, node.title, link.url, node.isVisible, audienceIds);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(K, name, 'failed', snaToolsFriendlyError(err));
+            snaToolsSiteSkipChildren(menu, node.children, path, node.title);
+            continue;
+        }
+        var id = made.id;
+        ids.push(id);
+        added.push({ id: id, node: node, path: path });
+        var outcome = snaToolsSiteLinkRow(node, link, menu, audienceIds, { hidden: made.hiddenSet, audiences: made.audiencesSet });
+        var row = snaToolsLog(K, name, outcome.result, outcome.note,
+            { verify: { type: 'menuLink', path: target.path, nodeId: id, title: node.title, url: link.url, hidden: !node.isVisible && made.hiddenSet } });
+        menu.created.push({ id: id, node: node, link: link, audienceIds: audienceIds, hiddenSet: made.hiddenSet, audiencesSet: made.audiencesSet, row: row });
+    }
+    try {
+        await snaToolsSiteFixOrder(dest, target, ids);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        menu.orderProblem = true;
+    }
+    for (var j = 0; j < added.length; j++) {
+        if (!added[j].node.children.length) { continue; }
+        await snaToolsSiteAddLinks(dest, context, menu, { path: '/_api/web/navigation/GetNodeById(' + added[j].id + ')/Children', parentId: added[j].id },
+            added[j].node.children, added[j].path);
+    }
+}
+
+// True when two lists of audience GUIDs hold the same GUIDs.
+function snaToolsSiteSameAudiences(a, b) {
+    var left = snaToolsSiteAudiences(a).sort();
+    var right = snaToolsSiteAudiences(b).sort();
+    return left.length === right.length && left.every(function(id, i) { return id === right[i]; });
+}
+
+// Sets which links open in a new tab, who sees them, and which are hidden through the menu editor (SaveMenuState),
+// which PnP says the audiences need to take effect. Only for the left menu, the one menu where SharePoint keeps new-tab
+// links. The menu editor keeps its own hidden state, which can differ from the one the links were added with, so every
+// link the copy added gets all three, and they are read back after the save. The hidden state and the audiences are
+// checked apart: when the read-back shows one that SharePoint refused earlier as set, the link's row and its destination
+// check are made again from what the read-back shows. Returns false when SharePoint didn't save them, or the read-back
+// shows something else.
+async function snaToolsSiteSaveMenuExtras(dest, menu) {
+    if (!menu.menuStateKey) { return true; }
+    var made = {};
+    var needed = false;
+    menu.created.forEach(function(c) {
+        made[String(c.id)] = c;
+        if (c.node.openInNewWindow || c.audienceIds.length || !c.node.isVisible) { needed = true; }
+    });
+    if (!needed) { return true; }
+    var address = '/_api/navigation/MenuState?menuNodeKey=' + snaToolsSiteMenuKey(menu.menuStateKey);
+    function walk(nodes, visit) {
+        (nodes || []).forEach(function(n) {
+            var created = made[String(n.Key)];
+            if (created) { visit(n, created); }
+            walk(n.Nodes, visit);
+        });
+    }
+    try {
+        var state = await snaToolsRead(dest.siteUrl, address);
+        var changed = 0;
+        walk(state && state.Nodes, function(n, c) {
+            n.OpenInNewWindow = !!c.node.openInNewWindow;
+            n.AudienceIds = c.audienceIds.slice();
+            n.IsHidden = !c.node.isVisible;
+            changed++;
+        });
+        if (changed === 0) { return false; }
+        snaToolsSiteCheckSaved(await snaToolsWrite(dest.siteUrl, '/_api/navigation/SaveMenuState', { body: { menuState: state } }));
+        var confirmed = {};
+        walk((await snaToolsRead(dest.siteUrl, address) || {}).Nodes, function(n, c) {
+            var hiddenSet = (n.IsHidden === true) === !c.node.isVisible;
+            var audiencesSet = snaToolsSiteSameAudiences(n.AudienceIds, c.audienceIds);
+            if (hiddenSet && audiencesSet && (n.OpenInNewWindow === true) === !!c.node.openInNewWindow) { confirmed[String(c.id)] = true; }
+            if ((!hiddenSet || c.hiddenSet) && (!audiencesSet || c.audiencesSet)) { return; }
+            c.hiddenSet = c.hiddenSet || hiddenSet;
+            c.audiencesSet = c.audiencesSet || audiencesSet;
+            if (!c.row) { return; }
+            var fixed = snaToolsSiteLinkRow(c.node, c.link, menu, c.audienceIds, { hidden: c.hiddenSet, audiences: c.audiencesSet });
+            c.row.result = fixed.result;
+            c.row.note = fixed.note;
+            if (c.row.verify) { c.row.verify.hidden = !c.node.isVisible && c.hiddenSet; }
+        });
+        return menu.created.every(function(c) { return confirmed[String(c.id)]; });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return false;
+    }
+}
+
+/**
+ * Makes one menu of the destination the same as this site's: reads the destination's links, removes them, and adds
+ * this site's links in order. Does nothing to the destination when this site's menu couldn't be read.
+ * @param {object} dest The checked destination.
+ * @param {object} context From snaToolsSiteLinkContext.
+ * @param {object} menu { label, words (the menu in a sentence, such as 'left menu'), target (see snaToolsSiteAddNode),
+ *        menuStateKey, useAudiences (see snaToolsSiteAddLinks), source (MenuRead), keep (IDs of the destination's links to leave, such as the footer's name),
+ *        max (most links at the top level, or 0), newTarget (async function that makes and returns the target after
+ *        the old links are removed, or null) }.
+ * @returns {Promise<boolean>} True when this site's links were added. Side effects: changes the destination's menu.
+ */
+async function snaToolsSiteCopyMenu(dest, context, menu) {
+    var K = SNA_TOOLS_KINDS.menuLink;
+    var label = menu.label;
+    if (!menu.source || menu.source.error) {
+        snaToolsLog(K, label, 'failed', 'Sitenalyzer couldn\'t read this site\'s ' + menu.words + ', so it left the destination\'s ' + menu.words + ' as it is. Copy again later.');
+        return false;
+    }
+    var existing;
+    try {
+        existing = (await snaToolsSiteReadNodes(dest.siteUrl, menu.target.path)).filter(function(n) { return (menu.keep || []).indexOf(n.id) === -1; });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(K, label, 'failed', 'Sitenalyzer couldn\'t read the destination\'s ' + menu.words + ', so it didn\'t change it. Copy again later.');
+        return false;
+    }
+    var nodes = menu.source.nodes;
+    if (nodes.length === 0 && existing.length === 0) {
+        snaToolsLog(K, label, 'skipped', 'This site\'s ' + menu.words + ' has no links, so there was nothing to copy.');
+        return false;
+    }
+    var removed = { count: 0 };
+    try {
+        await snaToolsSiteRemoveNodes(dest, existing, removed);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) {
+            // Each removal finished before the next one was sent, so fewer links were removed than the destination had.
+            if (removed.count > 0) {
+                snaToolsLogStopped(K, label, 'You stopped the copy after Sitenalyzer removed ' + removed.count + ' of the ' + existing.length +
+                    ' links the destination had in its ' + menu.words + ', before it added this site\'s links. Copy again into the same destination ' +
+                    'to finish the ' + menu.words + '.');
+            }
+            throw err;
+        }
+        var gone = removed.count === 0
+            ? 'Sitenalyzer couldn\'t remove the destination\'s own links from its ' + menu.words + ', so it didn\'t add this site\'s links, '
+            : 'Sitenalyzer removed ' + removed.count + ' of the ' + snaCountText(existing.length, 'link', 'links') + ' the destination had in its ' +
+                menu.words + ', but SharePoint didn\'t let it remove the rest. It didn\'t add this site\'s links, ';
+        snaToolsLog(K, label, 'failed', gone + 'which would have put some links there twice. Check the destination\'s ' + menu.words +
+            ', then copy again. ' + snaToolsFriendlyError(err));
+        return false;
+    }
+    // This row isn't a copied item, so it isn't counted with them.
+    if (existing.length > 0) {
+        snaToolsLog(K, label, 'copied', nodes.length === 0
+            ? 'This site\'s ' + menu.words + ' has no links, so Sitenalyzer removed the destination\'s own links to match it.'
+            : 'Removed the destination\'s own links from its ' + menu.words + ', so it matches this site\'s.', { summary: true });
+    }
+    if (nodes.length === 0) { return true; }
+    var target = menu.target;
+    if (menu.newTarget) {
+        try {
+            target = await menu.newTarget();
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(K, label, 'failed', snaToolsFriendlyError(err));
+            return false;
+        }
+    }
+    menu.created = [];
+    menu.orderProblem = false;
+    await snaToolsSiteAddLinks(dest, context, menu, target, nodes, []);
+    if (menu.source.overLimit) {
+        snaToolsLog(K, label, 'partial', 'This site\'s ' + menu.words + ' has more than ' + SNA_TOOLS_SITE_MENU_MAX + ' links, and Sitenalyzer reads at most ' +
+            SNA_TOOLS_SITE_MENU_MAX + ' links from one menu, so some links under others might be missing in the destination. Compare the two menus, and add ' +
+            'any missing links with Edit in the destination\'s ' + menu.words + '.');
+    }
+    if (menu.orderProblem) {
+        snaToolsLog(K, label, 'partial', 'Copied the links, but they may be in a different order than in this site. Put them in order with Edit in the destination\'s ' + menu.words + '.');
+    }
+    if (!(await snaToolsSiteSaveMenuExtras(dest, menu))) {
+        snaToolsLog(K, label, 'partial', 'Copied the links, but SharePoint didn\'t confirm which of them are hidden, open in a new tab, or show only to their ' +
+            'audiences. Check those links with Edit in the destination\'s ' + menu.words + '.');
+    }
+    return true;
+}
+
+// ### Footer ###
+
+// Returns the destination's footer menu, { id, path }, setting it up first when the destination never had one.
+// Throws when SharePoint refuses.
+async function snaToolsSiteFooterRoot(dest, state) {
+    if (state.footerRoot) { return state.footerRoot; }
+    var address = '/_api/navigation/MenuState?menuNodeKey=' + snaToolsSiteMenuKey(SNA_TOOLS_SITE_FOOTER_KEY);
+    function ready(menu) {
+        return !!(menu && menu.StartingNodeKey) && (!menu.StartingNodeTitle || menu.StartingNodeTitle === SNA_TOOLS_SITE_FOOTER_LINKS);
+    }
+    var menu = await snaToolsRead(dest.siteUrl, address);
+    if (!ready(menu)) {
+        snaToolsSiteCheckSaved(await snaToolsWrite(dest.siteUrl, '/_api/navigation/SaveMenuState', { body: { menuState: {
+            Version: new Date().toISOString(), StartingNodeTitle: SNA_TOOLS_SITE_FOOTER_LINKS, SPSitePrefix: '/', SPWebPrefix: dest.serverRelativeUrl,
+            FriendlyUrlPrefix: '', SimpleUrl: '', Nodes: [] } } }));
+        menu = await snaToolsRead(dest.siteUrl, address);
+        if (!ready(menu)) { throw snaToolsError(500, 'footer', ''); }
+    }
+    var id = parseInt(menu.StartingNodeKey, 10);
+    state.footerRoot = { id: id, path: '/_api/web/navigation/GetNodeById(' + id + ')/Children', parentId: id };
+    return state.footerRoot;
+}
+
+// The note for a footer the destination can't have, for one it didn't let Sitenalyzer set up, and for one whose items
+// couldn't be read.
+var SNA_TOOLS_SITE_NO_FOOTER_NOTE = 'The destination isn\'t a communication site, so it has no footer. Sitenalyzer didn\'t copy ';
+var SNA_TOOLS_SITE_FOOTER_REFUSED_NOTE = 'SharePoint didn\'t let Sitenalyzer set up the footer in the destination. Add it by hand in ' + SNA_TOOLS_SITE_WHERE.footer + '.';
+var SNA_TOOLS_SITE_FOOTER_UNREAD_NOTE = 'Sitenalyzer couldn\'t read the destination\'s footer, so it left the footer as it is. Copy again later, or change it by hand in ' +
+    SNA_TOOLS_SITE_WHERE.footer + '.';
+
+// The start of the note for a footer part the copy left out because the destination's features couldn't be read.
+var SNA_TOOLS_SITE_DEST_UNCHECKED_NOTE = 'Sitenalyzer couldn\'t check whether the destination has a footer, so it didn\'t copy ';
+
+// Returns the destination's footer, { root, children }, setting it up first when needed. When that fails, logs a row
+// named each of names with the reason, and returns null.
+async function snaToolsSiteOpenFooter(dest, state, kind, names) {
+    var root;
+    try {
+        root = await snaToolsSiteFooterRoot(dest, state);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        names.forEach(function(name) { snaToolsLog(kind, name, 'skipped', SNA_TOOLS_SITE_FOOTER_REFUSED_NOTE); });
+        return null;
+    }
+    try {
+        return { root: root, children: await snaToolsSiteReadNodes(dest.siteUrl, root.path) };
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        names.forEach(function(name) { snaToolsLog(kind, name, 'failed', SNA_TOOLS_SITE_FOOTER_UNREAD_NOTE); });
+        return null;
+    }
+}
+
+// Copies the footer's links. The footer's display name and logo are part of the site look (see snaToolsSiteCopyFooterLook).
+async function snaToolsSiteCopyFooterMenu(plan, dest, state, context, useAudiences) {
+    var K = SNA_TOOLS_KINDS.menuLink;
+    var footer = plan.siteSettings && plan.siteSettings.footer;
+    if (!footer) { return; }
+    if (footer.error) {
+        snaToolsLog(K, 'Footer menu', 'failed', 'Sitenalyzer couldn\'t read this site\'s footer, so it left the destination\'s footer as it is. Copy again later.');
+        return;
+    }
+    var destCommunication = await snaToolsSiteIsCommunication(dest, state);
+    if (destCommunication !== true) {
+        if (footer.links.length) {
+            snaToolsLog(K, 'Footer menu', 'skipped', destCommunication === false ? SNA_TOOLS_SITE_NO_FOOTER_NOTE + 'the footer links.'
+                : SNA_TOOLS_SITE_DEST_UNCHECKED_NOTE + 'the footer links. Copy again later.');
+        }
+        return;
+    }
+    var opened = await snaToolsSiteOpenFooter(dest, state, K, ['Footer menu']);
+    if (!opened) { return; }
+    var root = opened.root;
+    // The footer's name and logo stay; every other item under the footer holds links.
+    var keep = opened.children.filter(function(n) { return n.title === SNA_TOOLS_SITE_FOOTER_NAME || n.title === SNA_TOOLS_SITE_FOOTER_LOGO; }).map(function(n) { return n.id; });
+    var copied = await snaToolsSiteCopyMenu(dest, context, {
+        label: 'Footer menu', words: 'footer', target: root, menuStateKey: '', useAudiences: useAudiences, source: { nodes: footer.links }, keep: keep,
+        max: SNA_TOOLS_SITE_FOOTER_MAX,
+        newTarget: async function() {
+            var id = (await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_LINKS, '', true, [])).id;
+            return { path: '/_api/web/navigation/GetNodeById(' + id + ')/Children', parentId: id };
+        }
+    });
+    if (!copied || !footer.links.length) { return; }
+    var destWeb = null;
+    try { destWeb = await snaToolsSiteDestWeb(dest, state, true); } catch (err) { if (snaToolsIsCancelled(err)) { throw err; } }
+    if (destWeb && destWeb.FooterEnabled === false) {
+        snaToolsLog(K, 'Footer menu', 'partial', 'Copied the footer links, but the destination\'s footer is turned off, so they don\'t show. ' +
+            'Turn it on in ' + SNA_TOOLS_SITE_WHERE.footer + ', or copy again with Site look on.');
+    }
+}
+
+// ### Copy Navigation ###
+
+// Reports the hub menu of this site, which belongs to its hub, so the copy doesn't change it.
+function snaToolsSiteReportHub(settings) {
+    var site = settings.site || {};
+    var hub = settings.hubName ? ' ' + snaMaskText(settings.hubName) : '';
+    if (site.IsHubSite === true) {
+        snaToolsLog(SNA_TOOLS_KINDS.menuLink, 'Hub menu', 'skipped', 'This site is the hub' + hub + ', and its hub menu belongs to the hub, so Sitenalyzer ' +
+            'didn\'t copy it. To give the destination a hub menu, ask your SharePoint admin to make the destination a hub.');
+    } else if (snaToolsSiteHasGroup(site.HubSiteId)) {
+        snaToolsLog(SNA_TOOLS_KINDS.menuLink, 'Hub menu', 'skipped', 'This site is connected to the hub' + hub + ', whose menu shows at the top of the site. ' +
+            'The menu belongs to the hub, so Sitenalyzer didn\'t copy it. To show it in the destination, connect the destination to the same hub in ' +
+            SNA_TOOLS_SITE_WHERE.picture + '.');
+    }
+}
+
+// Turns on audience targeting for the destination's menus, as this site has it. Tries the REST API, then CSOM.
+async function snaToolsSiteTurnOnAudiences(dest) {
+    var K = SNA_TOOLS_KINDS.menuLink;
+    var name = 'Audience targeting in menus';
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/web', { method: 'MERGE', verbose: true, body: { __metadata: { type: 'SP.Web' }, NavAudienceTargetingEnabled: true } });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        try {
+            await snaToolsCsom(dest.siteUrl, snaToolsCsomXml(
+                '<SetProperty Id="3" ObjectPathId="2" Name="NavAudienceTargetingEnabled"><Parameter Type="Boolean">true</Parameter></SetProperty>' +
+                '<Method Name="Update" Id="4" ObjectPathId="2" />',
+                '<StaticProperty Id="1" TypeId="' + SNA_TOOLS_SITE_CONTEXT_TYPE + '" Name="Current" /><Property Id="2" ParentId="1" Name="Web" />'));
+        } catch (csomErr) {
+            if (snaToolsIsCancelled(csomErr)) { throw csomErr; }
+            snaToolsLog(K, name, 'failed', 'Sitenalyzer couldn\'t turn on audience targeting for the destination\'s menus, so every link shows to everyone. ' +
+                'Turn it on in the destination with Edit at the bottom of the menu, then copy again.');
+            return;
+        }
+    }
+    snaToolsLog(K, name, 'copied', 'Turned on audience targeting for the destination\'s menus, as in this site. It hides links from people outside a link\'s ' +
+        'audiences, but they can still open the pages if they have the address.');
+}
+
+/**
+ * Copies this site's menus into the destination: the left menu always, the top menu when this site shows it (a
+ * classic site that isn't a hub), and the footer's links when this site has a footer. Each menu ends up the same as
+ * this site's: the destination's own links in it are removed, but only after this site's menu was read. Links into
+ * this site point at the destination; links to other sites stay the same. Hub menus are reported, not copied.
+ * Runs after the lists, libraries, and pages are copied, so links to them find their copies.
+ * @param {object} plan The copy plan, with plan.siteSettings from snaToolsSiteReadSource.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs and addresses.
+ * @returns {Promise<void>} Side effects: changes the destination's menus and adds results.
+ */
+async function snaToolsCopyNavigation(plan, dest, maps) {
+    if (!plan.navigation) { return; }
+    var K = SNA_TOOLS_KINDS.menuLink;
+    var settings = plan.siteSettings || { menus: {} };
+    var state = snaToolsSiteState(maps);
+    var menus = settings.menus || {};
+    var footer = settings.footer;
+    var topRead = menus.topNavigationBar;
+    var showsTop = !!topRead && !snaToolsSiteIsModern(settings.web);
+    // The lists and libraries of both sites are read only when there is a link to point at the destination.
+    var anyLinks = [menus.quickLaunch, showsTop ? topRead : null, footer && !footer.error ? { nodes: footer.links } : null].some(function(read) {
+        return !!(read && read.nodes && read.nodes.length);
+    });
+    var context = anyLinks ? await snaToolsSiteLinkContext(plan, dest, maps, state) : null;
+
+    // Audiences hide links only while audience targeting is on, so the links of a site that has it off are copied
+    // without their audiences: they show to everyone there, and must show to everyone in the destination too. When
+    // this site's settings couldn't be read, targeting is null, and the links are copied without their audiences too.
+    var targeting = settings.web && typeof settings.web.NavAudienceTargetingEnabled === 'boolean' ? settings.web.NavAudienceTargetingEnabled : null;
+    var useAudiences = targeting === true;
+    var anyAudience = false;
+    (function walk(nodes) {
+        (nodes || []).forEach(function(n) { if (n.audienceIds.length) { anyAudience = true; } walk(n.children); });
+    })([].concat((menus.quickLaunch && menus.quickLaunch.nodes) || [], showsTop ? (topRead.nodes || []) : [],
+        footer && !footer.error ? footer.links : []));
+    if (useAudiences) { await snaToolsSiteTurnOnAudiences(dest); }
+    else if (anyAudience && targeting === null) {
+        snaToolsLog(K, 'Audience targeting in menus', 'skipped', 'Some links in this site\'s menus have audiences, but Sitenalyzer couldn\'t check whether ' +
+            'this site uses audience targeting, so it copied the links without their audiences, and they show to everyone. Copy again later, or add the ' +
+            'audiences with Edit in the destination\'s menus.');
+    } else if (anyAudience) {
+        snaToolsLog(K, 'Audience targeting in menus', 'skipped', 'Some links in this site\'s menus have audiences, but audience targeting is off in this ' +
+            'site, so Sitenalyzer copied them without their audiences. They show to everyone, as in this site.');
+    }
+
+    snaToolsSiteReportHub(settings);
+    var quick = SNA_TOOLS_SITE_MENUS.quickLaunch;
+    await snaToolsSiteCopyMenu(dest, context, { label: quick.label, words: quick.words, menuStateKey: quick.menuStateKey, useAudiences: useAudiences,
+        source: menus.quickLaunch, target: { path: '/_api/web/navigation/' + quick.collection, collection: quick.collection }, keep: [], max: 0, newTarget: null });
+
+    var top = SNA_TOOLS_SITE_MENUS.topNavigationBar;
+    if (topRead && !showsTop) {
+        // Modern pages don't show the top menu, so links kept there are reported, not copied.
+        if (topRead.nodes && topRead.nodes.length) {
+            snaToolsLog(K, top.label, 'skipped', 'This site\'s top menu has ' + snaCountText(topRead.nodes.length, 'link', 'links') + ', but modern pages ' +
+                'don\'t show the top menu, so Sitenalyzer didn\'t copy it. Add any links you need to the destination\'s left menu.');
+        }
+    } else if (topRead) {
+        // SharePoint keeps "open in new tab" only for the left menu, so the top menu has no menu editor key here.
+        await snaToolsSiteCopyMenu(dest, context, { label: top.label, words: top.words, menuStateKey: '', useAudiences: useAudiences, source: topRead,
+            target: { path: '/_api/web/navigation/' + top.collection, collection: top.collection }, keep: [], max: 0, newTarget: null });
+    }
+    await snaToolsSiteCopyFooterMenu(plan, dest, state, context, useAudiences);
+}
+
+// ### Copy the Site Look ###
+
+// Returns where an image of this site is: { kind: 'file', path } for a file in this site, { kind: 'api', url } for a
+// picture SharePoint makes, such as a group's picture, { kind: 'default' } for SharePoint's own image, or
+// { kind: 'elsewhere' } for anything else, such as a file in another site.
+function snaToolsSiteImageSource(plan, value) {
+    var siteUrl = xlsxStripSlash(plan.source.siteUrl);
+    var origin = snaToolsSiteParts(siteUrl).origin;
+    var url;
+    try { url = new URL(String(value || ''), origin + '/'); } catch (e) { return { kind: 'elsewhere' }; }
+    if (url.origin.toLowerCase() !== origin.toLowerCase()) { return { kind: 'elsewhere' }; }
+    var path = url.pathname;
+    try { path = decodeURIComponent(path); } catch (e) { return { kind: 'elsewhere' }; }
+    var under = snaToolsFilesUnder(path, snaToolsFilesSourcePath(plan));
+    if (under === null || under === '') { return { kind: 'elsewhere' }; }
+    if (/^_layouts\//i.test(under)) { return { kind: 'default' }; }
+    if (/^_api\//i.test(under)) {
+        return { kind: 'api', url: siteUrl + '/' + under.split('/').map(encodeURIComponent).join('/') + url.search };
+    }
+    return { kind: 'file', path: path };
+}
+
+// Downloads an image of this site (see snaToolsSiteImageSource).
+async function snaToolsSiteDownload(plan, image) {
+    if (image.kind === 'file') { return snaToolsReadBlob(plan.source.siteUrl, image.path); }
+    var site = xlsxStripSlash(plan.source.siteUrl);
+    snaToolsCheckAddress(site, image.url);
+    var res = await snaToolsFetch(site, image.url, { method: 'GET', headers: { 'Accept': 'image/*' } });
+    return res.blob();
+}
+
+// Returns the file extension for an image, such as '.png', from its name or its type.
+function snaToolsSiteImageExtension(name, type) {
+    var match = /\.([a-z0-9]+)$/i.exec(String(name || ''));
+    if (match && SNA_TOOLS_SITE_IMAGE_TYPES[match[1].toLowerCase()]) { return '.' + match[1].toLowerCase(); }
+    var ext = Object.keys(SNA_TOOLS_SITE_IMAGE_TYPES).filter(function(e) { return SNA_TOOLS_SITE_IMAGE_TYPES[e] === String(type || '').toLowerCase(); })[0];
+    return ext ? '.' + ext : '.png';
+}
+
+/**
+ * Puts a copy of an image of this site, such as its logo, in the destination's Site Assets library, unless the copy of
+ * Site Assets already put it there. Returns where it is.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs and addresses; reads and fills maps.fileUrls.
+ * @param {object} image From snaToolsSiteImageSource, of kind 'file' or 'api'.
+ * @param {string} newName The name for an image SharePoint named itself, such as __siteIcon__.png, without its extension.
+ * @returns {Promise<{path: string, kept: boolean}>} The image's path in the destination, and kept true when the destination
+ *          already had a file there, which Sitenalyzer used instead.
+ * @throws {Error} When the copy fails. Side effects: adds the image to the destination.
+ */
+async function snaToolsSiteCopyImage(plan, dest, maps, image, newName) {
+    var fileState = snaToolsFilesState(maps);
+    var key = image.kind === 'file' ? snaToolsFilesKey(image.path) : '';
+    if (key) {
+        var mapped = Object.keys(maps.fileUrls || {}).filter(function(from) { return snaToolsFilesKey(from) === key; })[0];
+        // A file the copy skipped, such as in Site Assets without Replace, is the destination's own file at that address.
+        var done = fileState.fileResults[key];
+        if (mapped) { return { path: maps.fileUrls[mapped], kept: !!done && done.result === 'skipped' }; }
+    }
+    var destAssets = await snaToolsFilesDestSiteAssets(dest, fileState, true);
+    if (!destAssets) {
+        throw snaToolsUserError('The destination has no Site Assets library, and SharePoint didn\'t let Sitenalyzer make one, so the picture has nowhere to go. ' +
+            'Add a picture to the destination by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
+    }
+    if (image.kind === 'file') {
+        var sourceAssets = snaToolsFilesSiteAssetsOf(await snaToolsFilesSourceListsOrNone(plan, fileState), snaToolsFilesSourcePath(plan));
+        var relative = sourceAssets ? snaToolsFilesUnder(image.path, sourceAssets.root) : null;
+        if (!relative) { relative = snaToolsFilesLeaf(image.path); }
+        // SharePoint manages the pictures it names itself, such as __siteIcon__.png, so the copy gets a name of its own.
+        if (/^__/.test(snaToolsFilesLeaf(relative))) { relative = newName + snaToolsSiteImageExtension(relative, ''); }
+        var destPath = destAssets + '/' + relative;
+        var outcome = await snaToolsFilesTransfer(plan, dest, maps, fileState, { path: image.path, size: 0, uniqueId: '' }, destAssets, destPath, 'picture');
+        fileState.fileResults[key] = { result: outcome.result, note: outcome.note, destPath: destPath };
+        return { path: destPath, kept: outcome.result === 'skipped' };
+    }
+    var blob = await snaToolsSiteDownload(plan, image);
+    var name = newName + snaToolsSiteImageExtension('', blob.type);
+    await snaToolsWrite(dest.siteUrl, '/_api/web/GetFolderByServerRelativePath(decodedurl=@f)/Files/AddUsingPath(decodedurl=@n,overwrite=@o)' +
+        '?@f=' + snaToolsFilesAlias(destAssets) + '&@n=' + snaToolsFilesAlias(name) + '&@o=true', { body: blob });
+    return { path: destAssets + '/' + name, kept: false };
+}
+
+// Returns true when the destination has a file at path, false when it hasn't, and null when SharePoint doesn't say.
+async function snaToolsSiteFileExists(dest, path) {
+    try {
+        await snaToolsRead(dest.siteUrl, '/_api/web/GetFileByServerRelativePath(decodedurl=@p)?@p=' + snaToolsFilesAlias(path) + '&$select=Name');
+        return true;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return err.status === 404 ? false : null;
+    }
+}
+
+// Returns true when the destination's file at path has the same contents as blob, and false when it differs or
+// SharePoint doesn't send it.
+async function snaToolsSiteFileMatches(dest, path, blob) {
+    try {
+        var saved = await snaToolsReadBlob(dest.siteUrl, path);
+        if (saved.size !== blob.size) { return false; }
+        var savedBytes = new Uint8Array(await saved.arrayBuffer());
+        var blobBytes = new Uint8Array(await blob.arrayBuffer());
+        for (var i = 0; i < savedBytes.length; i++) {
+            if (savedBytes[i] !== blobBytes[i]) { return false; }
+        }
+        return true;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        return false;
+    }
+}
+
+// Returns the note for a picture the copy couldn't take, or '' when it can: none of its own, SharePoint's own, or one
+// saved in another site.
+function snaToolsSiteImageProblem(image, what, where) {
+    if (image.kind === 'default') { return 'This site uses SharePoint\'s own ' + what + ', so the destination keeps its own.'; }
+    if (image.kind === 'elsewhere') {
+        return 'This site\'s ' + what + ' is saved in another site, so Sitenalyzer didn\'t copy it. Choose the picture by hand in ' + where + '.';
+    }
+    return '';
+}
+
+// Applies this site's theme colors to the destination. Never uses a theme that only a SharePoint admin can apply.
+async function snaToolsSiteCopyTheme(plan, dest, destSite) {
+    var K = SNA_TOOLS_KINDS.siteLookSetting;
+    var theme = plan.siteSettings.theme;
+    if (!theme || theme.error) {
+        snaToolsLog(K, 'Theme', 'failed', 'Sitenalyzer couldn\'t read this site\'s theme, so the destination keeps its own. Copy again later, or choose a theme in ' +
+            SNA_TOOLS_SITE_WHERE.theme + '.');
+        return;
+    }
+    if (theme.isDefault) {
+        snaToolsLog(K, 'Theme', 'skipped', 'This site uses SharePoint\'s default theme, so the destination keeps its own theme.');
+        return;
+    }
+    var name = String(plan.source.title || 'Copied site').substring(0, 100) + ' colors';
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/thememanager/ApplyTheme', {
+            body: { name: name, themeJson: JSON.stringify({ isInverted: theme.isInverted, palette: theme.palette }) },
+            headers: { 'Content-Type': 'application/json;charset=utf-8' }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        var refusal = snaToolsSiteRefusal(err, SNA_TOOLS_SITE_WHERE.theme);
+        snaToolsLog(K, 'Theme', refusal.result, refusal.note);
+        return;
+    }
+    var inHub = destSite && snaToolsSiteHasGroup(destSite.HubSiteId);
+    // The hub sentence is kept when the destination check finds other colors, because the hub's theme is a likely reason.
+    var hubNote = inHub ? ' The destination is connected to a hub, so the hub\'s colors may replace the copied ones.' : '';
+    // SharePoint's read of a theme gives only its main colors, not the color pairs that newer themes use for page sections.
+    snaToolsLog(K, 'Theme', 'copied', 'Applied this site\'s main theme colors. The colors of page sections might differ. If they do, choose a theme in ' +
+        SNA_TOOLS_SITE_WHERE.theme + '.' + hubNote,
+        { verify: { type: 'siteLook', property: 'theme', value: theme.palette.themePrimary || '', keepNote: hubNote } });
+}
+
+// Sets the header, menu style, and footer settings together with SetChromeOptions, which takes all of them at once.
+// Settings this site has are copied; the others keep the destination's values. The footer settings are copied only
+// between two sites known to have footers, and the menu orientation only into a site known not to have one. Returns
+// true when SharePoint took them.
+async function snaToolsSiteCopyChrome(plan, dest, state) {
+    var K = SNA_TOOLS_KINDS.siteLookSetting;
+    var web = plan.siteSettings.web;
+    var known = SNA_TOOLS_SITE_CHROME.filter(function(s) { return web[s.property] !== undefined && web[s.property] !== null; });
+    if (known.length === 0) {
+        snaToolsLog(K, 'Header and footer', 'skipped', 'Sitenalyzer couldn\'t read this site\'s header and footer settings, so it didn\'t copy them. ' +
+            'Set them by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
+        return false;
+    }
+    var destWeb = null;
+    try { destWeb = await snaToolsSiteDestWeb(dest, state, false); } catch (err) { if (snaToolsIsCancelled(err)) { throw err; } }
+    // Each is true, false, or null when Sitenalyzer couldn't read that site's features.
+    var communication = await snaToolsSiteIsCommunication(dest, state);
+    var sourceCommunication = plan.siteSettings.communication;
+    function copies(setting) {
+        if (web[setting.property] === undefined || web[setting.property] === null) { return false; }
+        if (setting.part === 'footer') { return communication === true && sourceCommunication === true; }
+        if (setting.part === 'orientation') { return communication === false; }
+        return true;
+    }
+    var copied = SNA_TOOLS_SITE_CHROME.filter(copies);
+    var footerOn = web.FooterEnabled === true && sourceCommunication !== false;
+    if (footerOn && communication === false) {
+        snaToolsLog(K, 'Footer', 'skipped', SNA_TOOLS_SITE_NO_FOOTER_NOTE + 'the footer settings.');
+    } else if (footerOn && communication === null) {
+        snaToolsLog(K, 'Footer', 'skipped', SNA_TOOLS_SITE_DEST_UNCHECKED_NOTE + 'the footer settings. Copy again later, or set them by hand in ' +
+            SNA_TOOLS_SITE_WHERE.footer + '.');
+    }
+    if (communication === true && sourceCommunication === false) {
+        snaToolsLog(K, 'Footer', 'skipped', 'This site isn\'t a communication site, so it has no footer, and the destination keeps its own footer settings.');
+    } else if (communication === true && sourceCommunication === null) {
+        snaToolsLog(K, 'Footer', 'skipped', 'Sitenalyzer couldn\'t check whether this site has a footer, so the destination keeps its own footer settings. ' +
+            'Copy again later, or set them by hand in ' + SNA_TOOLS_SITE_WHERE.footer + '.');
+    }
+    if (web.HorizontalQuickLaunch === false && communication === true) {
+        snaToolsLog(K, 'Menu orientation', 'skipped', 'Communication sites always show the menu across the top, so the destination keeps it there.');
+    } else if (typeof web.HorizontalQuickLaunch === 'boolean' && communication === null) {
+        snaToolsLog(K, 'Menu orientation', 'skipped', 'Sitenalyzer couldn\'t check whether the destination is a communication site, which always shows the ' +
+            'menu across the top, so it didn\'t change the menu orientation. Copy again later, or set it by hand in ' + SNA_TOOLS_SITE_WHERE.menu + '.');
+    }
+    if (copied.length === 0) { return false; }
+    // SetChromeOptions changes every setting at once, so the destination's own value of each setting that isn't
+    // copied must be known, or the call would change it.
+    var unknown = !destWeb || SNA_TOOLS_SITE_CHROME.some(function(s) {
+        return !copies(s) && (destWeb[s.property] === undefined || destWeb[s.property] === null);
+    });
+    if (unknown) {
+        snaToolsLog(K, 'Header and footer', 'skipped', 'Sitenalyzer couldn\'t read the destination\'s header and footer settings, and SharePoint changes ' +
+            'them all at once, so Sitenalyzer didn\'t change any of them. Copy again later, or set them by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
+        return false;
+    }
+    var body = {};
+    SNA_TOOLS_SITE_CHROME.forEach(function(s) { body[s.option] = copies(s) ? web[s.property] : destWeb[s.property]; });
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/web/SetChromeOptions', { body: body });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        copied.forEach(function(s) {
+            var refusal = snaToolsSiteRefusal(err, s.part === 'footer' ? SNA_TOOLS_SITE_WHERE.footer : (s.part === 'header' ? SNA_TOOLS_SITE_WHERE.header : SNA_TOOLS_SITE_WHERE.menu));
+            snaToolsLog(K, s.name, refusal.result, refusal.note);
+        });
+        return false;
+    }
+    copied.forEach(function(s) {
+        snaToolsLog(K, s.name, 'copied', 'Set to ' + snaToolsSiteValueWords(s, web[s.property]) + ', as in this site.',
+            { verify: { type: 'siteLook', property: s.property, value: web[s.property] } });
+    });
+    return true;
+}
+
+// Shows or hides the site navigation, as this site does. SharePoint refuses this in the same request as SetChromeOptions,
+// so it's a request of its own.
+async function snaToolsSiteCopyNavigationShown(plan, dest) {
+    var K = SNA_TOOLS_KINDS.siteLookSetting;
+    var shown = plan.siteSettings.web.QuickLaunchEnabled;
+    if (typeof shown !== 'boolean') { return; }
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/web', { method: 'MERGE', verbose: true, body: { __metadata: { type: 'SP.Web' }, QuickLaunchEnabled: shown } });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        var refusal = snaToolsSiteRefusal(err, SNA_TOOLS_SITE_WHERE.menu);
+        snaToolsLog(K, 'Site navigation visibility', refusal.result, refusal.note);
+        return;
+    }
+    snaToolsLog(K, 'Site navigation visibility', 'copied', (shown ? 'Shows' : 'Hides') + ' the site navigation, as in this site.',
+        { verify: { type: 'siteLook', property: 'QuickLaunchEnabled', value: shown } });
+}
+
+// Returns the note for a picture the destination's Site Assets already had at the same address as this site's picture,
+// which the copy used and left as it is. what names the picture, such as 'logo'.
+function snaToolsSiteKeptPictureNote(path, what) {
+    return 'Made ' + snaToolsFilesLeaf(path) + ', a picture the destination already had in Site Assets, the destination\'s ' + what + '. ' +
+        'If it isn\'t this site\'s ' + what + ', check Replace pages and files that already exist in the destination, then copy again.';
+}
+
+// Copies the site logo, and uses the same picture for the site logo thumbnail. A site with a Microsoft 365 group shows
+// the group's picture as its thumbnail, which only some people can change; when SharePoint refuses, the row says who can.
+async function snaToolsSiteCopyLogo(plan, dest, maps) {
+    var K = SNA_TOOLS_KINDS.siteLookSetting;
+    var logo = plan.siteSettings.web.SiteLogoUrl;
+    if (!logo) {
+        snaToolsLog(K, 'Site logo', 'skipped', 'This site has no logo of its own, so the destination keeps its own logo.');
+        return;
+    }
+    var image = snaToolsSiteImageSource(plan, logo);
+    var problem = snaToolsSiteImageProblem(image, 'logo', SNA_TOOLS_SITE_WHERE.header);
+    if (problem) {
+        snaToolsLog(K, 'Site logo', 'skipped', problem);
+        return;
+    }
+    var copy;
+    try {
+        copy = await snaToolsSiteCopyImage(plan, dest, maps, image, 'site-logo-copied');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(K, 'Site logo', 'failed', snaToolsFriendlyError(err));
+        return;
+    }
+    var copiedNote = copy.kept ? snaToolsSiteKeptPictureNote(copy.path, 'logo') : 'Copied this site\'s logo into Site Assets and made it the destination\'s logo.';
+    var hasGroup = snaToolsSiteHasGroup(dest.groupId);
+    try {
+        await snaToolsWrite(dest.siteUrl, '/_api/siteiconmanager/setsitelogo', { body: { relativeLogoUrl: copy.path, type: 0, aspect: 1 } });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        var refusal = snaToolsSiteRefusal(err, SNA_TOOLS_SITE_WHERE.header);
+        snaToolsLog(K, 'Site logo', refusal.result, refusal.note);
+        return;
+    }
+    var verify = { verify: { type: 'siteLook', property: 'SiteLogoUrl', value: copy.path } };
+    if (!hasGroup) {
+        snaToolsLog(K, 'Site logo', 'copied', copiedNote, verify);
+    } else {
+        // SharePoint may keep a group's picture as the logo, so the logo is read back before the thumbnail changes it.
+        // When the read fails, SharePoint did take the logo. That row has no destination check, because changing the
+        // group's picture next can change the logo too.
+        var after = null;
+        try {
+            after = await snaToolsRead(dest.siteUrl, '/_api/web?$select=SiteLogoUrl');
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+        }
+        var origin = snaToolsSiteParts(dest.siteUrl).origin;
+        if (!after) {
+            snaToolsLog(K, 'Site logo', 'copied', copiedNote);
+        } else if (snaToolsSiteUrlKey(after.SiteLogoUrl, origin) !== snaToolsSiteUrlKey(copy.path, origin)) {
+            snaToolsLog(K, 'Site logo', 'skipped', 'Sitenalyzer copied this site\'s logo into Site Assets, but SharePoint kept the destination\'s logo, which can ' +
+                'happen on a site with a Microsoft 365 group. Choose the copied logo by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
+        } else {
+            snaToolsLog(K, 'Site logo', 'copied', copiedNote);
+        }
+    }
+    await snaToolsSiteCopyThumbnail(plan, dest, maps, image, copy, hasGroup);
+}
+
+// Sets the site logo thumbnail to the copied logo: with setsitelogo on a site without a group, or by changing the group's
+// picture on a site with one. When SharePoint refuses the group's picture, a PNG logo is saved as __siteIcon__.png in
+// Site Assets, which Microsoft gives as the way around that refusal. A __siteIcon__.png the destination already has is
+// never replaced, because a site owner may have put it there; when it already holds the copied logo, the row says Copied.
+async function snaToolsSiteCopyThumbnail(plan, dest, maps, image, copy, hasGroup) {
+    var K = SNA_TOOLS_KINDS.siteLookSetting;
+    var name = 'Site logo thumbnail';
+    if (!hasGroup) {
+        try {
+            await snaToolsWrite(dest.siteUrl, '/_api/siteiconmanager/setsitelogo', { body: { relativeLogoUrl: copy.path, type: 0, aspect: 0 } });
+            snaToolsLog(K, name, 'copied', 'Made ' + (copy.kept ? snaToolsFilesLeaf(copy.path) : 'the copied logo') + ' the site logo thumbnail too, as in this site.');
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var refusal = snaToolsSiteRefusal(err, SNA_TOOLS_SITE_WHERE.header);
+            snaToolsLog(K, name, refusal.result, refusal.note);
+        }
+        return;
+    }
+    var refusedNote = 'The destination\'s site logo thumbnail is the picture of its Microsoft 365 group, and SharePoint didn\'t let Sitenalyzer change it. ' +
+        'Ask an owner of the group to change it in ' + SNA_TOOLS_SITE_WHERE.picture + '.';
+    var blob = null;
+    var type = '';
+    try {
+        blob = await snaToolsSiteDownload(plan, image);
+        type = SNA_TOOLS_SITE_IMAGE_TYPES[snaToolsSiteImageExtension(image.path || '', blob.type).substring(1)];
+        await snaToolsWrite(dest.siteUrl, '/_api/GroupService/SetGroupImage', { body: blob, headers: { 'Content-Type': type } });
+        snaToolsLog(K, name, 'copied', 'Changed the picture of the destination\'s Microsoft 365 group, which SharePoint shows as its site logo thumbnail, to the copied logo.');
+        return;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    // Microsoft's way around the refusal needs a PNG picture, so a logo of any other type isn't saved under that name.
+    if (!blob || type !== SNA_TOOLS_SITE_IMAGE_TYPES.png) {
+        snaToolsLog(K, name, 'skipped', refusedNote);
+        return;
+    }
+    try {
+        var assets = await snaToolsFilesDestSiteAssets(dest, snaToolsFilesState(maps), false);
+        var iconPath = assets + '/' + SNA_TOOLS_SITE_ICON_NAME;
+        var exists = assets ? await snaToolsSiteFileExists(dest, iconPath) : null;
+        // An earlier copy may have saved the copied logo there already, so a file with the same contents counts as copied.
+        if (exists === true && await snaToolsSiteFileMatches(dest, iconPath, blob)) {
+            snaToolsLog(K, name, 'copied', 'SharePoint didn\'t let Sitenalyzer change the picture of the destination\'s Microsoft 365 group, and Site Assets in ' +
+                'the destination already has the copied logo as ' + SNA_TOOLS_SITE_ICON_NAME + ', as Microsoft suggests. If the site logo thumbnail doesn\'t ' +
+                'change, ask an owner of the group to change it in ' + SNA_TOOLS_SITE_WHERE.picture + '.');
+            return;
+        }
+        if (exists === true) {
+            snaToolsLog(K, name, 'skipped', 'SharePoint didn\'t let Sitenalyzer change the picture of the destination\'s Microsoft 365 group, and Site Assets in ' +
+                'the destination already has a ' + SNA_TOOLS_SITE_ICON_NAME + ', so Sitenalyzer didn\'t replace it. To change the site logo thumbnail by hand, ' +
+                'ask an owner of the group to change it in ' + SNA_TOOLS_SITE_WHERE.picture + '. You can also rename ' + SNA_TOOLS_SITE_ICON_NAME + ' in Site ' +
+                'Assets, then upload the copied logo, ' + snaToolsFilesLeaf(copy.path) + ', there with the name ' + SNA_TOOLS_SITE_ICON_NAME + '.');
+            return;
+        }
+        if (exists === false) {
+            // Never replaces a file, even one that was saved after the check above.
+            await snaToolsWrite(dest.siteUrl, '/_api/web/GetFolderByServerRelativePath(decodedurl=@f)/Files/AddUsingPath(decodedurl=@n,overwrite=@o)' +
+                '?@f=' + snaToolsFilesAlias(assets) + '&@n=' + snaToolsFilesAlias(SNA_TOOLS_SITE_ICON_NAME) + '&@o=false', { body: blob });
+            snaToolsLog(K, name, 'copied', 'SharePoint didn\'t let Sitenalyzer change the picture of the destination\'s Microsoft 365 group, so Sitenalyzer saved ' +
+                'the copied logo as ' + SNA_TOOLS_SITE_ICON_NAME + ' in Site Assets, as Microsoft suggests. If the site logo thumbnail doesn\'t change, ask an ' +
+                'owner of the group to change it in ' + SNA_TOOLS_SITE_WHERE.picture + '.');
+            return;
+        }
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    snaToolsLog(K, name, 'skipped', refusedNote);
+}
+
+// Copies the footer's display name and logo, which SharePoint keeps in the footer menu.
+async function snaToolsSiteCopyFooterLook(plan, dest, maps, state) {
+    var K = SNA_TOOLS_KINDS.siteLookSetting;
+    var footer = plan.siteSettings.footer;
+    if (!footer || (!footer.error && !footer.name && !footer.logoUrl)) { return; }
+    if (footer.error) {
+        snaToolsLog(K, 'Footer display name and logo', 'failed', 'Sitenalyzer couldn\'t read this site\'s footer, so the destination keeps its own footer ' +
+            'name and logo. Copy again later.');
+        return;
+    }
+    // When the destination has no footer, or Sitenalyzer couldn't check, the Footer row of the site look says so.
+    if ((await snaToolsSiteIsCommunication(dest, state)) !== true) { return; }
+    var names = [];
+    if (footer.name) { names.push('Footer display name'); }
+    if (footer.logoUrl) { names.push('Footer logo'); }
+    var opened = await snaToolsSiteOpenFooter(dest, state, K, names);
+    if (!opened) { return; }
+    var root = opened.root;
+    var children = opened.children;
+    function itemsTitled(title) { return children.filter(function(n) { return n.title === title; }); }
+    if (footer.name) {
+        try {
+            await snaToolsSiteRemoveNodes(dest, itemsTitled(SNA_TOOLS_SITE_FOOTER_NAME));
+            var nameId = (await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_NAME, '', true, [])).id;
+            await snaToolsSiteAddNode(dest, { path: '/_api/web/navigation/GetNodeById(' + nameId + ')/Children', parentId: nameId }, footer.name, '', true, []);
+            snaToolsLog(K, 'Footer display name', 'copied', 'Set to ' + snaMaskText(footer.name) + ', as in this site.',
+                { verify: { type: 'menuLink', path: '/_api/web/navigation/GetNodeById(' + nameId + ')/Children', title: footer.name, url: '', hidden: false } });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var refusal = snaToolsSiteRefusal(err, SNA_TOOLS_SITE_WHERE.footer);
+            snaToolsLog(K, 'Footer display name', refusal.result, refusal.note);
+        }
+    }
+    if (footer.logoUrl) {
+        var image = snaToolsSiteImageSource(plan, footer.logoUrl);
+        var problem = snaToolsSiteImageProblem(image, 'footer logo', SNA_TOOLS_SITE_WHERE.footer);
+        if (problem) {
+            snaToolsLog(K, 'Footer logo', 'skipped', problem);
+            return;
+        }
+        try {
+            var copy = await snaToolsSiteCopyImage(plan, dest, maps, image, 'footer-logo-copied');
+            await snaToolsSiteRemoveNodes(dest, itemsTitled(SNA_TOOLS_SITE_FOOTER_LOGO));
+            var logoId = (await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_LOGO, copy.path, true, [])).id;
+            snaToolsLog(K, 'Footer logo', 'copied', copy.kept ? snaToolsSiteKeptPictureNote(copy.path, 'footer logo') :
+                'Copied this site\'s footer logo into Site Assets and made it the destination\'s footer logo.',
+                { verify: { type: 'menuLink', path: root.path, nodeId: logoId, title: SNA_TOOLS_SITE_FOOTER_LOGO, url: copy.path, hidden: false } });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            var logoRefusal = snaToolsSiteRefusal(err, SNA_TOOLS_SITE_WHERE.footer);
+            snaToolsLog(K, 'Footer logo', logoRefusal.result, logoRefusal.note);
+        }
+    }
+}
+
+/**
+ * Copies this site's look into the destination: its theme colors, header, menu style, and footer settings, whether the
+ * site navigation shows, its logo and logo thumbnail, and its footer's display name and logo. The destination keeps its
+ * own title and description. Each setting gets its own row. Settings SharePoint refuses because the destination doesn't
+ * allow custom scripts, or because only a SharePoint admin can change them, are Skipped with what to do instead.
+ * Runs after Site Assets is copied, so a logo copied with it is used from there.
+ * @param {object} plan The copy plan, with plan.siteSettings from snaToolsSiteReadSource.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs and addresses.
+ * @returns {Promise<void>} Side effects: changes how the destination looks and adds results.
+ */
+async function snaToolsCopySiteLook(plan, dest, maps) {
+    if (!plan.siteLook) { return; }
+    var K = SNA_TOOLS_KINDS.siteLookSetting;
+    var settings = plan.siteSettings;
+    if (!settings || !settings.web) {
+        snaToolsLog(K, 'Site look', 'failed', 'Sitenalyzer couldn\'t read this site\'s look, so the destination keeps its own. Copy again later.');
+        return;
+    }
+    if (String(dest.webTemplate || '').toUpperCase() === 'TEAMCHANNEL') {
+        snaToolsLog(K, 'Site look', 'skipped', 'The destination is a Microsoft Teams channel site, which takes its look from its team, so Sitenalyzer didn\'t change it.');
+        return;
+    }
+    var state = snaToolsSiteState(maps);
+    var destSite = null;
+    try { destSite = await snaToolsRead(dest.siteUrl, '/_api/site?$select=HubSiteId'); } catch (err) { if (snaToolsIsCancelled(err)) { throw err; } }
+
+    await snaToolsSiteCopyTheme(plan, dest, destSite);
+    // The header layout comes before the logo, and SetChromeOptions changes the footer's settings before its name and logo.
+    if (await snaToolsSiteCopyChrome(plan, dest, state)) { state.destWeb = null; }
+    await snaToolsSiteCopyNavigationShown(plan, dest);
+    await snaToolsSiteCopyLogo(plan, dest, maps);
+    if (Number(settings.web.HeaderLayout) === 4) {
+        snaToolsLog(K, 'Header background image', 'skipped', 'SharePoint doesn\'t let Sitenalyzer read the background image of this site\'s header, so it ' +
+            'didn\'t copy it. If the header has one, add it by hand in ' + SNA_TOOLS_SITE_WHERE.header + '.');
+    }
+    await snaToolsSiteCopyFooterLook(plan, dest, maps, state);
+}
+
+// ### Check the Destination ###
+
+// Menu links (and the footer's name and logo): found in their place in the destination's menu, by ID or else by title,
+// with the address and visibility that were asked for.
+async function snaToolsSiteVerifyLinks(dest, entries, cache) {
+    var origin = snaToolsSiteParts(dest.siteUrl).origin;
+    var byPath = {};
+    entries.forEach(function(entry) { (byPath[entry.verify.path] = byPath[entry.verify.path] || []).push(entry); });
+    var paths = Object.keys(byPath);
+    for (var p = 0; p < paths.length; p++) {
+        var nodes;
+        try {
+            nodes = await snaToolsSiteReadNodes(dest.siteUrl, paths[p]);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            continue;
+        }
+        byPath[paths[p]].forEach(function(entry) {
+            var check = entry.verify;
+            var node = nodes.filter(function(n) { return check.nodeId !== undefined && n.id === check.nodeId; })[0] ||
+                nodes.filter(function(n) { return n.title === check.title; })[0];
+            check.found = !!node;
+            if (!node) { return; }
+            if (snaToolsSiteUrlKey(node.url, origin) !== snaToolsSiteUrlKey(check.url, origin)) {
+                check.problem = 'The link is in the destination\'s menu, but it points somewhere else. Check it with Edit in the destination\'s menu.';
+            } else if (node.isVisible === !!check.hidden) {
+                check.problem = 'The link is in the destination\'s menu, but it isn\'t ' + (check.hidden ? 'hidden' : 'shown') + ' as in this site. Change it with Edit in the destination\'s menu.';
+            }
+        });
+    }
+}
+
+// Site look settings: the destination's settings read back, and its theme's main color.
+async function snaToolsSiteVerifyLook(dest, entries, cache) {
+    var origin = snaToolsSiteParts(dest.siteUrl).origin;
+    var properties = [];
+    entries.forEach(function(entry) {
+        var name = entry.verify.property;
+        if (name !== 'theme' && properties.indexOf(name) === -1) { properties.push(name); }
+    });
+    var web = null;
+    if (properties.length) {
+        try {
+            web = await snaToolsRead(dest.siteUrl, '/_api/web?$select=' + properties.join(','));
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+        }
+    }
+    var theme = null;
+    if (entries.some(function(e) { return e.verify.property === 'theme'; })) { theme = await snaToolsSiteReadTheme(dest.siteUrl); }
+    entries.forEach(function(entry) {
+        var check = entry.verify;
+        if (check.property === 'theme') {
+            if (!theme || theme.error) { return; }
+            check.found = true;
+            if (String(theme.palette.themePrimary || '').toLowerCase() !== String(check.value || '').toLowerCase()) { check.problem = SNA_TOOLS_SITE_LOOK_CHANGED_NOTE; }
+            return;
+        }
+        if (!web || web[check.property] === undefined) { return; }
+        check.found = true;
+        var same = check.property === 'SiteLogoUrl'
+            ? snaToolsSiteUrlKey(web.SiteLogoUrl, origin) === snaToolsSiteUrlKey(check.value, origin)
+            : web[check.property] === check.value;
+        if (!same) { check.problem = SNA_TOOLS_SITE_LOOK_CHANGED_NOTE; }
+    });
+}
+
+snaToolsAddVerifyCheck('menuLink', snaToolsSiteVerifyLinks);
+snaToolsAddVerifyCheck('siteLook', snaToolsSiteVerifyLook);
+
+/*
+This file is part of Sitenalyzer
+permissions.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: Copies permissions when the person turns on the Permissions switch: permission levels, SharePoint groups with
+         their owners and members, who has access to the site, the permissions of each copied list or library that has
+         its own, and the group that each people picker column is limited to. It never removes access or members the
+         destination already has, and it reports what it left out, such as sharing links and Limited Access.
+Notes: See README file for documentation and full license information.
+
+       Function the copy steps call, only when the Permissions switch is on (keep this name and its parameters):
+       snaToolsCopyPermissions(plan, dest, maps) -> Promise<void>
+           plan is the copy plan (see plan.js; each PlanList has ownPermissions and roleAssignments from the report),
+           dest is the destination from snaToolsCheckDestination (see runner.js), and maps is the shared map of source
+           to destination IDs (see snaToolsNewMaps in runner.js). It fills maps.principals and maps.roleDefinitions,
+           logs one result for each permission level, group, group member, and permission (kinds 'Permission level',
+           'Group', 'Group member', and 'Permission'), using display names only, never sign-in names or email
+           addresses, catches its own errors for each item, and lets snaCancelledError through.
+
+       Order of the work, because each part needs the one before it:
+         1. Read this site's permissions (from the report where it holds them) and the destination's.
+         2. Permission levels: built-in levels map by their type; custom levels map by name or are created.
+         3. Groups: the owners, members, and visitors groups map by their role; other groups map by name or are
+            created. Then owners, then members. A destination group that its parent site or the top site of its
+            site collection also uses as its owners, members, or visitors group gets no new members, because
+            SharePoint groups belong to the whole site collection and the new members would get access to that site
+            too. The copy makes a new group for the destination instead.
+         4. Who has access to the site, then to each list or library with its own permissions.
+         5. People picker columns that this copy made, and that this site limits to a group, are pointed at the
+            destination's group. When the permissions step stops before then, each of those columns gets a row that
+            says it lets people choose anyone.
+       Destination checks this file adds for verify.js (see snaToolsAddVerifyCheck in core.js):
+         { type: 'permissionLevel', roleDefinitionId }            a permission level, by its destination ID
+         { type: 'group', groupId }                               a SharePoint group, by its destination ID
+         { type: 'groupMember', groupId, loginName }              a member of a destination group; loginName stays in memory
+         { type: 'permission', listId, principalId, roleDefinitionIds, keepNote }  access on the site ('' listId) or a
+                                                                  list; keepNote is the end of the note that stays
+                                                                  when the check finds a problem
+         { type: 'ownPermissions', listId }                       a list or library that has its own permissions
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Permissions Settings ###
+
+// Properties of a permission level, read from both sites.
+var SNA_TOOLS_PERMISSIONS_ROLE_SELECT = 'Id,Name,Description,BasePermissions,Hidden,RoleTypeKind,Order';
+
+// Properties of a SharePoint group in this site, with its owner. RequestToJoinLeaveEmailSetting is copied to a new
+// group as it is and never shown in the results.
+var SNA_TOOLS_PERMISSIONS_GROUP_SELECT = 'Id,Title,Description,LoginName,OnlyAllowMembersViewMembership,AllowMembersEditMembership,' +
+    'AllowRequestToJoinLeave,AutoAcceptRequestToJoinLeave,RequestToJoinLeaveEmailSetting,Owner/Id,Owner/Title,' +
+    'Owner/LoginName,Owner/PrincipalType';
+
+// Settings of a group that the copy gives a group it creates. Groups that already exist in the destination keep theirs.
+var SNA_TOOLS_PERMISSIONS_GROUP_SETTINGS = ['Description', 'OnlyAllowMembersViewMembership', 'AllowMembersEditMembership',
+    'AllowRequestToJoinLeave', 'AutoAcceptRequestToJoinLeave', 'RequestToJoinLeaveEmailSetting'];
+
+var SNA_TOOLS_PERMISSIONS_MEMBER_SELECT = 'Id,Title,LoginName,PrincipalType';
+var SNA_TOOLS_PERMISSIONS_ASSIGNMENT_SELECT = 'PrincipalId,Member/Id,Member/Title,Member/LoginName,Member/PrincipalType,' +
+    'RoleDefinitionBindings/Id,RoleDefinitionBindings/Name,RoleDefinitionBindings/RoleTypeKind,RoleDefinitionBindings/Hidden';
+
+// Site groups are read SNA_SHARING_GROUPS_BATCH_SIZE at a time ($top and $skip), at most this many times.
+var SNA_TOOLS_PERMISSIONS_GROUP_PAGES_MAX = 20;
+
+// The three groups every site has. They are matched by their role, because their names differ in each site.
+var SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS = [
+    { property: 'AssociatedOwnerGroup', words: 'owners group' },
+    { property: 'AssociatedMemberGroup', words: 'members group' },
+    { property: 'AssociatedVisitorGroup', words: 'visitors group' }
+];
+
+// PrincipalType values: 1 person, 2 distribution list, 4 security group (including Microsoft 365 groups), 8 SharePoint group.
+var SNA_TOOLS_PERMISSIONS_PRINCIPAL_TYPES = { person: 1, distributionList: 2, securityGroup: 4, sharePointGroup: 8 };
+
+// SharePoint's error code when a new permission level has the same name or the same permissions as one that exists.
+var SNA_TOOLS_PERMISSIONS_SAME_LEVEL_CODE = '-2130575293';
+
+// The CSOM type whose Current property is the request's own site (SP.ClientContext in ProcessQuery requests).
+var SNA_TOOLS_PERMISSIONS_CSOM_CONTEXT_TYPE_ID = '{3747adcd-a3c3-41b9-bfab-4a64dd2f1e0a}';
+
+// The site template of a Teams private or shared channel site. Teams manages its permissions.
+var SNA_TOOLS_PERMISSIONS_CHANNEL_TEMPLATE = 'TEAMCHANNEL';
+
+// Sign-in names that stand for the whole organization, and the start of a Microsoft 365 group's sign-in name.
+var SNA_TOOLS_PERMISSIONS_EVERYONE_LOGIN = 'c:0(.s|true';
+var SNA_TOOLS_PERMISSIONS_EVERYONE_EXCEPT_EXTERNAL_PREFIX = 'c:0-.f|rolemanager|spo-grid-all-users';
+var SNA_TOOLS_PERMISSIONS_M365_GROUP_PREFIX = 'c:0o.c|federateddirectoryclaimprovider|';
+var SNA_TOOLS_PERMISSIONS_SYSTEM_ACCOUNT_LOGIN = 'sharepoint\\system';
+var SNA_TOOLS_PERMISSIONS_EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
+// Most names a note lists before it says how many more there are.
+var SNA_TOOLS_PERMISSIONS_NAMES_IN_NOTE_MAX = 10;
+
+var SNA_TOOLS_PERMISSIONS_GONE_NOTE = 'This person or group no longer exists in your organization, so Sitenalyzer left them out. ' +
+    'If someone else does this work now, give that person access in the destination.';
+var SNA_TOOLS_PERMISSIONS_APP_NOTE = 'Apps get access through their own setup, not through permissions, so Sitenalyzer didn\'t copy ' +
+    'this. Ask your SharePoint admin to give the app access to the destination if it needs it.';
+var SNA_TOOLS_PERMISSIONS_OWN_GROUP_NOTE = 'This is the Microsoft 365 group connected to this site. Sitenalyzer left it out, ' +
+    'because it would give that group\'s members access to the destination. Add the people who need access to the ' +
+    'destination\'s own groups instead.';
+var SNA_TOOLS_PERMISSIONS_UNKNOWN_GROUP_NOTE = 'Sitenalyzer couldn\'t check whether this is the Microsoft 365 group connected to ' +
+    'this site, so it left it out. Add it in the destination if it should have access there.';
+var SNA_TOOLS_PERMISSIONS_SYSTEM_ACCOUNT_NOTE = 'SharePoint adds this account by itself, so Sitenalyzer didn\'t copy it.';
+
+// Notes for each reason that snaToolsPermissionsSkipReason gives, for members and access.
+var SNA_TOOLS_PERMISSIONS_SKIP_NOTES = {
+    app: SNA_TOOLS_PERMISSIONS_APP_NOTE,
+    system: SNA_TOOLS_PERMISSIONS_SYSTEM_ACCOUNT_NOTE,
+    ownGroup: SNA_TOOLS_PERMISSIONS_OWN_GROUP_NOTE,
+    unknownGroup: SNA_TOOLS_PERMISSIONS_UNKNOWN_GROUP_NOTE
+};
+
+// Words for each reason that snaToolsPermissionsSkipReason gives, for the owner of a new group.
+var SNA_TOOLS_PERMISSIONS_OWNER_SKIP_WORDS = {
+    app: 'because it\'s an app',
+    system: 'because SharePoint adds this account by itself',
+    ownGroup: 'because it\'s the Microsoft 365 group connected to this site',
+    unknownGroup: 'because it couldn\'t check whether it\'s the Microsoft 365 group connected to this site'
+};
+
+// ### Small Helpers ###
+
+// Returns a sign-in name in lowercase, for comparisons.
+function snaToolsPermissionsLogin(value) {
+    return String(value || '').toLowerCase();
+}
+
+// Returns value as a whole number above 0, or 0. Every ID put in an address goes through this.
+function snaToolsPermissionsInt(value) {
+    var number = Number(value);
+    return (Number.isInteger(number) && number > 0) ? number : 0;
+}
+
+// Returns a collection from an answer, whether it is an array or a verbose { results: [] } object.
+function snaToolsPermissionsItems(value) {
+    if (Array.isArray(value)) { return value; }
+    return (value && Array.isArray(value.results)) ? value.results : [];
+}
+
+// True when a sign-in name stands for everyone in the organization: Everyone, or Everyone except external users.
+function snaToolsPermissionsIsEveryone(login) {
+    var key = snaToolsPermissionsLogin(login);
+    return key === SNA_TOOLS_PERMISSIONS_EVERYONE_LOGIN || key.indexOf(SNA_TOOLS_PERMISSIONS_EVERYONE_EXCEPT_EXTERNAL_PREFIX) === 0;
+}
+
+// True when two permission levels allow the same things.
+function snaToolsPermissionsSameRights(a, b) {
+    var x = (a && a.BasePermissions) || {};
+    var y = (b && b.BasePermissions) || {};
+    return String(x.High) === String(y.High) && String(x.Low) === String(y.Low);
+}
+
+// True for the levels the copy never copies: Limited Access, hidden levels, and SharePoint's own System level (255).
+function snaToolsPermissionsIsSkippedLevel(level) {
+    return snaIsLimitedAccessRole(level) || (level && level.RoleTypeKind === 255);
+}
+
+// True when SharePoint said a person or group can't be found, such as an account deleted from the organization.
+function snaToolsPermissionsIsGone(err) {
+    return !!err && (err.status === 404 || /could not be found|cannot be found|does not exist/i.test(err.serverMessage || ''));
+}
+
+// Returns the note for a failed request. SharePoint often names the account it couldn't find or add, and
+// snaToolsFriendlyError replaces every sign-in name and email address in its message (see snaToolsHideAccounts).
+function snaToolsPermissionsErrorNote(err) {
+    return snaToolsFriendlyError(err);
+}
+
+// Returns the name of a person or group for a note, or fallback when SharePoint gave no display name or the name it
+// gave looks like a sign-in name or an email address, such as for an account without a display name.
+function snaToolsPermissionsDisplayName(principal, fallback) {
+    var title = String((principal && principal.Title) || '').trim();
+    if (principal && principal.PrincipalType === SNA_TOOLS_PERMISSIONS_PRINCIPAL_TYPES.sharePointGroup && title) { return title; }
+    if (title && !/[|@]/.test(title)) { return title; }
+    return typeof fallback === 'string' ? fallback : 'A person or group';
+}
+
+// Returns the names of people and groups joined for a note, such as 'A, B, and C', or the first ones and how many more
+// there are. Those without a display name are counted, such as 'A and 2 more without a display name'.
+function snaToolsPermissionsNames(principals) {
+    var names = [];
+    var unnamed = 0;
+    principals.forEach(function(p) {
+        var name = snaToolsPermissionsDisplayName(p, '');
+        if (name) { names.push(name); } else { unnamed++; }
+    });
+    var shown = names.slice(0, SNA_TOOLS_PERMISSIONS_NAMES_IN_NOTE_MAX);
+    var parts = shown.slice();
+    if (names.length > shown.length) { parts.push((names.length - shown.length) + ' more'); }
+    if (unnamed > 0) {
+        parts.push((shown.length > 0 ? unnamed + ' more' : snaCountText(unnamed, 'person or group', 'people and groups')) + ' without a display name');
+    }
+    return snaJoinWords(parts);
+}
+
+// Returns the report of the site being copied, or null when the report on screen is of another site.
+function snaToolsPermissionsReport(plan) {
+    if (!_snaReport || !_snaReport.permissions) { return null; }
+    return snaDigestKey(_snaReport.siteUrl) === snaDigestKey(plan.source.siteUrl) ? _snaReport : null;
+}
+
+// Returns why a person or group is left out of groups, permissions, and group owners: 'app', 'system' (SharePoint's own
+// account), 'ownGroup' (this site's Microsoft 365 group, its members or its owners), 'unknownGroup' (any Microsoft 365
+// group, when this site's couldn't be read), or '' when it is copied.
+function snaToolsPermissionsSkipReason(ctx, member) {
+    var login = snaToolsPermissionsLogin(member.LoginName);
+    if (snaPrincipalKind(member) === 'app') { return 'app'; }
+    if (login === SNA_TOOLS_PERMISSIONS_SYSTEM_ACCOUNT_LOGIN) { return 'system'; }
+    if (login.indexOf(SNA_TOOLS_PERMISSIONS_M365_GROUP_PREFIX) === 0) {
+        // Fails closed: when this site's Microsoft 365 group couldn't be read, no Microsoft 365 group is copied.
+        if (ctx.source.groupIdUnknown) { return 'unknownGroup'; }
+        var own = ctx.source.groupId ? SNA_TOOLS_PERMISSIONS_M365_GROUP_PREFIX + ctx.source.groupId : '';
+        if (own && (login === own || login === own + '_o')) { return 'ownGroup'; }
+    }
+    return '';
+}
+
+// Returns why a person or group is left out of groups and permissions, as a note, or '' when it is copied.
+function snaToolsPermissionsSkipNote(ctx, member) {
+    var reason = snaToolsPermissionsSkipReason(ctx, member);
+    return reason ? SNA_TOOLS_PERMISSIONS_SKIP_NOTES[reason] : '';
+}
+
+// Returns the copied people picker columns that this site limits to a SharePoint group, from the copied lists and the
+// site columns, as [{ list, field, groupId, destListId, destFieldId, made, key }]. list is null and destListId '' for a
+// site column. made is true for a column this copy created (see snaToolsListsRun in lists.js), and false for one the
+// destination already had, which the copy leaves as it is. key tells the columns apart.
+function snaToolsPermissionsPickerColumns(ctx) {
+    var columns = [];
+    var run = snaToolsListsRun(ctx.maps);
+    function add(list, field) {
+        if (field.type !== 'User' && field.type !== 'UserMulti') { return; }
+        var root = snaToolsParseXml(field.schemaXml);
+        var groupId = snaToolsPermissionsInt(root && root.getAttribute('UserSelectionScope'));
+        var destFieldId = snaToolsCleanGuid(ctx.maps.fieldIds[field.id]);
+        var destListId = list ? snaToolsCleanGuid(ctx.maps.lists[list.sourceId]) : '';
+        if (!groupId || !destFieldId || (list && !destListId)) { return; }
+        var listState = list ? run.lists[list.sourceId] : null;
+        var made = list ? !!(listState && listState.created && listState.created[field.internalName]) : !!run.siteColumnEntries[field.id];
+        columns.push({ list: list, field: field, groupId: groupId, destListId: destListId, destFieldId: destFieldId, made: made,
+            key: destListId + '|' + destFieldId });
+    }
+    ctx.plan.lists.forEach(function(list) { (list.fields || []).forEach(function(f) { add(list, f); }); });
+    (ctx.plan.siteColumns || []).forEach(function(f) { add(null, f); });
+    return columns;
+}
+
+// ### Reading Permissions ###
+
+// Reads every SharePoint group of a site, a page at a time with $top and $skip, the way the report reads them for
+// sharing links. Stops when a page brings no new groups.
+async function snaToolsPermissionsReadGroups(siteUrl, select, expand) {
+    var groups = [];
+    var seen = {};
+    for (var page = 0; page < SNA_TOOLS_PERMISSIONS_GROUP_PAGES_MAX; page++) {
+        var json = await snaToolsRead(siteUrl, '/_api/web/sitegroups?$select=' + select + (expand ? '&$expand=' + expand : '') +
+            '&$top=' + SNA_SHARING_GROUPS_BATCH_SIZE + '&$skip=' + groups.length);
+        var batch = (json && json.value) || [];
+        var added = 0;
+        batch.forEach(function(group) {
+            if (seen[group.Id]) { return; }
+            seen[group.Id] = true;
+            groups.push(group);
+            added++;
+        });
+        if (added === 0 || batch.length < SNA_SHARING_GROUPS_BATCH_SIZE) { break; }
+    }
+    return groups;
+}
+
+// Returns a site's title and its owners, members, and visitors groups: { title, groups, groupTitles }, where groups
+// has the ID of each by property name, such as { AssociatedOwnerGroup: 3 }, and groupTitles their names. A site without
+// one of them has 0 and '' for it.
+async function snaToolsPermissionsReadWebGroups(siteUrl) {
+    var select = 'Title,' + SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.map(function(a) { return a.property + '/Id,' + a.property + '/Title'; }).join(',');
+    var expand = SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.map(function(a) { return a.property; }).join(',');
+    var web = await snaToolsRead(siteUrl, '/_api/web?$select=' + select + '&$expand=' + expand);
+    var result = { title: String((web && web.Title) || ''), groups: {}, groupTitles: {} };
+    SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+        var group = web && web[a.property];
+        result.groups[a.property] = snaToolsPermissionsInt(group && group.Id);
+        result.groupTitles[a.property] = String((group && group.Title) || '');
+    });
+    return result;
+}
+
+// Returns the IDs of a site's owners, members, and visitors groups, by property name, such as { AssociatedOwnerGroup: 3 }.
+// A site without one of them has 0 for it.
+async function snaToolsPermissionsReadAssociated(siteUrl) {
+    return (await snaToolsPermissionsReadWebGroups(siteUrl)).groups;
+}
+
+// Returns the address of a site on the destination's host from its server-relative address, such as
+// https://contoso.sharepoint.com/sites/hub for /sites/hub, or '' when the address isn't a plain server-relative one.
+function snaToolsPermissionsSiteUrl(destUrl, serverRelativeUrl) {
+    var path = String(serverRelativeUrl || '');
+    if (path.charAt(0) !== '/' || /[?#\\]|\/\.\.?(\/|$)/.test(path)) { return ''; }
+    return snaToolsSiteParts(destUrl).origin + (path === '/' ? '' : xlsxStripSlash(path));
+}
+
+// Returns the server-relative address of the top site of the destination's site collection, such as /sites/hub.
+async function snaToolsPermissionsReadRootPath(dest) {
+    var site = await snaToolsRead(dest.siteUrl, '/_api/site?$select=ServerRelativeUrl');
+    return (site && site.ServerRelativeUrl) || dest.serverRelativeUrl;
+}
+
+/**
+ * Finds the destination's owners, members, and visitors groups that its parent site or the top site of its site
+ * collection also uses as its owners, members, or visitors group, as a subsite often does. SharePoint groups belong to
+ * the whole site collection, so adding people to such a group gives them access to that site too. Reads only.
+ * @param {object} dest The checked destination (see snaToolsCheckDestination in runner.js).
+ * @param {string} rootPath The server-relative address of the top site of the destination's site collection.
+ * @param {object} destAssociated The IDs of the destination's own groups (see snaToolsPermissionsReadAssociated).
+ * @returns {Promise<object>} { groupId: { roleWords, siteWords, siteTitle } } for each such group: roleWords is its role
+ *          in the other site, such as 'owners group', siteWords is 'its parent site' or 'the top site of its site
+ *          collection', and siteTitle is that site's name. Empty when the destination is the top site of its site
+ *          collection or has none of these groups.
+ * @throws {Error} snaToolsError when a read fails, or when SharePoint gives a site address that can't be used.
+ */
+async function snaToolsPermissionsReadSharedGroups(dest, rootPath, destAssociated) {
+    var shared = {};
+    var destIds = SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.map(function(a) { return snaToolsPermissionsInt(destAssociated && destAssociated[a.property]); })
+        .filter(function(id) { return id > 0; });
+    if (destIds.length === 0 || snaToolsSamePath(rootPath, dest.serverRelativeUrl)) { return shared; }
+    var parent = await snaToolsRead(dest.siteUrl, '/_api/web/parentweb?$select=Title,ServerRelativeUrl');
+    var parentPath = (parent && parent.ServerRelativeUrl) || rootPath;
+    var sites = [{ path: parentPath, words: 'its parent site' }];
+    if (!snaToolsSamePath(parentPath, rootPath)) { sites.push({ path: rootPath, words: 'the top site of its site collection' }); }
+    for (var i = 0; i < sites.length; i++) {
+        var siteUrl = snaToolsPermissionsSiteUrl(dest.siteUrl, sites[i].path);
+        if (!siteUrl) { throw snaToolsError(500, 'address', ''); }
+        var web = await snaToolsPermissionsReadWebGroups(siteUrl);
+        var site = sites[i];
+        SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+            var id = web.groups[a.property];
+            if (!id || destIds.indexOf(id) === -1 || shared[id]) { return; }
+            shared[id] = { roleWords: a.words, siteWords: site.words, siteTitle: web.title };
+        });
+    }
+    return shared;
+}
+
+// Returns the words that name where a destination group is also used, such as 'the owners group of its parent site, Hub'.
+function snaToolsPermissionsSharedWhere(info) {
+    return 'the ' + info.roleWords + ' of ' + info.siteWords + (info.siteTitle ? ', ' + info.siteTitle : '');
+}
+
+// Returns the members of one group of this site, from the report when it read them, as
+// [{ Id, Title, LoginName, PrincipalType }].
+async function snaToolsPermissionsSourceMembers(ctx, groupId) {
+    var index = ctx.report ? (ctx.report.permissions.index || {}) : {};
+    var known = Object.keys(index).map(function(key) { return index[key]; }).filter(function(p) {
+        return p.kind === 'sharePointGroup' && String(p.id) === String(groupId) && p.membersStatus === 'read' && Array.isArray(p.members);
+    })[0];
+    if (known) {
+        return known.members.map(function(m) {
+            return { Id: m.id, Title: m.title, LoginName: m.loginName, PrincipalType: SNA_TOOLS_PERMISSIONS_PRINCIPAL_TYPES[m.kind] || 0 };
+        });
+    }
+    var read = await snaToolsReadAll(ctx.sourceUrl, '/_api/web/sitegroups(' + snaToolsPermissionsInt(groupId) + ')/users?$select=' +
+        SNA_TOOLS_PERMISSIONS_MEMBER_SELECT, SNA_TOOLS_READ_MAX);
+    return read.items;
+}
+
+// Returns the role assignments of a list or of the site, read with their members and permission levels.
+async function snaToolsPermissionsReadAssignments(siteUrl, apiBase) {
+    return (await snaToolsReadAll(siteUrl, apiBase + '/roleassignments?$select=' + SNA_TOOLS_PERMISSIONS_ASSIGNMENT_SELECT +
+        '&$expand=Member,RoleDefinitionBindings', SNA_TOOLS_READ_MAX)).items;
+}
+
+// Returns the address part of a destination list, such as /_api/web/lists(guid'...').
+function snaToolsPermissionsListBase(listId) {
+    return "/_api/web/lists(guid'" + snaToolsCleanGuid(listId) + "')";
+}
+
+// Reads what the copy needs from this site, using the report where it already holds it.
+async function snaToolsPermissionsReadSource(ctx) {
+    var report = ctx.report;
+    var source = ctx.source;
+    source.roleDefinitions = (report && Array.isArray(report.permissions.roleDefinitions))
+        ? report.permissions.roleDefinitions
+        : (await snaToolsReadAll(ctx.sourceUrl, '/_api/web/roledefinitions?$select=' + SNA_TOOLS_PERMISSIONS_ROLE_SELECT, SNA_TOOLS_READ_MAX)).items;
+    source.groups = await snaToolsPermissionsReadGroups(ctx.sourceUrl, SNA_TOOLS_PERMISSIONS_GROUP_SELECT, 'Owner');
+    source.associated = await snaToolsPermissionsReadAssociated(ctx.sourceUrl);
+    source.siteAssignments = (report && report.permissions.siteRolesRead)
+        ? report.permissions.siteRoleAssignments
+        : await snaToolsPermissionsReadAssignments(ctx.sourceUrl, '/_api/web');
+    try {
+        var site = await snaToolsRead(ctx.sourceUrl, '/_api/site?$select=GroupId');
+        var groupId = snaToolsCleanGuid(site && site.GroupId);
+        source.groupId = groupId === SNA_TOOLS_PERMISSIONS_EMPTY_GUID ? '' : groupId;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        source.groupIdUnknown = true;
+    }
+    // Lists whose permissions were not in the report are read now. A list whose read fails gets no entry in
+    // listAssignments, so it keeps the site's permissions instead of getting its own with no one in them.
+    for (var i = 0; i < ctx.plan.lists.length; i++) {
+        var list = ctx.plan.lists[i];
+        if (!list.ownPermissions || !ctx.maps.lists[list.sourceId]) { continue; }
+        var assignments = snaToolsPermissionsItems(list.roleAssignments);
+        if (assignments.length === 0) {
+            try {
+                assignments = await snaToolsPermissionsReadAssignments(ctx.sourceUrl, snaToolsPermissionsListBase(list.sourceId));
+            } catch (err) {
+                if (snaToolsIsCancelled(err)) { throw err; }
+                snaToolsLog(SNA_TOOLS_KINDS.permission, 'Permissions of ' + (list.newTitle || list.title), 'failed', 'Sitenalyzer couldn\'t ' +
+                    'read who has access to it in this site, so it uses the site\'s permissions in the destination. Open its ' +
+                    'permissions in the destination, stop inheriting permissions, and give access by hand.');
+                continue;
+            }
+        }
+        source.listAssignments[list.sourceId] = assignments;
+    }
+}
+
+// Reads what the copy needs from the destination: its levels, groups, default groups, and who has access to the site.
+async function snaToolsPermissionsReadDestination(ctx) {
+    var destUrl = ctx.dest.siteUrl;
+    ctx.destRoles = (await snaToolsReadAll(destUrl, '/_api/web/roledefinitions?$select=' + SNA_TOOLS_PERMISSIONS_ROLE_SELECT, SNA_TOOLS_READ_MAX)).items;
+    ctx.destGroups = await snaToolsPermissionsReadGroups(destUrl, 'Id,Title,LoginName', '');
+    ctx.destAssociated = await snaToolsPermissionsReadAssociated(destUrl);
+    ctx.destSiteAssignments = await snaToolsPermissionsReadAssignments(destUrl, '/_api/web');
+    // Permission levels belong to the top site of a site collection, so a subsite's new levels are made there.
+    var rootPath = await snaToolsPermissionsReadRootPath(ctx.dest);
+    ctx.destIsRoot = snaToolsSamePath(rootPath, ctx.dest.serverRelativeUrl);
+    ctx.rolesSiteUrl = ctx.destIsRoot ? destUrl : snaToolsPermissionsSiteUrl(destUrl, rootPath);
+    if (!ctx.rolesSiteUrl) { throw snaToolsError(500, 'address', ''); }
+    ctx.webUnique = ctx.destIsRoot || ctx.dest.hasUniqueRoleAssignments;
+    ctx.sharedGroups = {};
+    if (ctx.destIsRoot) { return; }
+    try {
+        ctx.sharedGroups = await snaToolsPermissionsReadSharedGroups(ctx.dest, rootPath, ctx.destAssociated);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        // Fails closed: when the other sites' groups can't be read, none of the destination's own groups gets new members.
+        SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+            if (ctx.destAssociated[a.property]) { ctx.sharedGroups[ctx.destAssociated[a.property]] = { unknown: true }; }
+        });
+    }
+}
+
+// ### Permission Levels ###
+
+// Maps a built-in permission level to the destination's level of the same type, and reports different permissions.
+async function snaToolsPermissionsMapBuiltInLevel(ctx, level) {
+    var kind = snaToolsPermissionsInt(level.RoleTypeKind);
+    var match = ctx.destRoles.filter(function(d) { return d.RoleTypeKind === kind && !d.Hidden; })[0];
+    if (!match) {
+        try {
+            match = await snaToolsRead(ctx.dest.siteUrl, '/_api/web/roledefinitions/getbytype(' + kind + ')?$select=' + SNA_TOOLS_PERMISSIONS_ROLE_SELECT);
+        } catch (err) {
+            if (snaToolsIsCancelled(err) || !snaToolsPermissionsIsGone(err)) { throw err; }
+            match = null;
+        }
+    }
+    if (!match || !snaToolsPermissionsInt(match.Id)) {
+        snaToolsLog(SNA_TOOLS_KINDS.permissionLevel, level.Name, 'skipped', 'The destination doesn\'t have this built-in ' +
+            'permission level, so Sitenalyzer couldn\'t give it to anyone. In the destination, make a permission level with ' +
+            'the same permissions, then give it by hand to the people and groups who have this level in this site.');
+        return;
+    }
+    ctx.maps.roleDefinitions[String(level.Id)] = match.Id;
+    var verify = { verify: { type: 'permissionLevel', roleDefinitionId: match.Id } };
+    // Built-in levels have names in the site's language, so the destination's can differ.
+    var named = match.Name && match.Name !== level.Name ? ' In the destination, it\'s named ' + match.Name + '.' : '';
+    if (snaToolsPermissionsSameRights(level, match)) {
+        snaToolsLog(SNA_TOOLS_KINDS.permissionLevel, level.Name, 'copied', 'The destination already has this permission level ' +
+            'with the same permissions.' + named, verify);
+        return;
+    }
+    snaToolsLog(SNA_TOOLS_KINDS.permissionLevel, level.Name, 'partial', 'The destination already has this permission level, ' +
+        'but it allows different things than in this site. Sitenalyzer didn\'t change it, because the change would apply ' +
+        'to the whole destination site collection. Compare the level in both sites, and change it in the destination if ' +
+        'you need to.' + named, verify);
+}
+
+// Maps a custom permission level to the destination's level with the same name, or creates it.
+async function snaToolsPermissionsCopyCustomLevel(ctx, level) {
+    var key = String(level.Name || '').toLowerCase();
+    var match = ctx.destRoles.filter(function(d) { return !d.Hidden && String(d.Name || '').toLowerCase() === key; })[0];
+    if (match) {
+        ctx.maps.roleDefinitions[String(level.Id)] = match.Id;
+        var same = snaToolsPermissionsSameRights(level, match);
+        snaToolsLog(SNA_TOOLS_KINDS.permissionLevel, level.Name, same ? 'copied' : 'partial', same
+            ? 'The destination already has a permission level with this name and the same permissions.'
+            : 'The destination already has a permission level with this name, but it allows different things. Sitenalyzer ' +
+              'used it and didn\'t change it. Compare the level in both sites, and change it in the destination if you need to.',
+            { verify: { type: 'permissionLevel', roleDefinitionId: match.Id } });
+        return;
+    }
+    var rights = level.BasePermissions || {};
+    var body = {
+        __metadata: { type: 'SP.RoleDefinition' },
+        Name: level.Name,
+        Description: level.Description || '',
+        BasePermissions: { __metadata: { type: 'SP.BasePermissions' }, High: String(rights.High || '0'), Low: String(rights.Low || '0') }
+    };
+    if (typeof level.Order === 'number') { body.Order = level.Order; }
+    var created;
+    try {
+        created = await snaToolsWrite(ctx.rolesSiteUrl, '/_api/web/roledefinitions', { verbose: true, body: body });
+    } catch (err) {
+        if (snaToolsIsCancelled(err) || err.code !== SNA_TOOLS_PERMISSIONS_SAME_LEVEL_CODE) { throw err; }
+        // SharePoint refuses a second level with the same permissions, such as one with a name in another language.
+        ctx.destRoles = (await snaToolsReadAll(ctx.dest.siteUrl, '/_api/web/roledefinitions?$select=' + SNA_TOOLS_PERMISSIONS_ROLE_SELECT, SNA_TOOLS_READ_MAX)).items;
+        var twin = ctx.destRoles.filter(function(d) { return !d.Hidden && d.RoleTypeKind === 0 && snaToolsPermissionsSameRights(level, d); })[0];
+        if (!twin) { throw err; }
+        ctx.maps.roleDefinitions[String(level.Id)] = twin.Id;
+        snaToolsLog(SNA_TOOLS_KINDS.permissionLevel, level.Name, 'copied', 'The destination already has a permission level ' +
+            'with the same permissions, named ' + twin.Name + ', so Sitenalyzer used it.', { verify: { type: 'permissionLevel', roleDefinitionId: twin.Id } });
+        return;
+    }
+    var id = snaToolsPermissionsInt(created && (created.Id || (created.d && created.d.Id)));
+    if (!id) { throw snaToolsError(500, 'id', ''); }
+    ctx.destRoles.push({ Id: id, Name: level.Name, RoleTypeKind: 0, Hidden: false, BasePermissions: body.BasePermissions });
+    ctx.maps.roleDefinitions[String(level.Id)] = id;
+    snaToolsLog(SNA_TOOLS_KINDS.permissionLevel, level.Name, 'copied', 'Created the permission level.',
+        { verify: { type: 'permissionLevel', roleDefinitionId: id } });
+}
+
+// Copies or maps every permission level of this site. Fills maps.roleDefinitions.
+async function snaToolsPermissionsCopyLevels(ctx) {
+    var levels = ctx.source.roleDefinitions.slice().sort(function(a, b) { return (a.Order || 0) - (b.Order || 0); });
+    for (var i = 0; i < levels.length; i++) {
+        snaToolsCheckCancelled();
+        var level = levels[i];
+        try {
+            if (snaToolsPermissionsIsSkippedLevel(level)) {
+                snaToolsLog(SNA_TOOLS_KINDS.permissionLevel, level.Name, 'skipped', level.RoleTypeKind === 1
+                    ? 'SharePoint gives this level by itself when someone shares a single item, and it gives access only to ' +
+                      'what was shared. Sitenalyzer didn\'t copy it.'
+                    : 'SharePoint keeps this level hidden and gives it by itself, so Sitenalyzer didn\'t copy it.');
+            } else if (level.RoleTypeKind !== 0) {
+                await snaToolsPermissionsMapBuiltInLevel(ctx, level);
+            } else {
+                await snaToolsPermissionsCopyCustomLevel(ctx, level);
+            }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(SNA_TOOLS_KINDS.permissionLevel, level.Name, 'failed', snaToolsPermissionsErrorNote(err));
+        }
+    }
+}
+
+// ### Groups ###
+
+// True when a role assignment gives a level other than Limited Access.
+function snaToolsPermissionsGivesAccess(assignment) {
+    return snaToolsPermissionsItems(assignment.RoleDefinitionBindings).some(function(b) { return !snaToolsPermissionsIsSkippedLevel(b); });
+}
+
+// Returns the source groups to copy, default groups first: the owners, members, and visitors groups, every group that
+// has access to the site or a copied list or that a copied people picker column is limited to, and the groups that own
+// those. Groups SharePoint makes by itself are left out.
+function snaToolsPermissionsGroupsToCopy(ctx) {
+    var byId = {};
+    ctx.source.groups.forEach(function(g) { byId[g.Id] = g; });
+    var used = {};
+    function useAssignments(assignments) {
+        assignments.forEach(function(ra) {
+            var member = ra.Member || {};
+            if (member.PrincipalType === 8 && snaToolsPermissionsGivesAccess(ra)) { used[member.Id] = true; }
+        });
+    }
+    useAssignments(ctx.source.siteAssignments);
+    Object.keys(ctx.source.listAssignments).forEach(function(id) { useAssignments(ctx.source.listAssignments[id]); });
+    SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) { if (ctx.source.associated[a.property]) { used[ctx.source.associated[a.property]] = true; } });
+    snaToolsPermissionsPickerColumns(ctx).forEach(function(c) { if (c.made && byId[c.groupId]) { used[c.groupId] = true; } });
+    var added = true;
+    while (added) {
+        added = false;
+        Object.keys(used).forEach(function(id) {
+            var owner = byId[id] && byId[id].Owner;
+            if (owner && owner.PrincipalType === 8 && byId[owner.Id] && !used[owner.Id]) { used[owner.Id] = true; added = true; }
+        });
+    }
+    var copy = [];
+    var leftOut = 0;
+    ctx.source.groups.forEach(function(g) {
+        if (snaIsSharePointSystemGroup(g.Title)) { return; }
+        if (used[g.Id]) { copy.push(g); } else { leftOut++; }
+    });
+    function rank(g) {
+        for (var i = 0; i < SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.length; i++) {
+            if (ctx.source.associated[SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS[i].property] === g.Id) { return i; }
+        }
+        return SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.length;
+    }
+    copy.sort(function(a, b) { return rank(a) - rank(b) || String(a.Title).localeCompare(String(b.Title)); });
+    return { groups: copy, leftOut: leftOut };
+}
+
+// Returns the name of a destination group, or ''.
+function snaToolsPermissionsDestGroupTitle(ctx, groupId) {
+    var known = ctx.destGroups.filter(function(d) { return d.Id === groupId; })[0];
+    return known ? String(known.Title || '') : '';
+}
+
+// Finds or creates the destination group for one source group. Returns the group's state for the later steps:
+// { source, destId, destTitle, how ('associated', 'existing', 'created', or 'shared'), roleWords, sharedNote,
+// createdWords }. A destination group that another site also uses (see snaToolsPermissionsReadSharedGroups) is never
+// used: the copy creates a group instead, or, when that group has the source group's name, uses no group ('shared',
+// with destId 0). sharedNote then says why, and createdWords starts the note of a group created instead.
+async function snaToolsPermissionsMapGroup(ctx, group) {
+    var state = { source: group, destId: 0, destTitle: '', how: '', roleWords: '', sharedNote: '', createdWords: '' };
+    var sharedGroups = ctx.sharedGroups || {};
+    var checked = false;
+    SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+        if (checked || ctx.source.associated[a.property] !== group.Id || !ctx.destAssociated[a.property]) { return; }
+        checked = true;
+        var destId = ctx.destAssociated[a.property];
+        var info = sharedGroups[destId];
+        var title = snaToolsPermissionsDestGroupTitle(ctx, destId);
+        if (!info) {
+            state.destId = destId;
+            state.destTitle = title;
+            state.how = 'associated';
+            state.roleWords = a.words;
+            return;
+        }
+        var named = 'the destination\'s ' + a.words + (title ? ', ' + title + ',' : '');
+        state.sharedNote = info.unknown
+            ? 'Sitenalyzer couldn\'t check whether ' + named + ' is also a group of its parent site or of the top site of its ' +
+              'site collection, so it didn\'t add anyone to it.'
+            : named.charAt(0).toUpperCase() + named.substring(1) + ' is also ' + snaToolsPermissionsSharedWhere(info) + '. Sitenalyzer ' +
+              'didn\'t add anyone to it, because that would give them access to that site too.';
+        state.createdWords = 'Created this group for the destination instead';
+    });
+    if (state.how) { return state; }
+    var key = String(group.Title || '').toLowerCase();
+    var existing = ctx.destGroups.filter(function(d) { return String(d.Title || '').toLowerCase() === key; })[0];
+    if (existing && sharedGroups[existing.Id]) {
+        var where = sharedGroups[existing.Id];
+        state.how = 'shared';
+        state.sharedNote = (where.unknown
+            ? 'The destination already has a group with this name, and Sitenalyzer couldn\'t check whether its parent site or the ' +
+              'top site of its site collection also uses it, so it didn\'t add anyone to it.'
+            : 'The destination already has a group with this name, and it\'s also ' + snaToolsPermissionsSharedWhere(where) + '. ' +
+              'Sitenalyzer didn\'t add anyone to it, because that would give them access to that site too.') +
+            ' In the destination, make a group with another name, add this group\'s members to it, and give it access by hand.';
+        return state;
+    }
+    if (existing) {
+        state.destId = existing.Id;
+        state.destTitle = existing.Title;
+        state.how = 'existing';
+        return state;
+    }
+    var body = { __metadata: { type: 'SP.Group' }, Title: group.Title };
+    SNA_TOOLS_PERMISSIONS_GROUP_SETTINGS.forEach(function(name) {
+        if (group[name] !== undefined && group[name] !== null) { body[name] = group[name]; }
+    });
+    var created = await snaToolsWrite(ctx.dest.siteUrl, '/_api/web/sitegroups', { verbose: true, body: body });
+    state.destId = snaToolsPermissionsInt(created && (created.Id || (created.d && created.d.Id)));
+    if (!state.destId) { throw snaToolsError(500, 'id', ''); }
+    state.destTitle = group.Title;
+    state.how = 'created';
+    ctx.destGroups.push({ Id: state.destId, Title: group.Title });
+    return state;
+}
+
+// Returns a CSOM request that makes one destination group the owner of another, built from the documented path
+// Current > Web > SiteGroups > GetById. Both IDs are whole numbers.
+function snaToolsPermissionsOwnerCsomXml(groupId, ownerGroupId) {
+    var actions = '<SetProperty Id="10" ObjectPathId="5" Name="Owner"><Parameter ObjectPathId="6" /></SetProperty>' +
+        '<Method Name="Update" Id="11" ObjectPathId="5" />';
+    var paths = '<StaticProperty Id="1" TypeId="' + SNA_TOOLS_PERMISSIONS_CSOM_CONTEXT_TYPE_ID + '" Name="Current" />' +
+        '<Property Id="2" ParentId="1" Name="Web" /><Property Id="3" ParentId="2" Name="SiteGroups" />' +
+        '<Method Id="5" ParentId="3" Name="GetById"><Parameters><Parameter Type="Number">' +
+        snaToolsXmlText(snaToolsPermissionsInt(groupId)) + '</Parameter></Parameters></Method>' +
+        '<Method Id="6" ParentId="3" Name="GetById"><Parameters><Parameter Type="Number">' +
+        snaToolsXmlText(snaToolsPermissionsInt(ownerGroupId)) + '</Parameter></Parameters></Method>';
+    return snaToolsCsomXml(actions, paths);
+}
+
+// Makes the destination principal ID for a person or claim, adding them to the destination's people if needed.
+// Remembers each answer, including people who can't be found, so each is asked about once.
+async function snaToolsPermissionsEnsureUser(ctx, loginName) {
+    var key = snaToolsPermissionsLogin(loginName);
+    if (ctx.users[key]) { return ctx.users[key]; }
+    if (ctx.usersGone[key]) { throw ctx.usersGone[key]; }
+    try {
+        var user = await snaToolsWrite(ctx.dest.siteUrl, '/_api/web/ensureuser', { body: { logonName: loginName } });
+        var id = snaToolsPermissionsInt(user && (user.Id || (user.d && user.d.Id)));
+        if (!id) { throw snaToolsError(500, 'id', ''); }
+        ctx.users[key] = id;
+        return id;
+    } catch (err) {
+        if (!snaToolsIsCancelled(err) && snaToolsPermissionsIsGone(err)) { ctx.usersGone[key] = err; }
+        throw err;
+    }
+}
+
+// Sets the owner of a group the copy created, as in this site. Returns { result, note } for the group's row. When the
+// owner has no display name, or only a sign-in name or an email address, the notes say "the same owner" instead.
+async function snaToolsPermissionsSetOwner(ctx, state) {
+    var owner = state.source.Owner;
+    var created = state.createdWords || 'Created the group';
+    if (!owner || !snaToolsPermissionsInt(owner.Id)) { return { result: 'copied', note: created + '.' }; }
+    var ownerName = snaToolsPermissionsDisplayName(owner, '');
+    var copiedNote = ownerName ? created + ', with ' + (owner.PrincipalType === 8 ? 'the group ' : '') + ownerName + ' as its owner, as in this site.'
+        : created + ', with the same owner as in this site.';
+    var chooseOwner = ' In the destination, open the group\'s settings and choose its owner.';
+    // SharePoint makes the person who creates a group its owner, and that stays when this site's owner is left out.
+    var skipReason = snaToolsPermissionsSkipReason(ctx, owner);
+    if (skipReason) {
+        return { result: 'partial', note: created + ', with you as its owner. In this site, its owner is ' +
+            snaToolsPermissionsDisplayName(owner, 'a person or group without a display name') + ', which Sitenalyzer left out, ' +
+            SNA_TOOLS_PERMISSIONS_OWNER_SKIP_WORDS[skipReason] + '.' + chooseOwner };
+    }
+    if (owner.PrincipalType === 8) {
+        var self = owner.Id === state.source.Id;
+        var ownerDestId = self ? state.destId : snaToolsPermissionsInt(ctx.maps.principals[String(owner.Id)]);
+        var who = self ? 'the group itself' : 'the group ' + ownerName;
+        if (!ownerDestId) {
+            return { result: 'partial', note: ownerName
+                ? created + ', but couldn\'t make ' + who + ' its owner, because that group wasn\'t copied.' + chooseOwner
+                : created + ', but couldn\'t give it the same owner as in this site, because the group that owns it wasn\'t copied.' + chooseOwner };
+        }
+        try {
+            await snaToolsCsom(ctx.dest.siteUrl, snaToolsPermissionsOwnerCsomXml(state.destId, ownerDestId));
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            if (!self && !ownerName) {
+                return { result: 'partial', note: created + ', but SharePoint didn\'t let Sitenalyzer give it the same owner as in this site.' + chooseOwner };
+            }
+            return { result: 'partial', note: created + ', but SharePoint didn\'t let Sitenalyzer make ' + who + ' its owner. ' +
+                'In the destination, open the group\'s settings and choose ' + (self ? 'the group' : ownerName) + ' as its owner.' };
+        }
+        return { result: 'copied', note: self ? created + '. As in this site, the group is its own owner.' : copiedNote };
+    }
+    try {
+        var userId = await snaToolsPermissionsEnsureUser(ctx, owner.LoginName);
+        await snaToolsWrite(ctx.dest.siteUrl, '/_api/web/sitegroups(' + state.destId + ')/SetUserAsOwner(' + userId + ')', { method: 'POST' });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        if (snaToolsPermissionsIsGone(err)) {
+            return { result: 'partial', note: created + ', but its owner in this site' + (ownerName ? ', ' + ownerName + ',' : '') +
+                ' no longer exists in your organization. In the destination, open the group\'s settings and choose a new owner.' };
+        }
+        return { result: 'partial', note: ownerName
+            ? created + ', but couldn\'t make ' + ownerName + ' its owner. In the destination, open the group\'s settings and choose ' +
+              ownerName + ' as its owner.'
+            : created + ', but couldn\'t give it the same owner as in this site.' + chooseOwner };
+    }
+    return { result: 'copied', note: copiedNote };
+}
+
+// Adds one source member to a destination group, unless it is left out or already there, and logs it.
+async function snaToolsPermissionsCopyMember(ctx, state, member, destLogins) {
+    var name = snaToolsPermissionsDisplayName(member) + ' in ' + state.source.Title;
+    var kind = SNA_TOOLS_KINDS.groupMember;
+    var skip = snaToolsPermissionsSkipNote(ctx, member);
+    if (skip) { snaToolsLog(kind, name, 'skipped', skip); return; }
+    var login = member.LoginName || '';
+    if (!login) {
+        snaToolsLog(kind, name, 'skipped', 'SharePoint didn\'t give a sign-in name for this member, so Sitenalyzer couldn\'t ' +
+            'add them. Add them to the group in the destination by hand.');
+        return;
+    }
+    var verify = { verify: { type: 'groupMember', groupId: state.destId, loginName: login } };
+    if (destLogins[snaToolsPermissionsLogin(login)]) {
+        snaToolsLog(kind, name, 'copied', 'Already in this group in the destination.', verify);
+        return;
+    }
+    try {
+        await snaToolsWrite(ctx.dest.siteUrl, '/_api/web/sitegroups(' + state.destId + ')/users', {
+            verbose: true, body: { __metadata: { type: 'SP.User' }, LoginName: login }
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        if (snaToolsPermissionsIsGone(err)) { snaToolsLog(kind, name, 'skipped', SNA_TOOLS_PERMISSIONS_GONE_NOTE); return; }
+        snaToolsLog(kind, name, 'failed', snaToolsPermissionsErrorNote(err));
+        return;
+    }
+    destLogins[snaToolsPermissionsLogin(login)] = true;
+    if (snaToolsPermissionsIsEveryone(login)) {
+        snaToolsLog(kind, name, 'partial', 'Added to the group. ' + snaToolsPermissionsDisplayName(member, 'This member') + ' opens everything ' +
+            'this group can use to your whole organization. Remove it from the group in the destination if only some ' +
+            'people should have access.', verify);
+        return;
+    }
+    snaToolsLog(kind, name, 'copied', 'Added to the group.', verify);
+}
+
+// Returns the sign-in names of a destination group's members, in lowercase, with the member who is the person running
+// the copy, if any: { logins: { login: true }, items: [members], caller: { Id, LoginName } | null }.
+async function snaToolsPermissionsDestMembers(ctx, groupId) {
+    var items = (await snaToolsReadAll(ctx.dest.siteUrl, '/_api/web/sitegroups(' + groupId + ')/users?$select=' +
+        SNA_TOOLS_PERMISSIONS_MEMBER_SELECT, SNA_TOOLS_READ_MAX)).items;
+    var logins = {};
+    var caller = null;
+    items.forEach(function(u) {
+        logins[snaToolsPermissionsLogin(u.LoginName)] = true;
+        if (ctx.dest.currentUserId && u.Id === ctx.dest.currentUserId) { caller = u; }
+    });
+    return { logins: logins, items: items, caller: caller };
+}
+
+// Logs one row for the members that a group already in the destination has there but not in this site. They stay,
+// because the copy never removes anyone. The person running the copy and SharePoint's own account aren't counted.
+function snaToolsPermissionsLogOtherMembers(ctx, state, members, destItems) {
+    var inSource = {};
+    members.forEach(function(m) { inSource[snaToolsPermissionsLogin(m.LoginName)] = true; });
+    var others = destItems.filter(function(u) {
+        var login = snaToolsPermissionsLogin(u.LoginName);
+        if (!login || inSource[login] || login === SNA_TOOLS_PERMISSIONS_SYSTEM_ACCOUNT_LOGIN) { return false; }
+        return !(ctx.dest.currentUserId && u.Id === ctx.dest.currentUserId);
+    });
+    if (others.length === 0) { return; }
+    var one = others.length === 1;
+    snaToolsLog(SNA_TOOLS_KINDS.groupMember, 'Other members of ' + state.source.Title, 'skipped', 'In the destination, this group has ' +
+        snaCountText(others.length, 'member', 'members') + ' who ' + (one ? 'isn\'t' : 'aren\'t') + ' in it in this site: ' +
+        snaToolsPermissionsNames(others) + '. Sitenalyzer didn\'t remove ' + (one ? 'this member' : 'them') + '. Remove ' +
+        (one ? 'this member' : 'them') + ' from the group in the destination if they shouldn\'t be in it.');
+}
+
+// Adds the members of one copied group. For a group the copy created, then removes the person running the copy when
+// SharePoint added them and they aren't in the group in this site. Never removes anyone else.
+async function snaToolsPermissionsCopyMembers(ctx, state, entry) {
+    var members;
+    try {
+        members = await snaToolsPermissionsSourceMembers(ctx, state.source.Id);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        snaToolsLog(SNA_TOOLS_KINDS.groupMember, 'Members of ' + state.source.Title, 'failed', 'Sitenalyzer couldn\'t read the ' +
+            'members of this group in this site, so it didn\'t add any. Add them to the group in the destination by hand.');
+        return;
+    }
+    var destLogins = {};
+    var destItems = null;
+    try {
+        var before = await snaToolsPermissionsDestMembers(ctx, state.destId);
+        destLogins = before.logins;
+        destItems = before.items;
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    for (var i = 0; i < members.length; i++) {
+        snaToolsCheckCancelled();
+        await snaToolsPermissionsCopyMember(ctx, state, members[i], destLogins);
+    }
+    if (state.how !== 'created' && destItems) { snaToolsPermissionsLogOtherMembers(ctx, state, members, destItems); }
+    if (state.how !== 'created' || !ctx.dest.currentUserId || !entry) { return; }
+    try {
+        var after = await snaToolsPermissionsDestMembers(ctx, state.destId);
+        var caller = after.caller;
+        if (!caller || !caller.LoginName) { return; }
+        var inSource = members.some(function(m) { return snaToolsPermissionsLogin(m.LoginName) === snaToolsPermissionsLogin(caller.LoginName); });
+        if (inSource) { return; }
+        await snaToolsWrite(ctx.dest.siteUrl, '/_api/web/sitegroups(' + state.destId + ')/users/removebyid(' +
+            snaToolsPermissionsInt(caller.Id) + ')', { method: 'POST' });
+        entry.note += ' Removed you from the group, because you aren\'t in it in this site.';
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        if (entry.result === 'copied') { entry.result = 'partial'; }
+        entry.note += ' Sitenalyzer couldn\'t check whether SharePoint added you to the group. In the destination, open ' +
+            'the group and remove yourself if you aren\'t in it in this site.';
+    }
+}
+
+// Copies the groups: finds or creates each one, sets the owners of new groups, then adds the members. Fills
+// maps.principals for groups.
+async function snaToolsPermissionsCopyGroups(ctx) {
+    var chosen = snaToolsPermissionsGroupsToCopy(ctx);
+    var states = [];
+    for (var i = 0; i < chosen.groups.length; i++) {
+        snaToolsCheckCancelled();
+        var group = chosen.groups[i];
+        try {
+            var state = await snaToolsPermissionsMapGroup(ctx, group);
+            if (state.how === 'shared') {
+                snaToolsLog(SNA_TOOLS_KINDS.group, group.Title, 'skipped', state.sharedNote);
+                continue;
+            }
+            ctx.maps.principals[String(group.Id)] = state.destId;
+            states.push(state);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(SNA_TOOLS_KINDS.group, group.Title, 'failed', snaToolsPermissionsErrorNote(err));
+        }
+    }
+    // Owners are set after every group exists, because a group can be owned by another group.
+    var entries = [];
+    for (var j = 0; j < states.length; j++) {
+        snaToolsCheckCancelled();
+        var s = states[j];
+        var outcome;
+        if (s.how === 'associated') {
+            outcome = { result: 'copied', note: 'Used the destination\'s own ' + s.roleWords + (s.destTitle ? ', ' + s.destTitle + ',' : '') +
+                ' for this site\'s ' + s.roleWords + '. Its name and settings in the destination stay the same.' };
+        } else if (s.how === 'existing') {
+            outcome = { result: 'copied', note: 'The destination already has a group with this name, so Sitenalyzer used it ' +
+                'and didn\'t change its settings or owner.' };
+        } else {
+            outcome = await snaToolsPermissionsSetOwner(ctx, s);
+            if (s.sharedNote) { outcome.note = s.sharedNote + ' ' + outcome.note; }
+        }
+        entries.push(snaToolsLog(SNA_TOOLS_KINDS.group, s.source.Title, outcome.result, outcome.note, { verify: { type: 'group', groupId: s.destId } }));
+    }
+    for (var k = 0; k < states.length; k++) {
+        snaToolsProgress('Copying permissions: members of ' + snaMaskText(states[k].source.Title) + '.');
+        await snaToolsPermissionsCopyMembers(ctx, states[k], entries[k]);
+    }
+    if (chosen.leftOut > 0) {
+        var one = chosen.leftOut === 1;
+        snaToolsLog(SNA_TOOLS_KINDS.group, 'Other groups', 'skipped', 'Left out ' + snaCountText(chosen.leftOut, 'group', 'groups') +
+            ' that ' + (one ? 'doesn\'t' : 'don\'t') + ' give access to this site or to the lists and libraries you chose. ' +
+            'Make ' + (one ? 'it' : 'them') + ' by hand in the destination if you need ' + (one ? 'it' : 'them') + '.');
+    }
+}
+
+// ### Who Has Access ###
+
+// Logs the rows that sum up what one scope left out: sharing links, the Limited Access System Group, and people and
+// groups who have only Limited Access.
+function snaToolsPermissionsLogLeftOut(scopeWords, counts) {
+    var K = SNA_TOOLS_KINDS;
+    if (counts.sharingLinks > 0) {
+        var oneLink = counts.sharingLinks === 1;
+        snaToolsLog(K.permission, 'Sharing links on ' + scopeWords, 'skipped', 'Left out ' +
+            snaCountText(counts.sharingLinks, 'sharing link', 'sharing links') + ', because the files and items ' +
+            (oneLink ? 'it shares aren\'t' : 'they share aren\'t') + ' copied. Share the files again in the destination if you need to.');
+    }
+    if (counts.systemGroups > 0) {
+        snaToolsLog(K.permission, 'Limited Access System Group on ' + scopeWords, 'skipped', 'SharePoint makes this group by ' +
+            'itself for links that share items with your organization, so Sitenalyzer didn\'t copy it.');
+    }
+    if (counts.limitedOnly > 0) {
+        var one = counts.limitedOnly === 1;
+        snaToolsLog(K.permission, 'Limited Access on ' + scopeWords, 'skipped', 'Left out ' +
+            snaCountText(counts.limitedOnly, 'person or group', 'people and groups') + ' who ' + (one ? 'has' : 'have') +
+            ' only Limited Access. SharePoint gives Limited Access by itself when someone shares a single item, and it ' +
+            'gives access only to what was shared.');
+    }
+}
+
+// Returns the destination principal ID for a source role assignment's member, or throws.
+async function snaToolsPermissionsDestPrincipal(ctx, member) {
+    if (member.PrincipalType === 8) {
+        var groupId = snaToolsPermissionsInt(ctx.maps.principals[String(member.Id)]);
+        if (!groupId) {
+            var groupName = snaToolsPermissionsDisplayName(member, '');
+            throw snaToolsUserError('Sitenalyzer couldn\'t copy the group' + (groupName ? ' ' + groupName : '') + ', so it doesn\'t have ' +
+                'this access in the destination. Make the group in the destination, then give it access by hand.');
+        }
+        return groupId;
+    }
+    var id = await snaToolsPermissionsEnsureUser(ctx, member.LoginName);
+    ctx.maps.principals[String(member.Id)] = id;
+    return id;
+}
+
+// Gives one source role assignment's member the same permission levels in the destination, and logs it. Returns true
+// when some of that access couldn't be given. scope is { listId ('' for the site), apiBase, words, existing:
+// { principalId: [level IDs] }, matched: { principalId: { wanted, complete, entry } } }; matched holds every destination
+// person or group that has access in this site, including those whose levels couldn't all be given. wanted is the
+// destination level IDs this site gives them, complete is true when every one was given, and entry is their row.
+async function snaToolsPermissionsCopyAssignment(ctx, scope, assignment) {
+    var member = assignment.Member || {};
+    var name = snaToolsPermissionsDisplayName(member) + ' on ' + scope.words;
+    var kind = SNA_TOOLS_KINDS.permission;
+    var levels = snaToolsPermissionsItems(assignment.RoleDefinitionBindings).filter(function(b) { return !snaToolsPermissionsIsSkippedLevel(b); });
+    var principalId;
+    try {
+        principalId = await snaToolsPermissionsDestPrincipal(ctx, member);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        if (snaToolsPermissionsIsGone(err)) { snaToolsLog(kind, name, 'skipped', SNA_TOOLS_PERMISSIONS_GONE_NOTE); return false; }
+        snaToolsLog(kind, name, 'failed', snaToolsPermissionsErrorNote(err));
+        return true;
+    }
+    var match = scope.matched[principalId] || { wanted: [], complete: true, entry: null };
+    scope.matched[principalId] = match;
+    var have = scope.existing[principalId] || [];
+    var given = [];
+    var failed = [];
+    var missing = [];
+    var lastError = null;
+    for (var i = 0; i < levels.length; i++) {
+        var roleId = snaToolsPermissionsInt(ctx.maps.roleDefinitions[String(levels[i].Id)]);
+        if (!roleId) { missing.push(levels[i].Name); continue; }
+        if (match.wanted.indexOf(roleId) === -1) { match.wanted.push(roleId); }
+        if (have.indexOf(roleId) === -1) {
+            try {
+                await snaToolsWrite(ctx.dest.siteUrl, scope.apiBase + '/roleassignments/addroleassignment(principalid=' + principalId +
+                    ',roledefid=' + roleId + ')', { method: 'POST' });
+                have.push(roleId);
+            } catch (err) {
+                if (snaToolsIsCancelled(err)) { throw err; }
+                failed.push(levels[i].Name);
+                lastError = err;
+                continue;
+            }
+        }
+        given.push({ id: roleId, name: levels[i].Name });
+    }
+    scope.existing[principalId] = have;
+    if (failed.length > 0 || missing.length > 0) { match.complete = false; }
+    if (given.length === 0) {
+        match.entry = snaToolsLog(kind, name, 'failed', lastError ? snaToolsPermissionsErrorNote(lastError)
+            : 'Sitenalyzer couldn\'t copy ' + (missing.length === 1 ? 'the permission level ' : 'the permission levels ') +
+              snaJoinWords(missing) + ', so it couldn\'t give this access. Check the permission levels in the results, then ' +
+              'give this access by hand in the destination.');
+        return true;
+    }
+    var note = 'Gave access with ' + snaJoinWords(given.map(function(g) { return g.name; })) + '.';
+    var result = 'copied';
+    if (failed.length > 0 || missing.length > 0) {
+        result = 'partial';
+        note += ' Couldn\'t give ' + snaJoinWords(failed.concat(missing)) + '. Give ' + (failed.length + missing.length === 1 ? 'it' : 'them') +
+            ' by hand in the destination.';
+    }
+    // keep is the part of the note that the destination check keeps after a problem it finds (see verify.js).
+    var keep = '';
+    if (snaToolsPermissionsIsEveryone(member.LoginName)) {
+        result = 'partial';
+        keep = ' This opens ' + scope.words + ' to your whole organization. Remove ' + snaToolsPermissionsDisplayName(member, 'it') +
+            ' from the permissions in the destination if only some people should have access.';
+        note += keep;
+    }
+    match.entry = snaToolsLog(kind, name, result, note, { verify: { type: 'permission', listId: scope.listId, principalId: principalId,
+        roleDefinitionIds: given.map(function(g) { return g.id; }), keepNote: keep } });
+    return failed.length > 0 || missing.length > 0;
+}
+
+// Gives each source role assignment of one scope (the site or one list) to the destination, and sums up what it left out.
+// Returns the counts, with missed: how many people and groups didn't get all of their access.
+async function snaToolsPermissionsCopyAssignments(ctx, scope, assignments) {
+    var counts = { sharingLinks: 0, systemGroups: 0, limitedOnly: 0, missed: 0 };
+    for (var i = 0; i < assignments.length; i++) {
+        snaToolsCheckCancelled();
+        var assignment = assignments[i];
+        var member = assignment.Member || {};
+        if (member.PrincipalType === 8 && snaIsSharePointSystemGroup(member.Title)) {
+            if (String(member.Title || '').indexOf('SharingLinks.') === 0) { counts.sharingLinks++; } else { counts.systemGroups++; }
+            continue;
+        }
+        var skip = snaToolsPermissionsSkipNote(ctx, member);
+        if (skip) {
+            snaToolsLog(SNA_TOOLS_KINDS.permission, snaToolsPermissionsDisplayName(member) + ' on ' + scope.words, 'skipped', skip);
+            continue;
+        }
+        if (!snaToolsPermissionsGivesAccess(assignment)) { counts.limitedOnly++; continue; }
+        if (await snaToolsPermissionsCopyAssignment(ctx, scope, assignment)) { counts.missed++; }
+    }
+    snaToolsPermissionsLogLeftOut(scope.words, counts);
+    return counts;
+}
+
+// Logs one row that names the people and groups with access to the site or one list in the destination that they don't
+// have in this site. Never removes that access. The person running the copy (callerId) is left out of that list, so no
+// note names them in the third person. Returns true when they have such access. tellCaller adds a sentence about that
+// access to this row; pass false when another row tells them instead.
+function snaToolsPermissionsLogOtherAccess(scope, destAssignments, callerId, tellCaller) {
+    var callerHasOther = false;
+    var others = destAssignments.filter(function(ra) {
+        var member = ra.Member || {};
+        var id = snaToolsPermissionsInt(ra.PrincipalId || member.Id);
+        if (!id || scope.matched[id]) { return false; }
+        if (member.PrincipalType === 8 && snaIsSharePointSystemGroup(member.Title)) { return false; }
+        if (!snaToolsPermissionsGivesAccess(ra)) { return false; }
+        if (callerId && id === callerId) { callerHasOther = true; return false; }
+        return true;
+    }).map(function(ra) { return ra.Member || {}; });
+    var tellYou = callerHasOther && tellCaller;
+    if (others.length === 0 && !tellYou) { return callerHasOther; }
+    var where = scope.listId ? ' to ' + scope.words : '';
+    var sentences = [];
+    if (others.length > 0) {
+        var note;
+        if (others.length === 1) {
+            // One person is "they"; a SharePoint group, a security group, or a claim such as Everyone is "it".
+            var isPerson = others[0].PrincipalType === SNA_TOOLS_PERMISSIONS_PRINCIPAL_TYPES.person;
+            note = 'In the destination, 1 ' + (isPerson ? 'person has access' + where + ' that they don\'t' : 'group has access' + where +
+                ' that it doesn\'t') + ' have in this site: ' + snaToolsPermissionsNames(others) + '. Sitenalyzer didn\'t remove ' +
+                (isPerson ? 'their' : 'its') + ' access. Remove it in the destination if ' + (isPerson ? 'they shouldn\'t' : 'it shouldn\'t') +
+                ' have access.';
+        } else {
+            note = 'In the destination, ' + snaCountText(others.length, 'person or group', 'people and groups') + ' have access' + where +
+                ' that they don\'t have in this site: ' + snaToolsPermissionsNames(others) + '. Sitenalyzer didn\'t remove their access. ' +
+                'Remove it in the destination if they shouldn\'t have access.';
+        }
+        sentences.push(note);
+    }
+    if (tellYou) {
+        sentences.push((others.length > 0 ? 'You also have' : 'In the destination, you have') + ' access' + where + ' that you don\'t ' +
+            'have in this site. Sitenalyzer didn\'t remove your access. Remove yourself from ' +
+            (scope.listId ? 'the permissions of ' + scope.words : 'the site\'s permissions') + ' in the destination if you shouldn\'t have access.');
+    }
+    snaToolsLog(SNA_TOOLS_KINDS.permission, 'Other access to ' + scope.words, 'skipped', sentences.join(' '));
+    return callerHasOther;
+}
+
+// Adds a sentence to the note of a permission row. The destination check keeps it after a problem it finds, because
+// the sentence names access that the check doesn't look at (see verify.js).
+function snaToolsPermissionsAddNote(entry, text) {
+    entry.note += text;
+    if (entry.verify) { entry.verify.keepNote = (entry.verify.keepNote || '') + text; }
+}
+
+// Adds to the row of each person or group with access in this site the permission levels they also have in the
+// destination, read before the copy, that this site doesn't give them, such as Full Control that SharePoint keeps for
+// the owners group when a list gets its own permissions. Never removes that access, except that removeCallerExtra
+// removes the extra levels of the person running the copy when they got every level this site gives them. Pass it
+// only for a list that used the site's permissions before the copy, so that SharePoint gave those levels.
+async function snaToolsPermissionsReportExtraLevels(ctx, scope, destAssignments, removeCallerExtra) {
+    var callerId = snaToolsPermissionsInt(ctx.dest.currentUserId);
+    var where = scope.listId ? ' on ' + scope.words : '';
+    for (var i = 0; i < destAssignments.length; i++) {
+        var ra = destAssignments[i];
+        var id = snaToolsPermissionsInt(ra.PrincipalId || (ra.Member && ra.Member.Id));
+        var match = id ? scope.matched[id] : null;
+        if (!match || !match.entry) { continue; }
+        var extra = snaToolsPermissionsItems(ra.RoleDefinitionBindings).filter(function(b) {
+            return !snaToolsPermissionsIsSkippedLevel(b) && match.wanted.indexOf(snaToolsPermissionsInt(b.Id)) === -1;
+        });
+        if (extra.length === 0) { continue; }
+        var entry = match.entry;
+        var one = extra.length === 1;
+        var levelWords = snaJoinWords(extra.map(function(b) { return b.Name; }));
+        var isCaller = callerId > 0 && id === callerId;
+        if (isCaller && removeCallerExtra && match.complete) {
+            var removed = [];
+            var kept = [];
+            for (var j = 0; j < extra.length; j++) {
+                snaToolsCheckCancelled();
+                try {
+                    await snaToolsWrite(ctx.dest.siteUrl, scope.apiBase + '/roleassignments/removeroleassignment(principalid=' + id +
+                        ',roledefid=' + snaToolsPermissionsInt(extra[j].Id) + ')', { method: 'POST' });
+                    removed.push(extra[j].Name);
+                } catch (err) {
+                    if (snaToolsIsCancelled(err)) { throw err; }
+                    kept.push(extra[j].Name);
+                }
+            }
+            if (removed.length > 0) {
+                snaToolsPermissionsAddNote(entry, ' Removed ' + snaJoinWords(removed) + ', which SharePoint gave you when ' + scope.words +
+                    ' got its own permissions, because you don\'t have ' + (removed.length === 1 ? 'it' : 'them') + ' there in this site.');
+            }
+            if (kept.length > 0) {
+                var oneKept = kept.length === 1;
+                if (entry.result === 'copied') { entry.result = 'partial'; }
+                snaToolsPermissionsAddNote(entry, ' SharePoint gave you ' + snaJoinWords(kept) + ' when ' + scope.words +
+                    ' got its own permissions, and Sitenalyzer couldn\'t remove ' + (oneKept ? 'it' : 'them') + '. Remove ' + (oneKept ? 'it' : 'them') +
+                    ' in the destination if you shouldn\'t have ' + (oneKept ? 'it' : 'them') + '.');
+            }
+            continue;
+        }
+        var isPerson = !!ra.Member && ra.Member.PrincipalType === 1;
+        if (entry.result === 'copied') { entry.result = 'partial'; }
+        snaToolsPermissionsAddNote(entry, isCaller
+            ? ' In the destination, you also have ' + levelWords + where + ', which you don\'t have in this site. Sitenalyzer ' +
+              'didn\'t remove ' + (one ? 'that level' : 'those levels') + '. Remove ' + (one ? 'it' : 'them') +
+              ' in the destination if you shouldn\'t have ' + (one ? 'it' : 'them') + '.'
+            : ' In the destination, ' + snaToolsPermissionsDisplayName(ra.Member, isPerson ? 'this person' : 'this group') + ' also has ' +
+              levelWords + where + ', which ' + (isPerson ? 'they don\'t' : 'it doesn\'t') + ' have in this site. Sitenalyzer didn\'t ' +
+              'remove ' + (one ? 'that level' : 'those levels') + '. Remove ' + (one ? 'it' : 'them') + ' in the destination if ' +
+              (one ? 'it isn\'t' : 'they aren\'t') + ' needed.');
+    }
+}
+
+// Returns the levels each principal has in a list of destination role assignments: { principalId: [level IDs] }.
+function snaToolsPermissionsExisting(assignments) {
+    var existing = {};
+    assignments.forEach(function(ra) {
+        var id = snaToolsPermissionsInt(ra.PrincipalId || (ra.Member && ra.Member.Id));
+        if (!id) { return; }
+        existing[id] = snaToolsPermissionsItems(ra.RoleDefinitionBindings).map(function(b) { return b.Id; });
+    });
+    return existing;
+}
+
+// Returns the destination ID of a copied list or library whose permissions the copy gives, or '' when the copy gives
+// it none: it uses the site's permissions in this site, it wasn't copied, or its access in this site couldn't be read.
+function snaToolsPermissionsDestListId(ctx, list) {
+    var destListId = snaToolsCleanGuid(ctx.maps.lists[list.sourceId]);
+    if (!list.ownPermissions || !destListId || !Array.isArray(ctx.source.listAssignments[list.sourceId])) { return ''; }
+    return destListId;
+}
+
+// Returns true when a destination list has its own permissions, false when it uses the site's, and null when that
+// couldn't be read.
+async function snaToolsPermissionsHasOwn(ctx, apiBase) {
+    try {
+        var destList = await snaToolsRead(ctx.dest.siteUrl, apiBase + '?$select=Id,HasUniqueRoleAssignments');
+        if (destList && typeof destList.HasUniqueRoleAssignments === 'boolean') { return destList.HasUniqueRoleAssignments; }
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    return null;
+}
+
+// Gives each list the destination already had, that the copy gives permissions to, its own permissions before the
+// copy gives anyone access to the site. (true,false) copies the site's access as it is before the copy, so everyone
+// keeps the access they had to the list, and nobody gets access to it only because the copy gave them access to the
+// site. It leaves alone any items that have their own permissions. Fills ctx.reusedLists with
+// { sourceListId: { hadOwn: true, false, or null when it couldn't be read, error: the failed request's error or null } }.
+async function snaToolsPermissionsKeepReusedListAccess(ctx) {
+    var lists = ctx.plan.lists;
+    for (var i = 0; i < lists.length; i++) {
+        snaToolsCheckCancelled();
+        var list = lists[i];
+        var destListId = snaToolsPermissionsDestListId(ctx, list);
+        if (!destListId || !(ctx.maps.existingLists && ctx.maps.existingLists[list.sourceId])) { continue; }
+        var apiBase = snaToolsPermissionsListBase(destListId);
+        var state = { hadOwn: await snaToolsPermissionsHasOwn(ctx, apiBase), error: null };
+        ctx.reusedLists[list.sourceId] = state;
+        if (state.hadOwn === true) { continue; }
+        // When hadOwn is null, the list may already have its own permissions; SharePoint then leaves it unchanged.
+        try {
+            await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(true,false)', { method: 'POST' });
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            state.error = err;
+        }
+    }
+}
+
+// Copies who has access to the site, then reports access the destination gives that this site doesn't. Never removes
+// any access from the destination.
+async function snaToolsPermissionsCopySiteAccess(ctx) {
+    var scope = { listId: '', apiBase: '/_api/web', words: 'the site', existing: snaToolsPermissionsExisting(ctx.destSiteAssignments), matched: {} };
+    if (!ctx.webUnique) {
+        // A subsite that uses its parent's permissions gets its own first. (true,false) copies the parent's
+        // assignments, so everyone who has access through the parent keeps it, and leaves its lists as they are.
+        try {
+            await snaToolsWrite(ctx.dest.siteUrl, '/_api/web/breakroleinheritance(true,false)', { method: 'POST' });
+            ctx.webUnique = true;
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(SNA_TOOLS_KINDS.permission, 'Permissions of the site', 'failed', 'The destination uses the permissions of ' +
+                'its parent site, and Sitenalyzer couldn\'t give it its own. ' + snaToolsPermissionsErrorNote(err));
+            return;
+        }
+    }
+    await snaToolsPermissionsCopyAssignments(ctx, scope, ctx.source.siteAssignments);
+    snaToolsPermissionsLogOtherAccess(scope, ctx.destSiteAssignments, snaToolsPermissionsInt(ctx.dest.currentUserId), true);
+    await snaToolsPermissionsReportExtraLevels(ctx, scope, ctx.destSiteAssignments, false);
+}
+
+// Gives each copied list or library with its own permissions the same permissions as in this site, then reports
+// access that the destination list has and that this site doesn't give. A list whose access in this site couldn't be
+// read has no entry in ctx.source.listAssignments and keeps the site's permissions. Access is removed only from the
+// person running the copy, and only on a list the copy created, because then SharePoint gave that access when the copy
+// gave the list its own permissions. A list the destination already had got its own permissions before the copy gave
+// anyone access to the site (see snaToolsPermissionsKeepReusedListAccess), so it keeps the access people had to it
+// before the copy, and access this site doesn't give is reported instead.
+async function snaToolsPermissionsCopyListAccess(ctx) {
+    var lists = ctx.plan.lists;
+    for (var i = 0; i < lists.length; i++) {
+        snaToolsCheckCancelled();
+        var list = lists[i];
+        var destListId = snaToolsPermissionsDestListId(ctx, list);
+        if (!destListId) { continue; }
+        var sourceAssignments = ctx.source.listAssignments[list.sourceId];
+        var listName = list.newTitle || list.title;
+        var name = 'Permissions of ' + listName;
+        var apiBase = snaToolsPermissionsListBase(destListId);
+        snaToolsProgress('Copying permissions: ' + snaMaskText(listName) + '.');
+        // reusedState is set for a list the destination already had, which the lists step used instead of creating one.
+        var reusedState = ctx.reusedLists[list.sourceId];
+        var reused = !!reusedState;
+        // hadOwn is true when the destination list had its own permissions before the copy, false when it used the
+        // site's, and null when that couldn't be read.
+        var hadOwn = reused ? reusedState.hadOwn : await snaToolsPermissionsHasOwn(ctx, apiBase);
+        var entry;
+        if (hadOwn === true) {
+            // The list already has its own permissions, so the copy doesn't need to change it before giving access.
+            entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'It already had its own permissions in the destination, so ' +
+                'Sitenalyzer didn\'t remove any access from it.', { verify: { type: 'ownPermissions', listId: destListId } });
+        } else {
+            // A list the destination already had got its own permissions in snaToolsPermissionsKeepReusedListAccess.
+            var breakError = reused ? reusedState.error : null;
+            if (!reused) {
+                try {
+                    // (false,false) gives a new list only what SharePoint keeps for the person running the copy, and
+                    // leaves alone any items that have their own permissions.
+                    await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/breakroleinheritance(false,false)', { method: 'POST' });
+                } catch (err) {
+                    if (snaToolsIsCancelled(err)) { throw err; }
+                    breakError = err;
+                }
+            }
+            if (breakError) {
+                snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'failed', 'Sitenalyzer couldn\'t give it its own permissions, so it uses the ' +
+                    'site\'s permissions in the destination. ' + snaToolsPermissionsErrorNote(breakError));
+                continue;
+            }
+            entry = snaToolsLog(SNA_TOOLS_KINDS.permission, name, 'copied', 'Gave it its own permissions, as in this site' +
+                (reused ? ', and kept the access anyone had to it in the destination before the copy.' : '.'),
+                { verify: { type: 'ownPermissions', listId: destListId } });
+        }
+        if (entry && hadOwn === null) {
+            entry.result = 'partial';
+            entry.note += ' Sitenalyzer couldn\'t check whether it already had its own permissions in the destination, so it didn\'t ' +
+                'remove any access from it. Open its permissions in the destination and remove anyone who doesn\'t have access to it ' +
+                'in this site.';
+        }
+        // When the copy gave a new list its own permissions, SharePoint keeps one assignment that gives the person running
+        // the copy access: their own, or that of a group they are in, such as the destination's owners group.
+        // destAssignments is null when it couldn't be read.
+        var destAssignments = null;
+        try {
+            destAssignments = await snaToolsPermissionsReadAssignments(ctx.dest.siteUrl, apiBase);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+        }
+        var scope = { listId: destListId, apiBase: apiBase, words: listName, existing: snaToolsPermissionsExisting(destAssignments || []), matched: {} };
+        var counts = await snaToolsPermissionsCopyAssignments(ctx, scope, sourceAssignments);
+        if (entry && counts.missed > 0) {
+            var one = counts.missed === 1;
+            entry.result = 'partial';
+            entry.note += ' Couldn\'t give ' + snaCountText(counts.missed, 'person or group', 'people and groups') + ' the access ' +
+                (one ? 'it has' : 'they have') + ' in this site. Give ' + (one ? 'it' : 'them') + ' access by hand in the destination.';
+        }
+        if (!destAssignments) {
+            if (entry && hadOwn === false && !reused) {
+                entry.result = 'partial';
+                entry.note += ' Sitenalyzer couldn\'t check who else SharePoint gave access to it, such as you or a group you\'re ' +
+                    'in. In the destination, open its permissions and remove anyone who doesn\'t have access to it in this site.';
+            } else if (entry && hadOwn !== null) {
+                entry.result = 'partial';
+                entry.note += ' Sitenalyzer couldn\'t check who else has access to it in the destination. Open its permissions there ' +
+                    'and remove anyone who doesn\'t have access to it in this site.';
+            }
+            continue;
+        }
+        var callerId = snaToolsPermissionsInt(ctx.dest.currentUserId);
+        var removeCallerAccess = hadOwn === false && !reused;
+        var callerHasOther = snaToolsPermissionsLogOtherAccess(scope, destAssignments, callerId, false);
+        await snaToolsPermissionsReportExtraLevels(ctx, scope, destAssignments, removeCallerAccess);
+        if (entry && callerHasOther && !removeCallerAccess) {
+            snaToolsPermissionsAddNote(entry, ' In the destination, you also have access to it that you don\'t have in this site. ' +
+                'Sitenalyzer didn\'t remove that access. Remove yourself from its permissions in the destination if you shouldn\'t have access.');
+        }
+        if (!removeCallerAccess || !callerId || !scope.existing[callerId] || scope.matched[callerId]) { continue; }
+        try {
+            await snaToolsWrite(ctx.dest.siteUrl, apiBase + '/roleassignments/getbyprincipalid(' + callerId + ')', { method: 'DELETE' });
+            if (entry) { entry.note += ' Removed the access SharePoint gave you when it got its own permissions, because you don\'t have it in this site.'; }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            if (entry) {
+                entry.result = 'partial';
+                entry.note += ' SharePoint gave you access to it, and Sitenalyzer couldn\'t remove that access. Remove yourself ' +
+                    'from its permissions in the destination if you shouldn\'t have access.';
+            }
+        }
+    }
+}
+
+// ### People Picker Columns ###
+
+// Returns the name of a people picker column for its row, such as 'Coordinator in Study Visits'.
+function snaToolsPermissionsPickerName(column) {
+    return column.list ? column.field.title + ' in ' + (column.list.newTitle || column.list.title) : column.field.title;
+}
+
+// Logs a row for each people picker column this copy made that the permissions step didn't get to, because it stopped
+// before then. Each of those columns lets people choose anyone. reason ends the first sentence of the note.
+function snaToolsPermissionsLogPickersLeft(ctx, reason) {
+    snaToolsPermissionsPickerColumns(ctx).forEach(function(c) {
+        if (!c.made || ctx.pickersDone[c.key]) { return; }
+        ctx.pickersDone[c.key] = true;
+        snaToolsLog(SNA_TOOLS_KINDS.column, snaToolsPermissionsPickerName(c), 'partial', 'It lets people choose anyone, because ' + reason +
+            '. Open the column\'s settings in the destination and choose the group it uses in this site.');
+    });
+}
+
+// Points each people picker column that this copy made, and that this site limits to a SharePoint group, at the
+// destination's group. A column the destination already had keeps its own setting.
+async function snaToolsPermissionsUpdatePeoplePickers(ctx) {
+    var columns = snaToolsPermissionsPickerColumns(ctx);
+    for (var i = 0; i < columns.length; i++) {
+        var list = columns[i].list;
+        var field = columns[i].field;
+        var sourceGroupId = columns[i].groupId;
+        var destFieldId = columns[i].destFieldId;
+        var destListId = columns[i].destListId;
+        snaToolsCheckCancelled();
+        ctx.pickersDone[columns[i].key] = true;
+        var name = snaToolsPermissionsPickerName(columns[i]);
+        var group = ctx.source.groups.filter(function(g) { return g.Id === sourceGroupId; })[0];
+        if (!columns[i].made) {
+            snaToolsLog(SNA_TOOLS_KINDS.column, name, 'skipped', 'The destination already had this column, so Sitenalyzer didn\'t change ' +
+                'the group people choose from in it.' + (group ? ' In this site, people choose only from the group ' + group.Title + '.' : '') +
+                ' Change the column\'s settings in the destination if it should work the same way.');
+            continue;
+        }
+        if (!group) {
+            // SharePoint keeps a column's group setting after the group is deleted.
+            snaToolsLog(SNA_TOOLS_KINDS.column, name, 'partial', 'In this site, this column is limited to a group that no longer ' +
+                'exists, so Sitenalyzer didn\'t limit it. Open the column\'s settings in the destination and choose a group if you need to.');
+            continue;
+        }
+        var groupName = group.Title;
+        var destGroupId = snaToolsPermissionsInt(ctx.maps.principals[String(sourceGroupId)]);
+        if (!destGroupId) {
+            snaToolsLog(SNA_TOOLS_KINDS.column, name, 'partial', 'Sitenalyzer couldn\'t limit the people you can choose in this ' +
+                'column to the group ' + groupName + ', because that group wasn\'t copied. Open the column\'s settings in the ' +
+                'destination and choose a group.');
+            continue;
+        }
+        var path = (list ? snaToolsPermissionsListBase(destListId) : '/_api/web') + "/fields(guid'" + destFieldId + "')";
+        try {
+            await snaToolsWrite(ctx.dest.siteUrl, path, { method: 'MERGE', verbose: true,
+                body: { __metadata: { type: 'SP.FieldUser' }, SelectionGroup: destGroupId } });
+            snaToolsLog(SNA_TOOLS_KINDS.column, name, 'copied', 'Limited the people you can choose in this column to the group ' +
+                groupName + ', as in this site.');
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            snaToolsLog(SNA_TOOLS_KINDS.column, name, 'partial', 'Sitenalyzer couldn\'t limit the people you can choose in this ' +
+                'column to the group ' + groupName + '. Open the column\'s settings in the destination and choose the group.');
+        }
+    }
+}
+
+// ### Copy Permissions ###
+
+/**
+ * Copies permission levels, groups with their owners and members, who has access to the site, and the permissions of
+ * each copied list or library that has its own, into the destination. Never removes access or members the destination
+ * already has, other than the access SharePoint gives the person running the copy on a new group or list.
+ * @param {object} plan The copy plan (see plan.js). Runs only when plan.permissions is true for a site source.
+ * @param {object} dest The checked destination (see snaToolsCheckDestination).
+ * @param {object} maps Source to destination IDs; fills maps.principals and maps.roleDefinitions.
+ * @returns {Promise<void>} Side effects: changes the destination's permissions and adds results. Needs the person to be
+ *          a site collection administrator of the destination.
+ * @throws {Error} snaCancelledError when the copy is stopped; snaToolsError when a read that every later part needs fails.
+ */
+async function snaToolsCopyPermissions(plan, dest, maps) {
+    if (!plan.permissions) { return; }
+    var K = SNA_TOOLS_KINDS;
+    var ctx = {
+        plan: plan, dest: dest, maps: maps, report: snaToolsPermissionsReport(plan), sourceUrl: xlsxStripSlash(plan.source.siteUrl),
+        source: { listAssignments: {}, groupId: '', groupIdUnknown: false, groups: [] }, users: {}, usersGone: {},
+        destRoles: [], destGroups: [], destAssociated: {}, destSiteAssignments: [], destIsRoot: true, rolesSiteUrl: dest.siteUrl, webUnique: true,
+        sharedGroups: {}, reusedLists: {}, pickersDone: {}
+    };
+    if (plan.source.kind !== 'site') {
+        snaToolsLog(K.permission, 'Permissions', 'skipped', 'A data dictionary file doesn\'t include permissions, so Sitenalyzer ' +
+            'didn\'t copy any. Give people access in the destination by hand.');
+        snaToolsPermissionsLogPickersLeft(ctx, 'a data dictionary file doesn\'t include permissions');
+        return;
+    }
+    if (String(dest.webTemplate || '').toUpperCase() === SNA_TOOLS_PERMISSIONS_CHANNEL_TEMPLATE) {
+        snaToolsLog(K.permission, 'Permissions', 'skipped', 'Permissions for channel sites are managed in Teams, so Sitenalyzer ' +
+            'left them unchanged. Give people access to the channel in Microsoft Teams.');
+        snaToolsPermissionsLogPickersLeft(ctx, 'Sitenalyzer doesn\'t copy permissions into a channel site');
+        return;
+    }
+    try {
+        snaToolsProgress('Copying permissions: reading them.');
+        await snaToolsPermissionsReadSource(ctx);
+        await snaToolsPermissionsReadDestination(ctx);
+        snaToolsProgress('Copying permissions: permission levels.');
+        await snaToolsPermissionsCopyLevels(ctx);
+        snaToolsProgress('Copying permissions: groups.');
+        await snaToolsPermissionsCopyGroups(ctx);
+        snaToolsProgress('Copying permissions: who has access to the site.');
+        await snaToolsPermissionsKeepReusedListAccess(ctx);
+        await snaToolsPermissionsCopySiteAccess(ctx);
+        await snaToolsPermissionsCopyListAccess(ctx);
+        await snaToolsPermissionsUpdatePeoplePickers(ctx);
+    } catch (err) {
+        // The columns step promised each of these columns a second row (see snaToolsListsAdjustPeople in lists.js).
+        if (!snaToolsIsCancelled(err)) { snaToolsPermissionsLogPickersLeft(ctx, 'Sitenalyzer couldn\'t finish copying permissions'); }
+        throw err;
+    }
+}
+
+// ### Destination Checks ###
+
+// Permission levels: found by their destination ID.
+async function snaToolsPermissionsVerifyPermissionLevels(dest, entries, cache) {
+    if (!cache.permRoles) {
+        cache.permRoles = (await snaToolsReadAll(dest.siteUrl, '/_api/web/roledefinitions?$select=Id,Name', SNA_TOOLS_READ_MAX)).items;
+    }
+    entries.forEach(function(entry) {
+        entry.verify.found = cache.permRoles.some(function(d) { return d.Id === entry.verify.roleDefinitionId; });
+    });
+}
+
+// Groups: found by their destination ID.
+async function snaToolsPermissionsVerifyGroups(dest, entries, cache) {
+    if (!cache.permGroups) { cache.permGroups = await snaToolsPermissionsReadGroups(dest.siteUrl, 'Id,Title', ''); }
+    entries.forEach(function(entry) {
+        entry.verify.found = cache.permGroups.some(function(g) { return g.Id === entry.verify.groupId; });
+    });
+}
+
+// Group members: found by sign-in name among the group's members. A group whose members can't be read stays unchecked.
+async function snaToolsPermissionsVerifyGroupMembers(dest, entries, cache) {
+    for (var i = 0; i < entries.length; i++) {
+        var check = entries[i].verify;
+        var key = 'permMembers:' + check.groupId;
+        try {
+            if (!cache[key]) {
+                cache[key] = (await snaToolsReadAll(dest.siteUrl, '/_api/web/sitegroups(' + snaToolsPermissionsInt(check.groupId) +
+                    ')/users?$select=Id,LoginName', SNA_TOOLS_READ_MAX)).items;
+            }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            continue;
+        }
+        var login = snaToolsPermissionsLogin(check.loginName);
+        check.found = cache[key].some(function(u) { return snaToolsPermissionsLogin(u.LoginName) === login; });
+    }
+}
+
+// Access on the site or a list: found when the person or group has an assignment there; Partly copied when some of
+// the levels given are missing.
+async function snaToolsPermissionsVerifyAssignments(dest, entries, cache) {
+    for (var i = 0; i < entries.length; i++) {
+        var check = entries[i].verify;
+        var key = 'permAssignments:' + (check.listId || 'web');
+        try {
+            if (!cache[key]) {
+                cache[key] = snaToolsPermissionsExisting(await snaToolsPermissionsReadAssignments(dest.siteUrl, check.listId ? snaToolsPermissionsListBase(check.listId) : '/_api/web'));
+            }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            continue;
+        }
+        var levels = cache[key][check.principalId];
+        check.found = !!levels;
+        if (levels && !(check.roleDefinitionIds || []).every(function(id) { return levels.indexOf(id) > -1; })) {
+            check.problem = 'Gave access, but the destination doesn\'t show every permission level Sitenalyzer gave. Check this ' +
+                'person or group\'s permissions in the destination.';
+        }
+    }
+}
+
+// Lists with their own permissions: found when the list is there; Partly copied when it uses the site's permissions.
+async function snaToolsPermissionsVerifyOwnPermissions(dest, entries, cache) {
+    for (var i = 0; i < entries.length; i++) {
+        var check = entries[i].verify;
+        try {
+            var list = await snaToolsRead(dest.siteUrl, snaToolsPermissionsListBase(check.listId) + '?$select=Id,HasUniqueRoleAssignments');
+            check.found = true;
+            if (list && list.HasUniqueRoleAssignments === false) {
+                check.problem = 'It uses the site\'s permissions in the destination instead of its own. Open its permissions in ' +
+                    'the destination, stop inheriting permissions, and give access by hand.';
+            }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            if (err.status === 404) { check.found = false; }
+        }
+    }
+}
+
+snaToolsAddVerifyCheck('permissionLevel', snaToolsPermissionsVerifyPermissionLevels);
+snaToolsAddVerifyCheck('group', snaToolsPermissionsVerifyGroups);
+snaToolsAddVerifyCheck('groupMember', snaToolsPermissionsVerifyGroupMembers);
+snaToolsAddVerifyCheck('permission', snaToolsPermissionsVerifyAssignments);
+snaToolsAddVerifyCheck('ownPermissions', snaToolsPermissionsVerifyOwnPermissions);
+
+/*
+This file is part of Sitenalyzer
+verify.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: After a copy, reads the destination back and checks that each item the copy logged as copied is there.
+         An item that isn't there is changed to Failed, and one that is there but not as asked, such as with another
+         name, to Partly copied. Adds one summary row for each kind of item it checked. Reads only.
+Notes: See README file for documentation and full license information.
+
+       A result is checked when it was logged with detail.verify (see snaToolsLog in core.js). The types checked here:
+         { type: 'list', listId, title, serverRelativeUrl }   a list or library, by its destination ID
+         { type: 'field', listId, internalName }              a column of a list, or a site column when listId is ''
+         { type: 'view', listId, title }                      a view of a list, by its title
+         { type: 'contentType', listId, name }                a content type of a list, or a site content type when listId is ''
+         { type: 'termSet', groupId, setId, termCount }       a term set in the destination term group, with its terms
+         { type: 'file', serverRelativeUrl }                  a file or page, by its path in the destination
+       Another file adds a type with snaToolsAddVerifyCheck(type, checker) at its top level (see core.js), such as
+       'group' in permissions.js. Any type can also have keepNote: text that stays at the end of the note when a check
+       finds a problem and the note becomes that problem.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Verify Settings ###
+
+// The note for an item the destination doesn't have after the copy.
+var SNA_TOOLS_NOT_FOUND_NOTE = 'Sitenalyzer couldn\'t find this in the destination after the copy. Check the destination, then copy again or make it by hand.';
+
+// The sentence added to a note when Sitenalyzer couldn't read the destination to check an item.
+var SNA_TOOLS_NOT_CHECKED_NOTE = ' Sitenalyzer couldn\'t read the destination to check it, so look for it there.';
+
+// ### Reads Shared by the Checks ###
+
+// Returns the destination's lists by lowercase ID, read once for each copy. Each is { id, title, serverRelativeUrl }.
+async function snaToolsVerifyListIndex(dest, cache) {
+    if (cache.lists) { return cache.lists; }
+    var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/lists?$select=Id,Title,RootFolder/ServerRelativeUrl&$expand=RootFolder', SNA_TOOLS_READ_MAX);
+    var byId = {};
+    read.items.forEach(function(l) {
+        byId[snaToolsCleanGuid(l.Id)] = { id: snaToolsCleanGuid(l.Id), title: l.Title || '', serverRelativeUrl: (l.RootFolder && l.RootFolder.ServerRelativeUrl) || '' };
+    });
+    cache.lists = byId;
+    return byId;
+}
+
+// Returns the items of one collection of a destination list, such as its columns, read once for each copy.
+// part is the address after the list, such as '/fields?$select=Id,InternalName'. listId '' reads the site's own.
+async function snaToolsVerifyCollection(dest, cache, listId, part) {
+    var key = (listId || 'web') + part;
+    if (cache[key]) { return cache[key]; }
+    var base = listId ? "/_api/web/lists(guid'" + snaToolsCleanGuid(listId) + "')" : '/_api/web';
+    cache[key] = (await snaToolsReadAll(dest.siteUrl, base + part, SNA_TOOLS_READ_MAX)).items;
+    return cache[key];
+}
+
+// Runs check(entry) for each entry, grouped by entry.verify.listId, after reading that list's collection with read.
+// A list whose collection can't be read leaves its entries unchecked.
+async function snaToolsVerifyByList(entries, read, check) {
+    var groups = {};
+    entries.forEach(function(entry) {
+        var key = snaToolsCleanGuid(entry.verify.listId) || '';
+        (groups[key] = groups[key] || []).push(entry);
+    });
+    var keys = Object.keys(groups);
+    for (var i = 0; i < keys.length; i++) {
+        var items;
+        try {
+            items = await read(keys[i]);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            continue;
+        }
+        groups[keys[i]].forEach(function(entry) { check(entry, items); });
+    }
+}
+
+// ### Checks ###
+
+// Lists and libraries: found by ID; a different name or address makes the item Partly copied.
+async function snaToolsVerifyLists(dest, entries, cache) {
+    var byId = await snaToolsVerifyListIndex(dest, cache);
+    entries.forEach(function(entry) {
+        var found = byId[snaToolsCleanGuid(entry.verify.listId)];
+        entry.verify.found = !!found;
+        if (!found) { return; }
+        if (entry.verify.title && found.title !== entry.verify.title) {
+            entry.verify.problem = 'Created it, but its name in the destination is ' + found.title + '. Rename it in the destination if you need the name you chose.';
+        } else if (entry.verify.serverRelativeUrl && found.serverRelativeUrl && !snaToolsSamePath(found.serverRelativeUrl, entry.verify.serverRelativeUrl)) {
+            entry.verify.problem = 'Created it, but its address in the destination is ' + found.serverRelativeUrl + ' instead of the one you chose.';
+        }
+    });
+}
+
+// Columns: found by internal name in the list, or in the site columns.
+async function snaToolsVerifyFields(dest, entries, cache) {
+    await snaToolsVerifyByList(entries, function(listId) {
+        return snaToolsVerifyCollection(dest, cache, listId, '/fields?$select=Id,InternalName,Title');
+    }, function(entry, items) {
+        entry.verify.found = items.some(function(f) { return f.InternalName === entry.verify.internalName; });
+    });
+}
+
+// Views: found by title in the list.
+async function snaToolsVerifyViews(dest, entries, cache) {
+    await snaToolsVerifyByList(entries, function(listId) {
+        return snaToolsVerifyCollection(dest, cache, listId, '/views?$select=Id,Title');
+    }, function(entry, items) {
+        entry.verify.found = items.some(function(v) { return v.Title === entry.verify.title; });
+    });
+}
+
+// Content types: found by name in the list, or in the site content types.
+async function snaToolsVerifyContentTypes(dest, entries, cache) {
+    await snaToolsVerifyByList(entries, function(listId) {
+        return snaToolsVerifyCollection(dest, cache, listId, '/contenttypes?$select=StringId,Name');
+    }, function(entry, items) {
+        entry.verify.found = items.some(function(ct) { return ct.Name === entry.verify.name; });
+    });
+}
+
+// Term sets: found by ID in the destination term group. Fewer terms than were copied makes the item Partly copied.
+async function snaToolsVerifyTermSets(dest, entries, cache) {
+    var termBase = '/_api/v2.1/sites/' + encodeURIComponent(dest.siteId) + '/termStore';
+    for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        var check = entry.verify;
+        var setsKey = 'termsets:' + check.groupId;
+        try {
+            if (!cache[setsKey]) {
+                cache[setsKey] = (await snaToolsReadAll(dest.siteUrl, termBase + '/groups/' + encodeURIComponent(check.groupId) + '/sets', SNA_TOOLS_READ_MAX)).items;
+            }
+            check.found = cache[setsKey].some(function(s) { return snaToolsCleanGuid(s.id) === snaToolsCleanGuid(check.setId); });
+            if (!check.found || !(check.termCount > 0)) { continue; }
+            var terms = await snaToolsReadAll(dest.siteUrl, termBase + '/sets/' + encodeURIComponent(check.setId) + '/terms', SNA_TERMS_PER_SET_MAX);
+            if (terms.items.length < check.termCount) {
+                check.problem = 'Created the term set, but the destination has ' + snaCountText(terms.items.length, 'term', 'terms') +
+                    ' of the ' + check.termCount + ' copied. Check the term set in the destination.';
+            }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            delete check.found;
+        }
+    }
+}
+
+// Files and pages: found by their path in the destination.
+async function snaToolsVerifyFiles(dest, entries, cache) {
+    for (var i = 0; i < entries.length; i++) {
+        var check = entries[i].verify;
+        try {
+            await snaToolsRead(dest.siteUrl, '/_api/web/GetFileByServerRelativePath(decodedurl=@p)?@p=' +
+                encodeURIComponent(snaToolsQuote(check.serverRelativeUrl)) + '&$select=Name');
+            check.found = true;
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            if (err.status === 404) { check.found = false; }
+        }
+    }
+}
+
+snaToolsAddVerifyCheck('list', snaToolsVerifyLists);
+snaToolsAddVerifyCheck('field', snaToolsVerifyFields);
+snaToolsAddVerifyCheck('view', snaToolsVerifyViews);
+snaToolsAddVerifyCheck('contentType', snaToolsVerifyContentTypes);
+snaToolsAddVerifyCheck('termSet', snaToolsVerifyTermSets);
+snaToolsAddVerifyCheck('file', snaToolsVerifyFiles);
+
+// ### Verify the Copy ###
+
+// Returns the result of a summary row from the results it sums up: Copied when every item was found as asked,
+// Failed when none was found, and Partly copied otherwise.
+function snaToolsSummaryResult(found, total, partial) {
+    if (found === 0) { return 'failed'; }
+    return (found === total && partial === 0) ? 'copied' : 'partial';
+}
+
+/**
+ * Reads the destination back and corrects the results of the copy that is running: an item logged as Copied or Partly
+ * copied that isn't in the destination becomes Failed, and one that is there but not as asked becomes Partly copied.
+ * Then adds one summary row for each kind of item checked.
+ * @param {object} plan The copy plan.
+ * @param {object} dest The checked destination.
+ * @param {object} maps Source to destination IDs.
+ * @returns {Promise<void>} Reads only; changes the results.
+ */
+async function snaToolsVerifyCopy(plan, dest, maps) {
+    var results = _snaToolsRun ? _snaToolsRun.results : [];
+    var cache = {};
+    var byType = {};
+    results.forEach(function(entry) {
+        if (!entry.verify || entry.summary || (entry.result !== 'copied' && entry.result !== 'partial')) { return; }
+        (byType[entry.verify.type] = byType[entry.verify.type] || []).push(entry);
+    });
+    var types = Object.keys(byType);
+    for (var t = 0; t < types.length; t++) {
+        var checker = _snaToolsVerifyChecks[types[t]];
+        if (!checker) { continue; }
+        try {
+            await checker(dest, byType[types[t]], cache);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            byType[types[t]].forEach(function(entry) { delete entry.verify.found; });
+        }
+    }
+
+    var kinds = {};
+    var kindOrder = [];
+    results.forEach(function(entry) {
+        if (!entry.verify || entry.summary || (entry.result !== 'copied' && entry.result !== 'partial') || !_snaToolsVerifyChecks[entry.verify.type]) { return; }
+        if (!kinds[entry.kind]) { kinds[entry.kind] = { total: 0, found: 0, partial: 0, unchecked: 0 }; kindOrder.push(entry.kind); }
+        var counts = kinds[entry.kind];
+        counts.total++;
+        if (entry.verify.found === true) {
+            counts.found++;
+            if (entry.verify.problem) {
+                entry.result = 'partial';
+                entry.note = entry.verify.problem + (entry.verify.keepNote || '');
+            }
+            if (entry.result === 'partial') { counts.partial++; }
+        } else if (entry.verify.found === false) {
+            entry.result = 'failed';
+            entry.note = SNA_TOOLS_NOT_FOUND_NOTE;
+        } else {
+            counts.unchecked++;
+            entry.note += SNA_TOOLS_NOT_CHECKED_NOTE;
+        }
+    });
+
+    kindOrder.forEach(function(kind) {
+        var counts = kinds[kind];
+        var words = SNA_TOOLS_KIND_WORDS[kind] || [kind.toLowerCase(), kind.toLowerCase() + 's'];
+        var checked = counts.total - counts.unchecked;
+        if (checked === 0) {
+            var one = counts.total === 1;
+            snaToolsLog(kind, 'Destination check', 'partial', 'Sitenalyzer couldn\'t read the destination to check the ' +
+                (one ? words[0] : snaCountText(counts.total, words[0], words[1])) + ' it copied. Look for ' + (one ? 'it' : 'them') +
+                ' in the destination.', { summary: true });
+            return;
+        }
+        var note = 'Found ' + counts.found + ' of ' + snaCountText(checked, words[0], words[1]) + ' in the destination.';
+        if (counts.unchecked > 0) {
+            note += ' Couldn\'t check ' + counts.unchecked + ' more.';
+        }
+        snaToolsLog(kind, 'Destination check', snaToolsSummaryResult(counts.found, checked, counts.partial + counts.unchecked), note, { summary: true });
+    });
+}
+
+/*
+This file is part of Sitenalyzer
+preflight.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-08
+Last Modified: 2026-11-09
+Summary: The check before copying in Copy site structure. After the person selects Copy to destination and before
+         anything changes, snaToolsPreflight reads the destination (and, for a few checks, this site) and lists what the
+         copy will skip, what will fail, and what may fail, so the person can copy anyway or go back. Also draws the
+         "Before you copy" part of the screen from that list.
+Notes: See README file for documentation and full license information.
+
+       Every check only reads. Requests go through snaToolsRead and snaToolsReadAll, and the one CSOM request, which
+       finds out whether the destination's term store answers CSOM at all, goes through snaToolsPreflightCsomRead, which
+       refuses any request that could change something.
+
+       Adding a check: snaToolsAddPreflightCheck(name, fn), where fn(plan, dest, context) returns (or resolves to) a list
+       of warnings { severity, kind, name, note, stops }:
+         severity  'fail' (the copy will try and fail), 'skip' (the copy will leave it out), 'maybe' (only the copy can
+                   find out, such as a term store change the organization may block), or 'info' (something to know).
+         stops     true for a 'fail' that stops the whole copy before it changes anything, such as a list name the
+                   destination already uses. Before you copy then offers only Go back. Left out otherwise.
+         kind      One of SNA_TOOLS_KINDS, such as 'Column'.
+         name      The item as people know it, such as 'Arm in Study Visits'.
+         note      Plain English that says what will happen and what the person can do.
+       context is shared by the checks of one run: { destLists (the destination's lists and libraries read again, or
+       null), destContentTypes (the destination's content types read again, or null), skipColumn(listId, internalName,
+       title) (marks a column the copy will skip, and returns false when it was already marked), skippedColumns
+       { listId: { internalName: title } }, couldNotFinish() (counts the check that is running as one that couldn't
+       finish, for a check that lists its own warning about a failed read instead of throwing) }. Checks run in the
+       order they were added, so a check that depends on skipped columns, such as the one for calculated columns, is
+       added after the checks that mark them.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Check Settings ###
+
+// The order warnings are listed in: what will fail first, then what will be skipped, what may fail, and notes.
+var SNA_TOOLS_PREFLIGHT_SEVERITIES = ['fail', 'skip', 'maybe', 'info'];
+
+// The permission that SharePoint takes away from everyone, site collection administrators too, on a site that doesn't
+// allow custom scripts: Add and Customize Pages, PermissionKind 19, which is bit 18 of the Low part of a permission mask.
+var SNA_TOOLS_PREFLIGHT_CUSTOMIZE_PAGES_BIT = 0x40000;
+
+// The site template of a Microsoft Teams private or shared channel site.
+var SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE = 'TEAMCHANNEL';
+
+// Most columns a term store warning names one by one. The rest are counted.
+var SNA_TOOLS_PREFLIGHT_COLUMNS_NAMED = 10;
+
+// The sentence for a term store change that only the copy itself can test.
+var SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT = 'Some organizations don\'t let people change term sets from a browser. Sitenalyzer can only find out when it tries.';
+
+// The result row that says the whole check before copying failed and the person copied anyway.
+var SNA_TOOLS_PREFLIGHT_FAILED_NAME = 'Check before copying';
+var SNA_TOOLS_PREFLIGHT_FAILED_NOTE = 'Sitenalyzer couldn\'t finish checking the destination before the copy, so it couldn\'t say what the copy ' +
+    'would skip, and you chose to copy anyway. The other rows say what the copy did. Look for any item marked Skipped or Failed.';
+
+// ### Check State ###
+
+var _snaToolsPreflightChecks = [];  // [{ name, fn }], in the order added
+
+// ### Running the Checks ###
+
+/**
+ * Adds a check to the check before copying. A check with the same name as one added before replaces it.
+ * @param {string} name What the check looks at, in plain words, such as 'Term sets'. Shown as the item when the check
+ *        itself fails.
+ * @param {function(object, object, object): (object[]|Promise<object[]>)} fn Returns the warnings; see the notes at the
+ *        top of this file. Must only read.
+ */
+function snaToolsAddPreflightCheck(name, fn) {
+    _snaToolsPreflightChecks = _snaToolsPreflightChecks.filter(function(c) { return c.name !== name; });
+    _snaToolsPreflightChecks.push({ name: String(name || ''), fn: fn });
+}
+
+/**
+ * Runs every check before copying, one after another. A check that fails adds one warning that says Sitenalyzer
+ * couldn't check that part, and the other checks still run.
+ * @param {object} plan The copy plan (see plan.js).
+ * @param {object} dest The checked destination (see snaToolsCheckDestination in runner.js).
+ * @returns {Promise<{warnings: object[], failedChecks: string[], destLists: (object[]|null)}>} warnings sorted with what
+ *          will fail first; failedChecks names the checks that couldn't finish; destLists are the destination's lists
+ *          and libraries as the check read them again (see snaToolsCheckDestination in runner.js), or null. Reads only.
+ * @throws {Error} snaCancelledError when the copy is stopped.
+ */
+async function snaToolsPreflight(plan, dest) {
+    var context = snaToolsPreflightContext();
+    var warnings = [];
+    var failedChecks = context.failedChecks;
+    for (var i = 0; i < _snaToolsPreflightChecks.length; i++) {
+        var check = _snaToolsPreflightChecks[i];
+        snaToolsCheckCancelled();
+        context.checkName = check.name;
+        var found;
+        try {
+            found = await check.fn(plan, dest, context);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            context.couldNotFinish();
+            found = [{ severity: 'maybe', kind: SNA_TOOLS_KINDS.note, name: check.name,
+                note: 'Sitenalyzer couldn\'t check this before the copy, so the copy may run into a problem here that this table doesn\'t show. ' +
+                    snaToolsPreflightReadError(err) }];
+        }
+        (found || []).forEach(function(w) { warnings.push(snaToolsPreflightWarning(w)); });
+    }
+    var order = SNA_TOOLS_PREFLIGHT_SEVERITIES;
+    var sorted = warnings.map(function(w, index) { return { w: w, index: index }; }).sort(function(a, b) {
+        return (order.indexOf(a.w.severity) - order.indexOf(b.w.severity)) || (a.index - b.index);
+    }).map(function(x) { return x.w; });
+    return { warnings: sorted, failedChecks: failedChecks, destLists: context.destLists };
+}
+
+// Returns the shared state of one run of the checks (see the notes at the top of this file). checkName and failedChecks
+// are for snaToolsPreflight.
+function snaToolsPreflightContext() {
+    var context = { destLists: null, destContentTypes: null, skippedColumns: {}, checkName: '', failedChecks: [] };
+    context.couldNotFinish = function() {
+        if (context.failedChecks.indexOf(context.checkName) === -1) { context.failedChecks.push(context.checkName); }
+    };
+    context.skipColumn = function(listId, internalName, title) {
+        var list = context.skippedColumns[listId] = context.skippedColumns[listId] || {};
+        if (Object.prototype.hasOwnProperty.call(list, internalName)) { return false; }
+        list[internalName] = String(title || internalName);
+        return true;
+    };
+    return context;
+}
+
+// Returns a warning with a known severity and kind, text in its name and note, and stops true or false. Only a 'fail'
+// can stop the copy.
+function snaToolsPreflightWarning(w) {
+    var kinds = Object.keys(SNA_TOOLS_KINDS).map(function(k) { return SNA_TOOLS_KINDS[k]; });
+    var severity = SNA_TOOLS_PREFLIGHT_SEVERITIES.indexOf(w && w.severity) > -1 ? w.severity : 'maybe';
+    return {
+        severity: severity,
+        kind: kinds.indexOf(w && w.kind) > -1 ? w.kind : SNA_TOOLS_KINDS.note,
+        name: String((w && w.name) || ''),
+        note: String((w && w.note) || ''),
+        stops: severity === 'fail' && !!(w && w.stops === true)
+    };
+}
+
+// True when a warning stops the whole copy, so the copy can't start until the person changes what they chose.
+function snaToolsPreflightStops(warnings) {
+    return (warnings || []).some(function(w) { return w.stops; });
+}
+
+// Returns why a read for a check failed, and what the person can do, for the end of a warning.
+function snaToolsPreflightReadError(err) {
+    var status = err && err.snaToolsError ? err.status : -1;
+    var what = 'Sitenalyzer ran into an unexpected problem.';
+    if (status === 0) { what = 'Sitenalyzer couldn\'t reach SharePoint.'; }
+    else if (status === 401 || status === 403) { what = 'SharePoint didn\'t let Sitenalyzer read what it needed.'; }
+    else if (status === 429 || status === 503) { what = 'SharePoint was too busy to answer.'; }
+    else if (status > 0) { what = 'SharePoint couldn\'t answer.'; }
+    return what + ' You can copy anyway, or go back and try again in a few minutes.';
+}
+
+/**
+ * Sends a CSOM request that only reads, such as one that loads the term store. Refuses, without sending it, any request
+ * whose actions could change something: a SetProperty, a Method action, or an object path method that isn't on the list
+ * of reads below.
+ * @param {string} siteUrl The site address, with no slash at the end.
+ * @param {string} requestXml The whole <Request> element.
+ * @returns {Promise<object[]>} SharePoint's answer (see snaToolsCsom).
+ * @throws {Error} snaToolsUserError when the request isn't read-only; snaToolsError when SharePoint refuses it.
+ */
+async function snaToolsPreflightCsomRead(siteUrl, requestXml) {
+    var text = String(requestXml || '');
+    var actions = (/<Actions>([\s\S]*)<\/Actions>/.exec(text) || ['', ''])[1];
+    var allowedMethods = ['GetDefaultSiteCollectionTermStore'];
+    var methods = [];
+    text.replace(/<(?:Method|StaticMethod)\b[^>]*\bName="([^"]*)"/g, function(m, name) { methods.push(name); return m; });
+    var readOnly = !/<(?:SetProperty|Method)\b/.test(actions) &&
+        methods.every(function(name) { return name === 'GetTaxonomySession' || allowedMethods.indexOf(name) > -1; });
+    if (!readOnly) {
+        throw snaToolsUserError('Sitenalyzer didn\'t send a request during the check before copying, because the request could change the destination.');
+    }
+    return snaToolsCsom(siteUrl, text);
+}
+
+// ### Helpers for Columns ###
+
+// Returns the label of a list's column for a warning, such as 'Arm in Study Visits'.
+function snaToolsPreflightColumnLabel(list, field) {
+    return snaMaskText(field.title) + ' in ' + snaMaskText(list.newTitle || list.title);
+}
+
+// Returns the columns the copy creates in each chosen list, leaving out the ones lists.js never makes on its own: built-in
+// columns, and the helper columns SharePoint makes beside managed metadata columns, such as their hidden Note columns.
+// Each is { list, field, label }.
+function snaToolsPreflightColumns(plan) {
+    var columns = [];
+    plan.lists.forEach(function(list) {
+        var noteIds = snaToolsListsNoteFieldIds(list.fields || []);
+        (list.fields || []).forEach(function(field) {
+            if (field.isTaxonomyNote || snaToolsListsIsMadeElsewhere(field, noteIds)) { return; }
+            columns.push({ list: list, field: field, label: snaToolsPreflightColumnLabel(list, field) });
+        });
+    });
+    return columns;
+}
+
+// Returns the managed metadata columns of the chosen lists and the copied site columns that use each term set, by term
+// set ID: { setId: [labels] }. A site column has its own name as its label.
+function snaToolsPreflightTermSetColumns(plan) {
+    var bySet = {};
+    function add(setId, label) {
+        if (!setId) { return; }
+        bySet[setId] = bySet[setId] || [];
+        if (bySet[setId].indexOf(label) === -1) { bySet[setId].push(label); }
+    }
+    snaToolsPreflightColumns(plan).forEach(function(c) { if (c.field.isTaxonomy) { add(c.field.termSetId, c.label); } });
+    (plan.siteColumns || []).forEach(function(f) { if (f.isTaxonomy && !f.builtIn) { add(f.termSetId, snaMaskText(f.title)); } });
+    return bySet;
+}
+
+// Returns a sentence that names the columns a warning is about, such as ' It will skip the 2 columns that use them: Arm
+// in Study Visits and Arm in Participants.', or '' when there are none. many is true when the warning is about more than
+// one term set. start begins the sentence, such as 'It will skip' or 'That would skip'.
+function snaToolsPreflightColumnsSentence(labels, many, start) {
+    if (labels.length === 0) { return ''; }
+    var named = labels.slice(0, SNA_TOOLS_PREFLIGHT_COLUMNS_NAMED);
+    var rest = labels.length - named.length;
+    var list = rest > 0 ? named.join(', ') + ', and ' + snaCountText(rest, 'more column', 'more columns') : snaJoinWords(named);
+    return ' ' + start + ' ' + (labels.length === 1 ? 'the column' : 'the ' + labels.length + ' columns') + ' that ' +
+        (labels.length === 1 ? 'uses ' : 'use ') + (many ? 'them' : 'it') + ': ' + list + '.';
+}
+
+// ### Lists and Libraries ###
+
+// A list or library whose new name or address the copy can't use stops the whole copy (see snaToolsRunCopy in
+// runner.js), so the destination's lists are read again in case they changed after Check destination, and each choice
+// gets the same checks as there.
+snaToolsAddPreflightCheck('Lists and libraries', async function(plan, dest, context) {
+    var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/lists?$select=Id,Title,BaseTemplate,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder', SNA_TOOLS_READ_MAX);
+    context.destLists = read.items.map(function(l) {
+        return { id: snaToolsCleanGuid(l.Id), title: l.Title || '', serverRelativeUrl: (l.RootFolder && l.RootFolder.ServerRelativeUrl) || '',
+            baseTemplate: l.BaseTemplate, hidden: l.Hidden === true };
+    });
+    var fresh = Object.assign({}, dest, { lists: context.destLists });
+    var newUrls = plan.lists.map(function(l) { return l.newUrl; });
+    var newTitles = plan.lists.map(function(l) { return l.newTitle; });
+    var warnings = [];
+    plan.lists.forEach(function(list, index) {
+        var found = snaToolsListChoiceProblems(fresh, list, newTitles.filter(function(t, i) { return i !== index; }),
+            newUrls.filter(function(u, i) { return i !== index; }));
+        var problem = found.address || found.name;
+        if (!problem) {
+            // A list or library the destination already has is renamed when the Name box holds another name.
+            var reused = snaToolsExistingDestinationList(fresh, list.newUrl, list.baseTemplate);
+            if (reused.usable && list.newTitle && list.newTitle !== reused.list.title) {
+                warnings.push({ severity: 'info', kind: list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list,
+                    name: snaMaskText(list.newTitle), note: snaMaskText(snaToolsExistingListNote(reused.list.title, list.newTitle, true)) });
+            }
+            return;
+        }
+        warnings.push({ severity: 'fail', stops: true, kind: list.isLibrary ? SNA_TOOLS_KINDS.library : SNA_TOOLS_KINDS.list,
+            name: snaMaskText(list.newTitle || list.title), note: problem + ' The copy can\'t start until you do. Select Go back to change it, then copy again.' });
+    });
+    return warnings;
+});
+
+// ### Term Sets ###
+
+// The chosen term sets go into the destination's own term group. Reads say whether that group is there and whether
+// there is more than one. The copy changes term sets through the REST API, and through CSOM when the REST API refuses,
+// and it can create the group only through CSOM, so a CSOM read of the term store says whether SharePoint answers CSOM
+// there at all. Whether the person may change term sets can't be read: a site collection administrator manages the
+// site's own group, but some organizations block term store changes from a browser, and only a change shows that.
+snaToolsAddPreflightCheck('Term sets', async function(plan, dest, context) {
+    var chosen = ((plan.termGroup && plan.termGroup.sets) || []).filter(function(s) { return s.selected; });
+    if (chosen.length === 0) { return []; }
+    var bySet = snaToolsPreflightTermSetColumns(plan);
+    var names = snaJoinWords(chosen.map(function(s) { return snaMaskText(s.name); }));
+    var labels = [];
+    chosen.forEach(function(s) { (bySet[s.sourceId] || []).forEach(function(l) { if (labels.indexOf(l) === -1) { labels.push(l); } }); });
+    var many = chosen.length > 1;
+    var columns = snaToolsPreflightColumnsSentence(labels, many, 'It will skip');
+    var couldSkip = snaToolsPreflightColumnsSentence(labels, many, 'That would skip');
+    function row(severity, note) {
+        return [{ severity: severity, kind: SNA_TOOLS_KINDS.termSet, name: 'Term store', note: note }];
+    }
+    // Columns are marked as skipped only when the copy will certainly skip them.
+    function markSkipped() {
+        snaToolsPreflightColumns(plan).forEach(function(c) {
+            if (c.field.isTaxonomy && chosen.some(function(s) { return s.sourceId === c.field.termSetId; })) {
+                context.skipColumn(c.list.sourceId, c.field.internalName, c.field.title);
+            }
+        });
+    }
+
+    var t = { siteUrl: xlsxStripSlash(dest.siteUrl), siteId: snaToolsCleanGuid(dest.siteId), base: '' };
+    t.base = snaToolsTaxonomyBase(t.siteId);
+    var groups;
+    try {
+        await snaToolsRead(t.siteUrl, t.base);
+        groups = await snaToolsTaxonomyOwnGroups(t, '');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        context.couldNotFinish();
+        return row('maybe', 'Sitenalyzer couldn\'t read the destination\'s term store, so it can\'t tell yet whether it can copy ' + names +
+            '. If it can\'t, it won\'t copy ' + (many ? 'them' : 'it') + '.' + couldSkip + ' ' + snaToolsPreflightReadError(err));
+    }
+    if (groups.length > 1) {
+        markSkipped();
+        return row('fail', 'The destination has more than one term group of its own, so Sitenalyzer can\'t tell which one to use, and it won\'t copy ' +
+            names + '.' + columns + ' Ask your term store administrator to check the destination\'s term groups, then copy again.');
+    }
+    var hasGroup = groups.length === 1;
+    var ifNot = ' If it can\'t, it won\'t copy ' + (many ? 'them' : 'it') + '.' + couldSkip;
+
+    // With no group yet, the copy makes one through CSOM, so SharePoint refusing a CSOM read of the term store means it
+    // will fail. With a group, the REST API may still take the changes, so a refusal only means it may fail.
+    try {
+        var request = snaToolsTaxonomyCsomRequest();
+        var store = snaToolsTaxonomyCsomStore(request);
+        request.query(store, ['Id']);
+        await snaToolsPreflightCsomRead(t.siteUrl, request.xml());
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        if (snaToolsTaxonomyIsCsomRefusal(err) && hasGroup) {
+            return row('maybe', 'Sitenalyzer will add ' + names + ' to the destination\'s own term group. SharePoint refused one of the two ways ' +
+                'Sitenalyzer changes term sets there, so it may refuse the other way too. If it does, Sitenalyzer won\'t copy ' +
+                (many ? 'them' : 'it') + '.' + couldSkip + ' If that happens, ask your term store administrator to let you change term sets in the ' +
+                'destination, then copy again.');
+        }
+        if (snaToolsTaxonomyIsCsomRefusal(err)) {
+            markSkipped();
+            return row('fail', 'The destination has no term group of its own, and SharePoint didn\'t let Sitenalyzer reach the destination\'s term store to ' +
+                'make one, so it won\'t copy ' + names + '.' + columns + ' In the destination, add a Managed Metadata column to any list and choose ' +
+                'Customize your term set, then copy again.');
+        }
+        context.couldNotFinish();
+        return row('maybe', (hasGroup ? 'Sitenalyzer will add ' + names + ' to the destination\'s own term group, but it couldn\'t check whether it can ' +
+            'change term sets there.' : 'The destination has no term group of its own, and Sitenalyzer couldn\'t check whether it can make one.') +
+            ' If it can\'t, it won\'t copy ' + names + '.' + couldSkip + ' ' + snaToolsPreflightReadError(err));
+    }
+    if (hasGroup) {
+        return row('maybe', 'Sitenalyzer will add ' + names + ' to the destination\'s own term group. ' + SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT + ifNot);
+    }
+    return row('maybe', 'The destination has no term group of its own yet, so Sitenalyzer will make one for ' + names + '. ' +
+        SNA_TOOLS_PREFLIGHT_BROWSER_LIMIT + ifNot);
+});
+
+// ### Columns ###
+
+// Columns that a data dictionary file already says the copy can't make, managed metadata columns with no term set,
+// columns that need a site term set the person didn't choose, and lookup columns that read from a list the copy doesn't
+// include and the destination doesn't have at the same address, or from a list on another site. For a data dictionary
+// file, every lookup column that reads from a list the copy doesn't include is skipped.
+snaToolsAddPreflightCheck('Columns', function(plan, dest, context) {
+    var warnings = [];
+    var siteSets = {};
+    ((plan.termGroup && plan.termGroup.sets) || []).forEach(function(s) { siteSets[s.sourceId] = s; });
+    var chosenLists = {};
+    plan.lists.forEach(function(l) { chosenLists[l.sourceId] = l; });
+    // A data dictionary file's columns that the copy can't make aren't in the plan's lists (see workbook.js).
+    (plan.skippedItems || []).forEach(function(item) {
+        var list = chosenLists[item.listSourceId];
+        if (item.kind !== SNA_TOOLS_KINDS.column || !list || !item.internalName) { return; }
+        if (context.skipColumn(list.sourceId, item.internalName, item.itemName)) {
+            warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: snaToolsPreflightColumnLabel(list, { title: item.itemName }),
+                note: item.beforeNote || item.note });
+        }
+    });
+    var destination = Object.assign({}, dest, { lists: context.destLists || dest.lists || [] });
+    var sourceWebId = snaToolsCleanGuid(plan.source && plan.source.webId);
+
+    snaToolsPreflightColumns(plan).forEach(function(c) {
+        var field = c.field;
+        var note = '';
+        if (field.isTaxonomy) {
+            var set = siteSets[field.termSetId];
+            if (!field.termSetId) {
+                note = 'It isn\'t connected to a term set in the site you copy from, so Sitenalyzer will skip this column. Make it by hand in the ' +
+                    'destination if you need it.';
+            } else if (set && !set.selected) {
+                note = 'It uses the term set ' + snaMaskText(set.name) + ', which you didn\'t choose, so Sitenalyzer will skip this column. ' +
+                    'Choose that term set too if you need the column.';
+            }
+        } else if (field.lookupListId && field.lookupListId !== c.list.sourceId && !chosenLists[field.lookupListId]) {
+            if (field.lookupWebId && sourceWebId && field.lookupWebId !== sourceWebId) {
+                note = 'It reads from a list on another site, so Sitenalyzer will skip this column. Make it by hand in the destination if you need it.';
+            } else {
+                var source = snaToolsPreflightSourceList(plan, field.lookupListId);
+                if (!source) {
+                    // Without the list's address, the copy can't look for that list in the destination, so it skips the
+                    // column whatever the destination has. A data dictionary file never gives the copy that address.
+                    var title = snaToolsPreflightFileListTitle(plan, field.lookupListId);
+                    note = 'It reads from ' + (title ? snaMaskText(title) + ', a list' : 'a list') + ' you didn\'t choose, so Sitenalyzer will ' +
+                        'skip this column. Choose that list too if you need the column.';
+                } else if (!snaToolsExistingDestinationList(destination, source.url, source.baseTemplate).usable) {
+                    note = 'It reads from ' + snaMaskText(source.title) + ', a list you didn\'t choose that the destination doesn\'t have, so ' +
+                        'Sitenalyzer will skip this column. Choose that list too if you need the column.';
+                }
+            }
+        }
+        if (note && context.skipColumn(c.list.sourceId, field.internalName, field.title)) {
+            warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: c.label, note: note });
+        }
+    });
+    return warnings;
+});
+
+// Returns a list of this site that a lookup reads from, by ID: { title, url (its address), baseTemplate }, or null when
+// the report doesn't have it, such as for a plan from a data dictionary file.
+function snaToolsPreflightSourceList(plan, listId) {
+    if (plan.source.kind !== 'site' || !_snaReport || !_snaReport.lists) { return null; }
+    var other = _snaReport.lists.filter(function(l) { return snaCleanListId(l.id) === listId; })[0];
+    if (!other) { return null; }
+    return { title: other.title || '', url: snaToolsCleanAddress(snaToolsListAddress(other)), baseTemplate: other.baseTemplate };
+}
+
+// Returns the name of a list in the data dictionary file the person chose, by ID, or '' when it isn't known. The plan
+// holds only the lists the person chose, so the name comes from the whole file.
+function snaToolsPreflightFileListTitle(plan, listId) {
+    if (plan.source.kind !== 'workbook' || typeof _snaToolsState === 'undefined' || !_snaToolsState || !_snaToolsState.workbook) { return ''; }
+    var list = _snaToolsState.workbook.plan.lists.filter(function(l) { return l.sourceId === listId; })[0];
+    return list ? String(list.title || '') : '';
+}
+
+// ### Term Sets of the Whole Organization ###
+
+// A managed metadata column whose term set isn't one of this site's own keeps its term set ID, so the destination's
+// term store must have that term set.
+snaToolsAddPreflightCheck('Term sets of the organization', async function(plan, dest, context) {
+    var siteSets = {};
+    ((plan.termGroup && plan.termGroup.sets) || []).forEach(function(s) { siteSets[s.sourceId] = true; });
+    var bySet = {};
+    snaToolsPreflightColumns(plan).forEach(function(c) {
+        var setId = snaToolsCleanGuid(c.field.termSetId);
+        if (!c.field.isTaxonomy || !setId || siteSets[c.field.termSetId]) { return; }
+        bySet[setId] = bySet[setId] || [];
+        bySet[setId].push(c);
+    });
+    var warnings = [];
+    var setIds = Object.keys(bySet);
+    for (var i = 0; i < setIds.length; i++) {
+        snaToolsCheckCancelled();
+        var there;
+        var problem = '';
+        try {
+            there = await snaToolsTaxonomySetExists(dest.siteUrl, dest.siteId, setIds[i]);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            problem = snaToolsPreflightReadError(err);
+            context.couldNotFinish();
+        }
+        bySet[setIds[i]].forEach(function(c) {
+            if (problem) {
+                warnings.push({ severity: 'maybe', kind: SNA_TOOLS_KINDS.column, name: c.label, note: 'Sitenalyzer couldn\'t check that the ' +
+                    'destination\'s term store has the term set this column uses. If it doesn\'t, Sitenalyzer skips the column. ' + problem });
+            } else if (!there && context.skipColumn(c.list.sourceId, c.field.internalName, c.field.title)) {
+                warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: c.label, note: 'The destination\'s term store doesn\'t ' +
+                    'have the term set this column uses, so Sitenalyzer will skip it. Ask your term store administrator to make that term set ' +
+                    'available to the destination, then copy again.' });
+            }
+        });
+    }
+    return warnings;
+});
+
+// ### Calculated Columns ###
+
+// A calculated column whose formula uses a column the copy skips is skipped too, and so is a calculated column that
+// uses that one, so the check repeats until nothing more is marked.
+snaToolsAddPreflightCheck('Calculated columns', function(plan, dest, context) {
+    var warnings = [];
+    var calculated = snaToolsPreflightColumns(plan).filter(function(c) { return c.field.type === 'Calculated'; });
+    var changed = true;
+    while (changed) {
+        changed = false;
+        calculated.forEach(function(c) {
+            var skipped = context.skippedColumns[c.list.sourceId] || {};
+            var missing = (c.field.fieldRefs || []).filter(function(ref) { return ref !== c.field.internalName && Object.prototype.hasOwnProperty.call(skipped, ref); });
+            if (missing.length === 0 || !context.skipColumn(c.list.sourceId, c.field.internalName, c.field.title)) { return; }
+            changed = true;
+            var used = snaJoinWords(missing.map(function(ref) { return snaMaskText(skipped[ref]); }));
+            warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.column, name: c.label, note: 'Its formula uses ' + used + ', which Sitenalyzer ' +
+                'will skip, so it will skip this column too. Make it by hand in the destination after you add ' + (missing.length === 1 ? 'that column' : 'those columns') + '.' });
+        });
+    }
+    return warnings;
+});
+
+// ### Content Types from the Content Type Hub ###
+
+// The copy never makes a content type that comes from the content type hub, so one the destination doesn't have yet is
+// skipped. The destination's content types are read again, in case the hub published one after Check destination.
+snaToolsAddPreflightCheck('Content types from the content type hub', async function(plan, dest, context) {
+    var hubTypes = plan.hubContentTypes || [];
+    if (hubTypes.length === 0) { return []; }
+    var read = await snaToolsReadAll(dest.siteUrl, '/_api/web/contenttypes?$select=StringId,Name', SNA_TOOLS_READ_MAX);
+    context.destContentTypes = read.items.map(function(ct) { return { stringId: ct.StringId || '', name: ct.Name || '' }; });
+    return hubTypes.filter(function(hub) {
+        return !context.destContentTypes.some(function(d) { return String(d.stringId).toUpperCase() === String(hub.stringId).toUpperCase(); });
+    }).map(function(hub) {
+        return { severity: 'skip', kind: SNA_TOOLS_KINDS.contentType, name: snaMaskText(hub.name), note: 'It comes from the content type hub, and ' +
+            'the destination doesn\'t have it yet, so Sitenalyzer will skip it and anything based on it. Publish it to the destination from the ' +
+            'content type gallery, then copy again.' };
+    });
+});
+
+// ### SharePoint's Own Site Columns ###
+
+// SharePoint's own site columns that someone renamed in this site, such as Enterprise Keywords shown as Tags, get the same
+// name in the destination's top-level site, which changes it in every site of that site collection. A column is renamed
+// only when both sites use the same language (see snaToolsListsBuiltInRename in lists.js).
+snaToolsAddPreflightCheck('SharePoint\'s own site columns', async function(plan, dest) {
+    var columns = (plan.builtInSiteColumns || []).filter(function(f) { return f.rename && f.title; });
+    var warnings = [];
+    var sameLanguage;
+    for (var i = 0; i < columns.length; i++) {
+        snaToolsCheckCancelled();
+        var there = await snaToolsListsReadBuiltInSiteColumn(dest, columns[i]);
+        if (!there || !there.Title || there.Title === columns[i].title) { continue; }
+        if (sameLanguage === undefined) { sameLanguage = await snaToolsListsSameLanguage(plan, dest); }
+        var decision = snaToolsListsBuiltInRename(columns[i], there.Title, sameLanguage, true);
+        warnings.push({ severity: decision.rename ? 'info' : 'skip', kind: SNA_TOOLS_KINDS.column,
+            name: snaMaskText(snaToolsListsSiteColumnName(columns[i])), note: snaMaskText(decision.note) });
+    }
+    return warnings;
+});
+
+// ### Agent Assets ###
+
+// Site skills go in the destination's Agent Assets library. When it has none, the copy turns on the feature that makes
+// it, which only the copy can test.
+snaToolsAddPreflightCheck('Agent Assets', function(plan, dest, context) {
+    var skills = (plan.agents && plan.siteContent && plan.siteContent.skills) || [];
+    if (skills.length === 0) { return []; }
+    var path = snaToolsJoinPath(dest.serverRelativeUrl, SNA_AGENT_ASSETS_FOLDER);
+    var lists = context.destLists || dest.lists || [];
+    if (lists.some(function(l) { return snaToolsSamePath(l.serverRelativeUrl, path); })) { return []; }
+    return skills.map(function(skill) {
+        return { severity: 'maybe', kind: SNA_TOOLS_KINDS.siteSkill, name: snaMaskText(skill.name || skill.folderName), note: 'The destination has no ' +
+            'Agent Assets library, so Sitenalyzer will try to turn on site skills there. If it can\'t, it skips this site skill. You can turn on ' +
+            'site skills in the destination, then copy again.' };
+    });
+});
+
+// ### Files Too Large to Copy ###
+
+// The copy skips any file in Site Assets larger than SNA_TOOLS_FILES_MAX_BYTES (see files.js). Reads Site Assets the
+// same way the copy does.
+snaToolsAddPreflightCheck('Site Assets', async function(plan) {
+    if (!plan.siteAssets || !plan.source.siteUrl) { return []; }
+    var lists = await snaToolsFilesReadLists(plan.source.siteUrl);
+    var library = snaToolsFilesSiteAssetsOf(lists, snaToolsFilesSourcePath(plan));
+    if (!library || !library.root) { return []; }
+    var tree = await snaToolsFilesWalk(plan.source.siteUrl, library.root, SNA_TOOLS_SKIPPED_ROOT_FOLDERS);
+    return tree.files.filter(function(f) { return f.size > SNA_TOOLS_FILES_MAX_BYTES; }).map(function(f) {
+        return { severity: 'skip', kind: SNA_TOOLS_KINDS.siteAssetsFile, name: snaMaskText(snaToolsFilesUnder(f.path, library.root) || f.name),
+            note: 'This file is larger than 250 MB, so Sitenalyzer will skip it. Copy it to the destination by hand, such as with Copy to in Site Assets.' };
+    });
+});
+
+// ### Custom Scripts ###
+
+// On a site that doesn't allow custom scripts, SharePoint doesn't take .aspx files, so pages the copy sends as files
+// (classic pages and pages in folders) fail, unless the destination already has the page and Replace isn't checked, when
+// the copy leaves that page as it is. Some site look settings may be refused there too.
+snaToolsAddPreflightCheck('Custom scripts', async function(plan, dest, context) {
+    var pages = (plan.pages && plan.siteContent && plan.siteContent.pages) || [];
+    var isChannel = String(dest.webTemplate || '').toUpperCase() === SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE;
+    var lookChecked = plan.siteLook && !isChannel;
+    if (pages.length === 0 && !lookChecked) { return []; }
+    var permissions = await snaToolsRead(dest.siteUrl, '/_api/web/effectivebasepermissions');
+    var low = Number(permissions && permissions.Low);
+    if (!isFinite(low) || (low & SNA_TOOLS_PREFLIGHT_CUSTOMIZE_PAGES_BIT) !== 0) { return []; }
+
+    var warnings = [];
+    var fix = 'Ask your SharePoint admin to allow custom scripts in the destination, then copy again. SharePoint turns them off again within 24 hours.';
+    if (pages.length > 0) {
+        var sourceLists = await snaToolsFilesReadLists(plan.source.siteUrl);
+        var asFiles = await snaToolsPreflightPagesAsFiles(plan, pages, sourceLists);
+        if (!plan.replaceExisting) { asFiles = await snaToolsPreflightPagesNotThere(plan, dest, context, asFiles, sourceLists); }
+        asFiles.forEach(function(page) {
+            warnings.push({ severity: 'fail', kind: SNA_TOOLS_KINDS.page, name: snaMaskText(page.name || page.fileName), note: 'The destination doesn\'t allow ' +
+                'custom scripts, and SharePoint doesn\'t take a classic page, or a page in a folder, on such a site, so this page will fail to copy. ' + fix });
+        });
+    }
+    if (lookChecked) {
+        warnings.push({ severity: 'maybe', kind: SNA_TOOLS_KINDS.siteLookSetting, name: 'Site look', note: 'The destination doesn\'t allow custom ' +
+            'scripts, so SharePoint may refuse some site look settings, such as the theme. Sitenalyzer skips any it refuses and says which. ' + fix });
+    }
+    return warnings;
+});
+
+// Returns the pages the copy sends as files instead of making them again through the site pages API: classic pages, and
+// pages in a folder other than Templates. Reads each Site Pages library's pages once. sourceLists are this site's lists.
+async function snaToolsPreflightPagesAsFiles(plan, pages, sourceLists) {
+    var modernById = {};
+    var libraryIds = [];
+    pages.forEach(function(p) { var id = snaToolsCleanGuid(p.libraryId); if (id && libraryIds.indexOf(id) === -1) { libraryIds.push(id); } });
+    for (var i = 0; i < libraryIds.length; i++) {
+        var read = await snaToolsReadAll(plan.source.siteUrl, "/_api/web/lists(guid'" + libraryIds[i] + "')/items?$select=Id,ClientSideApplicationId,PageLayoutType&$top=500",
+            SNA_TOOLS_READ_MAX);
+        read.items.forEach(function(item) {
+            modernById[libraryIds[i] + '/' + item.Id] = snaToolsCleanGuid(item.ClientSideApplicationId) === SNA_TOOLS_MODERN_PAGE_APP_ID &&
+                item.PageLayoutType !== 'RepostPage';
+        });
+    }
+    return pages.filter(function(page) {
+        var place = snaToolsFilesPagePlace(plan, page, sourceLists);
+        if (!place.srcPath) { return false; }
+        return place.inFolder || !modernById[snaToolsCleanGuid(page.libraryId) + '/' + page.id];
+    });
+}
+
+// Returns the pages the destination doesn't have yet at the place the copy puts them in its Site Pages library, which
+// the copy finds the same way (see snaToolsFilesCopyOnePage in files.js). Reads each folder once. When the destination
+// has no Site Pages library, returns pages as they are. sourceLists are this site's lists (see snaToolsFilesReadLists).
+async function snaToolsPreflightPagesNotThere(plan, dest, context, pages, sourceLists) {
+    var destLibrary = (context.destLists || dest.lists || []).filter(function(l) {
+        return Number(l.baseTemplate) === 119 && l.serverRelativeUrl;
+    })[0];
+    if (!destLibrary || pages.length === 0) { return pages; }
+    var folders = {};
+    var left = [];
+    for (var i = 0; i < pages.length; i++) {
+        var destPath = snaToolsJoinPath(destLibrary.serverRelativeUrl, snaToolsFilesPagePlace(plan, pages[i], sourceLists).relative);
+        var parent = snaToolsFilesKey(snaToolsFilesParent(destPath));
+        if (!folders[parent]) {
+            var info = await snaToolsFilesReadFolder(dest.siteUrl, snaToolsFilesParent(destPath));
+            folders[parent] = {};
+            info.files.forEach(function(f) { folders[parent][f.name.toLowerCase()] = true; });
+        }
+        if (!folders[parent][snaToolsFilesLeaf(destPath).toLowerCase()]) { left.push(pages[i]); }
+    }
+    return left;
+}
+
+// ### Channel Sites ###
+
+// Microsoft Teams manages a channel site's permissions and look, so the copy leaves them as they are.
+snaToolsAddPreflightCheck('Channel site', function(plan, dest) {
+    if (String(dest.webTemplate || '').toUpperCase() !== SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE) { return []; }
+    var warnings = [];
+    if (plan.permissions) {
+        warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.permission, name: 'Permissions', note: 'The destination is a Microsoft Teams channel site, ' +
+            'whose permissions Teams manages, so Sitenalyzer will leave them unchanged. Give people access to the channel in Microsoft Teams.' });
+    }
+    if (plan.siteLook) {
+        warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.siteLookSetting, name: 'Site look', note: 'The destination is a Microsoft Teams channel ' +
+            'site, which takes its look from its team, so Sitenalyzer will leave its look unchanged.' });
+    }
+    return warnings;
+});
+
+// ### Groups of a Subsite ###
+
+// A subsite often uses its parent site's owners, members, or visitors group as its own. SharePoint groups belong to the
+// whole site collection, so the copy makes a new group instead of adding people to such a group (see
+// snaToolsPermissionsMapGroup in permissions.js). The reads are the same ones the copy makes.
+snaToolsAddPreflightCheck('Groups of the destination', async function(plan, dest) {
+    if (!plan.permissions || plan.source.kind !== 'site') { return []; }
+    if (String(dest.webTemplate || '').toUpperCase() === SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE) { return []; }
+    var rootPath = await snaToolsPermissionsReadRootPath(dest);
+    if (snaToolsSamePath(rootPath, dest.serverRelativeUrl)) { return []; }
+    var web = await snaToolsPermissionsReadWebGroups(dest.siteUrl);
+    var shared = await snaToolsPermissionsReadSharedGroups(dest, rootPath, web.groups);
+    var warnings = [];
+    SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+        var info = shared[web.groups[a.property]];
+        if (!info) { return; }
+        var title = web.groupTitles[a.property];
+        warnings.push({ severity: 'info', kind: SNA_TOOLS_KINDS.group, name: snaMaskText(title || 'The destination\'s ' + a.words),
+            note: 'The destination\'s ' + a.words + (title ? ', ' + snaMaskText(title) + ',' : '') + ' is also the ' + info.roleWords + ' of ' +
+                info.siteWords + (info.siteTitle ? ', ' + snaMaskText(info.siteTitle) : '') + '. Sitenalyzer won\'t add anyone to it, because ' +
+                'that would give them access to that site too. Instead, it will copy this site\'s ' + a.words + ' the way it copies other ' +
+                'groups: to a group with the same name, which it makes when the destination doesn\'t have one.' });
+    });
+    return warnings;
+});
+
+// ### Notes from the Plan ###
+
+// Things noticed while the plan was read, such as that Navigation replaces the destination's menu links.
+snaToolsAddPreflightCheck('Notes', function(plan) {
+    return (plan.warnings || []).map(function(text) {
+        return { severity: 'info', kind: SNA_TOOLS_KINDS.note, name: 'This copy', note: text };
+    });
+});
+
+// ### Before You Copy ###
+
+// Returns the sentence above the warnings, such as "Sitenalyzer found 3 things to know before you copy to Study Two:
+// 1 item will fail and 2 items will be skipped." When a warning stops the copy, the sentence says that instead.
+function snaToolsPreflightSummary(warnings, destName) {
+    if (warnings.length === 0) {
+        return 'Sitenalyzer checked ' + destName + ' and found nothing that will stop or change the copy.';
+    }
+    var stops = warnings.filter(function(w) { return w.stops; }).length;
+    if (stops > 0) {
+        var others = warnings.length - stops;
+        return 'Sitenalyzer found ' + snaCountText(stops, 'problem', 'problems') + ' that ' + (stops === 1 ? 'stops' : 'stop') + ' the copy to ' +
+            destName + ' before it changes anything.' + (others > 0 ? ' It also found ' + snaCountText(others, 'other thing', 'other things') + ' to know.' : '');
+    }
+    var counts = { fail: 0, skip: 0, maybe: 0, info: 0 };
+    warnings.forEach(function(w) { counts[w.severity]++; });
+    var parts = [];
+    if (counts.fail) { parts.push(snaCountText(counts.fail, 'item', 'items') + ' will fail'); }
+    if (counts.skip) { parts.push(snaCountText(counts.skip, 'item', 'items') + ' will be skipped'); }
+    if (counts.maybe) { parts.push(snaCountText(counts.maybe, 'item', 'items') + ' may fail'); }
+    if (counts.info) { parts.push(snaCountText(counts.info, 'note', 'notes')); }
+    return 'Sitenalyzer found ' + snaCountText(warnings.length, 'thing', 'things') + ' to know before you copy to ' + destName + ': ' +
+        snaJoinWords(parts) + '.';
+}
+
+/**
+ * Returns the markup of the "Before you copy" part: what the copy includes, what the check found, a table of the
+ * warnings, and the Copy anyway and Go back buttons. When a warning stops the copy, only Go back is offered.
+ * @param {object} preflight { plan, dest, warnings, failedChecks, error (a sentence when the whole check failed, or '') }.
+ * @returns {string} Markup. Every value from SharePoint or the person is escaped.
+ */
+function snaToolsPreflightHtml(preflight) {
+    var destName = snaMaskText(preflight.dest.title || preflight.dest.siteUrl);
+    var lead = 'You chose to copy ' + snaToolsCopyContentsText(preflight.plan) + ' to ' + destName + '.';
+    var stops = !preflight.error && snaToolsPreflightStops(preflight.warnings);
+    var summary;
+    if (preflight.error) {
+        summary = preflight.error + ' You can copy anyway, or go back.';
+    } else {
+        var stopCount = preflight.warnings.filter(function(w) { return w.stops; }).length;
+        var next = ' Select Copy anyway to copy, or Go back to change what you chose.';
+        if (stops) {
+            next = ' The copy can start only after you fix ' + (stopCount === 1 ? 'it' : 'them') + '. Select Go back to change what you chose.';
+        } else if (preflight.warnings.length > 0) {
+            next = ' Select Copy anyway to copy everything else, or Go back to change what you chose.';
+        }
+        summary = snaToolsPreflightSummary(preflight.warnings, destName) +
+            (preflight.failedChecks.length > 0 ? ' Sitenalyzer couldn\'t finish every check, so the copy may run into problems that this table doesn\'t show.' : '') +
+            next;
+    }
+    var html = '<div class="sna-tools-preflight" id="sna-tools-preflight">' +
+        '<h4 id="sna-tools-h-preflight" class="sna-subsection-title sna-tools-heading" tabindex="-1">Before you copy</h4>' +
+        '<p class="sna-tools-preflight-lead">' + snaEscapeHtml(lead) + '</p>' +
+        '<p id="sna-tools-preflight-summary" class="sna-tools-preflight-summary">' + snaEscapeHtml(summary) + '</p>';
+    if (preflight.warnings.length > 0) {
+        html += '<table class="sna-perm-list-table sna-tools-preflight-table" aria-describedby="sna-tools-preflight-summary">' +
+            '<caption class="sna-visually-hidden">What Sitenalyzer found before the copy</caption>' +
+            '<thead><tr><th scope="col">Item</th><th scope="col">Kind</th><th scope="col">What will happen</th></tr></thead><tbody>' +
+            preflight.warnings.map(function(w) {
+                return '<tr><td>' + snaEscapeHtml(w.name) + '</td><td>' + snaEscapeHtml(w.kind) + '</td><td>' + snaEscapeHtml(w.note) + '</td></tr>';
+            }).join('') + '</tbody></table>';
+    }
+    return html + '<div class="sna-tools-row sna-tools-preflight-actions">' +
+            (stops ? '' : '<button type="button" id="sna-tools-copy-anyway" class="sna-btn sna-btn-primary" data-action="tools-copy-anyway">Copy anyway</button>') +
+            '<button type="button" id="sna-tools-go-back" class="sna-btn ' + (stops ? 'sna-btn-primary' : 'sna-btn-outline') + '" data-action="tools-go-back">Go back</button>' +
+        '</div></div>';
+}
+
+// Returns what a plan copies, such as "2 lists, 1 term set, site pages, and Site Assets".
+function snaToolsCopyContentsText(plan) {
+    var lists = plan.lists.filter(function(l) { return !l.isLibrary; }).length;
+    var libraries = plan.lists.length - lists;
+    var sets = plan.termGroup ? plan.termGroup.sets.filter(function(s) { return s.selected; }).length : 0;
+    var parts = [];
+    if (lists) { parts.push(snaCountText(lists, 'list', 'lists')); }
+    if (libraries) { parts.push(snaCountText(libraries, 'library', 'libraries')); }
+    if (sets) { parts.push(snaCountText(sets, 'term set', 'term sets')); }
+    if ((plan.siteContentTypes || []).length) { parts.push(snaCountText(plan.siteContentTypes.length, 'content type', 'content types')); }
+    if (plan.pages) { parts.push('site pages'); }
+    if (plan.siteAssets) { parts.push('Site Assets'); }
+    if (plan.agents) { parts.push('agents and site skills'); }
+    if (plan.navigation) { parts.push('navigation'); }
+    if (plan.siteLook) { parts.push('the site look'); }
+    if (plan.permissions) { parts.push('permissions'); }
+    return parts.length ? snaJoinWords(parts) : 'nothing';
+}
+
+// Adds the warnings to the results of the copy that is running, with the result Warning, so they are in the same
+// table as what the copy did. They aren't counted as copied, skipped, or failed. error is the sentence Before you copy
+// showed when the whole check failed, or ''; then one Warning row says so, and it isn't counted either.
+function snaToolsLogPreflightWarnings(warnings, error) {
+    if (error) { snaToolsLog(SNA_TOOLS_KINDS.note, SNA_TOOLS_PREFLIGHT_FAILED_NAME, 'warning', SNA_TOOLS_PREFLIGHT_FAILED_NOTE, { summary: true }); }
+    (warnings || []).forEach(function(w) { snaToolsLog(w.kind, w.name, 'warning', w.note); });
+}
+
+/*
+This file is part of Sitenalyzer
+runner.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: Checks the destination site of Copy site structure, and runs the copy's steps in order: term sets, site
+         columns, lists and libraries, content types, list columns, views, form settings, Site Assets, the site look,
+         agents and site skills, site pages, navigation, permissions, and finally the check of the destination. Each step logs a result for
+         each item and keeps going after an item fails. Only a failed destination check, a stop, or a failed read of
+         the source stops the copy.
+Notes: See README file for documentation and full license information.
+
+       Shared map of source to destination IDs that every step reads and fills (see snaToolsNewMaps):
+       { lists: { srcListId: destListId }, existingLists: { srcListId: true } for each list the destination already had,
+         listUrls: { srcServerRelativeUrl: destServerRelativeUrl },
+         fields: { srcListId: { srcInternalName: destInternalName } }, fieldIds: { srcFieldId: destFieldId },
+         termSets: { srcSetId: destSetId }, terms: { srcTermId: destTermId }, termSetsMissing: { srcSetId: reason },
+         views: { srcViewId: destViewId }, contentTypes: { srcStringId: destStringId },
+         principals: { srcPrincipalId: destPrincipalId }, roleDefinitions: { srcId: destId },
+         fileUrls: { srcServerRelativeUrl: destServerRelativeUrl }, fileIds: { srcFileId: destFileId },
+         destination: { siteUrl, webId, siteId, serverRelativeUrl, termStoreId, currentUserId } }
+       IDs are lowercase GUIDs without braces.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Runner Settings ###
+
+// Steps of the copy, for the progress bar: the destination check, the thirteen copy steps, and the check afterwards.
+var SNA_TOOLS_STEP_COUNT = 15;
+
+// Parts of a site's address after which a person may have pasted more, such as /SitePages/Home.aspx. The destination
+// check keeps only the part before them.
+var SNA_TOOLS_SITE_ADDRESS_ENDS = /\/(?:SitePages|SiteAssets|Lists|Shared(?:%20| )Documents|_layouts|Forms)(?:\/|$)/i;
+
+// Names a list or library address can't have, because SharePoint uses them for its own pages and folders.
+var SNA_TOOLS_RESERVED_ADDRESSES = ['lists', 'forms', '_layouts', '_api', '_vti_bin', '_catalogs', 'sitepages', 'siteassets'];
+
+// ### Destination ###
+
+/**
+ * Returns the address of the site a person typed, or why it can't be used. Only https addresses on the same host as
+ * this site are accepted. Anything after the site's own address, such as /SitePages/Home.aspx, a query, or a #, is removed.
+ * @param {string} text What the person typed, such as https://contoso.sharepoint.com/sites/new-study/SitePages/Home.aspx.
+ * @param {string} sourceUrl This site's address.
+ * @returns {{siteUrl: string, message: string}} siteUrl is '' when message says what is wrong.
+ */
+function snaToolsNormalizeSiteAddress(text, sourceUrl) {
+    var origin = snaOrigin(sourceUrl) || window.location.origin;
+    var example = origin + '/sites/new-study';
+    var typed = String(text || '').trim();
+    if (!typed) { return { siteUrl: '', message: 'Enter the address of the site to copy to, such as ' + example + '.' }; }
+    var url;
+    try { url = new URL(typed); } catch (e) { url = null; }
+    if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:')) {
+        return { siteUrl: '', message: 'Enter the full address of a SharePoint site, such as ' + example + '.' };
+    }
+    if (url.protocol !== 'https:') {
+        return { siteUrl: '', message: 'Use an address that starts with https://, such as ' + example + '.' };
+    }
+    if (url.origin !== origin) {
+        var host = new URL(origin).host;
+        return { siteUrl: '', message: 'You can copy only to a site on ' + host + ', the same SharePoint as this site. Enter an address that starts with ' + origin + ', such as ' + example + '.' };
+    }
+    var path = url.pathname;
+    var end = SNA_TOOLS_SITE_ADDRESS_ENDS.exec(path);
+    if (end) { path = path.substring(0, end.index); }
+    if (/\.aspx$/i.test(path)) { path = path.substring(0, path.lastIndexOf('/')); }
+    return { siteUrl: origin + xlsxStripSlash(path), message: '' };
+}
+
+// The status line for a destination that is this site, in a copy from this site's report. Copying into this site would
+// change its menus, look, and permissions, and a list with its own name and address would be copied onto itself.
+var SNA_TOOLS_SAME_SITE_MESSAGE = 'You can\'t copy to this site. Copy site structure copies only to another site. Enter the address of another site, then check again.';
+
+// Returns the ID of the site whose report is open, as a lowercase GUID, or '' when it isn't known.
+function snaToolsReportWebId(report) {
+    return snaToolsCleanGuid(report && report.site && report.site.id);
+}
+
+/**
+ * Checks a destination site before anything is copied: that its address is on this host, that the person is a site
+ * collection administrator there, and which lists, site columns, and content types it already has. For a copy from this
+ * site's report, it also checks that the destination isn't this site. This site is recognized by its ID when both IDs
+ * are known, and by its address otherwise. A copy from a data dictionary file may go into this site, because nothing of
+ * this site is copied onto itself.
+ * @param {string} address The destination address the person typed.
+ * @param {string} sourceUrl This site's address.
+ * @param {string} [sourceWebId] This site's ID, such as from snaToolsReportWebId, or '' when it isn't known.
+ * @param {boolean} [fromFile] true when the copy comes from a data dictionary file, so this site is allowed.
+ * @returns {Promise<object>} { ok, message, siteUrl, title, webId, siteId, serverRelativeUrl, webTemplate,
+ *          configuration, groupId, hasUniqueRoleAssignments, currentUserId, isSiteAdmin, thisSite (true when the
+ *          destination is this site; ok is then false unless fromFile is true), lists: [{ id, title, serverRelativeUrl,
+ *          baseTemplate, hidden }], siteColumns: [{ id, internalName }], contentTypes: [{ stringId, name }] }. message
+ *          is a plain-English sentence for the status line: why ok is false, or what the person can do. Reads only;
+ *          sends no request for an address on another host, or for this site's own address unless fromFile is true.
+ */
+async function snaToolsCheckDestination(address, sourceUrl, sourceWebId, fromFile) {
+    var normalized = snaToolsNormalizeSiteAddress(address, sourceUrl);
+    var result = { ok: false, message: normalized.message, siteUrl: normalized.siteUrl, title: '', webId: '', siteId: '', serverRelativeUrl: '',
+        webTemplate: '', configuration: 0, groupId: '', hasUniqueRoleAssignments: false, currentUserId: 0, isSiteAdmin: false,
+        thisSite: false, lists: [], siteColumns: [], contentTypes: [] };
+    if (!normalized.siteUrl) { return result; }
+    if (!fromFile && snaDigestKey(normalized.siteUrl) === snaDigestKey(sourceUrl)) {
+        result.thisSite = true;
+        result.message = SNA_TOOLS_SAME_SITE_MESSAGE;
+        return result;
+    }
+
+    var site = normalized.siteUrl;
+    var web, collection, user;
+    try {
+        web = await snaToolsRead(site, '/_api/web?$select=Id,Title,Url,ServerRelativeUrl,WebTemplate,Configuration,HasUniqueRoleAssignments');
+        collection = await snaToolsRead(site, '/_api/site?$select=Id,ServerRelativeUrl,GroupId');
+        user = await snaToolsRead(site, '/_api/web/currentuser?$select=Id,IsSiteAdmin');
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        result.message = err.status === 404
+            ? 'Sitenalyzer couldn\'t find a site at this address. Check the address, then check again.'
+            : 'Sitenalyzer couldn\'t open this site. Check the address and that you can open the site, then check again.';
+        return result;
+    }
+    // SharePoint's own address for the site is used from here on, so a pasted address with different capitals still matches.
+    var canonical = snaSafeTenantUrl(web && web.Url, sourceUrl);
+    if (canonical && snaOrigin(canonical) === snaOrigin(site)) { site = xlsxStripSlash(canonical); }
+    result.siteUrl = site;
+    result.title = (web && web.Title) || '';
+    result.webId = snaToolsCleanGuid(web && web.Id);
+    result.serverRelativeUrl = (web && web.ServerRelativeUrl) || snaToolsSiteParts(site).serverRelativeUrl;
+    result.webTemplate = (web && web.WebTemplate) || '';
+    result.configuration = (web && web.Configuration) || 0;
+    result.hasUniqueRoleAssignments = !!(web && web.HasUniqueRoleAssignments);
+    result.siteId = snaToolsCleanGuid(collection && collection.Id);
+    result.groupId = snaToolsCleanGuid(collection && collection.GroupId);
+    result.currentUserId = (user && user.Id) || 0;
+    result.isSiteAdmin = !!(user && user.IsSiteAdmin === true);
+    var sourceId = snaToolsCleanGuid(sourceWebId);
+    result.thisSite = (result.webId && sourceId) ? result.webId === sourceId : snaDigestKey(site) === snaDigestKey(sourceUrl);
+    if (result.thisSite && !fromFile) {
+        result.message = SNA_TOOLS_SAME_SITE_MESSAGE;
+        return result;
+    }
+    var name = snaMaskText(result.title || site);
+    if (!result.isSiteAdmin) {
+        result.message = 'You can\'t copy to ' + name + '. You need to be a site collection administrator there. Ask a site collection administrator to add you, then check again.';
+        return result;
+    }
+
+    try {
+        var lists = await snaToolsReadAll(site, '/_api/web/lists?$select=Id,Title,BaseTemplate,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder', SNA_TOOLS_READ_MAX);
+        result.lists = lists.items.map(function(l) {
+            return { id: snaToolsCleanGuid(l.Id), title: l.Title || '', serverRelativeUrl: (l.RootFolder && l.RootFolder.ServerRelativeUrl) || '', baseTemplate: l.BaseTemplate, hidden: l.Hidden === true };
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        result.message = 'Sitenalyzer couldn\'t read the lists and libraries in ' + name + ', so it can\'t check which names and addresses are already used. Check again in a few minutes.';
+        return result;
+    }
+    // Site columns and content types help the copy steps find what the destination has. Not reading them stops nothing.
+    try {
+        result.siteColumns = (await snaToolsReadAll(site, '/_api/web/fields?$select=Id,InternalName', SNA_TOOLS_READ_MAX)).items.map(function(f) {
+            return { id: snaToolsCleanGuid(f.Id), internalName: f.InternalName || '' };
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    try {
+        result.contentTypes = (await snaToolsReadAll(site, '/_api/web/contenttypes?$select=StringId,Name', SNA_TOOLS_READ_MAX)).items.map(function(ct) {
+            return { stringId: ct.StringId || '', name: ct.Name || '' };
+        });
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    result.ok = true;
+    result.message = 'You can copy to ' + name + '. You\'re a site collection administrator there.';
+    return result;
+}
+
+// Returns the problem with a list's new name, or '' when there is none: empty, too long, or already used in the
+// destination. others are the new names of the other chosen lists.
+function snaToolsNameProblem(newTitle, destination, others) {
+    var title = String(newTitle || '').trim();
+    if (!title) { return 'Enter a name.'; }
+    if (title.length > 255) { return 'Use 255 characters or fewer.'; }
+    var key = title.toLowerCase();
+    if (destination && destination.lists.some(function(l) { return l.title.toLowerCase() === key; })) {
+        return 'The destination already has a list or library with this name. Choose another name.';
+    }
+    if (others.some(function(o) { return String(o || '').trim().toLowerCase() === key; })) {
+        return 'Another list or library you chose has this name. Choose another name.';
+    }
+    return '';
+}
+
+// Returns the problem with a list's new address, or '' when there is none. The address becomes the last part of the
+// list's web address and its internal name, so it uses only letters, numbers, hyphens, and underscores. A list is
+// created with its address as its first title, so an address that matches a title in the destination is refused too.
+function snaToolsAddressProblem(newUrl, isLibrary, destination, others) {
+    var address = String(newUrl || '');
+    if (!address) { return 'Enter an address, such as Study-Visits.'; }
+    if (!/^[A-Za-z0-9_-]+$/.test(address)) { return 'Use only letters, numbers, hyphens, and underscores, such as Study-Visits.'; }
+    if (address.length > 100) { return 'Use 100 characters or fewer.'; }
+    var key = address.toLowerCase();
+    if (SNA_TOOLS_RESERVED_ADDRESSES.indexOf(key) > -1) { return 'SharePoint uses this address for its own pages. Choose another address.'; }
+    if (destination) {
+        var path = snaToolsPathKey(snaToolsJoinPath(destination.serverRelativeUrl, (isLibrary ? '' : 'Lists/') + address));
+        var inUse = destination.lists.some(function(l) { return snaToolsPathKey(l.serverRelativeUrl) === path || l.title.toLowerCase() === key; });
+        if (inUse) { return 'The destination already has a list or library at this address. Choose another address.'; }
+    }
+    if (others.some(function(o) { return String(o || '').toLowerCase() === key; })) {
+        return 'Another list or library you chose has this address. Choose another address.';
+    }
+    return '';
+}
+
+// ### Run the Copy ###
+
+// Returns an empty map of source to destination IDs for one copy (see the notes at the top of this file).
+function snaToolsNewMaps(dest) {
+    return {
+        lists: {}, existingLists: {}, listUrls: {}, fields: {}, fieldIds: {}, termSets: {}, terms: {}, termSetsMissing: {}, views: {},
+        contentTypes: {}, principals: {}, roleDefinitions: {}, fileUrls: {}, fileIds: {},
+        destination: { siteUrl: dest.siteUrl, webId: dest.webId, siteId: dest.siteId, serverRelativeUrl: dest.serverRelativeUrl,
+            termStoreId: '', currentUserId: dest.currentUserId }
+    };
+}
+
+/**
+ * Starts a new copy: stops any older one, and sets up the results log that snaToolsLog writes to.
+ * @param {object} destination The checked destination (see snaToolsCheckDestination).
+ * @returns {object} The run { token, destination, results, unloggedChanges }. unloggedChanges counts the changes
+ *     SharePoint made since the last row (see snaToolsLogStopped). Pass the run to snaToolsEndRun when the copy ends.
+ */
+function snaToolsBeginRun(destination) {
+    _snaToolsToken++;
+    _snaToolsActiveToken = _snaToolsToken;
+    _snaToolsRun = { token: _snaToolsToken, destination: destination, results: [], unloggedChanges: 0 };
+    return _snaToolsRun;
+}
+
+// Ends a copy that snaToolsBeginRun started, whether it finished, failed, or was stopped. Returns true when the copy
+// was stopped before it finished. After this, the copy adds no more rows.
+function snaToolsEndRun(run) {
+    var stopped = run.token !== _snaToolsToken;
+    if (_snaToolsActiveToken === run.token) { _snaToolsActiveToken = 0; }
+    return stopped;
+}
+
+// Runs one step of the copy. A step that fails as a whole, instead of item by item, gets one Failed row of kind, named
+// what, and the copy goes on with the next step. A stop is passed on, after a Partly copied row of kind, named what,
+// when SharePoint made a change for the step that no row describes yet.
+async function snaToolsRunStep(stepNumber, text, kind, what, work) {
+    snaToolsCheckCancelled();
+    snaToolsProgress(text, stepNumber);
+    try {
+        await work();
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) {
+            snaToolsLogStopped(kind, what, SNA_TOOLS_STOPPED_NOTE);
+            throw err;
+        }
+        snaToolsLog(kind, what, 'failed', 'Sitenalyzer couldn\'t finish this part of the copy. ' + snaToolsFriendlyError(err));
+    }
+}
+
+/**
+ * Copies a site's structure into the destination, step by step, then checks the destination. Results are added to the
+ * run that snaToolsBeginRun started.
+ * @param {object} plan The copy plan (see plan.js).
+ * @param {object} destination The checked destination (see snaToolsCheckDestination).
+ * @returns {Promise<object>} The maps of source to destination IDs.
+ * @throws {Error} snaToolsUserError when the destination check fails again; snaCancelledError when the copy is stopped.
+ *         Side effects: changes the destination.
+ */
+async function snaToolsRunCopy(plan, destination) {
+    snaToolsProgress('Checking the destination again.', 0);
+    // A plan from a data dictionary file has no site address, so this site's own address and ID are used.
+    var dest = await snaToolsCheckDestination(destination.siteUrl, plan.source.siteUrl || (_snaReport && _snaReport.siteUrl) || getBaseUrl(),
+        snaToolsReportWebId(_snaReport), plan.source.kind === 'workbook');
+    if (!dest.ok) { throw snaToolsUserError(dest.message); }
+    var newUrls = plan.lists.map(function(l) { return l.newUrl; });
+    var newTitles = plan.lists.map(function(l) { return l.newTitle; });
+    plan.lists.forEach(function(list, index) {
+        var otherUrls = newUrls.filter(function(u, i) { return i !== index; });
+        var otherTitles = newTitles.filter(function(u, i) { return i !== index; });
+        // A list or library the destination already has at the chosen address, from the same template, is used instead of a new one.
+        var found = snaToolsListChoiceProblems(dest, list, otherTitles, otherUrls);
+        var problem = found.address || found.name;
+        if (problem) {
+            throw snaToolsUserError('Sitenalyzer didn\'t copy anything, because ' + snaMaskText(list.title) + ' can\'t be copied with the name and address you chose: ' + problem);
+        }
+    });
+    if (_snaToolsRun) { _snaToolsRun.destination = dest; }
+    var maps = snaToolsNewMaps(dest);
+    // A plan from a data dictionary file names the columns, terms, and views it can't make; each gets a Skipped row.
+    snaToolsLogWorkbookSkipped(plan);
+    var K = SNA_TOOLS_KINDS;
+
+    await snaToolsRunStep(1, 'Copying term sets.', K.termSet, 'Term sets', function() { return snaToolsCopyTermSets(plan, dest, maps); });
+    await snaToolsRunStep(2, 'Copying site columns.', K.column, 'Site columns', function() { return snaToolsCopySiteColumns(plan, dest, maps); });
+    await snaToolsRunStep(3, 'Copying lists and libraries.', K.list, 'Lists and libraries', function() { return snaToolsCopyLists(plan, dest, maps); });
+    await snaToolsRunStep(4, 'Copying content types.', K.contentType, 'Content types', function() { return snaToolsCopyContentTypes(plan, dest, maps); });
+    await snaToolsRunStep(5, 'Copying columns.', K.column, 'Columns', function() { return snaToolsCopyListColumns(plan, dest, maps); });
+    await snaToolsRunStep(6, 'Copying views.', K.view, 'Views', function() { return snaToolsCopyViews(plan, dest, maps); });
+    await snaToolsRunStep(7, 'Copying form settings.', K.contentType, 'Form settings', function() { return snaToolsCopyFormSettings(plan, dest, maps); });
+    // Site Assets goes first, so the images that pages show are there before the pages.
+    if (plan.siteAssets) {
+        await snaToolsRunStep(8, 'Copying Site Assets.', K.siteAssetsFile, 'Site Assets', function() { return snaToolsCopySiteAssets(plan, dest, maps); });
+    }
+    // The site look comes after Site Assets, so a logo copied with Site Assets is used from there.
+    if (plan.siteLook) {
+        await snaToolsRunStep(9, 'Copying the site look.', K.siteLookSetting, 'Site look', function() { return snaToolsCopySiteLook(plan, dest, maps); });
+    }
+    if (plan.agents) {
+        await snaToolsRunStep(10, 'Copying agents and site skills.', K.agent, 'Agents and site skills', function() { return snaToolsCopyAgents(plan, dest, maps); });
+    }
+    if (plan.pages) {
+        await snaToolsRunStep(11, 'Copying site pages.', K.page, 'Site pages', function() { return snaToolsCopyPages(plan, dest, maps); });
+    }
+    // Navigation comes after the lists, libraries, and pages, so links to them find their copies, and so the links that
+    // new lists add to the menu are replaced with this site's.
+    if (plan.navigation) {
+        await snaToolsRunStep(12, 'Copying navigation.', K.menuLink, 'Navigation', function() { return snaToolsCopyNavigation(plan, dest, maps); });
+    }
+    if (plan.permissions) {
+        await snaToolsRunStep(13, 'Copying permissions.', K.permission, 'Permissions', function() { return snaToolsCopyPermissions(plan, dest, maps); });
+    }
+    snaToolsCheckCancelled();
+    snaToolsProgress('Checking what was copied.', 14);
+    try {
+        await snaToolsVerifyCopy(plan, dest, maps);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+    }
+    snaToolsProgress('Finished copying.', SNA_TOOLS_STEP_COUNT);
+    return maps;
+}
+
+/*
+This file is part of Sitenalyzer
+ui.js
+Author(s): Gabriel Mongefranco.
+Created: 2026-11-05
+Last Modified: 2026-11-09
+Summary: Draws the Tools section (#sna/tools) and its Copy site structure screen (#sna/tools/copy), and handles its
+         buttons, boxes, and switches: the source, the destination and its check, the lists and libraries to copy with
+         their new names and addresses, the term sets, the site's own content types, the other content, the copy with
+         its progress and Stop copying button, the check before copying with Copy anyway and Go back (drawn by
+         preflight.js), and the results table with Save results (.xlsx). The choices and results are kept in _snaToolsState,
+         so they stay when the view is drawn again, such as after Show hidden values changes.
+Notes: See README file for documentation and full license information.
+       Every action name starts with tools-, and sitenalyzer.js passes clicks, typing, and changes inside #sna-tools here.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// ### Screen Settings ###
+
+// The switches under Other content, in order, with their labels and hints.
+var SNA_TOOLS_SWITCHES = [
+    { option: 'pages', label: 'Site pages', hint: 'Copies the pages in Site Pages, pointed at the copied lists and libraries.' },
+    { option: 'siteAssets', label: 'Site Assets', hint: 'Copies the files in Site Assets, such as images that pages show.' },
+    { option: 'agents', label: 'Agents and site skills', hint: 'Copies agents and the site skills in Agent Assets.' },
+    { option: 'navigation', label: 'Navigation', hint: 'Copies the site\'s menus, and points links to this site at the destination.' },
+    { option: 'siteLook', label: 'Site look', hint: 'Copies the theme, logo, header, and footer, which changes how the whole destination looks.' },
+    { option: 'permissions', label: 'Permissions', hint: 'Copies permission levels, groups and their members, and who has access to the site and to each list or library. Off unless you turn it on.' }
+];
+
+// The hint of each switch that a data dictionary file has nothing for.
+var SNA_TOOLS_WORKBOOK_SWITCH_HINT = 'A data dictionary file doesn\'t include these.';
+
+// The hint of Replace for a data dictionary file, which has no pages or files to replace.
+var SNA_TOOLS_WORKBOOK_REPLACE_HINT = 'A data dictionary file doesn\'t include pages or files.';
+
+// Most list and library views counted at the same time for the Views column, and most lists whose content types are
+// read at the same time for the Content types part.
+var SNA_TOOLS_VIEW_COUNT_PARALLEL = 3;
+
+// How long after a part of the screen is drawn again its status line gets a new message. Screen readers announce a
+// change in a status line that is already on the page, but not text that is already in a line when it appears.
+var SNA_TOOLS_STATUS_DELAY_MS = 150;
+
+// The hints of a content type that can't be left out, and why.
+var SNA_TOOLS_TYPE_USED_HINT = 'A list you chose uses it.';
+var SNA_TOOLS_TYPE_PARENT_HINT = 'A content type you chose is based on it.';
+
+// ### Screen State ###
+
+// Returns the choices of a fresh Copy site structure screen. Permissions is off until the person turns it on.
+function snaToolsNewState() {
+    return {
+        source: 'site',             // 'site' (this site's report) or 'workbook' (a data dictionary file)
+        workbook: null,             // { fileName, plan } once a data dictionary file was read
+        workbookStatus: '', workbookError: false,
+        destinationText: '',        // What is in the Destination site address box
+        destination: null,          // The last successful destination check; it counts only while destinationText matches its typed
+        destinationStatus: '', destinationError: false, checking: false,
+        destinationThisSite: false, // true when the last check found the site whose report is open; its answer depends on the source
+        lists: {},                  // Choices by source list ID: { selected, newTitle, newUrl }
+        termSets: {},               // true or false by source term set ID
+        contentTypes: null,         // The site's own content types: { report, status ('loading', 'ready', or 'failed'),
+                                    // types [{ id (uppercase), name, parent (uppercase ID) }], uses { listId: [content type IDs] } }
+        excludedTypes: {},          // true by uppercase ID for each site content type the person unchecked
+        options: { pages: true, siteAssets: true, agents: true, navigation: true, siteLook: false, permissions: false, replaceExisting: false },
+        viewCounts: {}, viewCountsReport: null,
+        running: false, progressText: '', progressValue: 0,
+        preflight: null,            // While Before you copy shows: { plan, dest, warnings, failedChecks, error } (see preflight.js)
+        results: null,              // The rows of the last copy, from snaToolsLog
+        resultsLead: '', resultsTitle: ''
+    };
+}
+
+var _snaToolsState = snaToolsNewState();
+var _snaToolsCheckCount = 0;    // Changes with each destination check, so the answer to an older check is dropped
+var _snaToolsTableWatcher = null; // Watches the size of the table of lists, so it can scroll sideways after a zoom or resize
+
+// True while the choices can't change: while copying or checking, and while Before you copy waits for an answer.
+function snaToolsLocked() {
+    return _snaToolsState.running || !!_snaToolsState.preflight;
+}
+
+// Stops a running copy and forgets every choice and result. Called by Start over, Change site, and Refresh report.
+function snaToolsReset() {
+    snaToolsCancel();
+    _snaToolsCheckCount++;
+    _snaToolsState = snaToolsNewState();
+    _snaToolsRun = null;
+    snaToolsShowSiteActions();
+}
+
+// True while a copy runs, from Copy to destination until the results show, except while Before you copy waits.
+function snaToolsCopying() {
+    return _snaToolsState.running || snaToolsBusy();
+}
+
+// Turns Refresh report, Start over, and Change site off while a copy runs, and shows the sentence under them that says
+// why. Each of them would stop the copy and clear its results, which are the only record of what it changed.
+function snaToolsShowSiteActions() {
+    var copying = snaToolsCopying();
+    var note = document.getElementById('sna-utility-note');
+    if (note) { note.hidden = !copying; }
+    document.querySelectorAll('.sna-utility-bar [data-action="refresh-report"], .sna-utility-bar [data-action="start-over"], ' +
+        '.sna-utility-bar [data-action="change-site"]').forEach(function(button) {
+        button.disabled = copying;
+        if (copying && note) { button.setAttribute('aria-describedby', note.id); } else { button.removeAttribute('aria-describedby'); }
+    });
+}
+
+// ### Choices ###
+
+// Returns the lists and libraries to choose from: the report's, or the data dictionary file's.
+// Each is { sourceId, title, url, isLibrary, columnCount, viewCount (a number, or undefined until counted) }. A managed
+// metadata column's hidden Note column isn't counted, because the person sees the two as one column.
+function snaToolsRows(report) {
+    var state = _snaToolsState;
+    if (state.source === 'workbook') {
+        var plan = state.workbook && state.workbook.plan;
+        return plan ? plan.lists.map(function(l) {
+            return { sourceId: l.sourceId, title: l.title, url: snaToolsCleanAddress(l.url), isLibrary: l.isLibrary, baseTemplate: l.baseTemplate,
+                columnCount: l.fields.filter(function(f) { return !f.builtIn && !f.isTaxonomyNote; }).length, viewCount: l.views.length };
+        }) : [];
+    }
+    return snaToolsSourceLists(report).map(function(row) {
+        row.viewCount = state.viewCounts[row.sourceId];
+        return row;
+    });
+}
+
+// Returns the term sets to choose from: the report's site term group, or the data dictionary file's term sets.
+function snaToolsTermSetRows(report) {
+    var state = _snaToolsState;
+    if (state.source === 'workbook') {
+        var plan = state.workbook && state.workbook.plan;
+        return (plan && plan.termGroup) ? plan.termGroup.sets.map(function(s) {
+            return { sourceId: s.sourceId, name: s.name, termCount: s.terms.length };
+        }) : [];
+    }
+    return snaToolsSourceTermSets(report);
+}
+
+// Returns the person's choice for one list or library, starting with it chosen and its source name and address.
+function snaToolsListChoice(row) {
+    var lists = _snaToolsState.lists;
+    if (!lists[row.sourceId]) { lists[row.sourceId] = { selected: true, newTitle: row.title, newUrl: row.url }; }
+    return lists[row.sourceId];
+}
+
+// True when a term set is chosen. Every term set starts chosen.
+function snaToolsTermSetChosen(row) {
+    var sets = _snaToolsState.termSets;
+    if (!Object.prototype.hasOwnProperty.call(sets, row.sourceId)) { sets[row.sourceId] = true; }
+    return sets[row.sourceId];
+}
+
+// Returns whether a switch under Other content, or Replace, is on. A data dictionary file has no pages, files, menus,
+// look, or permissions, so for that source each one is off. The person's choices stay for this site's report.
+function snaToolsOption(name) {
+    if (_snaToolsState.source === 'workbook') { return false; }
+    return !!_snaToolsState.options[name];
+}
+
+// Returns the last successful destination check while the address box still holds the address it checked, or null.
+function snaToolsCurrentDestination() {
+    var state = _snaToolsState;
+    var dest = state.destination;
+    return (dest && dest.ok && dest.typed === String(state.destinationText || '').trim()) ? dest : null;
+}
+
+// Returns why each of the site's own content types must be copied, by uppercase ID: 'list' when a chosen list uses it,
+// and 'parent' when a content type that is copied is based on it. The person can leave out the others.
+function snaToolsForcedTypes(report) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    var forced = {};
+    if (state.source !== 'site' || !info || info.status !== 'ready') { return forced; }
+    var byId = {};
+    info.types.forEach(function(t) { byId[t.id] = t; });
+    snaToolsRows(report).forEach(function(row) {
+        if (!snaToolsListChoice(row).selected) { return; }
+        (info.uses[row.sourceId] || []).forEach(function(id) { if (byId[id]) { forced[id] = 'list'; } });
+    });
+    info.types.forEach(function(t) {
+        if (!forced[t.id] && state.excludedTypes[t.id]) { return; }
+        for (var parent = byId[t.parent]; parent; parent = byId[parent.parent]) {
+            if (!forced[parent.id]) { forced[parent.id] = 'parent'; }
+        }
+    });
+    return forced;
+}
+
+// Returns how many of the site's own content types the copy includes, or 0 while they aren't known.
+function snaToolsChosenTypeCount(report) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    if (state.source !== 'site' || !info || info.status !== 'ready') { return 0; }
+    var forced = snaToolsForcedTypes(report);
+    return info.types.filter(function(t) { return forced[t.id] || !state.excludedTypes[t.id]; }).length;
+}
+
+// Returns the choices for the plan: { lists: [{ sourceId, newTitle, newUrl }], termSetIds, excludedContentTypeIds, pages,
+// siteAssets, agents, navigation, siteLook, permissions, replaceExisting }. Names are trimmed.
+function snaToolsChoices(report) {
+    var lists = snaToolsRows(report).filter(function(row) { return snaToolsListChoice(row).selected; }).map(function(row) {
+        var choice = snaToolsListChoice(row);
+        return { sourceId: row.sourceId, newTitle: String(choice.newTitle || '').trim(), newUrl: choice.newUrl };
+    });
+    return {
+        lists: lists,
+        termSetIds: snaToolsTermSetRows(report).filter(snaToolsTermSetChosen).map(function(s) { return s.sourceId; }),
+        // The plan copies a chosen list's content types, and the ones they are based on, even when unchecked here.
+        excludedContentTypeIds: Object.keys(_snaToolsState.excludedTypes).filter(function(id) { return _snaToolsState.excludedTypes[id]; }),
+        pages: snaToolsOption('pages'), siteAssets: snaToolsOption('siteAssets'), agents: snaToolsOption('agents'),
+        navigation: snaToolsOption('navigation'), siteLook: snaToolsOption('siteLook'), permissions: snaToolsOption('permissions'), replaceExisting: snaToolsOption('replaceExisting')
+    };
+}
+
+// Checks every choice. Returns { rows, chosenCount, problems: { sourceId: { name, address, note } }, canCopy, hint }, where
+// hint says what the person must do before Copy to destination works, or what it will do. A note isn't a problem: it says
+// the copy adds to a list or library the destination already has (see snaToolsListChoiceProblems in plan.js).
+function snaToolsValidate(report) {
+    var state = _snaToolsState;
+    var rows = snaToolsRows(report);
+    var dest = snaToolsCurrentDestination();
+    var chosen = rows.filter(function(row) { return snaToolsListChoice(row).selected; });
+    var problems = {};
+    var problemCount = 0;
+    chosen.forEach(function(row, index) {
+        var choice = snaToolsListChoice(row);
+        var others = chosen.filter(function(r, i) { return i !== index; }).map(snaToolsListChoice);
+        var found = snaToolsListChoiceProblems(dest, { newTitle: choice.newTitle, newUrl: choice.newUrl, isLibrary: row.isLibrary,
+            baseTemplate: row.baseTemplate }, others.map(function(o) { return o.newTitle; }), others.map(function(o) { return o.newUrl; }));
+        problems[row.sourceId] = found;
+        if (found.name) { problemCount++; }
+        if (found.address) { problemCount++; }
+    });
+    var termSets = snaToolsTermSetRows(report).filter(snaToolsTermSetChosen);
+    var anyOption = ['pages', 'siteAssets', 'agents', 'navigation', 'siteLook', 'permissions'].some(snaToolsOption);
+    var result = { rows: rows, chosenCount: chosen.length, problems: problems, canCopy: false, hint: '' };
+    if (state.running || snaToolsBusy()) {
+        result.hint = 'Sitenalyzer is copying. Select Stop copying to stop.';
+    } else if (state.preflight) {
+        result.hint = (!state.preflight.error && snaToolsPreflightStops(state.preflight.warnings))
+            ? 'Select Go back under Before you copy.' : 'Select Copy anyway or Go back under Before you copy.';
+    } else if (state.source === 'workbook' && !state.workbook) {
+        result.hint = 'Choose a data dictionary file before you copy.';
+    } else if (!dest) {
+        result.hint = 'Check the destination before you copy.';
+    } else if (chosen.length === 0 && termSets.length === 0 && !anyOption && snaToolsChosenTypeCount(report) === 0) {
+        result.hint = 'Choose at least one list, library, term set, content type, or other content to copy.';
+    } else if (problemCount > 0) {
+        result.hint = problemCount === 1
+            ? 'Fix the problem marked in Lists and libraries before you copy.'
+            : 'Fix the ' + problemCount + ' problems marked in Lists and libraries before you copy.';
+    } else {
+        result.canCopy = true;
+        result.hint = dest.thisSite
+            ? 'Copies what you chose from the file to this site, ' + snaMaskText(dest.title || dest.siteUrl) + '.'
+            : 'Copies what you chose to ' + snaMaskText(dest.title || dest.siteUrl) + '. Nothing changes in this site.';
+    }
+    return result;
+}
+
+// ### Draw the Screen ###
+
+/**
+ * Draws the Tools section: its title, its navigation with one part, Copy site structure, and that part.
+ * @param {object} route The view, such as { section: 'tools', anchor: 'copy' }.
+ * @param {object} report The collected report.
+ * @returns {string} Markup for #sp-results. Every value from SharePoint or the person is escaped.
+ */
+function snaToolsRender(route, report) {
+    var part = route.anchor || SNA_TOOLS_PARTS[0];
+    var nav = snaSubnavHtml('Tools', [{ title: '', items: [
+        { href: snaRouteHash({ section: 'tools', anchor: 'copy' }), text: 'Copy site structure', current: part === 'copy' }
+    ] }]);
+    return snaSectionTitleHtml('Tools', 'Tools that work with this site\'s structure.') +
+        '<div class="sna-split">' + nav + '<div class="sna-split-body" id="sna-tools">' + snaToolsRenderCopy(report) + '</div></div>';
+}
+
+// Returns the markup of one heading of Copy site structure, one level under the heading of the part.
+function snaToolsHeadingHtml(id, text) {
+    return '<h4 id="' + id + '" class="sna-subsection-title sna-tools-heading">' + snaEscapeHtml(text) + '</h4>';
+}
+
+// Returns the markup of Copy site structure, drawn from _snaToolsState. Validation messages and the state of
+// Copy to destination are filled in by snaToolsRefreshForm after the markup is on the page.
+function snaToolsRenderCopy(report) {
+    var state = _snaToolsState;
+    var off = snaToolsLocked() ? ' disabled' : '';
+    var isWorkbook = state.source === 'workbook';
+    var origin = snaOrigin(report.siteUrl) || window.location.origin;
+    var html = snaPartTitleHtml('Copy site structure', 'Copies lists and libraries without their items or files, with their columns, ' +
+        'views, and content types, and term sets, into another site where you\'re a site collection administrator.');
+
+    // Source
+    html += snaToolsHeadingHtml('sna-tools-h-source', 'Source') +
+        '<fieldset class="sna-tools-fieldset"><legend class="sna-visually-hidden">Copy from</legend>' +
+        '<div class="sna-tools-choice"><input type="radio" name="sna-tools-source" id="sna-tools-source-site" value="site"' +
+            (isWorkbook ? '' : ' checked') + off + '><label for="sna-tools-source-site">This site\'s report</label></div>' +
+        '<div class="sna-tools-choice"><input type="radio" name="sna-tools-source" id="sna-tools-source-workbook" value="workbook"' +
+            (isWorkbook ? ' checked' : '') + off + '><label for="sna-tools-source-workbook">A data dictionary file</label></div>' +
+        '</fieldset>' +
+        '<div id="sna-tools-file-area" class="sna-tools-file-area"' + (isWorkbook ? '' : ' hidden') + '>' +
+            '<label for="sna-tools-file" class="sna-field-label">Data dictionary file</label>' +
+            '<p id="sna-tools-file-hint" class="sna-hint">Such as a file saved with Data dictionary (.xlsx).</p>' +
+            '<input type="file" id="sna-tools-file" class="sna-tools-file" accept=".xlsx" aria-describedby="sna-tools-file-hint sna-tools-file-status"' + off + '>' +
+            '<p id="sna-tools-file-status" class="sna-tools-status' + (state.workbookError ? ' sna-error-text' : '') + '" role="status">' +
+                snaEscapeHtml(state.workbookStatus) + '</p>' +
+        '</div>';
+
+    // Destination
+    html += snaToolsHeadingHtml('sna-tools-h-destination', 'Destination') +
+        '<label for="sna-tools-destination" class="sna-field-label">Destination site address</label>' +
+        '<p id="sna-tools-destination-hint" class="sna-hint">Such as ' + snaEscapeHtml(origin) + '/sites/new-study</p>' +
+        '<div class="sna-tools-row">' +
+            '<input type="text" id="sna-tools-destination" class="sna-tools-input sna-tools-destination" value="' + snaEscapeHtml(state.destinationText) + '"' +
+                ' autocomplete="off" spellcheck="false" inputmode="url" aria-describedby="sna-tools-destination-hint sna-tools-destination-status"' + off + '>' +
+            '<button type="button" class="sna-btn sna-btn-outline" data-action="tools-choose-destination"' + off + '>Choose a site</button>' +
+            '<button type="button" class="sna-btn sna-btn-primary" data-action="tools-check-destination"' + off + '>Check destination</button>' +
+        '</div>' +
+        '<p id="sna-tools-destination-status" class="sna-tools-status' + (state.destinationError ? ' sna-error-text' : '') + '" role="status">' +
+            snaEscapeHtml(state.destinationStatus) + '</p>';
+
+    html += snaToolsHeadingHtml('sna-tools-h-lists', 'Lists and libraries') + snaToolsListsHtml(report, off);
+    html += snaToolsTermSetsHtml(report, off);
+    html += snaToolsHeadingHtml('sna-tools-h-contenttypes', 'Content types') +
+        '<div id="sna-tools-contenttypes">' + snaToolsContentTypesHtml(off) + '</div>';
+    html += snaToolsOtherContentHtml(off);
+    html += snaToolsCopyHtml();
+    html += state.preflight ? snaToolsPreflightHtml(state.preflight) : '';
+    html += snaToolsResultsHtml();
+    return html;
+}
+
+// Returns the table of lists and libraries to copy, with a checkbox, a Name box, and an Address box for each.
+function snaToolsListsHtml(report, off) {
+    var state = _snaToolsState;
+    var rows = snaToolsRows(report);
+    if (state.source === 'workbook' && !state.workbook) {
+        return '<p class="sna-note">Choose a data dictionary file to see its lists and libraries.</p>';
+    }
+    if (rows.length === 0) {
+        return '<p class="sna-note">' + (state.source === 'workbook'
+            ? 'This data dictionary file has no lists or libraries that Sitenalyzer can copy.'
+            : 'This site has no lists or libraries that Sitenalyzer can copy. Site Pages, Site Assets, and Agent Assets are copied with the switches under Other content.') + '</p>';
+    }
+    var html = '<p class="sna-hint sna-tools-lists-hint">Sitenalyzer copies each one without its items or files. The address is the last part of its web address, such as Study-Visits.</p>' +
+        '<div class="sna-view-actions sna-tools-select-actions">' +
+            '<button type="button" class="sna-link-btn" data-action="tools-select-all"' + off + '>Select all</button>' +
+            '<button type="button" class="sna-link-btn" data-action="tools-clear-all"' + off + '>Clear all</button>' +
+        '</div>' +
+        '<p id="sna-tools-lists-count" class="sna-table-count" role="status"></p>' +
+        '<div id="sna-tools-lists-wrap" class="sna-tools-table-wrap">' +
+        '<table class="sna-perm-list-table sna-tools-lists"><caption class="sna-visually-hidden">Lists and libraries to copy</caption>' +
+        '<thead><tr><th scope="col">Copy</th><th scope="col">Name</th><th scope="col">Address</th><th scope="col">Type</th>' +
+        '<th scope="col">Columns</th><th scope="col">Views</th></tr></thead><tbody>';
+    rows.forEach(function(row, index) {
+        var choice = snaToolsListChoice(row);
+        var id = 'sna-tools-row-' + index;
+        html += '<tr data-list-id="' + snaEscapeHtml(row.sourceId) + '">' +
+            '<td><label class="sna-tools-check"><input type="checkbox" class="sna-tools-list-check" id="' + id + '-copy"' +
+                (choice.selected ? ' checked' : '') + off + '><span>' + snaEscapeHtml(row.title) + '</span></label></td>' +
+            '<td><input type="text" class="sna-tools-input sna-tools-list-name" id="' + id + '-name" value="' + snaEscapeHtml(choice.newTitle) + '"' +
+                ' aria-label="' + snaEscapeHtml('New name for ' + row.title) + '" aria-describedby="' + id + '-name-msg" autocomplete="off" spellcheck="false"' + off + '>' +
+                '<p id="' + id + '-name-msg" class="sna-tools-field-msg sna-error-text" hidden></p></td>' +
+            '<td><input type="text" class="sna-tools-input sna-tools-list-address" id="' + id + '-address" value="' + snaEscapeHtml(choice.newUrl) + '"' +
+                ' aria-label="' + snaEscapeHtml('New address for ' + row.title) + '" aria-describedby="' + id + '-address-msg" autocomplete="off" spellcheck="false"' + off + '>' +
+                '<p id="' + id + '-address-msg" class="sna-tools-field-msg sna-error-text" hidden></p></td>' +
+            '<td>' + (row.isLibrary ? 'Library' : 'List') + '</td>' +
+            '<td class="sna-tools-number">' + snaEscapeHtml(String(row.columnCount)) + '</td>' +
+            '<td class="sna-tools-number sna-tools-views">' + snaEscapeHtml(row.viewCount === undefined ? '' : String(row.viewCount)) + '</td></tr>';
+    });
+    return html + '</tbody></table></div>';
+}
+
+// Returns the term sets to copy, as checkboxes, or '' when the source has no term group of its own.
+function snaToolsTermSetsHtml(report, off) {
+    var sets = snaToolsTermSetRows(report);
+    if (sets.length === 0) { return ''; }
+    return snaToolsHeadingHtml('sna-tools-h-termsets', 'Term sets') +
+        '<p id="sna-tools-termsets-hint" class="sna-hint">Columns that use a term set you leave out are skipped.</p>' +
+        '<ul class="sna-tools-checklist" aria-labelledby="sna-tools-h-termsets">' + sets.map(function(set) {
+            return '<li><label class="sna-tools-check"><input type="checkbox" class="sna-tools-termset-check" data-set-id="' + snaEscapeHtml(set.sourceId) + '"' +
+                (snaToolsTermSetChosen(set) ? ' checked' : '') + off + '><span>' + snaEscapeHtml(set.name) +
+                ' <span class="sna-muted">(' + snaEscapeHtml(snaCountText(set.termCount, 'term', 'terms')) + ')</span></span></label></li>';
+        }).join('') + '</ul>';
+}
+
+// Returns the inside of the Content types part: a checkbox for each of the site's own content types, all checked at
+// first, or a sentence that says why there are none. Which ones can't be left out is set by snaToolsRefreshForm.
+function snaToolsContentTypesHtml(off) {
+    var state = _snaToolsState;
+    var info = state.contentTypes;
+    if (state.source === 'workbook') { return '<p class="sna-note">A data dictionary file doesn\'t include content types.</p>'; }
+    if (!info || info.status === 'loading') { return '<p class="sna-note">Reading this site\'s content types...</p>'; }
+    if (info.status === 'failed') {
+        return '<p class="sna-note">Sitenalyzer couldn\'t read this site\'s content types here, so the copy includes all of the site\'s own content types.</p>';
+    }
+    if (info.types.length === 0) { return '<p class="sna-note">This site has no content types of its own.</p>'; }
+    return '<p id="sna-tools-types-hint" class="sna-hint">Sitenalyzer copies each content type you check, with its columns.</p>' +
+        '<ul class="sna-tools-checklist" aria-labelledby="sna-tools-h-contenttypes">' + info.types.map(function(t, index) {
+            var id = 'sna-tools-type-' + index;
+            return '<li><label class="sna-tools-check"><input type="checkbox" class="sna-tools-type-check" id="' + id + '" data-type-id="' + snaEscapeHtml(t.id) + '"' +
+                (state.excludedTypes[t.id] ? '' : ' checked') + off + '><span>' + snaEscapeHtml(t.name) + '</span></label>' +
+                '<p id="' + id + '-hint" class="sna-hint sna-tools-type-hint" hidden></p></li>';
+        }).join('') + '</ul>';
+}
+
+// Returns the switches under Other content and the Replace checkbox, each with a one-sentence hint.
+function snaToolsOtherContentHtml(off) {
+    var isWorkbook = _snaToolsState.source === 'workbook';
+    var html = snaToolsHeadingHtml('sna-tools-h-other', 'Other content') + '<ul class="sna-tools-switches">';
+    SNA_TOOLS_SWITCHES.forEach(function(item) {
+        var id = 'sna-tools-option-' + item.option;
+        html += '<li class="sna-tools-switch' + (isWorkbook ? ' sna-tools-disabled' : '') + '"><div class="sna-tools-switch-row">' +
+            '<input type="checkbox" role="switch" id="' + id + '" data-option="' + item.option + '" aria-describedby="' + id + '-hint"' +
+                (snaToolsOption(item.option) ? ' checked' : '') + (isWorkbook ? ' disabled' : off) + '>' +
+            '<label for="' + id + '">' + snaEscapeHtml(item.label) + '</label></div>' +
+            '<p id="' + id + '-hint" class="sna-hint">' + snaEscapeHtml(isWorkbook ? SNA_TOOLS_WORKBOOK_SWITCH_HINT : item.hint) + '</p></li>';
+    });
+    html += '</ul><div class="sna-tools-replace' + (isWorkbook ? ' sna-tools-disabled' : '') + '"><div class="sna-tools-choice">' +
+        '<input type="checkbox" id="sna-tools-option-replaceExisting" data-option="replaceExisting" aria-describedby="sna-tools-option-replaceExisting-hint"' +
+            (snaToolsOption('replaceExisting') ? ' checked' : '') + (isWorkbook ? ' disabled' : off) + '>' +
+        '<label for="sna-tools-option-replaceExisting">Replace pages and files that already exist in the destination</label></div>' +
+        '<p id="sna-tools-option-replaceExisting-hint" class="sna-hint">' + snaEscapeHtml(isWorkbook ? SNA_TOOLS_WORKBOOK_REPLACE_HINT
+            : 'Leave this off to keep the destination\'s own pages and files.') + '</p></div>';
+    return html;
+}
+
+// Returns the Copy part: the Copy to destination button and its hint, and while copying, the progress bar and
+// the Stop copying button. The progress line is always on the page, so screen readers announce each change.
+function snaToolsCopyHtml() {
+    var state = _snaToolsState;
+    return snaToolsHeadingHtml('sna-tools-h-copy', 'Copy') +
+        '<p id="sna-tools-copy-hint" class="sna-hint sna-tools-copy-hint"></p>' +
+        '<div class="sna-tools-row">' +
+            '<button type="button" id="sna-tools-copy-button" class="sna-btn sna-btn-primary" data-action="tools-start-copy" aria-describedby="sna-tools-copy-hint" disabled>Copy to destination</button>' +
+            (state.running ? '<button type="button" id="sna-tools-stop-button" class="sna-btn sna-btn-outline" data-action="tools-stop-copy">Stop copying</button>' : '') +
+        '</div>' +
+        '<div class="sna-tools-progress-area"' + (state.running ? '' : ' hidden') + '>' +
+            '<label for="sna-tools-progress" class="sna-field-label">Copy progress</label>' +
+            '<progress id="sna-tools-progress" max="' + SNA_TOOLS_STEP_COUNT + '" value="' + Number(state.progressValue || 0) + '"></progress>' +
+        '</div>' +
+        '<p id="sna-tools-progress-status" class="sna-tools-status" role="status">' + snaEscapeHtml(state.running ? state.progressText : '') + '</p>';
+}
+
+// Returns the counts sentence of the results, such as "Copied 12 items. Partly copied 2. Skipped 1. Failed 0.", and
+// "Warned about 2 items before the copy." when Before you copy listed any. Summary rows, such as the destination check,
+// are not counted.
+function snaToolsResultsSummary(results) {
+    var counts = { copied: 0, partial: 0, skipped: 0, failed: 0, warning: 0 };
+    results.forEach(function(r) { if (!r.summary && counts[r.result] !== undefined) { counts[r.result]++; } });
+    return 'Copied ' + snaCountText(counts.copied, 'item', 'items') + '. Partly copied ' + counts.partial + '. Skipped ' +
+        counts.skipped + '. Failed ' + counts.failed + '.' +
+        (counts.warning ? ' Warned about ' + snaCountText(counts.warning, 'item', 'items') + ' before the copy.' : '');
+}
+
+// Returns the Results part after a copy: what happened, the counts, the results table, and Save results (.xlsx).
+function snaToolsResultsHtml() {
+    var state = _snaToolsState;
+    if (!state.results) { return ''; }
+    var html = '<h4 id="sna-tools-results-title" class="sna-subsection-title sna-tools-heading" tabindex="-1">Results</h4>' +
+        (state.resultsLead ? '<p class="sna-tools-results-lead">' + snaEscapeHtml(state.resultsLead) + '</p>' : '') +
+        '<p class="sna-tools-results-summary">' + snaEscapeHtml(snaToolsResultsSummary(state.results)) + '</p>';
+    if (state.results.length === 0) { return html; }
+    return html + '<div class="sna-view-actions">' +
+            '<button type="button" class="sna-btn sna-btn-outline" data-action="tools-save-results">' + snaIconHtml('download') + 'Save results (.xlsx)</button>' +
+        '</div>' +
+        snaQueueTableHtml({ id: 'sna-tbl-tools-results', type: 'toolsresults', searchLabel: 'results', label: 'Results of the copy',
+            data: state.results.map(function(r) { return { name: r.name, kind: r.kind, resultText: SNA_TOOLS_RESULTS[r.result], note: r.note }; }) },
+            'sna-tools-results-table');
+}
+
+// ### Update the Screen ###
+
+// Draws the Tools view again when it is on screen, then puts focus on the element with focusId, if there is one.
+function snaToolsRedraw(focusId) {
+    if (!_snaReport || !_snaRoute || _snaRoute.section !== 'tools') { return; }
+    renderApp(_snaRoute, { focus: 'none', full: true });
+    var target = focusId ? document.getElementById(focusId) : null;
+    if (target && !target.disabled) {
+        try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+        target.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// Runs after the Tools view is drawn: fills in validation messages and the copy hint, lets the table of lists scroll
+// sideways when it doesn't fit, and starts counting each list's views.
+function snaToolsAfterRender() {
+    snaToolsRefreshForm();
+    snaToolsFitTable();
+    snaToolsWatchTable();
+    snaToolsLoadViewCounts(_snaReport);
+    snaToolsLoadContentTypes(_snaReport);
+}
+
+// Checks again whether the table of lists fits each time its box changes size, such as when the person zooms in or
+// makes the window narrower. Only the table on the page now is watched.
+function snaToolsWatchTable() {
+    if (_snaToolsTableWatcher) { _snaToolsTableWatcher.disconnect(); _snaToolsTableWatcher = null; }
+    var wrap = document.getElementById('sna-tools-lists-wrap');
+    if (!wrap || typeof ResizeObserver !== 'function') { return; }
+    _snaToolsTableWatcher = new ResizeObserver(function() { snaToolsFitTable(); });
+    _snaToolsTableWatcher.observe(wrap);
+}
+
+// Writes a message in a status line that was just drawn again, in a later task, so screen readers find the line on the
+// page first and then announce the message. The line stays empty until then. isCurrent returns false when the message
+// no longer applies, such as after the person changed something, and the message is then left out.
+function snaToolsAnnounceLater(lineId, text, isCurrent) {
+    var line = document.getElementById(lineId);
+    if (!line) { return; }
+    line.textContent = '';
+    setTimeout(function() {
+        var now = document.getElementById(lineId);
+        if (now && !now.textContent && isCurrent()) { now.textContent = text; }
+    }, SNA_TOOLS_STATUS_DELAY_MS);
+}
+
+// Shows a message under one Name or Address box, or removes it when text is ''. The box is marked invalid while it has
+// one, unless isNote is true: a note says what the copy will do and needs no fix.
+function snaToolsSetFieldMessage(input, text, isNote) {
+    if (!input) { return; }
+    var message = document.getElementById(input.id + '-msg');
+    if (message) {
+        message.textContent = text;
+        message.hidden = !text;
+        message.classList.toggle('sna-error-text', !isNote);
+        message.classList.toggle('sna-hint', !!isNote);
+    }
+    if (text && !isNote) { input.setAttribute('aria-invalid', 'true'); } else { input.removeAttribute('aria-invalid'); }
+}
+
+// Brings the parts of the screen that depend on the choices up to date, without drawing the view again, so focus and
+// typing stay where they are: the messages under the Name and Address boxes, the count of chosen lists, and the
+// Copy to destination button and its hint.
+function snaToolsRefreshForm() {
+    var root = document.getElementById('sna-tools');
+    if (!root || !_snaReport) { return; }
+    var check = snaToolsValidate(_snaReport);
+    root.querySelectorAll('tr[data-list-id]').forEach(function(tr) {
+        var problem = check.problems[tr.getAttribute('data-list-id')] || { name: '', address: '', note: '' };
+        snaToolsSetFieldMessage(tr.querySelector('.sna-tools-list-name'), problem.name);
+        snaToolsSetFieldMessage(tr.querySelector('.sna-tools-list-address'), problem.address || problem.note, !problem.address && !!problem.note);
+    });
+    var count = document.getElementById('sna-tools-lists-count');
+    if (count) {
+        var total = check.rows.length;
+        count.textContent = 'Chose ' + check.chosenCount + ' of ' + (total === 1 ? '1 list or library.' : total + ' lists and libraries.');
+    }
+    var forced = snaToolsForcedTypes(_snaReport);
+    root.querySelectorAll('.sna-tools-type-check').forEach(function(box) {
+        var id = box.getAttribute('data-type-id');
+        var why = forced[id];
+        var text = why === 'list' ? SNA_TOOLS_TYPE_USED_HINT : (why === 'parent' ? SNA_TOOLS_TYPE_PARENT_HINT : '');
+        box.checked = !!why || !_snaToolsState.excludedTypes[id];
+        box.disabled = !!why || snaToolsLocked();
+        var hint = document.getElementById(box.id + '-hint');
+        if (hint) { hint.textContent = text; hint.hidden = !text; }
+        if (text) { box.setAttribute('aria-describedby', box.id + '-hint'); } else { box.removeAttribute('aria-describedby'); }
+    });
+    var button = document.getElementById('sna-tools-copy-button');
+    if (button) { button.disabled = !check.canCopy; }
+    var hint = document.getElementById('sna-tools-copy-hint');
+    if (hint) { hint.textContent = check.hint; }
+}
+
+// Lets the table of lists scroll sideways when its boxes don't fit, such as on a phone. While it scrolls, its box is a
+// labeled region that keyboard users can reach and scroll with the arrow keys.
+function snaToolsFitTable() {
+    var wrap = document.getElementById('sna-tools-lists-wrap');
+    if (!wrap) { return; }
+    if (wrap.scrollWidth > wrap.clientWidth + 1) {
+        wrap.setAttribute('role', 'region');
+        wrap.setAttribute('tabindex', '0');
+        wrap.setAttribute('aria-label', 'Lists and libraries to copy (scroll sideways to see more)');
+    } else {
+        wrap.removeAttribute('role');
+        wrap.removeAttribute('tabindex');
+        wrap.removeAttribute('aria-label');
+    }
+}
+
+// Counts the public views of each list and library in the report, once for each report, for the Views column.
+// A list whose views can't be read shows Not read.
+function snaToolsLoadViewCounts(report) {
+    var state = _snaToolsState;
+    if (!report || state.source !== 'site' || state.viewCountsReport === report) { return; }
+    state.viewCountsReport = report;
+    var rows = snaToolsSourceLists(report);
+    snaMapWithLimit(rows, SNA_TOOLS_VIEW_COUNT_PARALLEL, async function(row) {
+        var count;
+        try {
+            var json = await snaToolsRead(report.siteUrl, "/_api/web/lists(guid'" + row.sourceId + "')/views?$select=Id,PersonalView,Hidden");
+            count = ((json && json.value) || []).filter(function(v) { return !v.PersonalView && !v.Hidden; }).length;
+        } catch (err) {
+            count = 'Not read';
+        }
+        if (_snaToolsState !== state || _snaReport !== report) { return; }
+        state.viewCounts[row.sourceId] = count;
+        var root = document.getElementById('sna-tools');
+        if (!root || state.source !== 'site') { return; }
+        Array.prototype.filter.call(root.querySelectorAll('tr[data-list-id]'), function(tr) {
+            return tr.getAttribute('data-list-id') === row.sourceId;
+        }).forEach(function(tr) {
+            var cell = tr.querySelector('.sna-tools-views');
+            if (cell) { cell.textContent = String(count); }
+        });
+    });
+}
+
+// Reads the site's own content types, once for each report, and, when it has any, which of them each list or library
+// uses, for the Content types part. Content types from SharePoint and from the content type hub aren't offered.
+async function snaToolsLoadContentTypes(report) {
+    var state = _snaToolsState;
+    if (!report || state.source !== 'site' || (state.contentTypes && state.contentTypes.report === report)) { return; }
+    var info = { report: report, status: 'loading', types: [], uses: {} };
+    state.contentTypes = info;
+    snaToolsShowContentTypes();
+    try {
+        var read = await snaToolsReadAll(report.siteUrl, '/_api/web/contenttypes?$select=' + SNA_TOOLS_CONTENT_TYPE_CHOICE_SELECT, SNA_TOOLS_READ_MAX);
+        info.types = snaToolsChoosableContentTypes(read.items.map(function(ct) { return snaToolsPlanContentType(ct, false); })).map(function(t) {
+            return { id: t.stringId.toUpperCase(), name: t.name, parent: String(t.parentStringId).toUpperCase() };
+        });
+        if (info.types.length > 0) {
+            await snaMapWithLimit(snaToolsSourceLists(report), SNA_TOOLS_VIEW_COUNT_PARALLEL, async function(row) {
+                try {
+                    var types = await snaToolsReadAll(report.siteUrl, "/_api/web/lists(guid'" + row.sourceId + "')/contenttypes?$select=StringId", SNA_TOOLS_READ_MAX);
+                    info.uses[row.sourceId] = types.items.map(function(ct) { return snaToolsListTypeParent(ct.StringId); }).filter(function(id) { return !!id; });
+                } catch (err) {
+                    // The copy itself still copies the content types this list uses.
+                    info.uses[row.sourceId] = [];
+                }
+            });
+        }
+        info.status = 'ready';
+    } catch (err) {
+        info.status = 'failed';
+    }
+    if (_snaToolsState !== state || state.contentTypes !== info || _snaReport !== report) { return; }
+    snaToolsShowContentTypes();
+    snaToolsRefreshForm();
+}
+
+// Draws the inside of the Content types part again, without drawing the rest of the view.
+function snaToolsShowContentTypes() {
+    var part = document.getElementById('sna-tools-contenttypes');
+    // The names are hidden like every other value in the view, such as a name that looks like a phone number.
+    if (part) { part.innerHTML = snaMaskHtml(snaToolsContentTypesHtml(snaToolsLocked() ? ' disabled' : '')); }
+}
+
+// Shows the result of a destination check, or '' to clear it, under the destination box.
+function snaToolsSetDestinationStatus(text, isError) {
+    var state = _snaToolsState;
+    state.destinationStatus = text || '';
+    state.destinationError = !!isError;
+    var line = document.getElementById('sna-tools-destination-status');
+    if (!line) { return; }
+    line.textContent = state.destinationStatus;
+    line.classList.toggle('sna-error-text', state.destinationError);
+}
+
+// ### Events ###
+
+/**
+ * Handles a click on a Tools button. Called by snaHandleAppClick in sitenalyzer.js for every data-action.
+ * @param {string} action The data-action value, such as 'tools-check-destination'.
+ * @param {Element} target The element with the data-action.
+ * @param {Event} e The click.
+ * @returns {boolean} True when the action belongs to Tools, so no other handler runs.
+ */
+function snaToolsHandleAction(action, target, e) {
+    if (String(action || '').indexOf('tools-') !== 0) { return false; }
+    if (action === 'tools-check-destination') { snaToolsCheckDestinationNow(); }
+    else if (action === 'tools-choose-destination') { snaOpenSiteDialog(target, 'tools-destination'); }
+    else if (action === 'tools-select-all') { snaToolsSelectAll(true); }
+    else if (action === 'tools-clear-all') { snaToolsSelectAll(false); }
+    else if (action === 'tools-start-copy') { snaToolsStartCopy(); }
+    else if (action === 'tools-copy-anyway') { snaToolsCopyAnyway(); }
+    else if (action === 'tools-go-back') { snaToolsGoBack(); }
+    else if (action === 'tools-stop-copy') { snaToolsStopCopy(); }
+    else if (action === 'tools-save-results') { snaToolsSaveResults(); }
+    return true;
+}
+
+// Handles typing in the destination box and the Name and Address boxes.
+function snaToolsHandleInput(e) {
+    var el = e.target;
+    var state = _snaToolsState;
+    if (snaToolsLocked()) { return; }
+    if (el.id === 'sna-tools-destination') {
+        var wasChecked = !!snaToolsCurrentDestination();
+        state.destinationText = el.value;
+        if (state.checking) {
+            // The check that is running is for the address that was in the box, so its answer is dropped.
+            snaToolsStopDestinationCheck();
+            snaToolsSetDestinationStatus('', false);
+        } else if (wasChecked && !snaToolsCurrentDestination()) {
+            snaToolsSetDestinationStatus('', false);
+        }
+        snaToolsRefreshForm();
+        return;
+    }
+    var row = el.closest('tr[data-list-id]');
+    var choice = row ? state.lists[row.getAttribute('data-list-id')] : null;
+    if (!choice) { return; }
+    if (el.classList.contains('sna-tools-list-name')) { choice.newTitle = el.value; }
+    else if (el.classList.contains('sna-tools-list-address')) { choice.newUrl = el.value; }
+    snaToolsRefreshForm();
+}
+
+// Handles the source buttons, checkboxes, switches, and the data dictionary file box.
+function snaToolsHandleChange(e) {
+    var el = e.target;
+    var state = _snaToolsState;
+    if (snaToolsLocked()) { return; }
+    if (el.name === 'sna-tools-source') {
+        state.source = el.value === 'workbook' ? 'workbook' : 'site';
+        state.lists = {};
+        state.termSets = {};
+        // This site is a destination only for a data dictionary file, so a check that found this site, or one still
+        // running, no longer counts for the new source, and its answer is replaced.
+        var status = '';
+        if (state.checking || state.destinationThisSite) {
+            snaToolsStopDestinationCheck();
+            state.destinationThisSite = false;
+            state.destination = null;
+            status = String(state.destinationText || '').trim() ? 'You changed the source, so select Check destination again.' : '';
+            snaToolsSetDestinationStatus(status, false);
+        }
+        snaToolsRedraw(el.id);
+        if (status) {
+            snaToolsAnnounceLater('sna-tools-destination-status', status, function() { return _snaToolsState === state && state.destinationStatus === status; });
+        }
+        return;
+    }
+    if (el.id === 'sna-tools-file') { snaToolsReadChosenFile(el); return; }
+    if (el.classList.contains('sna-tools-list-check')) {
+        var row = el.closest('tr[data-list-id]');
+        var choice = row ? state.lists[row.getAttribute('data-list-id')] : null;
+        if (choice) { choice.selected = el.checked; }
+    } else if (el.classList.contains('sna-tools-termset-check')) {
+        state.termSets[el.getAttribute('data-set-id')] = el.checked;
+    } else if (el.classList.contains('sna-tools-type-check')) {
+        state.excludedTypes[el.getAttribute('data-type-id')] = !el.checked;
+    } else if (el.hasAttribute('data-option')) {
+        var option = el.getAttribute('data-option');
+        if (Object.prototype.hasOwnProperty.call(state.options, option)) { state.options[option] = el.checked; }
+    }
+    snaToolsRefreshForm();
+}
+
+// Enter in the destination box checks the destination, the same as Check destination.
+function snaToolsHandleKeydown(e) {
+    if (e.key !== 'Enter' || !e.target || e.target.id !== 'sna-tools-destination') { return; }
+    e.preventDefault();
+    snaToolsCheckDestinationNow();
+}
+
+// Chooses every list and library, or none, and keeps focus on the button.
+function snaToolsSelectAll(selected) {
+    if (snaToolsLocked() || !_snaReport) { return; }
+    snaToolsRows(_snaReport).forEach(function(row) { snaToolsListChoice(row).selected = selected; });
+    var root = document.getElementById('sna-tools');
+    if (root) { root.querySelectorAll('.sna-tools-list-check').forEach(function(box) { box.checked = selected; }); }
+    snaToolsRefreshForm();
+}
+
+// Puts a site chosen in Choose a site into the destination box, closes the dialog, and returns focus to the box.
+// Called by snaChooseSite in sitenalyzer.js when the dialog was opened by Choose a site in Tools.
+function snaToolsUseDestination(address) {
+    var state = _snaToolsState;
+    var text = String(address || '').trim();
+    // A check that is still running is for the address that was in the box, so its answer is dropped.
+    if (state.checking) { snaToolsStopDestinationCheck(); }
+    state.destinationText = text;
+    state.destination = null;
+    state.destinationThisSite = false;
+    snaToolsSetDestinationStatus(text ? 'Select Check destination to check this site.' : '', false);
+    var input = document.getElementById('sna-tools-destination');
+    if (input) {
+        input.value = text;
+        _snaSiteDialogOpener = input;
+    }
+    snaCloseSiteDialog();
+    snaToolsRefreshForm();
+}
+
+// Drops the answer of the destination check that is running, so Check destination can check another address.
+function snaToolsStopDestinationCheck() {
+    _snaToolsCheckCount++;
+    _snaToolsState.checking = false;
+}
+
+// Checks the address in the destination box and shows the result under it. Focus stays on the button.
+async function snaToolsCheckDestinationNow() {
+    var state = _snaToolsState;
+    var report = _snaReport;
+    if (!report || state.checking || snaToolsLocked()) { return; }
+    var input = document.getElementById('sna-tools-destination');
+    if (input) { state.destinationText = input.value; }
+    var typed = String(state.destinationText || '').trim();
+    var checkId = ++_snaToolsCheckCount;
+    state.checking = true;
+    state.destination = null;
+    snaToolsSetDestinationStatus('Checking the destination...', false);
+    snaToolsRefreshForm();
+    var result;
+    try {
+        result = await snaToolsCheckDestination(typed, report.siteUrl, snaToolsReportWebId(report), state.source === 'workbook');
+    } catch (err) {
+        result = { ok: false, message: 'Sitenalyzer couldn\'t check the destination. ' + snaToolsFriendlyError(err) };
+    }
+    if (checkId !== _snaToolsCheckCount || _snaToolsState !== state) { return; }
+    state.checking = false;
+    result.typed = typed;
+    state.destination = result.ok ? result : null;
+    state.destinationThisSite = !!result.thisSite;
+    snaToolsSetDestinationStatus(result.message, !result.ok);
+    snaToolsRefreshForm();
+}
+
+// Reads the data dictionary file the person chose, then shows its lists, libraries, and term sets.
+async function snaToolsReadChosenFile(fileInput) {
+    var state = _snaToolsState;
+    var file = fileInput.files && fileInput.files[0];
+    state.workbook = null;
+    state.lists = {};
+    state.termSets = {};
+    if (!file) {
+        state.workbookStatus = '';
+        state.workbookError = false;
+        snaToolsRedraw('sna-tools-file');
+        return;
+    }
+    state.workbookStatus = 'Reading ' + file.name + '...';
+    state.workbookError = false;
+    var status = document.getElementById('sna-tools-file-status');
+    if (status) { status.textContent = state.workbookStatus; status.classList.remove('sna-error-text'); }
+    try {
+        var plan = await snaToolsReadWorkbook(file);
+        if (_snaToolsState !== state) { return; }
+        state.workbook = { fileName: file.name, plan: plan };
+        var sets = plan.termGroup ? plan.termGroup.sets.length : 0;
+        state.workbookStatus = 'Read ' + file.name + ': ' + snaCountText(plan.lists.length, 'list or library', 'lists and libraries') +
+            ' and ' + snaCountText(sets, 'term set', 'term sets') + '.';
+    } catch (err) {
+        if (_snaToolsState !== state) { return; }
+        state.workbookStatus = snaToolsFriendlyError(err);
+        state.workbookError = true;
+    }
+    var message = state.workbookStatus;
+    snaToolsRedraw('sna-tools-file');
+    snaToolsAnnounceLater('sna-tools-file-status', message, function() { return _snaToolsState === state && state.workbookStatus === message; });
+}
+
+// ### Copy ###
+
+// Copy to destination: reads what the copy needs from this site, then runs the check before copying (preflight.js) and
+// shows Before you copy, with focus on its heading. Nothing changes in the destination until the person selects Copy
+// anyway. Focus moves to Stop copying while the reads and the check run.
+async function snaToolsStartCopy() {
+    var state = _snaToolsState;
+    var report = _snaReport;
+    if (!report || snaToolsLocked() || snaToolsBusy()) { return; }
+    var check = snaToolsValidate(report);
+    if (!check.canCopy) { snaToolsRefreshForm(); return; }
+    var dest = snaToolsCurrentDestination();
+    var choices = snaToolsChoices(report);
+    var run = snaToolsBeginRun(dest);
+    state.running = true;
+    state.results = null;
+    state.progressValue = 0;
+    state.progressText = 'Reading what the copy needs from this site.';
+    snaToolsShowSiteActions();
+    snaToolsRedraw('sna-tools-stop-button');
+    snaToolsAnnounce(true);
+
+    var preflight = null;
+    var lead = '';
+    try {
+        var plan = state.source === 'workbook'
+            ? snaToolsPlanWithChoices(state.workbook.plan, choices)
+            : await snaToolsBuildPlanFromSite(report, choices, function(text) { snaToolsProgress(text); });
+        snaToolsCheckCancelled();
+        snaToolsProgress('Checking the destination before the copy.');
+        preflight = { plan: plan, dest: dest, warnings: [], failedChecks: [], error: '' };
+        try {
+            var found = await snaToolsPreflight(plan, dest);
+            preflight.warnings = found.warnings;
+            preflight.failedChecks = found.failedChecks;
+            // The lists the check read again replace the ones Check destination read, so after Go back, Lists and
+            // libraries marks a name or address the destination started using since.
+            if (found.destLists) { dest.lists = found.destLists; }
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            preflight.error = 'Sitenalyzer couldn\'t finish checking the destination before the copy, so it can\'t say what the copy will skip.';
+        }
+    } catch (err) {
+        // Only the reads of this site get here: the check before copying catches its own problems.
+        preflight = null;
+        lead = snaToolsIsCancelled(err)
+            ? 'You stopped the copy before it changed anything.'
+            : 'Sitenalyzer stopped the copy before it changed anything. ' + snaToolsSourceReadError(err);
+    }
+    snaToolsEndRun(run);
+    if (_snaToolsState !== state) { return; }
+    state.running = false;
+    state.progressText = '';
+    snaToolsShowSiteActions();
+    if (preflight) {
+        state.preflight = preflight;
+        snaToolsRedraw('sna-tools-h-preflight');
+        return;
+    }
+    state.results = run.results.slice();
+    state.resultsLead = lead;
+    state.resultsTitle = dest.title || '';
+    snaToolsRedraw('sna-tools-results-title');
+}
+
+// Go back: closes Before you copy without copying anything, and returns focus to Copy to destination. When a name or
+// address must change first, Copy to destination is turned off, so focus goes to the first box marked with a problem.
+function snaToolsGoBack() {
+    var state = _snaToolsState;
+    if (!state.preflight || state.running) { return; }
+    var text = 'You didn\'t copy anything.';
+    state.preflight = null;
+    state.progressText = text;
+    snaToolsRedraw('sna-tools-copy-button');
+    var button = document.getElementById('sna-tools-copy-button');
+    var marked = document.querySelector('#sna-tools [aria-invalid="true"]');
+    if (button && button.disabled && marked) { marked.focus(); }
+    snaToolsAnnounceLater('sna-tools-progress-status', text, function() {
+        return _snaToolsState === state && !state.running && !state.preflight && state.progressText === text;
+    });
+}
+
+// Copy anyway: copies what the person chose, checks the destination, and shows the results, with the warnings from
+// Before you copy at the top of the results table. Focus moves to Stop copying while it runs and to the Results heading after.
+async function snaToolsCopyAnyway() {
+    var state = _snaToolsState;
+    var preflight = state.preflight;
+    if (!preflight || state.running || snaToolsBusy()) { return; }
+    // Before you copy shows no Copy anyway button when a warning stops the copy, and the copy never starts then.
+    if (!preflight.error && snaToolsPreflightStops(preflight.warnings)) { return; }
+    var dest = preflight.dest;
+    var run = snaToolsBeginRun(dest);
+    state.preflight = null;
+    state.running = true;
+    state.progressValue = 0;
+    state.progressText = 'Starting the copy.';
+    snaToolsShowSiteActions();
+    snaToolsRedraw('sna-tools-stop-button');
+    snaToolsAnnounce(true);
+    snaToolsLogPreflightWarnings(preflight.warnings, preflight.error);
+
+    var lead = '';
+    try {
+        await snaToolsRunCopy(preflight.plan, dest);
+        lead = 'Finished copying to ' + snaMaskText((run.destination && run.destination.title) || dest.title) +
+            '. Sitenalyzer checked the destination afterwards. Each row says what happened.';
+    } catch (err) {
+        lead = snaToolsIsCancelled(err)
+            ? 'You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped.' + snaToolsStoppedItemsText(run.results)
+            : 'Sitenalyzer stopped the copy because of a problem. ' + snaToolsFriendlyError(err);
+    }
+    snaToolsEndRun(run);
+    if (_snaToolsState !== state) { return; }
+    state.running = false;
+    snaToolsShowSiteActions();
+    state.results = run.results.slice();
+    state.resultsLead = lead;
+    state.resultsTitle = (run.destination && run.destination.title) || dest.title || '';
+    state.progressText = '';
+    snaToolsRedraw('sna-tools-results-title');
+}
+
+// Returns the sentence about the items a stop left partly made (see snaToolsLogStopped), such as " The item it was
+// making when you stopped is marked Partly copied. Its note says what to do next.", or '' when there are none.
+function snaToolsStoppedItemsText(results) {
+    var count = results.filter(function(r) { return r.detail && r.detail.stopped; }).length;
+    if (count === 0) { return ''; }
+    return count === 1
+        ? ' The item it was making when you stopped is marked Partly copied. Its note says what to do next.'
+        : ' The ' + count + ' items it was making when you stopped are marked Partly copied. Their notes say what to do next.';
+}
+
+// Stop copying: the copy stops at its next request or step, and the results so far are shown.
+function snaToolsStopCopy() {
+    if (!_snaToolsState.running) { return; }
+    snaToolsCancel();
+    snaToolsProgress('Stopping the copy.');
+    snaToolsAnnounce(true);
+}
+
+// Save results (.xlsx): saves the results table as a one-sheet workbook named for the destination and today's date,
+// such as StudyTwo_Copy_Results_2026-11-05.xlsx. Values that look like personal information are hidden in the rows and
+// in the destination's name in the file name, as in the other workbooks, unless Show hidden values is on.
+function snaToolsSaveResults() {
+    var state = _snaToolsState;
+    if (!state.results || !XLSX) { return; }
+    var rows = state.results.map(function(r) { return [snaMaskText(r.name), r.kind, SNA_TOOLS_RESULTS[r.result], snaMaskText(r.note)]; });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildSheet(['Item', 'Kind', 'Result', 'Notes'], rows), 'Copy_Results');
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(state.resultsTitle)) + '_Copy_Results_' + snaDateStamp(new Date()) + '.xlsx');
 }
 
 // ### Start Sitenalyzer ###
