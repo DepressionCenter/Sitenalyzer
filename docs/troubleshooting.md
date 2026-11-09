@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/troubleshooting.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Problems people can run into when installing or using Sitenalyzer, with causes and fixes.
 Notes: See README file for documentation and full license information.
 
@@ -244,7 +244,7 @@ When the destination has more than one term group of its own, the note says "The
 
 **Problem:** Page rows say **Partly copied**, with a note such as "Copied. Some parts of this page may still show the original site's content. Open the page and check it." A note can also say that some links still open the original site.
 
-**Cause:** Sitenalyzer changes each link and web part that uses this site so it uses the copy in the destination. It can't do that for something the copy didn't include, such as a list you didn't choose or a subsite of this site, so those keep using the original site. A page saved in a folder is copied as a file first, and if SharePoint then refuses the changed page, its links still open the original site. A copied agent also still uses the original site's knowledge sources.
+**Cause:** Sitenalyzer changes each link and web part that uses this site so it uses the copy in the destination. It can't do that for something the copy didn't include, such as a list you didn't choose or a subsite of this site, so those keep using the original site. A page saved in a folder is copied as a file first, and if SharePoint then refuses the changed page, its links still open the original site. After every page is copied, Sitenalyzer saves a page again when it names a page copied after it, such as in a Quick links web part. If SharePoint refuses that save, the note says Sitenalyzer couldn't update its links to pages it copied after this one. A copied agent also still uses the original site's knowledge sources.
 
 **Fix:** Open the page in the destination and check each web part and link. To fix the page with a copy, choose the lists and libraries it uses in **Lists and libraries**, check **Replace pages and files that already exist in the destination**, and copy again into the same destination.
 

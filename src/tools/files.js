@@ -3,12 +3,14 @@ This file is part of Sitenalyzer
 files.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Copies the files Copy site structure copies: the folders and files in Site Assets, agents (.agent files) into
          the matching destination library, site skills into the destination's Agent Assets library, and the pages in
          Site Pages. Modern pages are made again through SharePoint's site pages API, with every link and ID of this
          site in their content pointed at the destination by snaToolsRewriteSourceLinks (core.js). A modern page in a
          folder is copied on the server, and then its content gets the same change. Page templates are copied first.
+         After every page is copied, a page that names a page copied after it, such as in a Quick links web part, is
+         saved again with that page's destination ID.
          Other files are copied on the server, or downloaded and uploaded again when SharePoint refuses the server copy;
          a modern page is never uploaded, because an upload leaves it blank. Each file gets its own result, and a failed
          file or folder doesn't stop the others.
@@ -98,7 +100,7 @@ var SNA_TOOLS_FOLDER_NOT_READ_NOTE = 'Sitenalyzer couldn\'t read this folder, so
 // ### Files State ###
 
 // What the file steps of one copy share: { maps, sourceLists, destLists, folders, folderErrors, fileResults, sourceIds,
-// leftoverPages, subsites, sourceIsTopSite }.
+// leftoverPages, subsites, sourceIsTopSite, pagesToRelink }.
 // It belongs to the maps object of that copy, so a new copy starts with a new state.
 var _snaToolsFilesState = null;
 
@@ -115,7 +117,8 @@ function snaToolsFilesState(maps) {
             sourceIds: {},      // IDs of this site's files, so a page that still uses one can be found
             leftoverPages: {},  // Pages SharePoint made a template from that Sitenalyzer couldn't remove, by lowercase path
             subsites: [],       // Addresses of this site's subsites, which the copy doesn't include
-            sourceIsTopSite: null  // True for the top site of its site collection, false for a subsite, null when unknown
+            sourceIsTopSite: null,  // True for the top site of its site collection, false for a subsite, null when unknown
+            pagesToRelink: []       // Pages whose content was saved, for snaToolsFilesRelinkPages
         };
     }
     maps.fileUrls = maps.fileUrls || {};
@@ -1183,6 +1186,34 @@ async function snaToolsCopyPages(plan, dest, maps) {
                 (err.snaToolsStillCheckedOut ? ' The page may still be checked out to you in the destination. Open Site Pages there and discard the check out.' : ''));
         }
     }
+    await snaToolsFilesRelinkPages(plan, dest, maps, state, sourceLists, destLists);
+}
+
+// Saves a page again when its content names a page copied after it, such as a Quick links item that names
+// Visit-Guide.aspx by its ID. A page's destination ID is known only once that page is made, so this runs after every
+// page is copied. The content is changed again from the source page, and the page's result is changed to match.
+async function snaToolsFilesRelinkPages(plan, dest, maps, state, sourceLists, destLists) {
+    var pending = state.pagesToRelink;
+    state.pagesToRelink = [];
+    if (pending.length === 0) { return; }
+    var linkOptions = snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destLists);
+    for (var i = 0; i < pending.length; i++) {
+        var saved = pending[i];
+        var content = snaToolsFilesRewritePage(saved.item, saved.fileName, maps, linkOptions);
+        if (JSON.stringify(content.body) === JSON.stringify(saved.body)) { continue; }
+        snaToolsProgress('Updating links between the copied pages.');
+        try {
+            await snaToolsFilesReplacePage(dest, saved.destPath, content.body);
+        } catch (err) {
+            if (snaToolsIsCancelled(err)) { throw err; }
+            saved.entry.result = 'partial';
+            saved.entry.note += ' Sitenalyzer couldn\'t update its links to pages it copied after this one. Open the page in the destination and ' +
+                'check its links.' + (err.snaToolsStillCheckedOut ? ' The page may still be checked out to you. Open Site Pages there and discard the check out.' : '');
+            continue;
+        }
+        saved.entry.result = content.unmapped || saved.otherPartial ? 'partial' : 'copied';
+        saved.entry.note = (content.unmapped ? SNA_TOOLS_PAGE_PARTIAL_NOTE : saved.copiedNote) + saved.suffix;
+    }
 }
 
 // Returns where a page is in this site's Site Pages: { srcPath (or '' when unknown), relative (such as
@@ -1233,6 +1264,9 @@ async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLis
     var modern = !!item && snaToolsCleanGuid(item.ClientSideApplicationId) === SNA_TOOLS_MODERN_PAGE_APP_ID && item.PageLayoutType !== 'RepostPage';
     var linkOptions = snaToolsFilesLinkOptions(plan, dest, maps, state, sourceLists, destLists);
     var outcome;
+    // The saved content and the pieces of the page's note, for snaToolsFilesRelinkPages: { item, fileName, body,
+    // copiedNote (the note when nothing of this site is left), suffix (more notes after it), otherPartial }.
+    var relink = null;
 
     if (!modern || inFolder) {
         // An uploaded modern page is blank, so a modern page is only copied on the server.
@@ -1244,11 +1278,13 @@ async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLis
                 // A copied file keeps its content as it is, so its links are pointed at the destination afterwards.
                 var kept = snaToolsFilesRewritePage(item, page.fileName || name, maps, linkOptions);
                 outcome = { result: kept.unmapped ? 'partial' : 'copied', note: kept.unmapped ? SNA_TOOLS_PAGE_PARTIAL_NOTE : copiedText + '.' };
+                relink = { item: item, fileName: page.fileName || name, body: kept.body, copiedNote: copiedText + '.', suffix: '', otherPartial: false };
                 if (kept.changed) {
                     try {
                         await snaToolsFilesReplacePage(dest, destPath, kept.body);
                     } catch (err) {
                         if (snaToolsIsCancelled(err)) { throw err; }
+                        relink = null;
                         outcome = { result: 'partial', note: copiedText + ', but Sitenalyzer couldn\'t point ' +
                             'its links at the destination, so some of them still open the original site. Open the page in the destination and ' +
                             'check its links.' + (err.snaToolsStillCheckedOut ? ' The page may still be checked out to you. Open Site Pages there ' +
@@ -1293,12 +1329,16 @@ async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLis
         if (sourceId && saved.uniqueId) { maps.fileIds[sourceId] = saved.uniqueId; }
         var note = existing ? 'Replaced the page in the destination.' : (isTemplate ? 'Copied the page template.' : 'Copied the page.');
         outcome = content.unmapped ? { result: 'partial', note: SNA_TOOLS_PAGE_PARTIAL_NOTE } : { result: 'copied', note: note };
+        relink = { item: item, fileName: fileName, body: content.body, copiedNote: note, suffix: '', otherPartial: false };
         if (saved.leftover) {
             // The page SharePoint made the template from is still at the top of Site Pages, so a page with its name can't go there.
             root.files[fileName.toLowerCase()] = { uniqueId: '' };
             state.leftoverPages[snaToolsFilesKey(saved.leftover)] = true;
-            outcome = { result: 'partial', note: outcome.note + ' SharePoint made the template from a page named ' + fileName +
-                ' in Site Pages, which Sitenalyzer couldn\'t remove. Delete that page in the destination.' };
+            var leftoverNote = ' SharePoint made the template from a page named ' + fileName +
+                ' in Site Pages, which Sitenalyzer couldn\'t remove. Delete that page in the destination.';
+            outcome = { result: 'partial', note: outcome.note + leftoverNote };
+            relink.suffix = leftoverNote;
+            relink.otherPartial = true;
         }
     }
 
@@ -1307,7 +1347,18 @@ async function snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLis
         return;
     }
     if (isHome) {
-        outcome = await snaToolsFilesHomePage(plan, dest, destPath, outcome.result, outcome.note);
+        // Asked with 'copied', so 'partial' in the answer means the page didn't become the destination's home page.
+        var home = await snaToolsFilesHomePage(plan, dest, destPath, 'copied', '');
+        outcome = { result: home.result === 'partial' ? 'partial' : outcome.result, note: outcome.note + home.note };
+        if (relink) {
+            relink.suffix += home.note;
+            relink.otherPartial = relink.otherPartial || home.result === 'partial';
+        }
     }
-    snaToolsLog(kind, name, outcome.result, outcome.note, { verify: { type: 'file', serverRelativeUrl: destPath } });
+    var entry = snaToolsLog(kind, name, outcome.result, outcome.note, { verify: { type: 'file', serverRelativeUrl: destPath } });
+    if (relink && entry) {
+        relink.entry = entry;
+        relink.destPath = destPath;
+        state.pagesToRelink.push(relink);
+    }
 }

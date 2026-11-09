@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-files.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Browser tests for the files part of Copy site structure: Site Assets folders and files, agents, site skills,
          and site pages. The source site's Site Assets, Agent Assets, and page content are answered here through
          answerOverrides, and the destination's answers are in pretend-destination-files.js.
@@ -539,6 +539,56 @@ test('copies a page template before a page with the same name, so the template i
     expect(notes.sort()).toEqual(['Copied the page template.', 'Copied the page.']);
     expect(destFile(record, '/SitePages/Templates/Visit Report.aspx').page.isTemplate).toBe(true);
     expect(destFile(record, '/SitePages/Visit Report.aspx').page.CanvasContent1).toBe('<div>Visit report text.</div>');
+});
+
+// The report lists pages by name, so Your Visit Guide (Visit Guide.aspx) is copied after Welcome (Home.aspx) and the
+// Visit Report template. Both name it by its ID in a Quick links web part, next to the IDs of this site and of Site Pages.
+const GUIDE_ID = 'efefefef-0000-4000-8000-000000000008';
+const GUIDE_LINKS = webPart('c70391ea-0b10-4ee9-b2b4-006d3fcad0cd', { items: [{ siteId: SOURCE_SITE_ID, webId: SOURCE_WEB_ID, listId: '{' + SITE_PAGES_ID + '}',
+    uniqueId: GUIDE_ID, sourceItem: { url: SITE_URL + '/SitePages/Visit Guide.aspx' } }] });
+const GUIDE_PAGES = {
+    1: Object.assign({}, SOURCE_PAGES[1], { CanvasContent1: '<div>' + GUIDE_LINKS + '</div>', BannerImageUrl: null }),
+    5: Object.assign({}, SOURCE_PAGES[5], { CanvasContent1: '<div>' + GUIDE_LINKS + '</div>' }),
+    8: { Title: 'Your Visit Guide', FileLeafRef: 'Visit Guide.aspx', FileRef: SITE_PATH + '/SitePages/Visit Guide.aspx', modern: true, PageLayoutType: 'Article',
+        CanvasContent1: '<div>Visit guide text.</div>' }
+};
+
+test('points a Quick links item at a page copied after the page that holds it', async function({ page }) {
+    const record = await copyWithFiles(page, { agents: false, siteAssets: false, sourcePages: GUIDE_PAGES });
+    const guideId = destFile(record, '/SitePages/Visit Guide.aspx').uniqueId;
+    const home = destFile(record, '/SitePages/Home.aspx').page;
+    const template = destFile(record, '/SitePages/Templates/Visit Report.aspx').page;
+    for (const saved of [home, template]) {
+        expect(saved.CanvasContent1).toContain('&quot;uniqueId&quot;:&quot;' + guideId + '&quot;');
+        expect(saved.CanvasContent1).toContain(DEST_URL + '/SitePages/Visit Guide.aspx');
+        expect(saved.CanvasContent1.toLowerCase()).not.toContain(GUIDE_ID);
+        expect(saved.checkedOut).toBe(false);
+    }
+    // Saved once when made, and once more after Visit Guide.aspx was made.
+    expect(home.actions).toEqual(['create', 'savepage', 'publish', 'checkoutpage', 'savepage', 'publish']);
+    await expectResult(page, 'Welcome', 'Page', 'Copied', 'Copied the page. It\'s this site\'s home page, but Sitenalyzer didn\'t make it the destination\'s ' +
+        'home page, because Replace pages and files that already exist in the destination isn\'t checked. To make it the home page, select it in Site ' +
+        'Pages in the destination and choose Make homepage.');
+    await expectResult(page, 'Visit Report', 'Page', 'Copied', 'Copied the page template.');
+    // Visit Guide.aspx names no other page, so it is saved only once.
+    expect(destFile(record, '/SitePages/Visit Guide.aspx').page.actions).toEqual(['create', 'savepage', 'publish']);
+});
+
+test('marks a page as partly copied when SharePoint refuses to save it again for a page copied after it', async function({ page }) {
+    const pages = { 1: GUIDE_PAGES[1], 8: GUIDE_PAGES[8] };
+    // SharePoint refuses to check out Home.aspx once it is published, as when someone else is editing it.
+    const refuseCheckout = { method: 'POST', pattern: /^\/_api\/sitepages\/pages\((\d+)\)\/checkoutpage$/i, answer: function(ctx) {
+        const file = Object.values(ctx.model.files).filter(function(f) { return f.page && f.page.Id === Number(ctx.match[1]); })[0];
+        if (!file || file.page.Name !== 'Home.aspx' || !file.page.published) { return undefined; }
+        file.page.actions.push('checkoutpage');
+        return ctx.spError(409, 'The page is checked out to someone else.');
+    } };
+    const record = await copyWithFiles(page, { agents: false, siteAssets: false, sourcePages: pages, destination: { handlers: [refuseCheckout] } });
+    expect(destFile(record, '/SitePages/Home.aspx').page.CanvasContent1.toLowerCase()).toContain(GUIDE_ID);
+    await expectResult(page, 'Welcome', 'Page', 'Partly copied', PARTIAL_PAGE_NOTE + ' It\'s this site\'s home page, but Sitenalyzer didn\'t make it the ' +
+        'destination\'s home page, because Replace pages and files that already exist in the destination isn\'t checked. To make it the home page, select ' +
+        'it in Site Pages in the destination and choose Make homepage. Sitenalyzer couldn\'t update its links to pages it copied after this one. Open the ' +
+        'page in the destination and check its links.');
 });
 
 // A modern page in a folder of Site Pages other than Templates, with a link and a List web part that use Study Visits.

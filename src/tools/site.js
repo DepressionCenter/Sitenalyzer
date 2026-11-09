@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 site.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-08
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: The navigation and site look parts of Copy site structure. Reads this site's menus (the left menu, the top
          menu, and the footer menu), its theme, logo, header, and footer settings, and copies them into the
          destination. Every link into this site is pointed at the destination with snaToolsRewriteSourceLinks (see
@@ -1161,10 +1161,12 @@ function snaToolsSiteImageExtension(name, type) {
  */
 async function snaToolsSiteCopyImage(plan, dest, maps, image, newName) {
     var fileState = snaToolsFilesState(maps);
-    if (image.kind === 'file') {
-        var key = snaToolsFilesKey(image.path);
+    var key = image.kind === 'file' ? snaToolsFilesKey(image.path) : '';
+    if (key) {
         var mapped = Object.keys(maps.fileUrls || {}).filter(function(from) { return snaToolsFilesKey(from) === key; })[0];
-        if (mapped) { return { path: maps.fileUrls[mapped], kept: false }; }
+        // A file the copy skipped, such as in Site Assets without Replace, is the destination's own file at that address.
+        var done = fileState.fileResults[key];
+        if (mapped) { return { path: maps.fileUrls[mapped], kept: !!done && done.result === 'skipped' }; }
     }
     var destAssets = await snaToolsFilesDestSiteAssets(dest, fileState, true);
     if (!destAssets) {
@@ -1179,6 +1181,7 @@ async function snaToolsSiteCopyImage(plan, dest, maps, image, newName) {
         if (/^__/.test(snaToolsFilesLeaf(relative))) { relative = newName + snaToolsSiteImageExtension(relative, ''); }
         var destPath = destAssets + '/' + relative;
         var outcome = await snaToolsFilesTransfer(plan, dest, maps, fileState, { path: image.path, size: 0, uniqueId: '' }, destAssets, destPath, 'picture');
+        fileState.fileResults[key] = { result: outcome.result, note: outcome.note, destPath: destPath };
         return { path: destPath, kept: outcome.result === 'skipped' };
     }
     var blob = await snaToolsSiteDownload(plan, image);
@@ -1351,6 +1354,13 @@ async function snaToolsSiteCopyNavigationShown(plan, dest) {
         { verify: { type: 'siteLook', property: 'QuickLaunchEnabled', value: shown } });
 }
 
+// Returns the note for a picture the destination's Site Assets already had at the same address as this site's picture,
+// which the copy used and left as it is. what names the picture, such as 'logo'.
+function snaToolsSiteKeptPictureNote(path, what) {
+    return 'Made ' + snaToolsFilesLeaf(path) + ', a picture the destination already had in Site Assets, the destination\'s ' + what + '. ' +
+        'If it isn\'t this site\'s ' + what + ', check Replace pages and files that already exist in the destination, then copy again.';
+}
+
 // Copies the site logo, and uses the same picture for the site logo thumbnail. A site with a Microsoft 365 group shows
 // the group's picture as its thumbnail, which only some people can change; when SharePoint refuses, the row says who can.
 async function snaToolsSiteCopyLogo(plan, dest, maps) {
@@ -1374,8 +1384,7 @@ async function snaToolsSiteCopyLogo(plan, dest, maps) {
         snaToolsLog(K, 'Site logo', 'failed', snaToolsFriendlyError(err));
         return;
     }
-    var keptNote = copy.kept ? ' The destination already had a picture at ' + snaToolsFilesLeaf(copy.path) + ' in Site Assets, so Sitenalyzer used that one.' : '';
-    var copiedNote = 'Copied this site\'s logo into Site Assets and made it the destination\'s logo.' + keptNote;
+    var copiedNote = copy.kept ? snaToolsSiteKeptPictureNote(copy.path, 'logo') : 'Copied this site\'s logo into Site Assets and made it the destination\'s logo.';
     var hasGroup = snaToolsSiteHasGroup(dest.groupId);
     try {
         await snaToolsWrite(dest.siteUrl, '/_api/siteiconmanager/setsitelogo', { body: { relativeLogoUrl: copy.path, type: 0, aspect: 1 } });
@@ -1421,7 +1430,7 @@ async function snaToolsSiteCopyThumbnail(plan, dest, maps, image, copy, hasGroup
     if (!hasGroup) {
         try {
             await snaToolsWrite(dest.siteUrl, '/_api/siteiconmanager/setsitelogo', { body: { relativeLogoUrl: copy.path, type: 0, aspect: 0 } });
-            snaToolsLog(K, name, 'copied', 'Made the copied logo the site logo thumbnail too, as in this site.');
+            snaToolsLog(K, name, 'copied', 'Made ' + (copy.kept ? snaToolsFilesLeaf(copy.path) : 'the copied logo') + ' the site logo thumbnail too, as in this site.');
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }
             var refusal = snaToolsSiteRefusal(err, SNA_TOOLS_SITE_WHERE.header);
@@ -1524,7 +1533,8 @@ async function snaToolsSiteCopyFooterLook(plan, dest, maps, state) {
             var copy = await snaToolsSiteCopyImage(plan, dest, maps, image, 'footer-logo-copied');
             await snaToolsSiteRemoveNodes(dest, itemsTitled(SNA_TOOLS_SITE_FOOTER_LOGO));
             var logoId = (await snaToolsSiteAddNode(dest, root, SNA_TOOLS_SITE_FOOTER_LOGO, copy.path, true, [])).id;
-            snaToolsLog(K, 'Footer logo', 'copied', 'Copied this site\'s footer logo into Site Assets and made it the destination\'s footer logo.',
+            snaToolsLog(K, 'Footer logo', 'copied', copy.kept ? snaToolsSiteKeptPictureNote(copy.path, 'footer logo') :
+                'Copied this site\'s footer logo into Site Assets and made it the destination\'s footer logo.',
                 { verify: { type: 'menuLink', path: root.path, nodeId: logoId, title: SNA_TOOLS_SITE_FOOTER_LOGO, url: copy.path, hidden: false } });
         } catch (err) {
             if (snaToolsIsCancelled(err)) { throw err; }

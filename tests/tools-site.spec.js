@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-site.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-08
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Browser tests for the navigation and site look parts of Copy site structure: the left menu, the top menu,
          the footer, hub menus, audience targeting, links pointed at the destination, the theme, the logo and its
          thumbnail, the header and footer settings, and the two switches. The source site's menus and look are given
@@ -117,6 +117,17 @@ function sourceFiles() {
     ];
 }
 
+// The answer to this site's read of the folder at the top of Site Assets, with these file names in it.
+function sourceSiteAssets(names) {
+    return { pattern: /^\/_api\/web\/GetFolderByServerRelativePath\(decodedurl=@p\)$/, answer: function(url) {
+        const folder = String(url.searchParams.get('@p') || '').replace(/^'|'$/g, '');
+        if (folder.toLowerCase() !== (SITE_PATH + '/SiteAssets').toLowerCase()) { return undefined; }
+        return { Exists: true, ServerRelativeUrl: SITE_PATH + '/SiteAssets', Folders: [], Files: names.map(function(name) {
+            return { Name: name, ServerRelativeUrl: SITE_PATH + '/SiteAssets/' + name, Length: '10', UniqueId: '' };
+        }) };
+    } };
+}
+
 // ### Helpers ###
 
 /**
@@ -126,14 +137,15 @@ function sourceFiles() {
  *        settings), collection (changes to its hub settings), sourceSite
  *        (its menus and look, see pretend-destination-site.js), destination (more destination options), lists (names
  *        of lists to choose, none when left out), address (a new address for Study Visits), navigation (on when left
- *        out), siteLook (off when left out), times (how many copies to run, 1 when left out), resultsTimeout (how long
- *        to wait for each copy, in milliseconds, 30000 when left out) }.
+ *        out), siteLook (off when left out), siteAssets (off when left out), answers (more source answers, checked
+ *        first), times (how many copies to run, 1 when left out), resultsTimeout (how long to wait for each copy, in
+ *        milliseconds, 30000 when left out) }.
  * @returns {Promise<object>} The record of requests, with record.destination the destination's model.
  */
 async function copySite(page, options) {
     const settings = options || {};
     const destination = Object.assign({ sourceSite: settings.sourceSite || {} }, settings.destination || {});
-    const answers = [sourceWeb(settings.web, settings.webRefused), sourceCollection(settings.collection)].concat(sourceFiles());
+    const answers = (settings.answers || []).concat([sourceWeb(settings.web, settings.webRefused), sourceCollection(settings.collection)], sourceFiles());
     const record = await openPretendSite(page, { destination: destination, answerOverrides: answers });
     await page.getByRole('button', { name: 'Extract site information' }).click();
     await expect(page.locator('#sna-site-header h1')).toBeVisible();
@@ -148,6 +160,7 @@ async function copySite(page, options) {
     for (const name of ['Site pages', 'Site Assets', 'Agents and site skills', 'Permissions']) { await page.getByRole('switch', { name: name }).uncheck(); }
     await page.getByRole('switch', { name: 'Navigation' }).setChecked(settings.navigation !== false);
     await page.getByRole('switch', { name: 'Site look' }).setChecked(!!settings.siteLook);
+    await page.getByRole('switch', { name: 'Site Assets' }).setChecked(!!settings.siteAssets);
     for (let i = 0; i < (settings.times || 1); i++) {
         await page.getByRole('button', { name: 'Copy to destination' }).click();
         await page.getByRole('button', { name: 'Copy anyway' }).click();
@@ -375,6 +388,31 @@ test('copies the theme, logo, header, and footer, and the destination keeps its 
         !(r.name === 'Destination check' && r.kind === 'Menu link'); })).toEqual([]);
     expect(sourceChanges(record)).toEqual([]);
     expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('says the logos are pictures the destination already had when the copy of Site Assets left its own files there', async function({ page }, testInfo) {
+    const record = await copySite(page, {
+        siteLook: true, siteAssets: true, navigation: false, answers: [sourceSiteAssets(['study-logo.png', 'footer-logo.png'])],
+        web: { SiteLogoUrl: SITE_PATH + '/SiteAssets/study-logo.png', FooterEnabled: true },
+        sourceSite: { communicationSite: true, footer: { name: '', logoUrl: SITE_PATH + '/SiteAssets/footer-logo.png', links: [] } },
+        destination: { communicationSite: true, setup: function(model) {
+            addPretendFile(model, DEST_PATH + '/SiteAssets/study-logo.png', { content: 'Destination logo' });
+            addPretendFile(model, DEST_PATH + '/SiteAssets/footer-logo.png', { content: 'Destination footer logo' });
+        } }
+    });
+    const model = record.destination;
+    expect(model.files[(DEST_PATH + '/SiteAssets/study-logo.png').toLowerCase()].content).toBe('Destination logo');
+    expect(model.logos.map(function(l) { return l.relativeLogoUrl; })).toEqual([DEST_PATH + '/SiteAssets/study-logo.png', DEST_PATH + '/SiteAssets/study-logo.png']);
+    const rows = await savedResults(page, testInfo);
+    const K = 'Site look setting';
+    expect(row(rows, 'study-logo.png', 'Site Assets file').result).toBe('Skipped');
+    expect(row(rows, 'footer-logo.png', 'Site Assets file').result).toBe('Skipped');
+    expect(row(rows, 'Site logo', K)).toEqual({ result: 'Copied', note: 'Made study-logo.png, a picture the destination already had in Site Assets, ' +
+        'the destination\'s logo. If it isn\'t this site\'s logo, check Replace pages and files that already exist in the destination, then copy again.' });
+    expect(row(rows, 'Site logo thumbnail', K)).toEqual({ result: 'Copied', note: 'Made study-logo.png the site logo thumbnail too, as in this site.' });
+    expect(row(rows, 'Footer logo', K)).toEqual({ result: 'Copied', note: 'Made footer-logo.png, a picture the destination already had in Site Assets, ' +
+        'the destination\'s footer logo. If it isn\'t this site\'s footer logo, check Replace pages and files that already exist in the destination, ' +
+        'then copy again.' });
 });
 
 test('changes the group picture of a site with a Microsoft 365 group to the copied logo', async function({ page }, testInfo) {
