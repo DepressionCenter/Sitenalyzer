@@ -1406,7 +1406,8 @@ function snaToolsListsAdjustPeople(root, field, notes, permissionsCopied) {
         root.setAttribute('UserSelectionScope', '0');
         out.scope = group;
         if (permissionsCopied) {
-            notes.push('Sitenalyzer set the group people choose from after it copied the groups. Another row for this column says whether that worked.');
+            notes.push('For now, it lets people choose anyone. Sitenalyzer limits it to the same group as in this site after it copies the groups, ' +
+                'and another row for this column says whether that worked.');
             return out;
         }
         out.changed = true;

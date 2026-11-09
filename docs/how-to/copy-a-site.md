@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/how-to/copy-a-site.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-08
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Step-by-step guide to Copy site structure in Tools: choosing a source and a destination, what each choice
          copies, what is never copied, the Before you copy check, and reading the results.
 Notes: See README file for documentation and full license information.
@@ -149,6 +149,9 @@ With **Permissions** on, the copy:
 - Maps this site's owners, members, and visitors groups to the destination's own groups, and makes other groups that give access to this site or to the lists and libraries you chose.
 - Adds the members of each group.
 - Gives each person and group the same permission levels on the site and on each list or library that has its own permissions.
+- Limits each Person column it makes to the destination's copy of the group that the column uses in this site. A Person column that the destination already had keeps its own setting.
+
+A subsite often uses its parent site's owners, members, or visitors group as its own. A SharePoint group belongs to the whole site collection, so adding people to such a group would give them access to the parent site too. When the destination is a subsite whose group is also a group of its parent site or of the top site of its site collection, the copy adds nobody to that group. It copies this site's group the way it copies other groups instead: to a group with the same name, which it makes when the destination doesn't have one. When Sitenalyzer can't read the parent site's groups, it does the same.
 
 It leaves out sharing links, Limited Access, apps, and the Microsoft 365 group connected to this site, because that group would give its members access to the destination. It never removes access or members that the destination already has. When someone in the destination has more access than in this site, the results name them so you can decide whether to remove it. The one exception is you. SharePoint adds you to each group the copy makes, and gives you access to each new list the copy gives its own permissions. When this site doesn't give you the same, the copy takes that membership or access away again and says so.
 
@@ -210,6 +213,7 @@ The sentence above the table counts the rows by what will happen to each item:
 - **Site Assets**: with **Site Assets** on, files larger than 250 MB, which the copy skips.
 - **Custom scripts**: when the destination doesn't allow custom scripts, classic pages and pages in a folder will fail if **Site pages** is on, and SharePoint may refuse some site look settings if **Site look** is on. A page the destination already has isn't listed when **Replace pages and files that already exist in the destination** is off, because the copy leaves that page as it is.
 - **Channel sites**: when the destination is a Microsoft Teams channel site and **Permissions** or **Site look** is on, the copy leaves that site's permissions or look unchanged.
+- **Groups of the destination**: with **Permissions** on and a subsite as the destination, each of the destination's owners, members, and visitors groups that its parent site or the top site of its site collection also uses. The copy adds nobody to those groups.
 - **Notes**: things Sitenalyzer noticed while it read this site or the data dictionary file, such as that it couldn't read every term of a term set.
 
 #### Copy anyway or Go back

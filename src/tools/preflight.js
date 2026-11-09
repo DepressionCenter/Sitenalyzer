@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 preflight.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-08
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: The check before copying in Copy site structure. After the person selects Copy to destination and before
          anything changes, snaToolsPreflight reads the destination (and, for a few checks, this site) and lists what the
          copy will skip, what will fail, and what may fail, so the person can copy anyway or go back. Also draws the
@@ -597,6 +597,32 @@ snaToolsAddPreflightCheck('Channel site', function(plan, dest) {
         warnings.push({ severity: 'skip', kind: SNA_TOOLS_KINDS.siteLookSetting, name: 'Site look', note: 'The destination is a Microsoft Teams channel ' +
             'site, which takes its look from its team, so Sitenalyzer will leave its look unchanged.' });
     }
+    return warnings;
+});
+
+// ### Groups of a Subsite ###
+
+// A subsite often uses its parent site's owners, members, or visitors group as its own. SharePoint groups belong to the
+// whole site collection, so the copy makes a new group instead of adding people to such a group (see
+// snaToolsPermissionsMapGroup in permissions.js). The reads are the same ones the copy makes.
+snaToolsAddPreflightCheck('Groups of the destination', async function(plan, dest) {
+    if (!plan.permissions || plan.source.kind !== 'site') { return []; }
+    if (String(dest.webTemplate || '').toUpperCase() === SNA_TOOLS_PREFLIGHT_CHANNEL_TEMPLATE) { return []; }
+    var rootPath = await snaToolsPermissionsReadRootPath(dest);
+    if (snaToolsSamePath(rootPath, dest.serverRelativeUrl)) { return []; }
+    var web = await snaToolsPermissionsReadWebGroups(dest.siteUrl);
+    var shared = await snaToolsPermissionsReadSharedGroups(dest, rootPath, web.groups);
+    var warnings = [];
+    SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+        var info = shared[web.groups[a.property]];
+        if (!info) { return; }
+        var title = web.groupTitles[a.property];
+        warnings.push({ severity: 'info', kind: SNA_TOOLS_KINDS.group, name: snaMaskText(title || 'The destination\'s ' + a.words),
+            note: 'The destination\'s ' + a.words + (title ? ', ' + snaMaskText(title) + ',' : '') + ' is also the ' + info.roleWords + ' of ' +
+                info.siteWords + (info.siteTitle ? ', ' + snaMaskText(info.siteTitle) : '') + '. Sitenalyzer won\'t add anyone to it, because ' +
+                'that would give them access to that site too. Instead, it will copy this site\'s ' + a.words + ' the way it copies other ' +
+                'groups: to a group with the same name, which it makes when the destination doesn\'t have one.' });
+    });
     return warnings;
 });
 

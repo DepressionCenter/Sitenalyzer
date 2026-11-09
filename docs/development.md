@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 docs/development.md
 Author(s): Gabriel Mongefranco.
 Created: 2026-10-14
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: How to build and test Sitenalyzer, update a library, and what the CI workflow checks.
 Notes: See README file for documentation and full license information.
 
@@ -157,7 +157,7 @@ The tests in `tests/tools-preflight.spec.js` check that **Before you copy**:
 - Warns about term sets when the destination's term store refuses CSOM, has no term group of its own, has one, or has more than one, and names the columns that use them. Its rows appear in the results with the result **Warning**, and the counts say how many.
 - Names columns whose term set or list the person left out, columns whose term set the destination lacks, managed metadata columns with no term set, and the calculated columns that use them.
 - Finds a list name or address the destination started using after **Check destination**, offers only **Go back**, and says how many problems stop the copy, with 1 and 3 of them.
-- Warns about content types from the content type hub, site skills with no Agent Assets library, files in Site Assets larger than 250 MB, classic pages and the site look when the destination doesn't allow custom scripts, and permissions in a channel site. It leaves out a classic page the destination already has, unless **Replace pages and files that already exist in the destination** is checked.
+- Warns about content types from the content type hub, site skills with no Agent Assets library, files in Site Assets larger than 250 MB, classic pages and the site look when the destination doesn't allow custom scripts, permissions in a channel site, and a subsite's groups that its parent site also uses. It leaves out a classic page the destination already has, unless **Replace pages and files that already exist in the destination** is checked.
 - Lists the notes from the plan, such as that **Navigation** replaces the menus, and says when a check couldn't finish while still offering **Copy anyway**.
 - Returns focus to **Copy to destination** after **Go back**, announces the check while it runs, and works with the keyboard alone.
 - Sends no change to either site while it checks, and refuses, without sending it, a CSOM request that could change something.
@@ -201,6 +201,8 @@ The record that `openPretendSite` returns has `record.destination`, the model, s
 | `noCustomScripts` | The destination doesn't allow custom scripts, so the person's permissions there lack Add and Customize Pages. `pretend-destination-preflight.js` reads it. |
 | `handlers` | More answers for one test, checked before every other answer. |
 | `setup(model)` | Changes the model before the page opens, such as adding a list with `model.addList(title, template, address)`. |
+
+For a subsite destination, a test calls `makeSubsite(model)` from `pretend-destination-permissions.js` in `setup(model)`, and `routeParentSite(page, record.destination)` after `openPretendSite`. The destination then has a parent site, Study Hub at `/sites/studyhub`, which is also the top site of its site collection and whose owners, members, and visitors groups the destination uses. `makeSubsite(model, { ownGroups: true })` keeps the destination's own groups instead. Study Hub answers only the reads of its groups, its request digest, and new permission levels, and keeps every request in `model.parent.requests`, so a test can check that nothing else changed there.
 
 Each answer is `{ method, pattern, answer(ctx) }`, where `pattern` is matched against the decoded address after `/sites/targetsite`, such as `/_api/web/lists`. `answer` returns a plain object for 200 OK, `ctx.reply(status, body)`, `ctx.rawReply(status, contentType, text)`, or `ctx.spError(status, message)` for an error in SharePoint's format, or `undefined` to pass the request on. `ctx` also holds the request's `body` as JSON, its `headers`, `xHttpMethod`, and the `model`. To add answers for one part of the copy, such as term sets, put them in a file named `tests/pretend-destination-<part>.js`, such as `pretend-destination-taxonomy.js`, that calls `addDestinationHandlers([...])` from `require('./pretend-destination')`. `pretend-destination.js` loads every file with that name when it loads, and their answers are checked before the standard ones.
 

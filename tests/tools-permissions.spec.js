@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-permissions.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Browser tests for the permissions part of Copy site structure: permission levels, groups with their owners
          and members, who has access to the site and to a list with its own permissions, what the copy leaves out,
          and that nothing about permissions is read or changed when the Permissions switch is off. Each test copies
@@ -30,7 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const { openPretendSite, reply, DIST_DIR, DEST_URL, DEST_PATH, LIST_ID, fieldsWithSchema } = require('./pretend-sharepoint');
-const { seedPermissions, ROLE_IDS, CALLER_LOGIN } = require('./pretend-destination-permissions');
+const { seedPermissions, makeSubsite, routeParentSite, ROLE_IDS, CALLER_LOGIN, PARENT_GROUP_IDS, HUB_MEMBER } = require('./pretend-destination-permissions');
 
 // The same SheetJS copy that site owners upload, used to read the saved results.
 const XLSX = require(path.join(DIST_DIR, 'SiteAssets', 'scripts', 'xlsx.full.min.js'));
@@ -860,6 +860,153 @@ test('keeps the notes about extra levels and the whole organization when the des
             'external users from the permissions in the destination if only some people should have access. In the destination, Everyone ' +
             'except external users also has Edit, which it doesn\'t have in this site. Sitenalyzer didn\'t remove that level. Remove it in ' +
             'the destination if it isn\'t needed.' });
+});
+
+// ### A Subsite Destination ###
+
+// The sentence the Group row of a group the copy made instead of using one of Study Hub's groups starts with.
+function sharedNote(role, title) {
+    return 'The destination\'s ' + role + ', ' + title + ', is also the ' + role + ' of its parent site, Study Hub. Sitenalyzer didn\'t add ' +
+        'anyone to it, because that would give them access to that site too.';
+}
+
+// Returns the requests that changed a destination group's members, for the groups with these IDs.
+function memberChanges(record, ids) {
+    const pattern = new RegExp('/sitegroups\\((' + ids.join('|') + ')\\)/users');
+    return destinationChanges(record).filter(function(c) { return pattern.test(c.path); });
+}
+
+test('makes new groups instead of adding people to the parent site\'s groups when a subsite uses them', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { setup: function(model) { makeSubsite(model); } } });
+    await routeParentSite(page, record.destination);
+    await copyStudyVisits(page);
+    const callerId = record.destination.currentUser.Id;
+    // Study Hub's groups give access to Study Hub too, so nobody is added to them.
+    expect(memberChanges(record, Object.values(PARENT_GROUP_IDS))).toEqual([]);
+    expect(destGroup(record, 'Study Hub Owners').Users).toEqual([callerId]);
+    expect(destGroup(record, 'Study Hub Members').Users).toEqual([HUB_MEMBER.Id]);
+    expect(destGroup(record, 'Study Hub Visitors').Users).toEqual([]);
+    // The members are in new groups with this site's names, which get this site's access to the destination only.
+    const owners = destGroup(record, 'Test Site Owners');
+    expect(memberLogins(record, owners)).toEqual(['i:0#.f|membership|test.owner@example.org']);
+    expect(memberLogins(record, destGroup(record, 'Test Site Members'))).toEqual(['i:0#.f|membership|test.member@example.org']);
+    expect(record.destination.roleAssignments.filter(function(a) { return a.principalId === owners.Id; })).toEqual([{ principalId: owners.Id, roleIds: [ROLE_IDS.fullControl] }]);
+    expect(record.destination.web.HasUniqueRoleAssignments).toBe(true);
+    // Study Hub is only read, apart from the new permission level, which belongs to the whole site collection.
+    expect(record.destination.parent.writes).toEqual([{ method: 'POST', path: '/_api/contextinfo' }, { method: 'POST', path: '/_api/web/roledefinitions' }]);
+
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Test Site Owners', 'Group')).toEqual({ name: 'Test Site Owners', kind: 'Group', result: 'Copied',
+        note: sharedNote('owners group', 'Study Hub Owners') + ' Created this group for the destination instead. As in this site, the group is its own owner. ' +
+            'Removed you from the group, because you aren\'t in it in this site.' });
+    expect(row(rows, 'Test Site Visitors', 'Group').note).toMatch(new RegExp('^' + sharedNote('visitors group', 'Study Hub Visitors').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+        ' Created this group for the destination instead, '));
+    expect(rows.filter(function(r) { return /Used the destination's own/.test(r.note); })).toEqual([]);
+    // Before you copy said so, and its rows are in the results with the result Warning.
+    expect(rows.filter(function(r) { return r.result === 'Warning' && r.kind === 'Group'; })).toEqual(['owners', 'members', 'visitors'].map(function(role) {
+        const title = 'Study Hub ' + role.charAt(0).toUpperCase() + role.substring(1);
+        return { name: title, kind: 'Group', result: 'Warning', note: 'The destination\'s ' + role + ' group, ' + title + ', is also the ' + role +
+            ' group of its parent site, Study Hub. Sitenalyzer won\'t add anyone to it, because that would give them access to that site too. ' +
+            'Instead, it will copy this site\'s ' + role + ' group the way it copies other groups: to a group with the same name, which it ' +
+            'makes when the destination doesn\'t have one.' };
+    }));
+    expect(record.unexpectedRequests).toEqual([]);
+});
+
+test('adds nobody to a subsite\'s groups when it can\'t read the parent site\'s groups', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { setup: function(model) { makeSubsite(model).parent.readRefused = true; } } });
+    await routeParentSite(page, record.destination);
+    await copyStudyVisits(page);
+    expect(memberChanges(record, Object.values(PARENT_GROUP_IDS))).toEqual([]);
+    expect(destGroup(record, 'Test Site Owners')).toBeDefined();
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Test Site Owners', 'Group').note).toMatch(/^Sitenalyzer couldn't check whether the destination's owners group, Study Hub Owners, is also a group of its parent site or of the top site of its site collection, so it didn't add anyone to it\. Created this group for the destination instead\. /);
+    expect(rows.filter(function(r) { return r.result === 'Warning' && r.name === 'Groups of the destination'; })).toHaveLength(1);
+});
+
+test('uses a subsite\'s own groups when the parent site doesn\'t use them', async function({ page }, testInfo) {
+    const record = await openTools(page, { destination: { setup: function(model) { makeSubsite(model, { ownGroups: true }); } } });
+    await routeParentSite(page, record.destination);
+    await copyStudyVisits(page);
+    expect(memberLogins(record, destGroup(record, 'Study Two Owners'))).toEqual([CALLER_LOGIN, 'i:0#.f|membership|test.owner@example.org']);
+    expect(memberChanges(record, Object.values(PARENT_GROUP_IDS))).toEqual([]);
+    expect(destGroup(record, 'Test Site Owners')).toBeUndefined();
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Test Site Owners', 'Group').note).toBe('Used the destination\'s own owners group, Study Two Owners, for this site\'s owners group. ' +
+        'Its name and settings in the destination stay the same.');
+    expect(rows.filter(function(r) { return r.result === 'Warning' && r.kind === 'Group'; })).toEqual([]);
+});
+
+// ### People Picker Columns the Copy Didn't Make ###
+
+// A Person column of Study Visits that this site limits to Unused Group (22).
+const COORDINATOR_COLUMN = { Id: 'bbbbbbbb-0000-4000-8000-000000000007', InternalName: 'Coordinator', StaticName: 'Coordinator', Title: 'Coordinator',
+    TypeAsString: 'User', Description: '', Required: false, Hidden: false, ReadOnlyField: false, CanBeDeleted: true, FromBaseType: false,
+    Sealed: false, Group: 'Custom Columns', Indexed: false, EnforceUniqueValues: false, CustomFormatter: '',
+    SchemaXml: '<Field ID="{bbbbbbbb-0000-4000-8000-000000000007}" Type="User" Name="Coordinator" StaticName="Coordinator" DisplayName="Coordinator" ' +
+        'List="UserInfo" ShowField="ImnName" UserSelectionMode="PeopleOnly" UserSelectionScope="22" Required="FALSE" SourceID="{' + LIST_ID + '}" ' +
+        'ColName="int1" RowOrdinal="0" />' };
+
+// The note of the column's own row when the permissions step will set its group afterwards.
+const PICKER_LATER_NOTE = 'Created the column. For now, it lets people choose anyone. Sitenalyzer limits it to the same group as in this site after it ' +
+    'copies the groups, and another row for this column says whether that worked.';
+
+// Returns the rows of the Coordinator column in Study Visits.
+function coordinatorRows(rows) {
+    return rows.filter(function(r) { return r.name === 'Coordinator in Study Visits' && r.kind === 'Column'; });
+}
+
+test('leaves the group of a Person column the destination already had as it is', async function({ page }, testInfo) {
+    const record = await openTools(page, { source: { studyVisitsColumns: [COORDINATOR_COLUMN] }, destination: { setup: function(model) {
+        seedPermissions(model);
+        const list = model.addList('Study Visits', 100, 'StudyVisits');
+        // In the destination, the column chooses from Study Two Members.
+        list.fields.push({ Id: 'cccccccc-0000-4000-8000-000000000001', InternalName: 'Coordinator', StaticName: 'Coordinator', Title: 'Coordinator',
+            TypeAsString: 'User', Hidden: false, Required: false, CanBeDeleted: true, FromBaseType: false, ReadOnlyField: false, SelectionGroup: 5,
+            SchemaXml: '<Field ID="{cccccccc-0000-4000-8000-000000000001}" Type="User" Name="Coordinator" DisplayName="Coordinator" UserSelectionScope="5" />' });
+    } } });
+    await copyStudyVisits(page);
+    const column = copiedList(record).fields.filter(function(f) { return f.InternalName === 'Coordinator'; })[0];
+    expect(column.SelectionGroup).toBe(5);
+    expect(destinationChanges(record).filter(function(c) { return /fields\(guid'cccccccc/.test(c.path); })).toEqual([]);
+    // Only that column uses Unused Group, so the group isn't copied.
+    expect(destGroup(record, 'Unused Group')).toBeUndefined();
+    const rows = await savedResults(page, testInfo);
+    expect(coordinatorRows(rows)).toEqual([
+        { name: 'Coordinator in Study Visits', kind: 'Column', result: 'Skipped',
+          note: 'The destination list already has a column with this internal name, so Sitenalyzer left it as it is.' },
+        { name: 'Coordinator in Study Visits', kind: 'Column', result: 'Skipped',
+          note: 'The destination already had this column, so Sitenalyzer didn\'t change the group people choose from in it. In this site, people ' +
+            'choose only from the group Unused Group. Change the column\'s settings in the destination if it should work the same way.' }
+    ]);
+});
+
+test('says a new Person column lets people choose anyone when the destination is a channel site', async function({ page }, testInfo) {
+    const record = await openTools(page, { source: { studyVisitsColumns: [COORDINATOR_COLUMN] },
+        destination: { setup: function(model) { model.web.WebTemplate = 'TEAMCHANNEL'; } } });
+    await copyStudyVisits(page);
+    const column = copiedList(record).fields.filter(function(f) { return f.InternalName === 'Coordinator'; })[0];
+    expect(column.SelectionGroup).toBeUndefined();
+    const rows = await savedResults(page, testInfo);
+    expect(coordinatorRows(rows)).toEqual([
+        { name: 'Coordinator in Study Visits', kind: 'Column', result: 'Copied', note: PICKER_LATER_NOTE },
+        { name: 'Coordinator in Study Visits', kind: 'Column', result: 'Partly copied', note: 'It lets people choose anyone, because Sitenalyzer ' +
+            'doesn\'t copy permissions into a channel site. Open the column\'s settings in the destination and choose the group it uses in this site.' }
+    ]);
+});
+
+test('says a new Person column lets people choose anyone when copying permissions fails', async function({ page }, testInfo) {
+    const refused = { pattern: /^\/_api\/web\/roledefinitions$/, answer: function(ctx) { return ctx.spError(403, 'Access denied.'); } };
+    const record = await openTools(page, { source: { studyVisitsColumns: [COORDINATOR_COLUMN] }, destination: { handlers: [refused] } });
+    await copyStudyVisits(page);
+    expect(copiedList(record).fields.filter(function(f) { return f.InternalName === 'Coordinator'; })[0].SelectionGroup).toBeUndefined();
+    const rows = await savedResults(page, testInfo);
+    expect(coordinatorRows(rows)).toEqual([
+        { name: 'Coordinator in Study Visits', kind: 'Column', result: 'Copied', note: PICKER_LATER_NOTE },
+        { name: 'Coordinator in Study Visits', kind: 'Column', result: 'Partly copied', note: 'It lets people choose anyone, because Sitenalyzer ' +
+            'couldn\'t finish copying permissions. Open the column\'s settings in the destination and choose the group it uses in this site.' }
+    ]);
+    expect(row(rows, 'Permissions', 'Permission').result).toBe('Failed');
 });
 
 // ### When Permissions Aren't Copied ###

@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 pretend-destination-permissions.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Answers of the pretend destination site (see pretend-destination.js) for the permissions part of Copy site
          structure: permission levels, SharePoint groups with their owners and members, the people the site knows,
          and who has access to the site and to each list. The answers change the same in-memory model that the
@@ -29,6 +29,10 @@ Notes: See README file for documentation and full license information.
          listUniqueReadRefused Reading whether a list has its own permissions fails.
          addNotSaved         Giving a person or group access to the site or a list answers that it worked, but the
                              destination doesn't keep that access.
+       A subsite destination: a test calls makeSubsite(model) in its setup, and routeParentSite(page, model) after
+       openPretendSite. The destination then has a parent site, Study Hub at /sites/studyhub, which is also the top site
+       of its site collection. The destination keeps its own address, /sites/targetsite, because the copy reads the
+       parent's address from SharePoint (/_api/web/parentweb) instead of working it out from its own.
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -55,6 +59,13 @@ const ROLE_IDS = { fullControl: 1073741829, design: 1073741828, edit: 1073741830
 const FIRST_NEW_ROLE_ID = 1073742000;
 const FIRST_NEW_GROUP_ID = 50;
 const FIRST_NEW_USER_ID = 100;
+// The parent site of a subsite destination (see makeSubsite), and its groups and member.
+const TENANT_ORIGIN = 'https://contoso.sharepoint.com';
+const PARENT_PATH = '/sites/studyhub';
+const PARENT_TITLE = 'Study Hub';
+const PARENT_DIGEST = 'PARENT-DIGEST-0001';
+const PARENT_GROUP_IDS = { owners: 8, members: 9, visitors: 10 };
+const HUB_MEMBER = { Id: 90, Title: 'Hub Member', LoginName: 'i:0#.f|membership|hub.member@example.org', PrincipalType: 1 };
 // SharePoint's error codes for a person who can't be found and for a level with the same name or permissions.
 const USER_NOT_FOUND_CODE = '-2146232832, Microsoft.SharePoint.SPException';
 const SAME_LEVEL_CODE = '-2130575293, Microsoft.SharePoint.SPException';
@@ -189,6 +200,108 @@ function addAssignment(ctx, listId, principalId, roleId) {
     return ctx.reply(204, null);
 }
 
+// Makes a permission level the way POST /_api/web/roledefinitions does, in the model's levels. Returns { level } or
+// { status, message, code } for SharePoint's error answer.
+function createLevel(model, body) {
+    const rights = (body && body.BasePermissions) || {};
+    const name = String((body && body.Name) || '');
+    if (!name) { return { status: 400, message: 'The permission level must have a name.' }; }
+    const same = model.roleDefinitions.some(function(d) {
+        return d.Name.toLowerCase() === name.toLowerCase() ||
+            (String(d.BasePermissions.High) === String(rights.High) && String(d.BasePermissions.Low) === String(rights.Low));
+    });
+    if (same) { return { status: 500, message: 'A role definition with the same characteristics already exists.', code: SAME_LEVEL_CODE }; }
+    const level = { Id: model.nextRoleId++, Name: name, Description: String(body.Description || ''), Hidden: false, RoleTypeKind: 0,
+        Order: Number(body.Order) || 0, BasePermissions: { High: String(rights.High), Low: String(rights.Low) } };
+    model.roleDefinitions.push(level);
+    return { level: level };
+}
+
+// Returns the owners, members, and visitors groups of a site, as the REST API describes them with $expand, by
+// property name.
+function associatedJson(model, associated) {
+    const json = {};
+    Object.keys(associated).forEach(function(property) {
+        const group = findGroup(model, associated[property]);
+        json[property] = group ? { Id: group.Id, Title: group.Title } : null;
+    });
+    return json;
+}
+
+/**
+ * Makes the destination a subsite of Study Hub (see the notes at the top of this file). Study Hub's owners, members, and
+ * visitors groups are added to the site collection's groups, and SharePoint gives the destination the same access
+ * that Study Hub has. Call it in setup(model).
+ * @param {object} model The destination model.
+ * @param {object} [options] { ownGroups: true to keep the destination's own owners, members, and visitors groups,
+ *        instead of using Study Hub's, as a subsite made with its own groups does }.
+ * @returns {object} The same model, with model.parent: { title, path, associatedGroups, readRefused, requests, writes }.
+ *          A test sets model.parent.readRefused to true to refuse reading Study Hub's groups.
+ */
+function makeSubsite(model, options) {
+    const settings = options || {};
+    seedPermissions(model);
+    model.site.ServerRelativeUrl = PARENT_PATH;
+    const callerId = model.currentUser.Id;
+    model.siteUsers.push(Object.assign({}, HUB_MEMBER));
+    [['owners', 'Owners', [callerId]], ['members', 'Members', [HUB_MEMBER.Id]], ['visitors', 'Visitors', []]].forEach(function(g) {
+        model.groups.push({ Id: PARENT_GROUP_IDS[g[0]], Title: PARENT_TITLE + ' ' + g[1], Description: '', OnlyAllowMembersViewMembership: false,
+            AllowMembersEditMembership: false, AllowRequestToJoinLeave: false, AutoAcceptRequestToJoinLeave: false, RequestToJoinLeaveEmailSetting: '',
+            OwnerId: PARENT_GROUP_IDS.owners, Users: g[2].slice() });
+    });
+    const parentGroups = { AssociatedOwnerGroup: PARENT_GROUP_IDS.owners, AssociatedMemberGroup: PARENT_GROUP_IDS.members,
+        AssociatedVisitorGroup: PARENT_GROUP_IDS.visitors };
+    model.parent = { title: PARENT_TITLE, path: PARENT_PATH, associatedGroups: parentGroups, readRefused: false, requests: [], writes: [] };
+    // A subsite that uses its parent's permissions has the parent's access.
+    model.roleAssignments.length = 0;
+    model.roleAssignments.push({ principalId: PARENT_GROUP_IDS.owners, roleIds: [ROLE_IDS.fullControl] },
+        { principalId: PARENT_GROUP_IDS.members, roleIds: [ROLE_IDS.edit] }, { principalId: PARENT_GROUP_IDS.visitors, roleIds: [ROLE_IDS.read] });
+    if (!settings.ownGroups) { model.associatedGroups = Object.assign({}, parentGroups); }
+    return model;
+}
+
+/**
+ * Answers the requests that the copy sends to Study Hub, the parent site of a destination that makeSubsite changed:
+ * its title and owners, members, and visitors groups, its request digest, and new permission levels, which belong to
+ * the whole site collection. Every other request is refused. Each request is kept in model.parent.requests, and each
+ * one that isn't a GET in model.parent.writes, as { method, path }.
+ * @param {object} page The Playwright page, after openPretendSite.
+ * @param {object} model The destination model, record.destination.
+ * @returns {Promise<void>}
+ */
+async function routeParentSite(page, model) {
+    const parent = model.parent;
+    await page.route(TENANT_ORIGIN + PARENT_PATH + '/**', async function(route) {
+        const request = route.request();
+        const url = new URL(request.url());
+        const method = request.method();
+        const apiPath = decodeURIComponent(url.pathname).substring(PARENT_PATH.length);
+        parent.requests.push({ method: method, path: apiPath });
+        if (method !== 'GET') { parent.writes.push({ method: method, path: apiPath }); }
+        function json(status, body) { return route.fulfill({ status: status, contentType: 'application/json', body: JSON.stringify(body) }); }
+        function error(status, message, code) {
+            return json(status, { 'odata.error': { code: code || '-2147024891, System.UnauthorizedAccessException', message: { lang: 'en-US', value: message } } });
+        }
+        if (method === 'GET' && apiPath === '/_api/web' && /AssociatedOwnerGroup/.test(url.searchParams.get('$expand') || '')) {
+            if (parent.readRefused) { await error(403, 'Access denied.'); return; }
+            await json(200, Object.assign({ Title: parent.title }, associatedJson(model, parent.associatedGroups)));
+            return;
+        }
+        if (method === 'POST' && apiPath === '/_api/contextinfo') {
+            await json(200, { FormDigestValue: PARENT_DIGEST, FormDigestTimeoutSeconds: 1800, WebFullUrl: TENANT_ORIGIN + PARENT_PATH });
+            return;
+        }
+        if (method === 'POST' && apiPath === '/_api/web/roledefinitions' && request.headers()['x-requestdigest'] === PARENT_DIGEST) {
+            let body = null;
+            try { body = JSON.parse(request.postData() || ''); } catch (e) { body = null; }
+            const made = createLevel(model, body);
+            if (made.level) { await json(200, made.level); } else { await error(made.status, made.message, made.code); }
+            return;
+        }
+        await error(method === 'GET' ? 404 : 403, method === 'GET' ? 'Not found.' : 'Access denied.');
+    });
+}
+
 // Reads the group IDs from a CSOM request that sets a group's owner and changes the model. Returns false when the
 // request isn't one this file understands.
 function setOwnerFromCsom(model, xml) {
@@ -212,12 +325,12 @@ addDestinationHandlers([
     { pattern: /^\/_api\/web$/, answer: function(ctx) {
         if (!/AssociatedOwnerGroup/.test(ctx.url.searchParams.get('$expand') || '')) { return undefined; }
         const model = seedPermissions(ctx.model);
-        const json = {};
-        Object.keys(model.associatedGroups).forEach(function(property) {
-            const group = findGroup(model, model.associatedGroups[property]);
-            json[property] = group ? { Id: group.Id, Title: group.Title } : null;
-        });
-        return json;
+        return Object.assign({ Title: model.web.Title }, associatedJson(model, model.associatedGroups));
+    } },
+    // The parent site of a subsite destination (see makeSubsite). A top site has none.
+    { pattern: /^\/_api\/web\/parentweb$/, answer: function(ctx) {
+        const parent = ctx.model.parent;
+        return parent ? { Title: parent.title, ServerRelativeUrl: parent.path } : ctx.reply(204, null);
     } },
     { pattern: /^\/_api\/web\/roledefinitions$/, answer: function(ctx) { return { value: seedPermissions(ctx.model).roleDefinitions }; } },
     { pattern: /^\/_api\/web\/roledefinitions\/getbytype\((\d+)\)$/, answer: function(ctx) {
@@ -225,20 +338,8 @@ addDestinationHandlers([
         return level || ctx.spError(404, 'Cannot find the role definition.');
     } },
     { method: 'POST', pattern: /^\/_api\/web\/roledefinitions$/, answer: function(ctx) {
-        const model = seedPermissions(ctx.model);
-        const body = ctx.body || {};
-        const rights = body.BasePermissions || {};
-        const name = String(body.Name || '');
-        if (!name) { return ctx.spError(400, 'The permission level must have a name.'); }
-        const same = model.roleDefinitions.some(function(d) {
-            return d.Name.toLowerCase() === name.toLowerCase() ||
-                (String(d.BasePermissions.High) === String(rights.High) && String(d.BasePermissions.Low) === String(rights.Low));
-        });
-        if (same) { return ctx.spError(500, 'A role definition with the same characteristics already exists.', SAME_LEVEL_CODE); }
-        const level = { Id: model.nextRoleId++, Name: name, Description: String(body.Description || ''), Hidden: false, RoleTypeKind: 0,
-            Order: Number(body.Order) || 0, BasePermissions: { High: String(rights.High), Low: String(rights.Low) } };
-        model.roleDefinitions.push(level);
-        return level;
+        const made = createLevel(seedPermissions(ctx.model), ctx.body || {});
+        return made.level || ctx.spError(made.status, made.message, made.code);
     } },
     // Groups, read a page at a time with $top and $skip.
     { pattern: /^\/_api\/web\/sitegroups$/, answer: function(ctx) {
@@ -384,4 +485,4 @@ addDestinationHandlers([
     } }
 ]);
 
-module.exports = { seedPermissions, ROLE_IDS, CALLER_LOGIN };
+module.exports = { seedPermissions, makeSubsite, routeParentSite, ROLE_IDS, CALLER_LOGIN, PARENT_GROUP_IDS, HUB_MEMBER };

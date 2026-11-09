@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools-integration.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Browser tests for a whole Copy site structure run, with every step working together: term sets, lists and
          their columns and views, Site Assets, an agent, a site skill, a site page, the left menu, and permissions. They check the
          order of the changes the destination gets, the results table, and the check of the destination afterwards
@@ -503,7 +503,8 @@ test('copies a whole site in an order where each step finds what it uses, and ch
     const coordinatorRows = rows.filter(function(r) { return r.name === 'Coordinator in Study Visits'; });
     expect(coordinatorRows).toEqual([
         { name: 'Coordinator in Study Visits', kind: 'Column', result: 'Copied',
-          note: 'Created the column. Sitenalyzer set the group people choose from after it copied the groups. Another row for this column says whether that worked.' },
+          note: 'Created the column. For now, it lets people choose anyone. Sitenalyzer limits it to the same group as in this site after it ' +
+            'copies the groups, and another row for this column says whether that worked.' },
         { name: 'Coordinator in Study Visits', kind: 'Column', result: 'Copied', note: 'Limited the people you can choose in this column to the group Data Managers, as in this site.' }
     ]);
     // No row names a person by sign-in name or email address.

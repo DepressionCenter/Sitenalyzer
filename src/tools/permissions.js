@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 permissions.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Copies permissions when the person turns on the Permissions switch: permission levels, SharePoint groups with
          their owners and members, who has access to the site, the permissions of each copied list or library that has
          its own, and the group that each people picker column is limited to. It never removes access or members the
@@ -23,9 +23,14 @@ Notes: See README file for documentation and full license information.
          1. Read this site's permissions (from the report where it holds them) and the destination's.
          2. Permission levels: built-in levels map by their type; custom levels map by name or are created.
          3. Groups: the owners, members, and visitors groups map by their role; other groups map by name or are
-            created. Then owners, then members.
+            created. Then owners, then members. A destination group that its parent site or the top site of its
+            site collection also uses as its owners, members, or visitors group gets no new members, because
+            SharePoint groups belong to the whole site collection and the new members would get access to that site
+            too. The copy makes a new group for the destination instead.
          4. Who has access to the site, then to each list or library with its own permissions.
-         5. People picker columns limited to a group are pointed at the destination's group.
+         5. People picker columns that this copy made, and that this site limits to a group, are pointed at the
+            destination's group. When the permissions step stops before then, each of those columns gets a row that
+            says it lets people choose anyone.
        Destination checks this file adds for verify.js (see snaToolsAddVerifyCheck in core.js):
          { type: 'permissionLevel', roleDefinitionId }            a permission level, by its destination ID
          { type: 'group', groupId }                               a SharePoint group, by its destination ID
@@ -235,9 +240,12 @@ function snaToolsPermissionsSkipNote(ctx, member) {
 }
 
 // Returns the copied people picker columns that this site limits to a SharePoint group, from the copied lists and the
-// site columns, as [{ list, field, groupId, destListId, destFieldId }]. list is null and destListId '' for a site column.
+// site columns, as [{ list, field, groupId, destListId, destFieldId, made, key }]. list is null and destListId '' for a
+// site column. made is true for a column this copy created (see snaToolsListsRun in lists.js), and false for one the
+// destination already had, which the copy leaves as it is. key tells the columns apart.
 function snaToolsPermissionsPickerColumns(ctx) {
     var columns = [];
+    var run = snaToolsListsRun(ctx.maps);
     function add(list, field) {
         if (field.type !== 'User' && field.type !== 'UserMulti') { return; }
         var root = snaToolsParseXml(field.schemaXml);
@@ -245,7 +253,10 @@ function snaToolsPermissionsPickerColumns(ctx) {
         var destFieldId = snaToolsCleanGuid(ctx.maps.fieldIds[field.id]);
         var destListId = list ? snaToolsCleanGuid(ctx.maps.lists[list.sourceId]) : '';
         if (!groupId || !destFieldId || (list && !destListId)) { return; }
-        columns.push({ list: list, field: field, groupId: groupId, destListId: destListId, destFieldId: destFieldId });
+        var listState = list ? run.lists[list.sourceId] : null;
+        var made = list ? !!(listState && listState.created && listState.created[field.internalName]) : !!run.siteColumnEntries[field.id];
+        columns.push({ list: list, field: field, groupId: groupId, destListId: destListId, destFieldId: destFieldId, made: made,
+            key: destListId + '|' + destFieldId });
     }
     ctx.plan.lists.forEach(function(list) { (list.fields || []).forEach(function(f) { add(list, f); }); });
     (ctx.plan.siteColumns || []).forEach(function(f) { add(null, f); });
@@ -275,17 +286,81 @@ async function snaToolsPermissionsReadGroups(siteUrl, select, expand) {
     return groups;
 }
 
+// Returns a site's title and its owners, members, and visitors groups: { title, groups, groupTitles }, where groups
+// has the ID of each by property name, such as { AssociatedOwnerGroup: 3 }, and groupTitles their names. A site without
+// one of them has 0 and '' for it.
+async function snaToolsPermissionsReadWebGroups(siteUrl) {
+    var select = 'Title,' + SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.map(function(a) { return a.property + '/Id,' + a.property + '/Title'; }).join(',');
+    var expand = SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.map(function(a) { return a.property; }).join(',');
+    var web = await snaToolsRead(siteUrl, '/_api/web?$select=' + select + '&$expand=' + expand);
+    var result = { title: String((web && web.Title) || ''), groups: {}, groupTitles: {} };
+    SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+        var group = web && web[a.property];
+        result.groups[a.property] = snaToolsPermissionsInt(group && group.Id);
+        result.groupTitles[a.property] = String((group && group.Title) || '');
+    });
+    return result;
+}
+
 // Returns the IDs of a site's owners, members, and visitors groups, by property name, such as { AssociatedOwnerGroup: 3 }.
 // A site without one of them has 0 for it.
 async function snaToolsPermissionsReadAssociated(siteUrl) {
-    var select = SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.map(function(a) { return a.property + '/Id,' + a.property + '/Title'; }).join(',');
-    var expand = SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.map(function(a) { return a.property; }).join(',');
-    var web = await snaToolsRead(siteUrl, '/_api/web?$select=' + select + '&$expand=' + expand);
-    var result = {};
-    SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
-        result[a.property] = snaToolsPermissionsInt(web && web[a.property] && web[a.property].Id);
-    });
-    return result;
+    return (await snaToolsPermissionsReadWebGroups(siteUrl)).groups;
+}
+
+// Returns the address of a site on the destination's host from its server-relative address, such as
+// https://contoso.sharepoint.com/sites/hub for /sites/hub, or '' when the address isn't a plain server-relative one.
+function snaToolsPermissionsSiteUrl(destUrl, serverRelativeUrl) {
+    var path = String(serverRelativeUrl || '');
+    if (path.charAt(0) !== '/' || /[?#\\]|\/\.\.?(\/|$)/.test(path)) { return ''; }
+    return snaToolsSiteParts(destUrl).origin + (path === '/' ? '' : xlsxStripSlash(path));
+}
+
+// Returns the server-relative address of the top site of the destination's site collection, such as /sites/hub.
+async function snaToolsPermissionsReadRootPath(dest) {
+    var site = await snaToolsRead(dest.siteUrl, '/_api/site?$select=ServerRelativeUrl');
+    return (site && site.ServerRelativeUrl) || dest.serverRelativeUrl;
+}
+
+/**
+ * Finds the destination's owners, members, and visitors groups that its parent site or the top site of its site
+ * collection also uses as its owners, members, or visitors group, as a subsite often does. SharePoint groups belong to
+ * the whole site collection, so adding people to such a group gives them access to that site too. Reads only.
+ * @param {object} dest The checked destination (see snaToolsCheckDestination in runner.js).
+ * @param {string} rootPath The server-relative address of the top site of the destination's site collection.
+ * @param {object} destAssociated The IDs of the destination's own groups (see snaToolsPermissionsReadAssociated).
+ * @returns {Promise<object>} { groupId: { roleWords, siteWords, siteTitle } } for each such group: roleWords is its role
+ *          in the other site, such as 'owners group', siteWords is 'its parent site' or 'the top site of its site
+ *          collection', and siteTitle is that site's name. Empty when the destination is the top site of its site
+ *          collection or has none of these groups.
+ * @throws {Error} snaToolsError when a read fails, or when SharePoint gives a site address that can't be used.
+ */
+async function snaToolsPermissionsReadSharedGroups(dest, rootPath, destAssociated) {
+    var shared = {};
+    var destIds = SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.map(function(a) { return snaToolsPermissionsInt(destAssociated && destAssociated[a.property]); })
+        .filter(function(id) { return id > 0; });
+    if (destIds.length === 0 || snaToolsSamePath(rootPath, dest.serverRelativeUrl)) { return shared; }
+    var parent = await snaToolsRead(dest.siteUrl, '/_api/web/parentweb?$select=Title,ServerRelativeUrl');
+    var parentPath = (parent && parent.ServerRelativeUrl) || rootPath;
+    var sites = [{ path: parentPath, words: 'its parent site' }];
+    if (!snaToolsSamePath(parentPath, rootPath)) { sites.push({ path: rootPath, words: 'the top site of its site collection' }); }
+    for (var i = 0; i < sites.length; i++) {
+        var siteUrl = snaToolsPermissionsSiteUrl(dest.siteUrl, sites[i].path);
+        if (!siteUrl) { throw snaToolsError(500, 'address', ''); }
+        var web = await snaToolsPermissionsReadWebGroups(siteUrl);
+        var site = sites[i];
+        SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+            var id = web.groups[a.property];
+            if (!id || destIds.indexOf(id) === -1 || shared[id]) { return; }
+            shared[id] = { roleWords: a.words, siteWords: site.words, siteTitle: web.title };
+        });
+    }
+    return shared;
+}
+
+// Returns the words that name where a destination group is also used, such as 'the owners group of its parent site, Hub'.
+function snaToolsPermissionsSharedWhere(info) {
+    return 'the ' + info.roleWords + ' of ' + info.siteWords + (info.siteTitle ? ', ' + info.siteTitle : '');
 }
 
 // Returns the members of one group of this site, from the report when it read them, as
@@ -365,11 +440,22 @@ async function snaToolsPermissionsReadDestination(ctx) {
     ctx.destAssociated = await snaToolsPermissionsReadAssociated(destUrl);
     ctx.destSiteAssignments = await snaToolsPermissionsReadAssignments(destUrl, '/_api/web');
     // Permission levels belong to the top site of a site collection, so a subsite's new levels are made there.
-    var site = await snaToolsRead(destUrl, '/_api/site?$select=ServerRelativeUrl');
-    var rootPath = (site && site.ServerRelativeUrl) || ctx.dest.serverRelativeUrl;
+    var rootPath = await snaToolsPermissionsReadRootPath(ctx.dest);
     ctx.destIsRoot = snaToolsSamePath(rootPath, ctx.dest.serverRelativeUrl);
-    ctx.rolesSiteUrl = ctx.destIsRoot ? destUrl : snaToolsSiteParts(destUrl).origin + (rootPath === '/' ? '' : xlsxStripSlash(rootPath));
+    ctx.rolesSiteUrl = ctx.destIsRoot ? destUrl : snaToolsPermissionsSiteUrl(destUrl, rootPath);
+    if (!ctx.rolesSiteUrl) { throw snaToolsError(500, 'address', ''); }
     ctx.webUnique = ctx.destIsRoot || ctx.dest.hasUniqueRoleAssignments;
+    ctx.sharedGroups = {};
+    if (ctx.destIsRoot) { return; }
+    try {
+        ctx.sharedGroups = await snaToolsPermissionsReadSharedGroups(ctx.dest, rootPath, ctx.destAssociated);
+    } catch (err) {
+        if (snaToolsIsCancelled(err)) { throw err; }
+        // Fails closed: when the other sites' groups can't be read, none of the destination's own groups gets new members.
+        SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
+            if (ctx.destAssociated[a.property]) { ctx.sharedGroups[ctx.destAssociated[a.property]] = { unknown: true }; }
+        });
+    }
 }
 
 // ### Permission Levels ###
@@ -498,7 +584,7 @@ function snaToolsPermissionsGroupsToCopy(ctx) {
     useAssignments(ctx.source.siteAssignments);
     Object.keys(ctx.source.listAssignments).forEach(function(id) { useAssignments(ctx.source.listAssignments[id]); });
     SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) { if (ctx.source.associated[a.property]) { used[ctx.source.associated[a.property]] = true; } });
-    snaToolsPermissionsPickerColumns(ctx).forEach(function(c) { if (byId[c.groupId]) { used[c.groupId] = true; } });
+    snaToolsPermissionsPickerColumns(ctx).forEach(function(c) { if (c.made && byId[c.groupId]) { used[c.groupId] = true; } });
     var added = true;
     while (added) {
         added = false;
@@ -523,24 +609,56 @@ function snaToolsPermissionsGroupsToCopy(ctx) {
     return { groups: copy, leftOut: leftOut };
 }
 
+// Returns the name of a destination group, or ''.
+function snaToolsPermissionsDestGroupTitle(ctx, groupId) {
+    var known = ctx.destGroups.filter(function(d) { return d.Id === groupId; })[0];
+    return known ? String(known.Title || '') : '';
+}
+
 // Finds or creates the destination group for one source group. Returns the group's state for the later steps:
-// { source, destId, destTitle, how ('associated', 'existing', or 'created'), roleWords }.
+// { source, destId, destTitle, how ('associated', 'existing', 'created', or 'shared'), roleWords, sharedNote,
+// createdWords }. A destination group that another site also uses (see snaToolsPermissionsReadSharedGroups) is never
+// used: the copy creates a group instead, or, when that group has the source group's name, uses no group ('shared',
+// with destId 0). sharedNote then says why, and createdWords starts the note of a group created instead.
 async function snaToolsPermissionsMapGroup(ctx, group) {
-    var state = { source: group, destId: 0, destTitle: '', how: '', roleWords: '' };
+    var state = { source: group, destId: 0, destTitle: '', how: '', roleWords: '', sharedNote: '', createdWords: '' };
+    var sharedGroups = ctx.sharedGroups || {};
+    var checked = false;
     SNA_TOOLS_PERMISSIONS_ASSOCIATED_GROUPS.forEach(function(a) {
-        if (!state.how && ctx.source.associated[a.property] === group.Id && ctx.destAssociated[a.property]) {
-            state.destId = ctx.destAssociated[a.property];
+        if (checked || ctx.source.associated[a.property] !== group.Id || !ctx.destAssociated[a.property]) { return; }
+        checked = true;
+        var destId = ctx.destAssociated[a.property];
+        var info = sharedGroups[destId];
+        var title = snaToolsPermissionsDestGroupTitle(ctx, destId);
+        if (!info) {
+            state.destId = destId;
+            state.destTitle = title;
             state.how = 'associated';
             state.roleWords = a.words;
+            return;
         }
+        var named = 'the destination\'s ' + a.words + (title ? ', ' + title + ',' : '');
+        state.sharedNote = info.unknown
+            ? 'Sitenalyzer couldn\'t check whether ' + named + ' is also a group of its parent site or of the top site of its ' +
+              'site collection, so it didn\'t add anyone to it.'
+            : named.charAt(0).toUpperCase() + named.substring(1) + ' is also ' + snaToolsPermissionsSharedWhere(info) + '. Sitenalyzer ' +
+              'didn\'t add anyone to it, because that would give them access to that site too.';
+        state.createdWords = 'Created this group for the destination instead';
     });
-    if (state.how) {
-        var known = ctx.destGroups.filter(function(d) { return d.Id === state.destId; })[0];
-        state.destTitle = known ? known.Title : '';
-        return state;
-    }
+    if (state.how) { return state; }
     var key = String(group.Title || '').toLowerCase();
     var existing = ctx.destGroups.filter(function(d) { return String(d.Title || '').toLowerCase() === key; })[0];
+    if (existing && sharedGroups[existing.Id]) {
+        var where = sharedGroups[existing.Id];
+        state.how = 'shared';
+        state.sharedNote = (where.unknown
+            ? 'The destination already has a group with this name, and Sitenalyzer couldn\'t check whether its parent site or the ' +
+              'top site of its site collection also uses it, so it didn\'t add anyone to it.'
+            : 'The destination already has a group with this name, and it\'s also ' + snaToolsPermissionsSharedWhere(where) + '. ' +
+              'Sitenalyzer didn\'t add anyone to it, because that would give them access to that site too.') +
+            ' In the destination, make a group with another name, add this group\'s members to it, and give it access by hand.';
+        return state;
+    }
     if (existing) {
         state.destId = existing.Id;
         state.destTitle = existing.Title;
@@ -596,7 +714,7 @@ async function snaToolsPermissionsEnsureUser(ctx, loginName) {
 // owner has no display name, or only a sign-in name or an email address, the notes say "the same owner" instead.
 async function snaToolsPermissionsSetOwner(ctx, state) {
     var owner = state.source.Owner;
-    var created = 'Created the group';
+    var created = state.createdWords || 'Created the group';
     if (!owner || !snaToolsPermissionsInt(owner.Id)) { return { result: 'copied', note: created + '.' }; }
     var ownerName = snaToolsPermissionsDisplayName(owner, '');
     var copiedNote = ownerName ? created + ', with ' + (owner.PrincipalType === 8 ? 'the group ' : '') + ownerName + ' as its owner, as in this site.'
@@ -770,6 +888,10 @@ async function snaToolsPermissionsCopyGroups(ctx) {
         var group = chosen.groups[i];
         try {
             var state = await snaToolsPermissionsMapGroup(ctx, group);
+            if (state.how === 'shared') {
+                snaToolsLog(SNA_TOOLS_KINDS.group, group.Title, 'skipped', state.sharedNote);
+                continue;
+            }
             ctx.maps.principals[String(group.Id)] = state.destId;
             states.push(state);
         } catch (err) {
@@ -791,6 +913,7 @@ async function snaToolsPermissionsCopyGroups(ctx) {
                 'and didn\'t change its settings or owner.' };
         } else {
             outcome = await snaToolsPermissionsSetOwner(ctx, s);
+            if (s.sharedNote) { outcome.note = s.sharedNote + ' ' + outcome.note; }
         }
         entries.push(snaToolsLog(SNA_TOOLS_KINDS.group, s.source.Title, outcome.result, outcome.note, { verify: { type: 'group', groupId: s.destId } }));
     }
@@ -1247,7 +1370,24 @@ async function snaToolsPermissionsCopyListAccess(ctx) {
 
 // ### People Picker Columns ###
 
-// Points each copied people picker column that this site limits to a SharePoint group at the destination's group.
+// Returns the name of a people picker column for its row, such as 'Coordinator in Study Visits'.
+function snaToolsPermissionsPickerName(column) {
+    return column.list ? column.field.title + ' in ' + (column.list.newTitle || column.list.title) : column.field.title;
+}
+
+// Logs a row for each people picker column this copy made that the permissions step didn't get to, because it stopped
+// before then. Each of those columns lets people choose anyone. reason ends the first sentence of the note.
+function snaToolsPermissionsLogPickersLeft(ctx, reason) {
+    snaToolsPermissionsPickerColumns(ctx).forEach(function(c) {
+        if (!c.made || ctx.pickersDone[c.key]) { return; }
+        ctx.pickersDone[c.key] = true;
+        snaToolsLog(SNA_TOOLS_KINDS.column, snaToolsPermissionsPickerName(c), 'partial', 'It lets people choose anyone, because ' + reason +
+            '. Open the column\'s settings in the destination and choose the group it uses in this site.');
+    });
+}
+
+// Points each people picker column that this copy made, and that this site limits to a SharePoint group, at the
+// destination's group. A column the destination already had keeps its own setting.
 async function snaToolsPermissionsUpdatePeoplePickers(ctx) {
     var columns = snaToolsPermissionsPickerColumns(ctx);
     for (var i = 0; i < columns.length; i++) {
@@ -1257,8 +1397,15 @@ async function snaToolsPermissionsUpdatePeoplePickers(ctx) {
         var destFieldId = columns[i].destFieldId;
         var destListId = columns[i].destListId;
         snaToolsCheckCancelled();
-        var name = list ? field.title + ' in ' + (list.newTitle || list.title) : field.title;
+        ctx.pickersDone[columns[i].key] = true;
+        var name = snaToolsPermissionsPickerName(columns[i]);
         var group = ctx.source.groups.filter(function(g) { return g.Id === sourceGroupId; })[0];
+        if (!columns[i].made) {
+            snaToolsLog(SNA_TOOLS_KINDS.column, name, 'skipped', 'The destination already had this column, so Sitenalyzer didn\'t change ' +
+                'the group people choose from in it.' + (group ? ' In this site, people choose only from the group ' + group.Title + '.' : '') +
+                ' Change the column\'s settings in the destination if it should work the same way.');
+            continue;
+        }
         if (!group) {
             // SharePoint keeps a column's group setting after the group is deleted.
             snaToolsLog(SNA_TOOLS_KINDS.column, name, 'partial', 'In this site, this column is limited to a group that no longer ' +
@@ -1303,34 +1450,42 @@ async function snaToolsPermissionsUpdatePeoplePickers(ctx) {
 async function snaToolsCopyPermissions(plan, dest, maps) {
     if (!plan.permissions) { return; }
     var K = SNA_TOOLS_KINDS;
+    var ctx = {
+        plan: plan, dest: dest, maps: maps, report: snaToolsPermissionsReport(plan), sourceUrl: xlsxStripSlash(plan.source.siteUrl),
+        source: { listAssignments: {}, groupId: '', groupIdUnknown: false, groups: [] }, users: {}, usersGone: {},
+        destRoles: [], destGroups: [], destAssociated: {}, destSiteAssignments: [], destIsRoot: true, rolesSiteUrl: dest.siteUrl, webUnique: true,
+        sharedGroups: {}, reusedLists: {}, pickersDone: {}
+    };
     if (plan.source.kind !== 'site') {
         snaToolsLog(K.permission, 'Permissions', 'skipped', 'A data dictionary file doesn\'t include permissions, so Sitenalyzer ' +
             'didn\'t copy any. Give people access in the destination by hand.');
+        snaToolsPermissionsLogPickersLeft(ctx, 'a data dictionary file doesn\'t include permissions');
         return;
     }
     if (String(dest.webTemplate || '').toUpperCase() === SNA_TOOLS_PERMISSIONS_CHANNEL_TEMPLATE) {
         snaToolsLog(K.permission, 'Permissions', 'skipped', 'Permissions for channel sites are managed in Teams, so Sitenalyzer ' +
             'left them unchanged. Give people access to the channel in Microsoft Teams.');
+        snaToolsPermissionsLogPickersLeft(ctx, 'Sitenalyzer doesn\'t copy permissions into a channel site');
         return;
     }
-    var ctx = {
-        plan: plan, dest: dest, maps: maps, report: snaToolsPermissionsReport(plan), sourceUrl: xlsxStripSlash(plan.source.siteUrl),
-        source: { listAssignments: {}, groupId: '', groupIdUnknown: false }, users: {}, usersGone: {},
-        destRoles: [], destGroups: [], destAssociated: {}, destSiteAssignments: [], destIsRoot: true, rolesSiteUrl: dest.siteUrl, webUnique: true,
-        reusedLists: {}
-    };
-    snaToolsProgress('Copying permissions: reading them.');
-    await snaToolsPermissionsReadSource(ctx);
-    await snaToolsPermissionsReadDestination(ctx);
-    snaToolsProgress('Copying permissions: permission levels.');
-    await snaToolsPermissionsCopyLevels(ctx);
-    snaToolsProgress('Copying permissions: groups.');
-    await snaToolsPermissionsCopyGroups(ctx);
-    snaToolsProgress('Copying permissions: who has access to the site.');
-    await snaToolsPermissionsKeepReusedListAccess(ctx);
-    await snaToolsPermissionsCopySiteAccess(ctx);
-    await snaToolsPermissionsCopyListAccess(ctx);
-    await snaToolsPermissionsUpdatePeoplePickers(ctx);
+    try {
+        snaToolsProgress('Copying permissions: reading them.');
+        await snaToolsPermissionsReadSource(ctx);
+        await snaToolsPermissionsReadDestination(ctx);
+        snaToolsProgress('Copying permissions: permission levels.');
+        await snaToolsPermissionsCopyLevels(ctx);
+        snaToolsProgress('Copying permissions: groups.');
+        await snaToolsPermissionsCopyGroups(ctx);
+        snaToolsProgress('Copying permissions: who has access to the site.');
+        await snaToolsPermissionsKeepReusedListAccess(ctx);
+        await snaToolsPermissionsCopySiteAccess(ctx);
+        await snaToolsPermissionsCopyListAccess(ctx);
+        await snaToolsPermissionsUpdatePeoplePickers(ctx);
+    } catch (err) {
+        // The columns step promised each of these columns a second row (see snaToolsListsAdjustPeople in lists.js).
+        if (!snaToolsIsCancelled(err)) { snaToolsPermissionsLogPickersLeft(ctx, 'Sitenalyzer couldn\'t finish copying permissions'); }
+        throw err;
+    }
 }
 
 // ### Destination Checks ###
