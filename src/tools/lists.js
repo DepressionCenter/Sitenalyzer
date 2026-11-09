@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 lists.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Copies lists and libraries without their items or files, with their settings, columns, site columns, content
          types, views, and form settings. Columns are made in an order that lets each one find what it needs: plain
          columns, then lookup columns (after every list exists), then managed metadata columns (after the term sets),
@@ -667,7 +667,17 @@ async function snaToolsCopyLists(plan, dest, maps) {
                 'another template, so Sitenalyzer didn\'t copy this ' + snaToolsListsWord(list) + '. Choose another address, then copy again.');
             continue;
         }
-        await snaToolsListsCreate(list, dest, maps, run);
+        try {
+            await snaToolsListsCreate(list, dest, maps, run);
+        } catch (err) {
+            // When the copy was stopped after SharePoint made the list, its row says what the stop left undone.
+            if (snaToolsIsCancelled(err)) {
+                snaToolsLogStopped(snaToolsListKind(list), list.newTitle, 'You stopped the copy after SharePoint made this ' + snaToolsListsWord(list) +
+                    ', before Sitenalyzer finished it, so its name or settings may not be the ones you chose. Copy again into the same destination ' +
+                    'to give it its name, columns, and views, then check its settings in the destination.');
+            }
+            throw err;
+        }
     }
 }
 

@@ -330,6 +330,59 @@ test('reports a footer menu the destination refused, and changes nothing else in
     expect(rows.filter(function(r) { return r.result === 'Failed'; })).toEqual([]);
 });
 
+// Returns a destination handler that holds the request when isHeld(ctx) is true, until release() is called. started
+// is a promise that resolves when it holds one, so a test can select Stop copying while the request is on its way.
+function holdRequest(method, pattern, isHeld) {
+    let markStarted;
+    let markReleased;
+    const started = new Promise(function(resolve) { markStarted = resolve; });
+    const released = new Promise(function(resolve) { markReleased = resolve; });
+    const handler = { method: method, pattern: pattern, answer: async function(ctx) {
+        if (!isHeld(ctx)) { return undefined; }
+        markStarted();
+        await released;
+        return undefined;
+    } };
+    return { handler: handler, started: started, release: markReleased };
+}
+
+test('says how many of the destination\'s links were removed when Stop copying comes partway through removing them', async function({ page }, testInfo) {
+    let deletes = 0;
+    const held = holdRequest('POST', /^\/_api\/web\/navigation\/GetNodeById\(\d+\)$/, function(ctx) {
+        if (ctx.xHttpMethod !== 'DELETE') { return false; }
+        deletes++;
+        return deletes === 2;
+    });
+    const copying = copySite(page, { sourceSite: { quickLaunch: [{ title: 'Home', url: SITE_PATH }] }, destination: { handlers: [held.handler], setup: function(model) {
+        ['Notebook', 'Pages', 'Recycle bin'].forEach(function(title) { addMenuLink(model, 'QuickLaunch', { Title: title, Url: DEST_PATH + '/' + title }); });
+    } } });
+    await held.started;
+    await page.getByRole('button', { name: 'Stop copying' }).click();
+    held.release();
+    const record = await copying;
+    // The second removal was on its way and finished. The third was never sent, and no link of this site was added.
+    expect(menuTree(record.destination, 'QuickLaunch').map(function(n) { return n.title; })).toEqual(['Notebook']);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Left menu', 'Menu link')).toEqual({ result: 'Partly copied', note: 'You stopped the copy after Sitenalyzer removed 2 of the 3 links ' +
+        'the destination had in its left menu, before it added this site\'s links. Copy again into the same destination to finish the left menu.' });
+});
+
+test('adds a row for the step that was running when Stop copying comes after a change that has no row yet', async function({ page }, testInfo) {
+    // New links go first, so the copy moves them into order after adding them, and the first move waits for the stop.
+    const held = holdRequest('POST', /^\/_api\/web\/navigation\/QuickLaunch\/MoveAfter$/, function() { return true; });
+    const menu = [{ title: 'Home', url: SITE_PATH }, { title: 'Contoso Help', url: 'https://example.org/help' }, { title: 'Archive site', url: '/sites/testsite-archive' }];
+    const copying = copySite(page, { sourceSite: { quickLaunch: menu }, destination: { menuAddsFirst: true, handlers: [held.handler] } });
+    await held.started;
+    await page.getByRole('button', { name: 'Stop copying' }).click();
+    held.release();
+    const record = await copying;
+    expect(destinationChanges(record).filter(function(c) { return /\/MoveAfter$/.test(c.path); })).toHaveLength(1);
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Navigation', 'Menu link')).toEqual({ result: 'Partly copied', note: 'You stopped the copy after SharePoint made a change for this part, ' +
+        'so the last item Sitenalyzer worked on may be only partly made. Copy again into the same destination to finish it.' });
+    expect(row(rows, 'Left menu: Home', 'Menu link').result).toBe('Copied');
+});
+
 // ### Site Look ###
 
 // This site's look: a Compact header, a mega menu, a vertical menu, an Extended footer, and its own logo.
@@ -500,6 +553,23 @@ test('saves only a PNG logo as __siteIcon__.png when SharePoint refuses the grou
 });
 
 // ### What SharePoint Refuses or Changes ###
+
+test('keeps the sentence about the hub when the destination check finds the hub\'s colors instead of the copied ones', async function({ page }, testInfo) {
+    // After the copy, the destination shows its hub's colors, as SharePoint does for a site connected to a hub.
+    const hubTheme = { pattern: /^\/_api\/SP\.Web\.GetContextWebThemeData$/, answer: function(ctx) {
+        if (!ctx.model.theme) { return undefined; }
+        const red = { DefaultColor: { R: 164, G: 38, B: 44, A: 255 } };
+        return { value: JSON.stringify({ Palette: { Colors: { themePrimary: red } }, IsInverted: false, IsDefault: false, Version: '1' }) };
+    } };
+    await copySite(page, {
+        siteLook: true, web: LOOK, sourceSite: { theme: { palette: PALETTE, isInverted: false } },
+        destination: { handlers: [hubTheme], setup: function(model) { model.site.HubSiteId = '7b7c7d7e-0000-4000-8000-000000000001'; } }
+    });
+    const rows = await savedResults(page, testInfo);
+    expect(row(rows, 'Theme', 'Site look setting')).toEqual({ result: 'Partly copied', note: 'Sitenalyzer set this, but the destination shows something ' +
+        'else now. Check it in Settings > Change the look in the destination. The destination is connected to a hub, so the hub\'s colors may replace ' +
+        'the copied ones.' });
+});
 
 // Returns a destination answer that refuses requests, with SharePoint's 400 answer, when refuse(ctx) is true.
 function refuseWhen(method, pattern, refuse) {

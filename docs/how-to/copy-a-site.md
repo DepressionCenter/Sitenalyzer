@@ -241,7 +241,9 @@ After **Copy anyway**, the rows from **Before you copy** appear at the top of th
 
 ### Stop copying
 
-To stop, select **Stop copying** next to **Copy to destination**. The copy stops before its next change. A change that SharePoint was already making can still finish. The results show what Sitenalyzer did before it stopped: "You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped."
+To stop, select **Stop copying** next to **Copy to destination**. The copy stops before its next change. A change that SharePoint was already making can still finish, and the table includes it. The results show what Sitenalyzer did before it stopped: "You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped."
+
+A stop can leave the item Sitenalyzer was making only partly made, such as a list that doesn't have its name yet, or a page that is blank and not published. That item's row says **Partly copied**, and its note says what to do next. For example, a page's note asks you to delete the blank page in Site Pages, then copy again. The results then add "The item it was making when you stopped is marked Partly copied. Its note says what to do next."
 
 After a stop, Sitenalyzer doesn't check the destination. To finish the copy, select **Copy to destination** again. See [Copy again into the same destination](#copy-again-into-the-same-destination).
 
@@ -268,7 +270,9 @@ The results mean:
 - **Failed**: Sitenalyzer tried and couldn't copy the item. The note says what to do.
 - **Warning**: **Before you copy** listed the item. See [Warnings in the results](#warnings-in-the-results).
 
-The table sorts and filters like the other tables in the report. To keep the results, select **Save results (.xlsx)**. It saves a workbook named for the destination and the date, such as `NewStudy_Copy_Results_2026-11-08.xlsx`. Values that look like personal information are hidden in it unless **Show hidden values** is on, as in the other workbooks.
+The table sorts and filters like the other tables in the report. To keep the results, select **Save results (.xlsx)**. It saves a workbook named for the destination and the date, such as `NewStudy_Copy_Results_2026-11-08.xlsx`. Values that look like personal information are hidden in it, and in the destination's name in the file name, unless **Show hidden values** is on, as in the other workbooks.
+
+When a note quotes SharePoint's own message, such as `SharePoint said: "The file is locked for shared use by the account"`, Sitenalyzer writes "the account" in place of any sign-in name or email address in it. **Show hidden values** doesn't bring them back.
 
 The results stay in **Tools** while you look at other sections. Sitenalyzer doesn't save them anywhere else, so save them before you select **Start over**, **Change site**, or **Refresh report**.
 
@@ -280,6 +284,8 @@ When the copy finishes, Sitenalyzer reads the destination again and looks for ea
 - An item it finds with another name or address becomes **Partly copied**, with a note that names the difference.
 
 It then adds a **Destination check** row for each kind of item, such as "Found 3 of 3 lists in the destination." If it couldn't read the destination to check an item, the note says so. Look for that item in the destination yourself.
+
+A theme that the destination check finds with other colors becomes **Partly copied**. When the destination is connected to a hub, the note also says that the hub's colors may replace the copied ones, because SharePoint can apply a hub's theme to the sites connected to it.
 
 ### Copy again into the same destination
 

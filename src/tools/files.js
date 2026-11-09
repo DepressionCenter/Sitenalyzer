@@ -90,6 +90,10 @@ var SNA_TOOLS_PAGE_SELECT_SHORT = 'Id,UniqueId,Title,FileLeafRef,ClientSideAppli
 var SNA_TOOLS_AGENT_COPIED_NOTE = 'Copied. It still uses the original site\'s knowledge sources.';
 var SNA_TOOLS_NO_AGENT_ASSETS_NOTE = 'The destination has no Agent Assets library. Turn on site skills in the destination, then copy again.';
 var SNA_TOOLS_PAGE_PARTIAL_NOTE = 'Copied. Some parts of this page may still show the original site\'s content. Open the page and check it.';
+var SNA_TOOLS_PAGE_STOPPED_NOTE = 'You stopped the copy while Sitenalyzer was saving this page in the destination, so the page there may be blank, ' +
+    'checked out to you, or not published. In the destination\'s Site Pages, delete the page if it\'s blank, or discard its check out, then copy again.';
+var SNA_TOOLS_PAGE_TEMPLATE_STOPPED_NOTE = 'You stopped the copy while Sitenalyzer was saving this page template in the destination, so Site Pages ' +
+    'or its Templates folder may have a blank page with this name. Delete it there, then copy again.';
 var SNA_TOOLS_TOO_LARGE_NOTE = 'This file is larger than 250 MB, so Sitenalyzer didn\'t copy it. Copy it to the destination by hand, such as with Copy to in Site Assets.';
 var SNA_TOOLS_MAKE_HOME_HINT = 'To make it the home page, select it in Site Pages in the destination and choose Make homepage.';
 var SNA_TOOLS_PAGE_NOT_UPLOADED_NOTE = 'SharePoint didn\'t let Sitenalyzer copy this page to the destination, and uploading it as a file would leave ' +
@@ -1181,7 +1185,11 @@ async function snaToolsCopyPages(plan, dest, maps) {
         try {
             await snaToolsFilesCopyOnePage(plan, dest, maps, state, page, sourceLists, destLists, destLibrary, welcome);
         } catch (err) {
-            if (snaToolsIsCancelled(err)) { throw err; }
+            if (snaToolsIsCancelled(err)) {
+                // A stop after SharePoint made or checked out the page leaves it as it was then, so its row says how to clean it up.
+                snaToolsLogStopped(kind, page.name || page.fileName, ordered[i].template ? SNA_TOOLS_PAGE_TEMPLATE_STOPPED_NOTE : SNA_TOOLS_PAGE_STOPPED_NOTE);
+                throw err;
+            }
             snaToolsLog(kind, page.name || page.fileName, 'failed', snaToolsFilesErrorNote(err) +
                 (err.snaToolsStillCheckedOut ? ' The page may still be checked out to you in the destination. Open Site Pages there and discard the check out.' : ''));
         }

@@ -866,7 +866,15 @@ async function snaToolsSiteCopyMenu(dest, context, menu) {
     try {
         await snaToolsSiteRemoveNodes(dest, existing, removed);
     } catch (err) {
-        if (snaToolsIsCancelled(err)) { throw err; }
+        if (snaToolsIsCancelled(err)) {
+            // Each removal finished before the next one was sent, so fewer links were removed than the destination had.
+            if (removed.count > 0) {
+                snaToolsLogStopped(K, label, 'You stopped the copy after Sitenalyzer removed ' + removed.count + ' of the ' + existing.length +
+                    ' links the destination had in its ' + menu.words + ', before it added this site\'s links. Copy again into the same destination ' +
+                    'to finish the ' + menu.words + '.');
+            }
+            throw err;
+        }
         var gone = removed.count === 0
             ? 'Sitenalyzer couldn\'t remove the destination\'s own links from its ' + menu.words + ', so it didn\'t add this site\'s links, '
             : 'Sitenalyzer removed ' + removed.count + ' of the ' + snaCountText(existing.length, 'link', 'links') + ' the destination had in its ' +
@@ -1256,10 +1264,12 @@ async function snaToolsSiteCopyTheme(plan, dest, destSite) {
         return;
     }
     var inHub = destSite && snaToolsSiteHasGroup(destSite.HubSiteId);
+    // The hub sentence is kept when the destination check finds other colors, because the hub's theme is a likely reason.
+    var hubNote = inHub ? ' The destination is connected to a hub, so the hub\'s colors may replace the copied ones.' : '';
     // SharePoint's read of a theme gives only its main colors, not the color pairs that newer themes use for page sections.
     snaToolsLog(K, 'Theme', 'copied', 'Applied this site\'s main theme colors. The colors of page sections might differ. If they do, choose a theme in ' +
-        SNA_TOOLS_SITE_WHERE.theme + '.' + (inHub ? ' The destination is connected to a hub, so the hub\'s colors may replace them.' : ''),
-        { verify: { type: 'siteLook', property: 'theme', value: theme.palette.themePrimary || '' } });
+        SNA_TOOLS_SITE_WHERE.theme + '.' + hubNote,
+        { verify: { type: 'siteLook', property: 'theme', value: theme.palette.themePrimary || '', keepNote: hubNote } });
 }
 
 // Sets the header, menu style, and footer settings together with SetChromeOptions, which takes all of them at once.

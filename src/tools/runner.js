@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 runner.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Checks the destination site of Copy site structure, and runs the copy's steps in order: term sets, site
          columns, lists and libraries, content types, list columns, views, form settings, Site Assets, the site look,
          agents and site skills, site pages, navigation, permissions, and finally the check of the destination. Each step logs a result for
@@ -241,17 +241,18 @@ function snaToolsNewMaps(dest) {
 /**
  * Starts a new copy: stops any older one, and sets up the results log that snaToolsLog writes to.
  * @param {object} destination The checked destination (see snaToolsCheckDestination).
- * @returns {object} The run { token, destination, results }. Pass it to snaToolsEndRun when the copy ends.
+ * @returns {object} The run { token, destination, results, unloggedChanges }. unloggedChanges counts the changes
+ *     SharePoint made since the last row (see snaToolsLogStopped). Pass the run to snaToolsEndRun when the copy ends.
  */
 function snaToolsBeginRun(destination) {
     _snaToolsToken++;
     _snaToolsActiveToken = _snaToolsToken;
-    _snaToolsRun = { token: _snaToolsToken, destination: destination, results: [] };
+    _snaToolsRun = { token: _snaToolsToken, destination: destination, results: [], unloggedChanges: 0 };
     return _snaToolsRun;
 }
 
 // Ends a copy that snaToolsBeginRun started, whether it finished, failed, or was stopped. Returns true when the copy
-// was stopped before it finished.
+// was stopped before it finished. After this, the copy adds no more rows.
 function snaToolsEndRun(run) {
     var stopped = run.token !== _snaToolsToken;
     if (_snaToolsActiveToken === run.token) { _snaToolsActiveToken = 0; }
@@ -259,14 +260,18 @@ function snaToolsEndRun(run) {
 }
 
 // Runs one step of the copy. A step that fails as a whole, instead of item by item, gets one Failed row of kind, named
-// what, and the copy goes on with the next step. A stop is passed on.
+// what, and the copy goes on with the next step. A stop is passed on, after a Partly copied row of kind, named what,
+// when SharePoint made a change for the step that no row describes yet.
 async function snaToolsRunStep(stepNumber, text, kind, what, work) {
     snaToolsCheckCancelled();
     snaToolsProgress(text, stepNumber);
     try {
         await work();
     } catch (err) {
-        if (snaToolsIsCancelled(err)) { throw err; }
+        if (snaToolsIsCancelled(err)) {
+            snaToolsLogStopped(kind, what, SNA_TOOLS_STOPPED_NOTE);
+            throw err;
+        }
         snaToolsLog(kind, what, 'failed', 'Sitenalyzer couldn\'t finish this part of the copy. ' + snaToolsFriendlyError(err));
     }
 }

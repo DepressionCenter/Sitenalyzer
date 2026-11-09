@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 tools.spec.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Browser tests for the Tools section and its Copy site structure screen. Each test opens the built app from
          dist/ on the pretend SharePoint site (see pretend-sharepoint.js), and most add the pretend destination site
          (see pretend-destination.js), so a copy runs against an in-memory model of the destination.
@@ -585,6 +585,52 @@ test('asks the destination for a new request digest once when SharePoint refuses
     expect(destinationChanges(record).filter(function(c) { return c.path === '/_api/web/lists'; })).toHaveLength(2);
 });
 
+test('leaves sign-in names and email addresses out of SharePoint\'s own message in a note', async function({ page }) {
+    await openTools(page, { destination: { handlers: [{ method: 'POST', pattern: /^\/_api\/web\/lists$/, answer: function(ctx) {
+        return ctx.spError(500, 'The list is locked for shared use by i:0#.f|membership|jdoe@example.org. Call 734-555-0100 or write to help@example.org.');
+    } }] } });
+    await copyStudyVisits(page, [], { filesOff: true });
+    const note = 'SharePoint couldn\'t make this change. SharePoint said: "The list is locked for shared use by the account Call [phone number hidden] ' +
+        'or write to the account". Try again later, or make it by hand in the destination.';
+    await expect(resultCell(resultRow(page, 'Study Visits'), 'note')).toHaveText(note);
+    // The note was written without them, so Show hidden values doesn't bring them back.
+    await page.getByRole('switch', { name: 'Show hidden values' }).check();
+    await expect(resultCell(resultRow(page, 'Study Visits'), 'note')).not.toContainText('jdoe');
+    await expect(resultCell(resultRow(page, 'Study Visits'), 'note')).not.toContainText('membership');
+});
+
+test('hides values that look like personal information in the destination\'s name in the saved results file name', async function({ page }) {
+    await openTools(page, { destination: { setup: function(model) { model.web.Title = 'MRN 4471-23 follow-up'; } } });
+    await copyStudyVisits(page, [], { filesOff: true });
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Save results (.xlsx)' }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/_Copy_Results_\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(download.suggestedFilename().split('_Copy_Results_')[0]).not.toMatch(/4471|23/);
+    expect(download.suggestedFilename()).toMatch(/Hidden/);
+});
+
+test('counts the items the destination check couldn\'t check, for one list and for several columns', async function({ page }) {
+    // Only the destination check reads the destination's lists and a list's columns with these $select values.
+    function refuseCheck(pattern, select) {
+        return { pattern: pattern, answer: function(ctx) {
+            return ctx.url.searchParams.get('$select') === select ? ctx.spError(500, 'The server is busy.') : undefined;
+        } };
+    }
+    await openTools(page, { destination: { handlers: [
+        refuseCheck(/^\/_api\/web\/lists$/, 'Id,Title,RootFolder/ServerRelativeUrl'),
+        refuseCheck(/^\/_api\/web\/lists\(guid'[^']+'\)\/fields$/, 'Id,InternalName,Title')
+    ] } });
+    await copyStudyVisits(page, [], { filesOff: true });
+    function checkRow(kind) {
+        return page.locator('#sna-tbl-tools-results .tabulator-row', { hasText: 'Destination check' }).filter({
+            has: page.locator('.tabulator-cell[tabulator-field="kind"]', { hasText: new RegExp('^' + kind + '$') })
+        });
+    }
+    await expect(resultCell(checkRow('List'), 'note')).toHaveText('Sitenalyzer couldn\'t read the destination to check the list it copied. Look for it in the destination.');
+    await expect(resultCell(checkRow('Column'), 'note')).toHaveText('Sitenalyzer couldn\'t read the destination to check the 3 columns it copied. Look for them in the destination.');
+});
+
 test('Stop copying stops the copy before its next change and shows what was done', async function({ page }) {
     let releaseCreate;
     let createStarted;
@@ -608,9 +654,16 @@ test('Stop copying stops the copy before its next change and shows what was done
     releaseCreate();
 
     await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused();
-    await expect(page.locator('.sna-tools-results-lead')).toHaveText('You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped.');
+    await expect(page.locator('.sna-tools-results-lead')).toHaveText('You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped. ' +
+        'The item it was making when you stopped is marked Partly copied. Its note says what to do next.');
     await expect(resultRow(page, 'Study Arms')).toHaveCount(1);
-    await expect(resultRow(page, 'Study Visits')).toHaveCount(0);
+    // SharePoint made the list after the stop, so it has a row that says the copy didn't finish it.
+    const list = resultRow(page, 'Study Visits');
+    await expect(resultCell(list, 'resultText')).toHaveText('Partly copied');
+    await expect(resultCell(list, 'note')).toHaveText('You stopped the copy after SharePoint made this list, before Sitenalyzer finished it, so its name or ' +
+        'settings may not be the ones you chose. Copy again into the same destination to give it its name, columns, and views, then check its settings ' +
+        'in the destination.');
+    expect(record.destination.lists.filter(function(l) { return l.RootFolder.ServerRelativeUrl === DEST_PATH + '/Lists/StudyVisits'; })).toHaveLength(1);
     // The term set step ran first. The list request was already on its way, but the copy sent nothing after it, such as
     // the request that renames the list.
     const changes = destinationChanges(record);
@@ -619,6 +672,42 @@ test('Stop copying stops the copy before its next change and shows what was done
     expect(changes.slice(termStoreCount).map(function(c) { return c.method + ' ' + c.path; })).toEqual(['POST /_api/web/lists']);
     await expect(page.getByRole('textbox', { name: 'Destination site address' })).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Stop copying' })).toHaveCount(0);
+});
+
+test('Stop copying while the request digest is on its way sends nothing after it', async function({ page }) {
+    let digestStarted;
+    let releaseDigest;
+    let listRefused = false;
+    const started = new Promise(function(resolve) { digestStarted = resolve; });
+    const release = new Promise(function(resolve) { releaseDigest = resolve; });
+    // SharePoint refuses the digest of the first list request, so the copy asks for a new digest, which waits for the stop.
+    const record = await openTools(page, { destination: { handlers: [
+        { method: 'POST', pattern: /^\/_api\/web\/lists$/, answer: function(ctx) {
+            if (listRefused) { return undefined; }
+            listRefused = true;
+            return ctx.spError(403, 'The security validation for this page is invalid and might be corrupted.');
+        } },
+        { method: 'POST', pattern: /^\/_api\/contextinfo$/, answer: async function() {
+            if (!listRefused) { return undefined; }
+            digestStarted();
+            await release;
+            return undefined;
+        } }
+    ] } });
+    await checkDestination(page, DEST_URL);
+    await chooseOnly(page, 'Study Visits');
+    await page.getByRole('button', { name: 'Copy to destination' }).click();
+    await copyAnyway(page, []);
+    await started;
+    await page.getByRole('button', { name: 'Stop copying' }).click();
+    releaseDigest();
+    await expect(page.getByRole('heading', { name: 'Results', exact: true })).toBeFocused();
+    await expect(page.locator('.sna-tools-results-lead')).toHaveText('You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped.');
+    // Only the refused list request reached the destination, and nothing changed there, so nothing has a row.
+    const lists = destinationChanges(record).filter(function(c) { return c.path === '/_api/web/lists'; });
+    expect(lists).toHaveLength(1);
+    expect(record.destination.lists.filter(function(l) { return l.RootFolder.ServerRelativeUrl === DEST_PATH + '/Lists/StudyVisits'; })).toEqual([]);
+    await expect(resultRow(page, 'Study Visits')).toHaveCount(0);
 });
 
 test('copies nothing when the person selects Go back under Before you copy', async function({ page }) {

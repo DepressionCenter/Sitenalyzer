@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 verify.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: After a copy, reads the destination back and checks that each item the copy logged as copied is there.
          An item that isn't there is changed to Failed, and one that is there but not as asked, such as with another
          name, to Partly copied. Adds one summary row for each kind of item it checked. Reads only.
@@ -245,8 +245,10 @@ async function snaToolsVerifyCopy(plan, dest, maps) {
         var words = SNA_TOOLS_KIND_WORDS[kind] || [kind.toLowerCase(), kind.toLowerCase() + 's'];
         var checked = counts.total - counts.unchecked;
         if (checked === 0) {
-            snaToolsLog(kind, 'Destination check', 'partial', 'Sitenalyzer couldn\'t read the destination to check the ' + words[1] +
-                ' it copied. Look for them in the destination.', { summary: true });
+            var one = counts.total === 1;
+            snaToolsLog(kind, 'Destination check', 'partial', 'Sitenalyzer couldn\'t read the destination to check the ' +
+                (one ? words[0] : snaCountText(counts.total, words[0], words[1])) + ' it copied. Look for ' + (one ? 'it' : 'them') +
+                ' in the destination.', { summary: true });
             return;
         }
         var note = 'Found ' + counts.found + ' of ' + snaCountText(checked, words[0], words[1]) + ' in the destination.';

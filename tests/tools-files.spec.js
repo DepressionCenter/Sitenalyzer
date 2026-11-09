@@ -443,6 +443,30 @@ test('discards a page that SharePoint refuses to save, so it isn\'t left checked
     await expectResult(page, 'Visit Report', 'Page', 'Copied', 'Copied the page template.');
 });
 
+test('says how to clean up a page that Stop copying left blank in the destination', async function({ page }) {
+    let pageStarted;
+    let releasePage;
+    const started = new Promise(function(resolve) { pageStarted = resolve; });
+    const release = new Promise(function(resolve) { releasePage = resolve; });
+    // The request that makes the Welcome page waits until the person selects Stop copying.
+    const holdWelcome = { method: 'POST', pattern: /^\/_api\/sitepages\/pages$/, answer: async function(ctx) {
+        if (!ctx.body || ctx.body.Name !== 'Home.aspx') { return undefined; }
+        pageStarted();
+        await release;
+        return undefined;
+    } };
+    const copying = copyWithFiles(page, { agents: false, siteAssets: false, destination: { handlers: [holdWelcome] } });
+    await started;
+    await page.getByRole('button', { name: 'Stop copying' }).click();
+    releasePage();
+    const record = await copying;
+    // SharePoint made the page, and the copy sent nothing after that, so the page is blank and not published.
+    expect(destFile(record, '/SitePages/Home.aspx').page.actions).toEqual(['create']);
+    await expectResult(page, 'Welcome', 'Page', 'Partly copied', 'You stopped the copy while Sitenalyzer was saving this page in the destination, so the ' +
+        'page there may be blank, checked out to you, or not published. In the destination\'s Site Pages, delete the page if it\'s blank, or discard ' +
+        'its check out, then copy again.');
+});
+
 // ### Folders That Can't Be Read, Files Already There, and Agents in Site Assets ###
 
 test('copies the other Site Assets files when one folder can\'t be read, and marks that folder as failed', async function({ page }) {

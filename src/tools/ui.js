@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 ui.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Draws the Tools section (#sna/tools) and its Copy site structure screen (#sna/tools/copy), and handles its
          buttons, boxes, and switches: the source, the destination and its check, the lists and libraries to copy with
          their new names and addresses, the term sets, the site's own content types, the other content, the copy with
@@ -901,7 +901,7 @@ async function snaToolsCopyAnyway() {
             '. Sitenalyzer checked the destination afterwards. Each row says what happened.';
     } catch (err) {
         lead = snaToolsIsCancelled(err)
-            ? 'You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped.'
+            ? 'You stopped the copy before it finished. The table shows what Sitenalyzer did before it stopped.' + snaToolsStoppedItemsText(run.results)
             : 'Sitenalyzer stopped the copy because of a problem. ' + snaToolsFriendlyError(err);
     }
     snaToolsEndRun(run);
@@ -914,6 +914,16 @@ async function snaToolsCopyAnyway() {
     snaToolsRedraw('sna-tools-results-title');
 }
 
+// Returns the sentence about the items a stop left partly made (see snaToolsLogStopped), such as " The item it was
+// making when you stopped is marked Partly copied. Its note says what to do next.", or '' when there are none.
+function snaToolsStoppedItemsText(results) {
+    var count = results.filter(function(r) { return r.detail && r.detail.stopped; }).length;
+    if (count === 0) { return ''; }
+    return count === 1
+        ? ' The item it was making when you stopped is marked Partly copied. Its note says what to do next.'
+        : ' The ' + count + ' items it was making when you stopped are marked Partly copied. Their notes say what to do next.';
+}
+
 // Stop copying: the copy stops at its next request or step, and the results so far are shown.
 function snaToolsStopCopy() {
     if (!_snaToolsState.running) { return; }
@@ -923,13 +933,13 @@ function snaToolsStopCopy() {
 }
 
 // Save results (.xlsx): saves the results table as a one-sheet workbook named for the destination and today's date,
-// such as StudyTwo_Copy_Results_2026-11-05.xlsx. Values that look like personal information are hidden, as in the
-// other workbooks, unless Show hidden values is on.
+// such as StudyTwo_Copy_Results_2026-11-05.xlsx. Values that look like personal information are hidden in the rows and
+// in the destination's name in the file name, as in the other workbooks, unless Show hidden values is on.
 function snaToolsSaveResults() {
     var state = _snaToolsState;
     if (!state.results || !XLSX) { return; }
     var rows = state.results.map(function(r) { return [snaMaskText(r.name), r.kind, SNA_TOOLS_RESULTS[r.result], snaMaskText(r.note)]; });
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, buildSheet(['Item', 'Kind', 'Result', 'Notes'], rows), 'Copy_Results');
-    snaDownloadWorkbook(wb, snaFileSafeSiteName(state.resultsTitle) + '_Copy_Results_' + snaDateStamp(new Date()) + '.xlsx');
+    snaDownloadWorkbook(wb, snaFileSafeSiteName(snaMaskText(state.resultsTitle)) + '_Copy_Results_' + snaDateStamp(new Date()) + '.xlsx');
 }

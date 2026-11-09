@@ -175,13 +175,10 @@ function snaToolsPermissionsIsGone(err) {
     return !!err && (err.status === 404 || /could not be found|cannot be found|does not exist/i.test(err.serverMessage || ''));
 }
 
-// Returns the note for a failed request, like snaToolsFriendlyError, with every sign-in name or email address in
-// SharePoint's own message replaced, because SharePoint often names the account it couldn't find or add.
+// Returns the note for a failed request. SharePoint often names the account it couldn't find or add, and
+// snaToolsFriendlyError replaces every sign-in name and email address in its message (see snaToolsHideAccounts).
 function snaToolsPermissionsErrorNote(err) {
-    if (!err || !err.serverMessage) { return snaToolsFriendlyError(err); }
-    var copy = Object.assign(new Error(err.message), err);
-    copy.serverMessage = String(err.serverMessage).replace(/\S*[|@]\S*/g, 'the account');
-    return snaToolsFriendlyError(copy);
+    return snaToolsFriendlyError(err);
 }
 
 // Returns the name of a person or group for a note, or fallback when SharePoint gave no display name or the name it

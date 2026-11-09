@@ -3,7 +3,7 @@ This file is part of Sitenalyzer
 core.js
 Author(s): Gabriel Mongefranco.
 Created: 2026-11-05
-Last Modified: 2026-11-08
+Last Modified: 2026-11-09
 Summary: Shared helpers for the Tools section: the one helper that writes to a site, reads that check their
          addresses first, CSOM requests, XML and ID helpers, the link rewrite that points links and IDs of the source
          at the destination (snaToolsRewriteSourceLinks), the results log, the progress line, and stopping a copy.
@@ -68,11 +68,20 @@ var SNA_TOOLS_ANNOUNCE_INTERVAL_MS = 1000;
 // Longest text of SharePoint's own error message that a note quotes.
 var SNA_TOOLS_SERVER_MESSAGE_MAX = 200;
 
+// A word with | or @ in it, which is how sign-in names, such as i:0#.f|membership|user@example.org, and email
+// addresses look. Notes say "the account" instead.
+var SNA_TOOLS_ACCOUNT_WORD = /\S*[|@]\S*/g;
+
+// The note for the part of the copy that was running when the person selected Stop copying, when SharePoint had
+// already made a change for it that no row describes.
+var SNA_TOOLS_STOPPED_NOTE = 'You stopped the copy after SharePoint made a change for this part, so the last item Sitenalyzer worked on ' +
+    'may be only partly made. Copy again into the same destination to finish it.';
+
 // ### Tools State ###
 
 var _snaToolsToken = 0;        // Changes when a copy is stopped or Tools is reset; a copy with an older token stops
 var _snaToolsActiveToken = 0;  // The token of the copy that is running, or 0 when none is
-var _snaToolsRun = null;       // The copy running or last run: { token, destination, results: [snaToolsLog entries] }
+var _snaToolsRun = null;       // The copy running or last run: { token, destination, results: [snaToolsLog entries], unloggedChanges }
 var _snaToolsVerifyChecks = {}; // Destination checks by type, added with snaToolsAddVerifyCheck; see verify.js
 var _snaToolsAnnouncedAt = 0;  // When the progress line last changed, in milliseconds
 var _snaToolsAnnounceTimer = null;
@@ -125,10 +134,18 @@ function snaToolsIsCancelled(err) {
     return !!(err && err.snaCancelled);
 }
 
+// Returns text with every sign-in name and email address replaced by "the account". SharePoint's own messages often
+// name an account, such as the one a file is checked out to, and notes never name accounts.
+function snaToolsHideAccounts(text) {
+    return String(text || '').replace(SNA_TOOLS_ACCOUNT_WORD, 'the account');
+}
+
 // Returns SharePoint's own message as a short quote for the end of a note, such as ' SharePoint said: "The formula
-// refers to a column that does not exist".', or '' when it gave none.
+// refers to a column that does not exist".', or '' when it gave none. Every note that quotes SharePoint uses this, so
+// sign-in names and email addresses are left out, and other values that look like personal information are hidden
+// unless Show hidden values is on.
 function snaToolsServerSaid(message) {
-    var text = String(message || '').replace(/\s+/g, ' ').trim().replace(/\.$/, '');
+    var text = snaMaskText(snaToolsHideAccounts(message)).replace(/\s+/g, ' ').trim().replace(/\.$/, '');
     if (!text) { return ''; }
     if (text.length > SNA_TOOLS_SERVER_MESSAGE_MAX) { text = text.substring(0, SNA_TOOLS_SERVER_MESSAGE_MAX - 3) + '...'; }
     return ' SharePoint said: "' + text + '".';
@@ -234,7 +251,11 @@ async function snaToolsFetch(siteUrl, url, init) {
     while (true) {
         snaToolsCheckCancelled();
         var headers = Object.assign({}, init.headers || {});
-        if (init.digest) { headers['X-RequestDigest'] = await getRequestDigest(siteUrl); }
+        if (init.digest) {
+            headers['X-RequestDigest'] = await getRequestDigest(siteUrl);
+            // The copy may have been stopped while the digest was on its way, and then this request isn't sent.
+            snaToolsCheckCancelled();
+        }
         var res;
         try {
             res = await fetch(url, { method: init.method || 'GET', headers: headers, credentials: 'include', body: init.body });
@@ -300,6 +321,7 @@ async function snaToolsWrite(siteUrl, apiPath, options) {
     Object.keys(opts.headers || {}).forEach(function(name) { headers[name] = opts.headers[name]; });
 
     var res = await snaToolsFetch(site, url, { method: fetchMethod, headers: headers, body: body === null ? undefined : body, digest: true });
+    snaToolsCountChange();
     if (res.status === 204) { return null; }
     var text = await res.text();
     if (!text) { return null; }
@@ -897,18 +919,21 @@ function snaToolsRewriteSourceLinks(text, maps, options) {
 // ### Results Log ###
 
 /**
- * Adds one row to the results of the copy that is running. Does nothing once the copy was stopped.
+ * Adds one row to the results of the copy that is running. Rows are still added after Stop copying, until
+ * snaToolsEndRun, so a change that SharePoint finished after the stop still has its row. Does nothing when no copy is
+ * running, or after Start over, Change site, or Refresh report.
  * @param {string} kind One of SNA_TOOLS_KINDS, such as 'List'.
  * @param {string} name The item, as people know it, such as 'Study Visits'.
  * @param {string} result 'copied', 'partial', 'skipped', 'failed', or 'warning' (from the check before copying).
  * @param {string} note Plain English that says what happened and, when the person can act, what to do next.
  *        Never a sign-in name, an email address, or file contents.
  * @param {object} [detail] Kept only in memory. detail.verify tells verify.js what to look for in the destination,
- *        such as { type: 'list', listId, title } (see verify.js for every type); detail.summary marks a summary row.
+ *        such as { type: 'list', listId, title } (see verify.js for every type); detail.summary marks a summary row;
+ *        detail.stopped marks the row of an item that a stop left partly made (see snaToolsLogStopped).
  * @returns {object|null} The new row { kind, name, result, note, detail, verify, summary }, or null when not added.
  */
 function snaToolsLog(kind, name, result, note, detail) {
-    if (!_snaToolsRun || _snaToolsRun.token !== _snaToolsActiveToken || _snaToolsActiveToken !== _snaToolsToken) { return null; }
+    if (!snaToolsRunIsOpen()) { return null; }
     var entry = {
         kind: kind,
         name: String(name === null || name === undefined ? '' : name),
@@ -919,7 +944,33 @@ function snaToolsLog(kind, name, result, note, detail) {
         summary: !!(detail && detail.summary)
     };
     _snaToolsRun.results.push(entry);
+    _snaToolsRun.unloggedChanges = 0;
     return entry;
+}
+
+// True while the copy in _snaToolsRun is running or finishing after a stop, so it can still add rows.
+function snaToolsRunIsOpen() {
+    return !!_snaToolsRun && _snaToolsActiveToken !== 0 && _snaToolsRun.token === _snaToolsActiveToken;
+}
+
+// Counts a change SharePoint made for the copy that is running. snaToolsLog sets the count back to 0, so a count above
+// 0 means a change that no row describes yet.
+function snaToolsCountChange() {
+    if (snaToolsRunIsOpen()) { _snaToolsRun.unloggedChanges = (_snaToolsRun.unloggedChanges || 0) + 1; }
+}
+
+/**
+ * Adds a Partly copied row for the item that was being made when the copy was stopped, but only when SharePoint made a
+ * change for it that no row describes yet, such as a new list that the copy hadn't renamed. Call it where a stop is
+ * passed on, before throwing it again.
+ * @param {string} kind One of SNA_TOOLS_KINDS, such as 'List'.
+ * @param {string} name The item, as people know it, such as 'Study Visits'.
+ * @param {string} note What may be missing and what to do next, such as SNA_TOOLS_STOPPED_NOTE.
+ * @returns {object|null} The new row, or null when every change already has a row.
+ */
+function snaToolsLogStopped(kind, name, note) {
+    if (!snaToolsRunIsOpen() || !(_snaToolsRun.unloggedChanges > 0)) { return null; }
+    return snaToolsLog(kind, name, 'partial', note, { stopped: true });
 }
 
 // ### Progress and Stopping ###
@@ -967,7 +1018,8 @@ function snaToolsBusy() {
     return _snaToolsActiveToken !== 0;
 }
 
-// Stops the copy that is running, if any. It stops at its next request or step.
+// Stops the copy that is running, if any. It stops at its next request or step. A request already on its way still
+// finishes, and the copy still logs what it did.
 function snaToolsCancel() {
     _snaToolsToken++;
 }
