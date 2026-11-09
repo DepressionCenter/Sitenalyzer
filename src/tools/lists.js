@@ -1508,8 +1508,10 @@ function snaToolsListsPointLookup(plan, dest, maps, scope, field, root) {
         }
         var match = source ? snaToolsExistingDestinationList(dest, source.url, source.baseTemplate) : null;
         if (!match || !match.usable) {
-            return { skip: 'Sitenalyzer skipped this column, because it reads from ' + (source ? source.title + ', which' : 'a list that') +
-                ' you didn\'t choose to copy and the destination doesn\'t have. Copy that list too, then copy again.' };
+            // Without the source list, nothing was looked up in the destination, so the note claims only that the list isn't in this copy.
+            return { skip: source
+                ? 'Sitenalyzer skipped this column, because it reads from ' + source.title + ', which you didn\'t choose to copy and the destination doesn\'t have. Copy that list too, then copy again.'
+                : 'Sitenalyzer skipped this column, because it reads from a list that isn\'t in this copy. Copy that list too, then copy again.' };
         }
         destListId = match.list.id;
         note = 'It reads from the destination\'s own ' + match.list.title + '.';

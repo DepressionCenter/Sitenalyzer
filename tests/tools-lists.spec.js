@@ -485,8 +485,8 @@ test('copies each kind of column, in an order that lets lookups, managed metadat
     expect(destField(visits, 'RelatedDocument').SchemaXml).toContain('List="{' + documents.Id + '}"');
     await expectResult(page, 'Related Document in Study Visits', 'Column', 'Copied', 'Created the column. It reads from the destination\'s own Documents.');
     expect(destField(visits, 'OldVisit')).toBeUndefined();
-    await expectResult(page, 'Old Visit in Study Visits', 'Column', 'Skipped', 'Sitenalyzer skipped this column, because it reads from a list that you didn\'t ' +
-        'choose to copy and the destination doesn\'t have. Copy that list too, then copy again.');
+    await expectResult(page, 'Old Visit in Study Visits', 'Column', 'Skipped', 'Sitenalyzer skipped this column, because it reads from a list that isn\'t in ' +
+        'this copy. Copy that list too, then copy again.');
 
     // The column a lookup shows is made with adddependentlookupfield, from the destination's own primary column.
     const dependent = changes.filter(function(c) { return /adddependentlookupfield/.test(c.path); })[0];
